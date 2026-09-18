@@ -63,16 +63,16 @@ A minimal example, a plain hand-drawn shape seven columns wide with a two-frame 
 {
   "version": 1,
   "width": 7,
-  "palette": { "y": "#f8d030", "k": "#202020", "r": "#e04040" },
+  "palette": { "y": "#f8d030", "r": "#e04040" },
   "right": [
-    { "glyphs": ["  ▄▄▄  ", "▐████▀▶"], "fg": ["  yyy  ", "yyyyyyk"] },
-    { "glyphs": ["  ▄▄▄  ", "▗████▀▶"], "fg": ["  yyy  ", "yyyyyyk"], "bg": ["       ", "     r "] }
+    { "glyphs": ["  ▄▄▄  ", "▐████▀▶"], "fg": ["  yyy  ", "yyyyyy "] },
+    { "glyphs": ["  ▄▄▄  ", "▗████▀▶"], "fg": ["  yyy  ", "yyyyyy "], "bg": ["       ", "     r "] }
   ]
 }
 ```
 
 The mod reads the file when a session loads and again whenever `/calm` turns Calm on, so an edited file shows after turning Calm off and on.
-An absent or unreadable file draws the stock boat silently, and a file that does not parse draws the stock boat and names the first problem in the transient notice under the prompt.
+An absent or unreadable file draws the stock boat silently, and a file that does not parse draws the stock boat and names the first problem in a transient `Calm sprite ignored: <problem>` notice under the prompt, which stands in for "Calm on" when `/calm` turns Calm on.
 This file is local to each Firstmate home and is not part of secondmate inherited configuration.
 
 ## Pi supervision branch

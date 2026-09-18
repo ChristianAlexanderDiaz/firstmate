@@ -71,7 +71,7 @@ function twoRows(value: unknown, width: number, where: string): string[][] | str
     if (typeof row !== "string") return `${where}[${index}] must be a string`;
     const cells = Array.from(row);
     if (cells.length !== width) {
-      return `${where}[${index}] is ${cells.length} characters wide, not the declared width ${width}`;
+      return `${where}[${index}] is ${cells.length} wide, not ${width}`;
     }
     rows.push(cells);
   }

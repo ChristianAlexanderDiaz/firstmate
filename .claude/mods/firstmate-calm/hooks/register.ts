@@ -115,7 +115,7 @@ async function loadCustomSprite($: EngineInterface): Promise<string | undefined>
   }
   const parsed = parseCalmCustomSprite(text);
   sprite.useCustomSprite(parsed.ok ? parsed.sprite : undefined);
-  return parsed.ok ? undefined : `Calm sprite ignored, drawing the boat: ${parsed.reason}`;
+  return parsed.ok ? undefined : `Calm sprite ignored: ${parsed.reason}`;
 }
 
 async function load($: EngineInterface): Promise<void> {
@@ -219,7 +219,7 @@ export const register: Register = (on) => {
     calm = active;
     if (!calm) sites.clear();
     $.ui.invalidate("ui.render");
-    $.ui.toast(active ? (spriteNotice === undefined ? "Calm on" : `Calm on. ${spriteNotice}`) : "Calm off");
+    $.ui.toast(active ? (spriteNotice ?? "Calm on") : "Calm off");
     // No `text`: the toggle leaves no output row in the transcript, as on Pi.
     return {};
   });

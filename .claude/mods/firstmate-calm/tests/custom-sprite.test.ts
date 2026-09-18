@@ -128,7 +128,7 @@ describe("the captain's custom sprite", () => {
 
   for (const [what, text, reason] of [
     ["invalid JSON", "{ not json", "not valid JSON"],
-    ["a row narrower than the declared width", SPRITE.replace("███▶ ", "███▶"), "not the declared width 5"],
+    ["a row narrower than the declared width", SPRITE.replace("███▶ ", "███▶"), `"right"[0].glyphs[1] is 4 wide, not 5`],
     ["an undefined palette key", SPRITE.replace("bbbe ", "bbbz "), `names "z"`],
     ["an unknown version", SPRITE.replace('"version":1', '"version":2'), `"version" must be 1`],
     ["a wide glyph", SPRITE.replace("███▶ ", "███\u{1f525} "), "not a single-column glyph"],
@@ -138,7 +138,8 @@ describe("the captain's custom sprite", () => {
       await $.session.start(sessionStart);
       expectStockBoat((await draw($, 40)).glyphs);
       expect(journal.toasts).toHaveLength(1);
-      expect(journal.toasts[0]).toContain("Calm sprite ignored, drawing the boat");
+      // The reason follows a short label, so a standard-width terminal shows it whole.
+      expect(journal.toasts[0]!.startsWith("Calm sprite ignored: ")).toBe(true);
       expect(journal.toasts[0]).toContain(reason);
     });
   }
@@ -163,7 +164,7 @@ describe("the captain's custom sprite", () => {
     // Calm is off, so the bad file is not announced at load.
     expect(journal.toasts).toHaveLength(0);
     await $.command.run(calmCommand());
-    expect(journal.toasts.at(-1)).toContain("Calm on. Calm sprite ignored, drawing the boat");
+    expect(journal.toasts.at(-1)).toMatch(/^Calm sprite ignored: the file is not valid JSON/);
     expectStockBoat((await draw($, 40)).glyphs);
     // Fixing the file and toggling off and on picks it up without a restart.
     files.set("/fm/home/config/calm-sprite.json", SPRITE);
