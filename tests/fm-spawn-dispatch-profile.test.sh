@@ -165,29 +165,46 @@ test_non_cursor_launch_clears_inherited_cursor_markers() {
 # CLAUDE_CODE_CHILD_SESSION and treats itself as a nested session, disabling
 # transcript persistence (verified on the installed 2.1.276 binary: the
 # footer "Transcript saving is off - inherited CLAUDE_CODE_CHILD_SESSION
-# marker"). This pins that the launch clears every such marker regardless of
-# what the ambient environment carries, while leaving deliberate
-# configuration (CLAUDE_CODE_ENABLE_FUNCTION_HOOKS, a captain setting) alone.
+# marker"). This runs the generated launch in a pane shell seeded with every
+# such marker and pins that the launched claude inherits none of them, while
+# deliberate configuration (CLAUDE_CODE_ENABLE_FUNCTION_HOOKS, a captain
+# setting) still reaches it.
 test_claude_launch_clears_inherited_parent_session_markers() {
-  local rec id out status launch
+  local rec id out status launch claude_env marker
+  local -a ancestor_env=(
+    CLAUDECODE=1 CLAUDE_CODE_CHILD_SESSION=1 CLAUDE_CODE_SESSION_ID=ancestor-session
+    CLAUDE_CODE_SESSION_ATTENDED=1 CLAUDE_CODE_ENTRYPOINT=cli
+    CLAUDE_CODE_EXECPATH=/ancestor/claude CLAUDE_CODE_MESSAGING_SOCKET=/tmp/cc-socks/1.sock
+    CLAUDE_CODE_MESSAGING_TOKEN=ancestor-token CLAUDE_PID=1 CLAUDE_EFFORT=high
+    AI_AGENT=claude-code_2-1-276_agent CLAUDE_CODE_INVOKED_SKILLS=some-skill
+    CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1
+  )
   id=profile-claude-parent-session-z1c
   rec=$(make_spawn_case profile-claude-parent-session claude "$id")
   read_case_record "$rec"
 
-  out=$(CLAUDECODE=1 CLAUDE_CODE_CHILD_SESSION=1 CLAUDE_CODE_SESSION_ID=ancestor-session \
-    CLAUDE_CODE_SESSION_ATTENDED=1 CLAUDE_CODE_ENTRYPOINT=cli \
-    CLAUDE_CODE_EXECPATH=/ancestor/claude CLAUDE_CODE_MESSAGING_SOCKET=/tmp/cc-socks/1.sock \
-    CLAUDE_CODE_MESSAGING_TOKEN=ancestor-token CLAUDE_PID=1 CLAUDE_EFFORT=high \
-    AI_AGENT=claude-code_2-1-276_agent CLAUDE_CODE_INVOKED_SKILLS=some-skill \
-    CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 \
+  out=$(export "${ancestor_env[@]}"
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "claude spawn under inherited parent-session markers should succeed"
+  expect_code 0 "$status" "claude spawn under inherited parent-session markers should succeed: $out"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "$CLAUDE_ENV_SCRUB_FLAGS" \
-    "claude launch must clear every inherited parent-session identity marker"
-  assert_not_contains "$launch" "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS" \
-    "claude launch must never touch deliberate captain configuration while scrubbing identity markers"
+  cat > "$FAKEBIN_DIR/claude" <<'SH'
+#!/bin/sh
+env
+SH
+  chmod +x "$FAKEBIN_DIR/claude"
+  claude_env=$(env "${ancestor_env[@]}" PATH="$FAKEBIN_DIR:$PATH" bash -c "$launch") ||
+    fail "could not execute the claude launch command"
+  claude_env=$'\n'"$claude_env"$'\n'
+  for marker in CLAUDECODE CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID \
+    CLAUDE_CODE_SESSION_ATTENDED CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH \
+    CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CLAUDE_PID CLAUDE_EFFORT \
+    AI_AGENT CLAUDE_CODE_INVOKED_SKILLS; do
+    assert_not_contains "$claude_env" $'\n'"$marker=" \
+      "launched claude inherited the ancestor's $marker"
+  done
+  assert_contains "$claude_env" $'\nCLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1\n' \
+    "launched claude lost deliberate captain configuration while scrubbing identity markers"
   pass "claude launches clear inherited parent-session identity markers"
 }
 
