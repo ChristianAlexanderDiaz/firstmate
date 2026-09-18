@@ -47,8 +47,8 @@ The file is one JSON object with these fields, and any other field is refused:
 - `width`: an integer from 1 to 64, the sprite's width in terminal columns.
 - `palette`: optional; an object mapping single non-space characters to `"#rrggbb"` colors.
 - `right`: 1 to 8 frames drawn while the sprite travels right.
-- `left`: optional; 1 to 8 frames drawn while it travels left, and when absent each `right` frame mirrored, reversing its cells and swapping paired glyphs such as `▌`/`▐`, `◢`/`◣`, `/`/`\`, and `(`/`)` (any other glyph mirrors onto itself, so a sprite built from other asymmetric glyphs should declare `left`).
 
+Left-facing frames are always produced by mirroring: while the sprite travels left, each `right` frame is drawn with its cells reversed and paired glyphs such as `▌`/`▐`, `◢`/`◣`, `/`/`\`, and `(`/`)` swapped, and any other glyph mirrors onto itself.
 Each frame is an object with `glyphs`, and optionally `fg` and `bg`, each an array of exactly two strings of exactly `width` characters.
 The upper `glyphs` row draws above the water and the lower row sits in the water row where the hull would.
 Every glyph must be one terminal column; control characters, combining marks, zero-width characters, and East Asian wide and emoji characters are refused.
@@ -57,7 +57,7 @@ A cell whose glyph is a space and whose `bg` is a space is transparent: the uppe
 Frames step once per sprite move, so a multi-frame list plays as a walk cycle in time with travel.
 Pi reads no custom sprite and always draws its stock boat.
 
-A minimal example, a plain hand-drawn shape seven columns wide with a two-frame walk and a mirrored left facing, to copy into `config/calm-sprite.json` and replace with your own art:
+A minimal example, a plain hand-drawn shape seven columns wide with a two-frame walk, to copy into `config/calm-sprite.json` and replace with your own art:
 
 ```json
 {

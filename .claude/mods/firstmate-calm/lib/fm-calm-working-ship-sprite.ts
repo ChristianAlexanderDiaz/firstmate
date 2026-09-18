@@ -112,7 +112,7 @@ export type CalmCustomSpriteFrame = readonly [
   readonly CalmCustomSpriteCell[],
 ];
 
-/** A validated custom sprite: its declared width and non-empty frame lists per facing. */
+/** A validated custom sprite: its declared width, its frames, and their mirrored left facing. */
 export type CalmCustomSprite = {
   readonly width: number;
   readonly right: readonly CalmCustomSpriteFrame[];

@@ -15,7 +15,7 @@ import type {
 export const CALM_CUSTOM_SPRITE_VERSION = 1;
 /** Widest sprite accepted, in terminal columns. */
 export const CALM_CUSTOM_SPRITE_MAX_WIDTH = 64;
-/** Most frames accepted per facing. */
+/** Most frames accepted. */
 export const CALM_CUSTOM_SPRITE_MAX_FRAMES = 8;
 /** Largest file accepted, in characters, so a stray large file is refused cheaply. */
 export const CALM_CUSTOM_SPRITE_MAX_CHARS = 65536;
@@ -24,9 +24,8 @@ export type CalmCustomSpriteParse =
   | { readonly ok: true; readonly sprite: CalmCustomSprite }
   | { readonly ok: false; readonly reason: string };
 
-// Glyphs that swap with a partner when a frame is mirrored to face the other way. Any
-// glyph not listed mirrors onto itself, so a sprite built from asymmetric glyphs outside
-// this table should declare its own `left` frames.
+// Glyphs that swap with a partner when a frame is mirrored to face left. Any glyph not
+// listed mirrors onto itself.
 const MIRROR_PAIRS: readonly (readonly [string, string])[] = [
   ["▌", "▐"], ["▖", "▗"], ["▘", "▝"], ["▙", "▟"], ["▛", "▜"], ["▚", "▞"],
   ["◢", "◣"], ["◤", "◥"], ["◸", "◹"], ["◺", "◿"], ["◀", "▶"], ["◁", "▷"],
@@ -180,7 +179,7 @@ export function parseCalmCustomSprite(text: string): CalmCustomSpriteParse {
   }
   if (!isRecord(document)) return fail("the file must hold one JSON object");
   for (const key of Object.keys(document)) {
-    if (!["version", "width", "palette", "right", "left"].includes(key)) {
+    if (!["version", "width", "palette", "right"].includes(key)) {
       return fail(`unknown field "${key}"`);
     }
   }
@@ -206,13 +205,5 @@ export function parseCalmCustomSprite(text: string): CalmCustomSpriteParse {
   }
   const right = parseFrames(document.right, width, palette, `"right"`);
   if (typeof right === "string") return fail(right);
-  let left: CalmCustomSpriteFrame[];
-  if (document.left === undefined) {
-    left = right.map(mirrorCalmCustomSpriteFrame);
-  } else {
-    const declared = parseFrames(document.left, width, palette, `"left"`);
-    if (typeof declared === "string") return fail(declared);
-    left = declared;
-  }
-  return { ok: true, sprite: { width, right, left } };
+  return { ok: true, sprite: { width, right, left: right.map(mirrorCalmCustomSpriteFrame) } };
 }

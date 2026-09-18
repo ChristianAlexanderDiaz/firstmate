@@ -432,13 +432,12 @@ const base = { version: 1, width: 4, palette: { a: "#102030" }, right: [{ glyphs
 const parsed = custom.parseCalmCustomSprite(JSON.stringify(base));
 check(parsed.ok, "a valid sprite did not parse: " + parsed.reason);
 const glyphs = (frame, row) => frame[row].map((cell) => cell.glyph).join("");
-check(glyphs(parsed.sprite.left[0], 0) === "▗██▌" && glyphs(parsed.sprite.left[0], 1) === "<██)", "the default left frame is not the mirrored right frame");
+check(glyphs(parsed.sprite.left[0], 0) === "▗██▌" && glyphs(parsed.sprite.left[0], 1) === "<██)", "the left frame is not the mirrored right frame");
 check(parsed.sprite.right[0][0][0].foreground === 0x102030 && parsed.sprite.right[0][1][0].foreground === undefined, "palette keys did not map onto cells");
-const declared = custom.parseCalmCustomSprite(JSON.stringify({ ...base, left: [{ glyphs: ["LLLL", "llll"] }] }));
-check(declared.ok && glyphs(declared.sprite.left[0], 0) === "LLLL", "a declared left frame was not used as given");
 for (const [label, document] of [
   ["array", []],
   ["unknown field", { ...base, speed: 2 }],
+  ["declared left frames", { ...base, left: base.right }],
   ["zero width", { ...base, width: 0 }],
   ["too wide", { ...base, width: 65 }],
   ["no frames", { ...base, right: [] }],
@@ -471,7 +470,7 @@ console.log("custom-ok");
 JS
   out=$(run_node "$TMP_ROOT/custom.mjs" 2>&1) || fail "custom sprite: $out"
   assert_contains "$out" "custom-ok" "the custom sprite checks did not complete"
-  pass "the custom sprite parser mirrors or keeps declared left frames, maps palette colors, refuses every malformed shape, and the shared sprite freezes and resumes its facing and walk frame"
+  pass "the custom sprite parser mirrors every frame to face left, maps palette colors, refuses every malformed shape, and the shared sprite freezes and resumes its facing and walk frame"
 }
 
 test_plugin_shape
