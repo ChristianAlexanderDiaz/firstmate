@@ -447,11 +447,16 @@ for (const [label, document] of [
   ["space key", { ...base, palette: { " ": "#000000" } }],
   ["control glyph", { ...base, right: [{ glyphs: ["\\u0007███", "████"] }] }],
   ["combining glyph", { ...base, right: [{ glyphs: ["e\\u0301██", "████"] }] }],
+  ["emoji-presentation symbol", { ...base, right: [{ glyphs: ["\\u26a1███", "████"] }] }],
+  ["wide CJK glyph", { ...base, right: [{ glyphs: ["\\u4e2d███", "████"] }] }],
+  ["zero-width space", { ...base, right: [{ glyphs: ["\\u200b███", "████"] }] }],
 ]) {
   const result = custom.parseCalmCustomSprite(JSON.stringify(document));
   check(!result.ok && typeof result.reason === "string" && result.reason.length > 0, "a malformed sprite parsed: " + label);
 }
 check(!custom.parseCalmCustomSprite("x".repeat(70000)).ok, "an oversized file parsed");
+// Narrow symbols a pixel sprite draws with stay accepted, including legacy-computing sextants.
+check(custom.parseCalmCustomSprite(JSON.stringify({ version: 1, width: 4, right: [{ glyphs: ["\\u{1fb00}▀▄█", "◿é░ "] }] })).ok, "narrow block and sextant glyphs were refused");
 // Freeze and resume keep the facing and walk frame with the rest of the state.
 const walk = custom.parseCalmCustomSprite(JSON.stringify({ version: 1, width: 3, right: [{ glyphs: ["   ", "AB>"] }, { glyphs: ["   ", "ab>"] }] }));
 check(walk.ok, "the walk sprite did not parse");
