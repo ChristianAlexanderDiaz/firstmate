@@ -4267,7 +4267,31 @@ agy) LAUNCH=${LAUNCH//__AGYBIN__/"$(shell_quote "$AGY_BIN")"} ;;
 esac
 LAUNCH=${LAUNCH//__WORKTREE__/$sq_worktree}
 case "$HARNESS" in
-claude | codex | opencode | pi | pi-signed | grok | kimi | gemini | muse | rovo | agy)
+# A claude-harness spawn's own pane, tmux server, or herdr server can carry
+# CLAUDECODE/CLAUDE_CODE_*/AI_AGENT markers set by whichever ancestor Claude
+# Code process (a primary's tool shell, or the pane-hosting server itself)
+# happened to start it, rather than by the captain. Verified on the installed
+# 2.1.276 binary (`strings`): CLAUDE_CODE_CHILD_SESSION is the direct trigger
+# for the interactive footer "Transcript saving is off - inherited
+# CLAUDE_CODE_CHILD_SESSION marker", and CLAUDE_CODE_SESSION_ID,
+# CLAUDE_CODE_SESSION_ATTENDED, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_EXECPATH,
+# CLAUDE_PID, CLAUDE_EFFORT, AI_AGENT, and CLAUDE_CODE_INVOKED_SKILLS all name
+# the ancestor's own session identity (the binary's own subprocess-env
+# constant list carries the same names). CLAUDE_CODE_MESSAGING_SOCKET and
+# CLAUDE_CODE_MESSAGING_TOKEN point at the ancestor's own IPC socket
+# (path-scoped by its pid), so an inherited pair would let a new session
+# collide with a live one instead of opening its own. Scrubbing bare
+# CLAUDECODE here is safe even though the new claude process sets it again
+# for its own later subprocesses once running: this only clears what the
+# ancestor left in the pane's shell before the fresh process starts.
+# Deliberately NOT included: CLAUDE_CODE_ENABLE_FUNCTION_HOOKS and
+# CLAUDE_CODE_AUTO_COMPACT_WINDOW are captain-set configuration, not identity,
+# and CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION/CLAUDE_CODE_SEND_FEEDBACK are set
+# fresh by this same launch string (docs/verification/runtime-backends.md).
+claude)
+  LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_EXECPATH -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_PID -u CLAUDE_EFFORT -u AI_AGENT -u CLAUDE_CODE_INVOKED_SKILLS $LAUNCH"
+  ;;
+codex | opencode | pi | pi-signed | grok | kimi | gemini | muse | rovo | agy)
   LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI $LAUNCH"
   ;;
 esac

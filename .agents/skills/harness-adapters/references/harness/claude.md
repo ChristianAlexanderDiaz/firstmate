@@ -51,6 +51,14 @@ As defense in depth, `fm_composer_strip_ghost` in `../../../bin/fm-composer-lib.
 `../../../docs/herdr-backend.md` under "Composer and injection safety" owns dark-TRUECOLOR tradeoffs and `../../../docs/verification/runtime-backends.md` owns captures.
 Styled capture stays internal to the boolean detector; `fm-peek` and model-facing captures remain plain, without escapes.
 
+## Session-identity markers
+
+A claude spawn's own pane, tmux server, or herdr server can carry `CLAUDECODE`/`CLAUDE_CODE_*`/`AI_AGENT` set by whichever ancestor Claude Code process happened to start it (a primary's tool shell, or a herdr server itself started inside one), rather than by the captain.
+Verified on the installed 2.1.276 binary (`strings` on the Bun-compiled executable): `CLAUDE_CODE_CHILD_SESSION` is the direct trigger for the interactive footer `Transcript saving is off - inherited CLAUDE_CODE_CHILD_SESSION marker \xB7 restart with CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 to keep future transcripts`, and the binary's own subprocess-env constant list (`FPo`) names `CLAUDECODE`, `AI_AGENT`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_PID`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_EFFORT`, and `CLAUDE_CODE_INVOKED_SKILLS` as the same session's own identity, never captain configuration.
+`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_MESSAGING_SOCKET`, and `CLAUDE_CODE_MESSAGING_TOKEN` are the same kind of ancestor-scoped identity (the messaging pair is path-scoped by the ancestor's own pid), confirmed present on a live herdr server's own environment (started inside a Claude Code 2.1.273 session) that every pane it hosts inherits before `fm-spawn.sh` ever runs.
+`launch_template()` and the shared `env -u` prefix stage in `../../../../../bin/fm-spawn.sh` are the single owner of the fix: every claude-harness spawn (crewmate, scout, and secondmate, on every runtime backend, since the same generated launch string executes wherever the backend delivers it) clears all of the markers above before exec, while leaving deliberate captain configuration (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW`) and this same launch's own `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION`/`CLAUDE_CODE_SEND_FEEDBACK` untouched.
+`../../../docs/verification/runtime-backends.md` under "Claude workspace trust" carries the dated reproduction and the exact scrub list.
+
 ## Feedback drafts
 
 The spawn disables Claude's `/bug` and `/feedback` model-drafted feedback flow for every Claude worker and secondmate, preventing a fleet-launched agent from queuing or submitting a bug report on the captain's behalf.
