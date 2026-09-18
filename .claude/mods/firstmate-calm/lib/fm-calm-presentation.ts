@@ -41,15 +41,25 @@ export function calmCodeRootFromPluginRoot(pluginRoot: string): string {
 }
 
 /**
- * The per-home `config/calm` path, resolved exactly as the Pi extension resolves it:
+ * The per-home config directory, resolved exactly as the Pi extension resolves it:
  * `FM_HOME`, then `FM_ROOT_OVERRIDE`, then the tracked code root, with
  * `FM_CONFIG_OVERRIDE` naming the config directory outright when present.
  */
-export function calmPreferencePath(env: CalmHomeEnvironment, pluginRoot: string): string {
-  const configDirectory =
+function calmConfigDirectory(env: CalmHomeEnvironment, pluginRoot: string): string {
+  return (
     env.FM_CONFIG_OVERRIDE ||
-    `${env.FM_HOME || env.FM_ROOT_OVERRIDE || calmCodeRootFromPluginRoot(pluginRoot)}/config`;
-  return `${configDirectory}/calm`;
+    `${env.FM_HOME || env.FM_ROOT_OVERRIDE || calmCodeRootFromPluginRoot(pluginRoot)}/config`
+  );
+}
+
+/** The per-home `config/calm` preference path. */
+export function calmPreferencePath(env: CalmHomeEnvironment, pluginRoot: string): string {
+  return `${calmConfigDirectory(env, pluginRoot)}/calm`;
+}
+
+/** The per-home optional custom working sprite, `config/calm-sprite.json`, beside the preference. */
+export function calmCustomSpritePath(env: CalmHomeEnvironment, pluginRoot: string): string {
+  return `${calmConfigDirectory(env, pluginRoot)}/calm-sprite.json`;
 }
 
 /**

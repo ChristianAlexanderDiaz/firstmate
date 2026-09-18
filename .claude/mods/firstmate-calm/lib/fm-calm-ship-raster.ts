@@ -105,7 +105,9 @@ export type CalmShipRasterCells = {
 /**
  * Pack a frame painted for exactly `columns` cells. Every row is padded with plain
  * spaces to the full width, so the sail row's short run still fills its Raster row,
- * and a row wider than the grid is clipped rather than wrapped.
+ * and a row wider than the grid is clipped rather than wrapped. A run's explicit RGB
+ * foreground or background, which only a custom sprite's cells carry, replaces the
+ * palette color or the default background for that run.
  */
 export function packCalmShipRasterCells(
   frame: CalmWorkingShipFrame,
@@ -114,12 +116,18 @@ export function packCalmShipRasterCells(
 ): CalmShipRasterCells {
   const rows = Math.max(1, frame.length);
   const words = new Uint32Array(columns * rows * 3);
-  const put = (row: number, column: number, codePoint: number, foreground: number): void => {
+  const put = (
+    row: number,
+    column: number,
+    codePoint: number,
+    foreground: number,
+    background: number = CALM_SHIP_RASTER_DEFAULT_COLOR,
+  ): void => {
     if (column < 0 || column >= columns) return;
     const offset = (row * columns + column) * 3;
     words[offset] = codePoint;
     words[offset + 1] = foreground;
-    words[offset + 2] = CALM_SHIP_RASTER_DEFAULT_COLOR;
+    words[offset + 2] = background;
   };
   for (let row = 0; row < rows; row += 1) {
     for (let column = 0; column < columns; column += 1) {
@@ -127,9 +135,11 @@ export function packCalmShipRasterCells(
     }
     let column = 0;
     for (const run of frame[row] ?? []) {
-      const foreground = palette[run.color];
+      // A custom sprite cell's own colors win; otherwise the class color and default background.
+      const foreground = run.foreground ?? palette[run.color];
+      const background = run.background ?? CALM_SHIP_RASTER_DEFAULT_COLOR;
       for (const glyph of Array.from(run.text)) {
-        put(row, column, glyph.codePointAt(0) ?? 0x20, foreground);
+        put(row, column, glyph.codePointAt(0) ?? 0x20, foreground, background);
         column += 1;
       }
     }
