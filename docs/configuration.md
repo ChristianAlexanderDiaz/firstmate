@@ -57,6 +57,20 @@ A cell whose glyph is a space and whose `bg` is a space is transparent: the uppe
 Frames step once per sprite move, so a multi-frame list plays as a walk cycle in time with travel.
 Pi reads no custom sprite and always draws its stock boat.
 
+A minimal example, a plain hand-drawn shape seven columns wide with a two-frame walk and a mirrored left facing, to copy into `config/calm-sprite.json` and replace with your own art:
+
+```json
+{
+  "version": 1,
+  "width": 7,
+  "palette": { "y": "#f8d030", "k": "#202020", "r": "#e04040" },
+  "right": [
+    { "glyphs": ["  ▄▄▄  ", "▐████▀▶"], "fg": ["  yyy  ", "yyyyyyk"] },
+    { "glyphs": ["  ▄▄▄  ", "▗████▀▶"], "fg": ["  yyy  ", "yyyyyyk"], "bg": ["       ", "     r "] }
+  ]
+}
+```
+
 The mod reads the file when a session loads and again whenever `/calm` turns Calm on, so an edited file shows after turning Calm off and on.
 An absent or unreadable file draws the stock boat silently, and a file that does not parse draws the stock boat and names the first problem in the transient notice under the prompt.
 This file is local to each Firstmate home and is not part of secondmate inherited configuration.
