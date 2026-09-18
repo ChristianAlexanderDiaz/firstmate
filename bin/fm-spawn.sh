@@ -4276,14 +4276,14 @@ case "$HARNESS" in
 # CLAUDE_CODE_CHILD_SESSION marker", and CLAUDE_CODE_SESSION_ID,
 # CLAUDE_CODE_SESSION_ATTENDED, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_EXECPATH,
 # CLAUDE_PID, CLAUDE_EFFORT, AI_AGENT, and CLAUDE_CODE_INVOKED_SKILLS all name
-# the ancestor's own session identity (the binary's own subprocess-env
-# constant list carries the same names). CLAUDE_CODE_MESSAGING_SOCKET and
-# CLAUDE_CODE_MESSAGING_TOKEN point at the ancestor's own IPC socket
-# (path-scoped by its pid), so an inherited pair would let a new session
-# collide with a live one instead of opening its own. Scrubbing bare
-# CLAUDECODE here is safe even though the new claude process sets it again
-# for its own later subprocesses once running: this only clears what the
-# ancestor left in the pane's shell before the fresh process starts.
+# the ancestor's own session identity (the binary's own subprocess-env key
+# list carries all of them but CLAUDE_CODE_ENTRYPOINT).
+# CLAUDE_CODE_MESSAGING_SOCKET and CLAUDE_CODE_MESSAGING_TOKEN point at the
+# ancestor's own IPC socket (path-scoped by its pid), so an inherited pair
+# would let a new session collide with a live one instead of opening its own.
+# Scrubbing bare CLAUDECODE here is safe even though the new claude process
+# sets it again for its own later subprocesses once running: this only clears
+# what the ancestor left in the pane's shell before the fresh process starts.
 # Deliberately NOT included: CLAUDE_CODE_ENABLE_FUNCTION_HOOKS and
 # CLAUDE_CODE_AUTO_COMPACT_WINDOW are captain-set configuration, not identity,
 # and CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION/CLAUDE_CODE_SEND_FEEDBACK are set

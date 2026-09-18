@@ -475,20 +475,29 @@ grep -a -o "Transcript saving[^\"'\`]\{0,150\}" ~/.local/share/claude/versions/2
 ```
 
 ```text
-Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker
+Transcript saving is off \u2014 CLAUDE_CODE_SKIP_PROMPT_HISTORY is set
+Transcript saving is off \u2014 inherited CLAUDE_CODE_CHILD_SESSION marker
 ```
 
-with the adjoining function that decides it:
+The adjoining function decides the second reason:
+
+```sh
+grep -a -o 'function iBe(){[^}]*}' ~/.local/share/claude/versions/2.1.276
+```
 
 ```text
 function iBe(){if(a.CLAUDE_CODE_FORCE_SESSION_PERSISTENCE)return!1;if(!(a.CLAUDE_CODE_CHILD_SESSION&&Yd()&&!sa()))return!1;return!n().isChildSessionMarkerAmbientInTmux()}
 ```
 
-`CLAUDE_CODE_CHILD_SESSION` truthy is the direct trigger; with persistence disabled the session's transcript is never written to `~/.claude/projects/<project>/<session-id>/`, so it cannot be resumed natively if it dies.
-The same binary carries the full constant list of markers a running session sets for its own subprocess environment, none of them captain configuration:
+`CLAUDE_CODE_CHILD_SESSION` truthy is the direct trigger; with persistence disabled the session's transcript is never written to `~/.claude/projects/<project>/<session-id>.jsonl`, so it cannot be resumed natively if it dies.
+The same binary's subprocess-environment key list, which `spawnEnvKeys()` merges into every tool-spawn environment, names the session-identity markers the fix clears alongside ordinary process names such as `SHELL`, `TMUX`, and `TMPDIR` that it leaves alone:
+
+```sh
+grep -a -o 'var FPo=\[[^.]*' ~/.local/share/claude/versions/2.1.276
+```
 
 ```text
-["SHELL","GIT_EDITOR","CLAUDECODE","AI_AGENT","CLAUDE_CODE_SESSION_ID","CLAUDE_CODE_CHILD_SESSION","CLAUDE_CODE_SESSION_ATTENDED","CLAUDE_PID","TRACEPARENT","CLAUDE_CODE_EXECPATH","TMUX","TMPDIR","CLAUDE_CODE_TMPDIR","TMPPREFIX","BUN_OPTIONS","TEMP","TMP","GIT_CONFIG_PARAMETERS","CLAUDE_EFFORT","CLAUDE_CODE_INVOKED_SKILLS"]
+var FPo=["SHELL","GIT_EDITOR","CLAUDECODE","AI_AGENT","CLAUDE_CODE_SESSION_ID","CLAUDE_CODE_CHILD_SESSION","CLAUDE_CODE_SESSION_ATTENDED","CLAUDE_PID","TRACEPARENT","CLAUDE_CODE_EXECPATH","TMUX","TMPDIR","CLAUDE_CODE_TMPDIR","TMPPREFIX","BUN_OPTIONS","TEMP","TMP","GIT_CONFIG_PARAMETERS","CLAUDE_EFFORT","CLAUDE_CODE_INVOKED_SKILLS",
 ```
 
 Reproduced live: a crewmate task spawned by `bin/fm-spawn.sh` from a primary running Claude Code 2.1.276 carried `CLAUDECODE=1`, `CLAUDE_CODE_CHILD_SESSION=1`, `CLAUDE_CODE_SESSION_ID=<the primary's own session id>`, `CLAUDE_CODE_SESSION_ATTENDED=1`, and `CLAUDE_CODE_ENTRYPOINT=cli` in its own tool-shell environment (`env` inside the crewmate's pane), and no transcript file existed anywhere under `~/.claude/projects/` for that crewmate's own session id, confirming the footer's claim against a live session rather than the disassembly alone.
