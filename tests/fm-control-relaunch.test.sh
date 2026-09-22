@@ -2252,6 +2252,37 @@ test_relaunch_of_a_held_in_flight_item_succeeds_and_keeps_the_hold() {
   pass "fm-control relaunch: a captain-held In-flight item succeeds and keeps the hold"
 }
 
+# While the captain is away the supervision branch owns recovery, and a
+# relaunch through fm-control is branch-legal in both postures
+# (docs/pi-supervision-branch.md). The away rule that limits the branch to
+# queued unblocked work governs NEW dispatch only; a relaunch of a held
+# In-flight task must pass the same relaunch rule fm-control checked, or the
+# old agent is stopped with no replacement.
+test_branch_relaunch_under_the_away_posture_of_a_held_in_flight_item_succeeds() {
+  local dir out rc=0
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
+    return 0
+  }
+  dir=$(new_case away-branch-held-inflight rl53)
+  add_ship_task "$dir" rl53 claude
+  seed_backlog "$dir" rl53 in_flight
+  tasks-axi hold rl53 --reason "captain decision pending" --kind captain \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  FM_HOME="$dir/home" "$ROOT/bin/fm-afk-contract.sh" enter --spend 2 >/dev/null \
+    || fail "away entry failed"
+
+  out=$(FM_SUPERVISION_ACTOR=branch run_control "$dir" rl53 relaunch --note "picking the work back up") || rc=$?
+  expect_code 0 "$rc" "a branch relaunch of a captain-held In-flight item under the away posture should succeed"$'\n'"$out"
+  [ "$(cat "$dir/fake/command")" = claude ] \
+    || fail "the branch relaunch left no agent running"$'\n'"$out"
+  [ "$(backlog_state "$dir" rl53)" = in_flight ] \
+    || fail "the branch relaunch changed the held item's state to $(backlog_state "$dir" rl53)"
+  [ "$(backlog_held "$dir" rl53)" = yes ] \
+    || fail "the branch relaunch dropped the captain hold on the replaced task"
+  pass "fm-control relaunch: the away-posture branch relaunches a captain-held In-flight item and keeps the hold"
+}
+
 # A row that is not In flight at all - here, held while still queued - is not
 # the "already in flight, replace its agent" case relaunch exists for, and
 # must still refuse before the old agent is ever touched.
@@ -2351,3 +2382,4 @@ test_relaunch_moves_a_drifted_item_back_in_flight
 test_relaunch_of_a_held_in_flight_item_succeeds_and_keeps_the_hold
 test_relaunch_of_a_held_queued_item_refuses_before_stopping_the_agent
 test_spawn_relaunch_of_a_held_in_flight_item_succeeds_and_keeps_the_hold
+test_branch_relaunch_under_the_away_posture_of_a_held_in_flight_item_succeeds

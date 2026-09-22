@@ -818,11 +818,11 @@ fm_backlog_meta_spawn_gen_optional() {  # <meta> <state>
   fm_backlog_meta_spawn_gen "$meta" "$state"
 }
 
-# A fresh dispatch (no mode, or any mode other than --relaunch) may only claim
-# a row already sitting at exactly `in_flight no no` (a re-verify of a
-# dispatch this process itself just committed) or `queued no no`; a held or
-# blocked row of either kind refuses, and dispatch never touches hold or
-# blocked state.
+# A fresh dispatch (no mode) may only claim a row already sitting at exactly
+# `in_flight no no` (a re-verify of a dispatch this process itself just
+# committed) or `queued no no`; a held or blocked row of either kind refuses,
+# and dispatch never touches hold or blocked state. An unrecognized mode is an
+# error (status 2), never a fresh dispatch.
 #
 # --relaunch replaces the agent of a task that is ALREADY in flight, so it
 # must accept an in-flight row whatever its hold or blocked flags read - a
