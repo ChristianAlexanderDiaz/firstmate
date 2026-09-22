@@ -355,37 +355,44 @@ fm_tasks_axi() {
   elif command -v perl >/dev/null 2>&1; then
     # Fork, run tasks-axi in the child, and poll waitpid(WNOHANG) until the
     # child exits or the bound expires: the same contract as
-    # `timeout $bound tasks-axi ...`. Expiry kills the child with TERM, waits
-    # one further bound of grace, then KILL, and exits 124 so the callers'
-    # timeout plumbing reports it. Polling rather than alarm+die keeps the
+    # `timeout $bound tasks-axi ...`. Like GNU timeout, the child runs in its
+    # own process group and expiry signals the whole group, so a grandchild
+    # (a wrapper script's own subprocess) cannot outlive the bound and hold
+    # the caller's output pipe open. Expiry sends TERM, waits one further
+    # bound of grace for the group to exit, then KILL, and exits 124 so the
+    # callers' timeout plumbing reports it. Both deadlines read the monotonic
+    # clock rather than summing poll steps, which a loaded host stretches
+    # well past their nominal length. Polling rather than alarm+die keeps the
     # bound off perl's platform-dependent syscall-restart signal semantics.
-    exec perl -MPOSIX=WNOHANG -e '
+    exec perl -MPOSIX=WNOHANG -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e '
       my $bound = shift;
       exit 127 unless defined $bound && $bound =~ /\A[0-9]+\z/;
       my $pid = fork;
       exit 127 unless defined $pid;
-      if ($pid == 0) { exec @ARGV; exit 127 }
+      if ($pid == 0) { setpgrp(0, 0); exec @ARGV; exit 127 }
+      setpgrp($pid, $pid);
       my $step = 0.05;
-      my $elapsed = 0;
+      my $deadline = clock_gettime(CLOCK_MONOTONIC) + $bound;
       while (1) {
         my $done = waitpid $pid, WNOHANG;
         exit(($? & 127) ? 128 + ($? & 127) : $? >> 8) if $done == $pid;
         exit 127 if $done == -1;
-        if ($elapsed >= $bound) {
-          kill "TERM", $pid;
-          my $grace = 0;
+        if (clock_gettime(CLOCK_MONOTONIC) >= $deadline) {
+          kill "TERM", -$pid;
+          my $kill_at = clock_gettime(CLOCK_MONOTONIC) + $bound;
           my $gone = waitpid $pid, WNOHANG;
-          while ($gone == 0 && $grace < $bound) {
+          while ($gone == 0 || kill(0, -$pid)) {
+            if (clock_gettime(CLOCK_MONOTONIC) >= $kill_at) {
+              kill "KILL", -$pid;
+              last;
+            }
             select undef, undef, undef, $step;
-            $grace += $step;
-            $gone = waitpid $pid, WNOHANG;
+            $gone = waitpid $pid, WNOHANG if $gone == 0;
           }
-          kill "KILL", $pid if $gone == 0;
-          waitpid $pid, 0;
+          waitpid $pid, 0 if $gone == 0;
           exit 124;
         }
         select undef, undef, undef, $step;
-        $elapsed += $step;
       }
     ' -- "$bound" tasks-axi "$@"
   fi

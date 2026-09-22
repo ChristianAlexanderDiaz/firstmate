@@ -51,6 +51,52 @@ pin_markdown_backend() {  # <addressing-root>
   printf '%s\n' 'backend = "markdown"' > "$1/.tasks.toml"
 }
 
+# A test-side safety net around a whole spawn, so a hang regression fails the
+# case (status 124, or 137 when the kill had to fire) instead of wedging the
+# suite. GNU timeout where it exists, gtimeout where coreutils ships under that
+# name, and otherwise a perl watchdog with the same contract: a stock macOS
+# host has perl but no timeout variant, and must still run these cases rather
+# than fail them on a missing binary. Like GNU timeout, the watchdog runs the
+# command in its own process group and signals the whole group (TERM at the
+# bound, KILL 5s later), so an orphaned grandchild cannot keep the caller's
+# output pipe open past the bound; and it reads a wall-clock deadline rather
+# than summing its poll steps, since a loaded host can stretch each short
+# sleep well past its nominal length.
+run_bounded() {  # <seconds> <command> [args...]
+  local bound=$1
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout -k 5 "$bound" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout -k 5 "$bound" "$@"
+  else
+    perl -MPOSIX=WNOHANG,setpgid -MTime::HiRes=time -e '
+      my $bound = shift;
+      my $pid = fork;
+      exit 127 unless defined $pid;
+      if ($pid == 0) { setpgid(0, 0); exec @ARGV; exit 127 }
+      setpgid($pid, $pid);
+      my $deadline = time + $bound;
+      my $done;
+      while (($done = waitpid $pid, WNOHANG) == 0) {
+        if (time >= $deadline) {
+          kill "TERM", -$pid;
+          my $kill_at = time + 5;
+          while (waitpid($pid, WNOHANG) == 0) {
+            if (time >= $kill_at) { kill "KILL", -$pid; waitpid $pid, 0; exit 137 }
+            select undef, undef, undef, 0.05;
+          }
+          kill "KILL", -$pid;
+          exit 124;
+        }
+        select undef, undef, undef, 0.05;
+      }
+      exit 127 if $done == -1;
+      exit(($? & 127) ? 128 + ($? & 127) : $? >> 8);
+    ' -- "$bound" "$@"
+  fi
+}
+
 # A home with a real backlog, a real project clone with an origin, a pooled
 # worktree, and stubs for every tool the spawn path shells out to.
 make_home() {  # <name> [task-id...]
@@ -329,17 +375,17 @@ make_fallback_bin() {  # <case-dir> <tasks-axi-stub-script>
 }
 
 run_bounded_fm_tasks_axi() {  # <fallback-bin> <bound> [args...]
-  local fb=$1 bound=$2 out rc=0 saved_path=$PATH
+  local fb=$1 bound=$2 out rc=0
   shift 2
-  # The fallback shape itself: a PATH with no timeout variant on it. Set and
-  # restored here, never in a subshell, so the change cannot leak into other
-  # tests.
-  PATH="$fb"
+  # The fallback shape itself: a PATH with no timeout variant on it. Set only
+  # inside the subshell, so the change cannot leak into other tests, and only
+  # after the library is sourced, since sourcing it needs ordinary tools
+  # (dirname) that the narrowed PATH deliberately lacks.
   out=$(
     . "$ROOT/bin/fm-backlog-transition-lib.sh"
+    PATH="$fb"
     FM_TASKS_AXI_TIMEOUT="$bound" fm_tasks_axi "$@" 2>&1
   ) || rc=$?
-  PATH=$saved_path
   printf '%s' "$out"
   return "$rc"
 }
@@ -358,6 +404,32 @@ exec sleep 300')
   [ $((SECONDS - started)) -lt 20 ] \
     || fail "the perl watchdog fallback did not bound the call (${SECONDS}s)"
   pass "fm_tasks_axi bounds the call through its perl watchdog when no timeout binary exists"
+}
+
+test_fm_tasks_axi_fallback_bounds_a_wrapper_scripts_grandchild() {
+  local case_dir fb out rc started stub
+  case_dir=$(make_home fm-tasks-axi-fallback-grandchild)
+  # A wrapper that does not exec: its `sleep` is a grandchild of the watchdog
+  # and holds the caller's output pipe open. Signaling only the direct child
+  # would leave that sleep running, so the caller's $(...) would wait out the
+  # whole 30s instead of the 2s bound - with TERM honored or ignored.
+  for stub in '#!/bin/bash
+sleep 30' '#!/bin/bash
+trap "" TERM
+sleep 30'; do
+    rm -rf "$case_dir/fallbackbin"
+    fb=$(make_fallback_bin "$case_dir" "$stub")
+    rc=0
+    started=$SECONDS
+    out=$(run_bounded_fm_tasks_axi "$fb" 2 show never-answers) || rc=$?
+    [ "$rc" -eq 124 ] \
+      || fail "the perl watchdog fallback did not report the wrapper as timed out (rc=$rc, out=$out)"
+    [ $((SECONDS - started)) -ge 2 ] \
+      || fail "the perl watchdog fallback fired before the bound elapsed"
+    [ $((SECONDS - started)) -lt 20 ] \
+      || fail "the perl watchdog fallback let a grandchild hold the caller past the bound (${SECONDS}s)"
+  done
+  pass "fm_tasks_axi's perl watchdog terminates the whole process group, not just the direct child"
 }
 
 test_fm_tasks_axi_fallback_passes_the_child_status_and_output_through() {
@@ -1475,14 +1547,14 @@ test_deferred_signal_verification_outlives_an_unresponsive_tasks_axi() {
 
   # The read-back's own `start` never answers, so the spawn must bound it
   # (FM_TASKS_AXI_TIMEOUT=3), print the attempted wording naming the timeout,
-  # and exit - the outer `timeout -k 5 30` only turns a regression back into
+  # and exit - the outer `run_bounded 30` only turns a regression back into
   # the lock-held-forever hang it exists to catch.
   mkdir -p "$case_dir/user-home"
   out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" \
     HOME="$case_dir/user-home" FM_SPAWN_NO_GUARD=1 \
     FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" CLAUDE_CONFIG_DIR='' \
     FM_TASKS_AXI_TIMEOUT=3 PATH="$case_dir/fakebin:$PATH" \
-    timeout -k 5 30 "$SPAWN" "$id" "$case_dir/project" \
+    run_bounded 30 "$SPAWN" "$id" "$case_dir/project" \
     --mode no-mistakes --yolo off 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "an interrupted spawn reported success"
   case "$rc" in
@@ -2779,7 +2851,7 @@ test_spawn_refuses_a_special_file_tasks_config() {
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" \
     CLAUDE_CONFIG_DIR='' \
     PATH="$case_dir/fakebin:$PATH" \
-    timeout 60 "$SPAWN" "$id" "$case_dir/project" --mode no-mistakes --yolo off 2>&1) || rc=$?
+    run_bounded 60 "$SPAWN" "$id" "$case_dir/project" --mode no-mistakes --yolo off 2>&1) || rc=$?
   [ "$rc" -ne 124 ] || fail "spawn hung reading a special-file tasks-axi config"
   [ "$rc" -ne 0 ] || fail "spawn accepted a special-file tasks-axi config"
   assert_contains "$out" "tasks-axi config is not a regular file" \
@@ -3027,6 +3099,7 @@ test_deferred_signal_reads_back_preserved_state
 test_deferred_signal_never_claims_unverified_preservation
 test_deferred_signal_verification_outlives_an_unresponsive_tasks_axi
 test_fm_tasks_axi_fallback_bounds_the_call_without_a_timeout_binary
+test_fm_tasks_axi_fallback_bounds_a_wrapper_scripts_grandchild
 test_fm_tasks_axi_fallback_passes_the_child_status_and_output_through
 test_fm_tasks_axi_fails_closed_when_nothing_can_bound_the_call
 test_fm_tasks_axi_gnu_timeout_forces_termination_of_a_sigterm_ignoring_child
