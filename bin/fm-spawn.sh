@@ -3103,6 +3103,14 @@ herdr_projection_existing_meta_allows_flat() { # <meta>
 # a live pane. The authoritative mutation still runs under the meta lock below.
 BACKLOG_TRANSITION=0
 BACKLOG_ROW_STATE=
+# A relaunch replaces the agent of a task that is already In flight, so its
+# row may be held or blocked (the ordinary shape of a scout parked on a
+# captain call, captain-hold-lifecycle) without that refusing the relaunch;
+# fm_backlog_row_dispatchable owns the exact rule for each mode, and the
+# commit below (spawn_commit_backlog_transition) passes the same mode so the
+# preflight and the locked commit-time check never disagree.
+BACKLOG_DISPATCH_MODE=
+[ "$RELAUNCH" -ne 1 ] || BACKLOG_DISPATCH_MODE=--relaunch
 if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   BACKLOG_TRANSITION=1
   if fm_backlog_row_probe "$DATA" "$ID"; then
@@ -3120,7 +3128,7 @@ if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
       echo "error: spawn refused - the supervision branch under the away-posture record may dispatch only queued unblocked work (already queued, or filed by the branch from the captain's away words); task $ID has no dispatchable backlog item in this home" >&2
       exit 1
     fi
-  elif ! fm_backlog_row_dispatchable "$BACKLOG_ROW_STATE"; then
+  elif ! fm_backlog_row_dispatchable "$BACKLOG_ROW_STATE" "$BACKLOG_DISPATCH_MODE"; then
     echo "error: this home's backlog item $ID is not dispatchable in state $BACKLOG_ROW_STATE; refusing before creating its endpoint or local copy" >&2
     exit 1
   fi
@@ -4525,7 +4533,7 @@ fi
 # point below so every earlier launch-delivery failure remains unwindable.
 spawn_commit_backlog_transition() {
   [ "$BACKLOG_TRANSITION" = 1 ] || return 0
-  fm_backlog_atomic_transition dispatch "$STATE/$ID.meta" "$DATA" "$ID" "$STATE"
+  fm_backlog_atomic_transition dispatch "$STATE/$ID.meta" "$DATA" "$ID" "$STATE" "$BACKLOG_DISPATCH_MODE"
 }
 
 # The deferred-signal exit path's preservation report. A claim about preserved
@@ -4549,10 +4557,16 @@ spawn_report_preserved_state() {
     fi
     return 1
   fi
-  if [ "$FM_BACKLOG_ROW_STATE" = "in_flight no no" ]; then
-    SPAWN_PRESERVED_CLAIM="verified preserved: its paired task record is present and its backlog item is In flight"
-    return 0
-  fi
+  # A relaunch's row may carry a hold or blocked flag the dispatch deliberately
+  # left untouched (fm_backlog_row_dispatchable's --relaunch mode), so any
+  # In-flight row - not only the unheld, unblocked shape a fresh dispatch
+  # produces - counts as preserved here.
+  case "$FM_BACKLOG_ROW_STATE" in
+    in_flight\ *)
+      SPAWN_PRESERVED_CLAIM="verified preserved: its paired task record is present and its backlog item is In flight"
+      return 0
+      ;;
+  esac
   # The commit reported success, but the row does not read back In flight:
   # move it now under the same lock and verify the result before naming it.
   fm_backlog_start "$DATA" "$ID" || repair_error=$FM_BACKLOG_TRANSITION_ERROR

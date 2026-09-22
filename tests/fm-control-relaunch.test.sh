@@ -343,6 +343,11 @@ backlog_state() {  # <case-dir> <id>
     sed -n 's/^  state: *//p' | head -1
 }
 
+backlog_held() {  # <case-dir> <id>
+  tasks-axi show "$2" --file "$1/home/data/backlog.md" 2>/dev/null |
+    sed -n 's/^  held: *//p' | head -1
+}
+
 # Shadow tasks-axi so every `start` fails and every other verb is real. A
 # relaunch that re-reads the row before acting never calls it; one that assumes
 # it must re-run the transition trips over it.
@@ -1023,6 +1028,32 @@ test_spawn_relaunch_without_a_harness_reuses_the_recorded_one() {
     || fail "fm-spawn --relaunch without --harness must reuse the recorded harness, got '$(meta_field "$dir" rl21 harness)'"
   assert_contains "$out" "spawned rl21 harness=claude" "the launch should report the recorded harness"
   pass "fm-spawn --relaunch: with no explicit harness it reuses the task's recorded one, never the crew default"
+}
+
+# The predicate fm-spawn's own preflight and locked commit-time backlog
+# transition share (bin/fm-backlog-transition-lib.sh's fm_backlog_row_dispatchable
+# --relaunch mode): a held or blocked In-flight row must be accepted, and
+# neither the state nor the hold may change.
+test_spawn_relaunch_of_a_held_in_flight_item_succeeds_and_keeps_the_hold() {
+  local dir out rc
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
+    return 0
+  }
+  dir=$(new_case spawn-held-inflight rl52)
+  add_ship_task "$dir" rl52 claude
+  seed_backlog "$dir" rl52 in_flight
+  tasks-axi hold rl52 --reason "captain decision pending" --kind captain \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  printf 'zsh' > "$dir/fake/command"
+
+  out=$(run_spawn "$dir" rl52 --relaunch --harness claude); rc=$?
+  expect_code 0 "$rc" "fm-spawn --relaunch should accept a captain-held In-flight item"$'\n'"$out"
+  [ "$(backlog_state "$dir" rl52)" = in_flight ] \
+    || fail "fm-spawn --relaunch changed the held item's state to $(backlog_state "$dir" rl52)"
+  [ "$(backlog_held "$dir" rl52)" = yes ] \
+    || fail "fm-spawn --relaunch dropped the captain hold on the replaced task"
+  pass "fm-spawn --relaunch: a held in-flight backlog item stays in flight and held"
 }
 
 test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
@@ -2197,6 +2228,59 @@ test_relaunch_moves_a_drifted_item_back_in_flight() {
   pass "relaunch heals an item that drifted out of In flight while the task stayed live"
 }
 
+# A scout or ship parked on an open captain call is a held, In-flight backlog
+# row (captain-hold-lifecycle) - the ordinary shape of the task this relaunch
+# is meant to replace, not a reason to refuse it.
+test_relaunch_of_a_held_in_flight_item_succeeds_and_keeps_the_hold() {
+  local dir out rc=0
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
+    return 0
+  }
+  dir=$(new_case held-inflight rl50)
+  add_ship_task "$dir" rl50 claude
+  seed_backlog "$dir" rl50 in_flight
+  tasks-axi hold rl50 --reason "captain decision pending" --kind captain \
+    --file "$dir/home/data/backlog.md" >/dev/null
+
+  out=$(run_control "$dir" rl50 relaunch --note "picking the work back up") || rc=$?
+  expect_code 0 "$rc" "a relaunch of a captain-held In-flight item should succeed"$'\n'"$out"
+  [ "$(backlog_state "$dir" rl50)" = in_flight ] \
+    || fail "relaunch changed the held item's state to $(backlog_state "$dir" rl50)"
+  [ "$(backlog_held "$dir" rl50)" = yes ] \
+    || fail "relaunch dropped the captain hold on the replaced task"
+  pass "fm-control relaunch: a captain-held In-flight item succeeds and keeps the hold"
+}
+
+# A row that is not In flight at all - here, held while still queued - is not
+# the "already in flight, replace its agent" case relaunch exists for, and
+# must still refuse before the old agent is ever touched.
+test_relaunch_of_a_held_queued_item_refuses_before_stopping_the_agent() {
+  local dir out rc=0
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
+    return 0
+  }
+  dir=$(new_case held-queued rl51)
+  add_ship_task "$dir" rl51 claude
+  seed_backlog "$dir" rl51 queued
+  tasks-axi hold rl51 --reason "captain decision pending" --kind captain \
+    --file "$dir/home/data/backlog.md" >/dev/null
+
+  out=$(run_control "$dir" rl51 relaunch --note "x"); rc=$?
+  expect_code 1 "$rc" "a relaunch of a held, non-in-flight item should refuse"
+  assert_contains "$out" "state queued yes no" \
+    "the refusal should name the actual ineligible state"
+  [ "$(cat "$dir/fake/command")" = claude ] \
+    || fail "a refused relaunch must not stop the agent"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch must send nothing"
+  [ "$(backlog_state "$dir" rl51)" = queued ] \
+    || fail "the refusal changed the backlog state to $(backlog_state "$dir" rl51)"
+  [ "$(backlog_held "$dir" rl51)" = yes ] \
+    || fail "the refusal changed the backlog hold"
+  pass "fm-control relaunch: a held item that is not In flight refuses before the agent is stopped"
+}
+
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
@@ -2264,3 +2348,6 @@ test_herdr_reclaim_of_a_secondmate_names_its_own_owner
 test_herdr_rebind_failure_from_a_plain_shell_names_the_real_cause
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
 test_relaunch_moves_a_drifted_item_back_in_flight
+test_relaunch_of_a_held_in_flight_item_succeeds_and_keeps_the_hold
+test_relaunch_of_a_held_queued_item_refuses_before_stopping_the_agent
+test_spawn_relaunch_of_a_held_in_flight_item_succeeds_and_keeps_the_hold

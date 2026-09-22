@@ -147,6 +147,7 @@ fi
 }
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 [ -d "$STATE" ] || {
   echo "error: state dir '$STATE' is missing; fm-control cannot resolve tasks for FM_HOME '$FM_HOME'" >&2
   exit 1
@@ -162,6 +163,10 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-backlog-transition-lib.sh
+. "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -864,10 +869,41 @@ record_note() {
   esac
 }
 
+# The replacement launch (fm-spawn.sh --relaunch) is the one place that may
+# move this row, and it refuses a row fm_backlog_row_dispatchable's --relaunch
+# mode does not accept (bin/fm-backlog-transition-lib.sh: the same predicate
+# fm-spawn's own preflight and locked commit-time check use). Proving that
+# here, before anything about the old agent is touched, is what keeps a
+# refused replacement from ever stopping a worker it cannot replace - a
+# captain-held or dependency-blocked row is the ordinary shape of a task
+# parked on a captain call (captain-hold-lifecycle) and must relaunch
+# normally, but a row that is not In flight at all still refuses exactly as
+# it always has.
+require_relaunch_backlog_eligible() {
+  local applies_status=0
+  if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
+    applies_status=0
+  else
+    applies_status=$?
+  fi
+  [ "$applies_status" -ne 2 ] \
+    || die "task $ID's backlog item could not be read before relaunch: $FM_BACKLOG_TRANSITION_ERROR"
+  [ "$applies_status" -eq 0 ] || return 0
+  fm_backlog_row_probe "$DATA" "$ID" || {
+    if [ "$FM_BACKLOG_ROW_RESULT" = not_found ]; then
+      die "task $ID has no backlog item in this home; refusing to relaunch a worker no record owns"
+    fi
+    die "task $ID's backlog item could not be read before relaunch ($FM_BACKLOG_ROW_ERROR)"
+  }
+  fm_backlog_row_dispatchable "$FM_BACKLOG_ROW_STATE" --relaunch \
+    || die "this home's backlog item $ID is not dispatchable in state $FM_BACKLOG_ROW_STATE; refusing before stopping its agent"
+}
+
 do_relaunch() {
   local exit_result state note_line
   local -a spawn_args
 
+  require_relaunch_backlog_eligible
   require_state_verified_backend relaunch
   resolve_relaunch_profile
 
