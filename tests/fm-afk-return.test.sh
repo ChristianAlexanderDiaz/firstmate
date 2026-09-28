@@ -1071,6 +1071,22 @@ $((now + 120))${tab}latch${tab}errors=3${tab}cooldown=600s"
   assert_contains "$out" '  - the supervision session latched after engine errors and paused away supervision (trip time unavailable, at least 1 engine error(s) in the window); still paused at return: every wake reaches main until ' \
     "a paused latch whose trip row was trimmed was not reported"
 
+  # A failed probe's latch row is not the trip: with the trip row gone, its
+  # time is never reported as when the session latched.
+  dir="$TMP_ROOT/brief-engine-probe-only"
+  install_runner "$dir"
+  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  now=$(date +%s)
+  seed_host_latch "$dir" 3 600 "$((now + 600))" "$now${tab}failed${tab}turn=t.9${tab}posture=away${tab}rc=1${tab}reports=0${tab}unacked=2${tab}error=1 cost=0${tab}boom${tab}signal: a
+$now${tab}latch${tab}errors=3${tab}cooldown=600s"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "a probe-only latch with no blocker should not hold the gate: $out"
+  assert_contains "$out" '  - the supervision session latched after engine errors and paused away supervision (trip time unavailable, at least 1 engine error(s) in the window); still paused at return: every wake reaches main until ' \
+    "a paused latch whose ledger holds only a probe row was not reported without a trip time"
+  assert_not_contains "$out" 'the supervision session latched at ' "a failed probe's time was reported as the trip time"
+
   dir="$TMP_ROOT/brief-engine-no-ledger"
   install_runner "$dir"
   contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"

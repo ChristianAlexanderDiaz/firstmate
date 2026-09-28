@@ -367,21 +367,26 @@ $note" "$evidence"
 # An engine error is a failed turn that exited nonzero or lacked a clean
 # engine result, the latch's own definition.
 engine_snapshot() {  # <evidence-file> <since-epoch>
-  local evidence=$1 since=$2 summary errors trip latch_errors cooldown recovered retry paused="" state line
+  local evidence=$1 since=$2 summary errors trip first last latch_errors cooldown recovered retry paused="" state line
   case "$since" in ''|*[!0-9]*) since=0 ;; esac
-  summary=$(awk -F '\t' -v since="$since" '
+  # shellcheck source=bin/fm-supervision-engine-lib.sh
+  . "$SCRIPT_DIR/fm-supervision-engine-lib.sh" || return 0
+  summary=$(awk -F '\t' -v since="$since" -v base="${FM_SUPERVISION_HOST_COOLDOWN}s" '
     $1 !~ /^[0-9]+$/ { next }
     $1 >= since && $2 == "failed" && ($5 != "rc=0" || $8 !~ /^error=0/) { errors++ }
-    $2 == "latch" { if (!trip || recovered != "") trip = $1; sub(/^errors=/, "", $3); sub(/^cooldown=/, "", $4); latch_errors = $3; cooldown = $4; recovered = "" }
-    $2 == "recovered" && trip { recovered = $1 }
-    END { printf "%d\t%s\t%s\t%s\t%s\n", errors, trip, latch_errors, cooldown, recovered }
+    $2 == "latch" {
+      sub(/^errors=/, "", $3); sub(/^cooldown=/, "", $4)
+      if ($4 == base) { first = $1; trip = $1; recovered = "" }
+      else if (!first || recovered != "") { first = $1; trip = ""; recovered = "" }
+      last = $1; latch_errors = $3; cooldown = $4
+    }
+    $2 == "recovered" && first { recovered = $1 }
+    END { printf "%d|%s|%s|%s|%s|%s|%s\n", errors, trip, first, last, latch_errors, cooldown, recovered }
   ' "$STATE/.supervision-host.log" 2>/dev/null) || summary=
-  IFS="$(printf '\t')" read -r errors trip latch_errors cooldown recovered <<EOF
+  IFS='|' read -r errors trip first last latch_errors cooldown recovered <<EOF
 $summary
 EOF
-  # shellcheck source=bin/fm-supervision-engine-lib.sh
-  if . "$SCRIPT_DIR/fm-supervision-engine-lib.sh" \
-    && fm_supervision_host_config "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" "$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null)" \
+  if fm_supervision_host_config "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" "$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null)" \
     && retry=$(fm_supervision_host_paused_until "$STATE"); then
     paused=1
     if [ "$(date +%s)" -lt "$retry" ]; then
@@ -396,9 +401,9 @@ EOF
   fi
   if [ -n "$trip" ] && [ "$trip" -ge "$since" ] && { [ -z "$paused" ] || [ -z "$recovered" ]; }; then
     line="the supervision session latched at $(epoch_to_iso "$trip") after $latch_errors consecutive engine errors and paused away supervision (at least ${errors:-0} engine error(s) in the window, last cooldown $cooldown); $state"
-  elif [ -n "$paused" ] && [ -n "$trip" ] && [ -z "$recovered" ]; then
+  elif [ -n "$paused" ] && [ -n "$first" ] && [ "$first" -lt "$since" ] && [ -z "$recovered" ]; then
     line="the supervision session was already latched after engine errors when the window began; $state"
-  elif [ -n "$paused" ]; then
+  elif [ -n "$paused" ] || { [ -z "$trip" ] && [ -n "$last" ] && [ "$last" -ge "$since" ]; }; then
     line="the supervision session latched after engine errors and paused away supervision (trip time unavailable, at least ${errors:-0} engine error(s) in the window); $state"
   elif [ "${errors:-0}" -gt 0 ]; then
     line="at least $errors supervision engine turn(s) ended in an engine error during the away window without latching; $state"
