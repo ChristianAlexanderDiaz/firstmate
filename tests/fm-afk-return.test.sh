@@ -1087,6 +1087,20 @@ $now${tab}latch${tab}errors=3${tab}cooldown=600s"
     "a paused latch whose ledger holds only a probe row was not reported without a trip time"
   assert_not_contains "$out" 'the supervision session latched at ' "a failed probe's time was reported as the trip time"
 
+  # A failed probe's row from before the window does not prove when the latch
+  # tripped, so the latch is not called already in effect.
+  dir="$TMP_ROOT/brief-engine-probe-before"
+  install_runner "$dir"
+  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  seed_host_latch "$dir" 3 600 "$((now + 600))" "$((now - 3600))${tab}latch${tab}errors=3${tab}cooldown=600s"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "a pre-window probe-only latch with no blocker should not hold the gate: $out"
+  assert_contains "$out" '  - the supervision session latched after engine errors and paused away supervision (trip time unavailable, at least 0 engine error(s) in the window); still paused at return' \
+    "a paused latch whose ledger holds only a pre-window probe row was not reported without a trip time"
+  assert_not_contains "$out" 'already latched' "a pre-window probe row was taken as a pre-existing trip"
+
   dir="$TMP_ROOT/brief-engine-no-ledger"
   install_runner "$dir"
   contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"

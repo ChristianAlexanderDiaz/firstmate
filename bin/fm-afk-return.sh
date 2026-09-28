@@ -367,7 +367,7 @@ $note" "$evidence"
 # An engine error is a failed turn that exited nonzero or lacked a clean
 # engine result, the latch's own definition.
 engine_snapshot() {  # <evidence-file> <since-epoch>
-  local evidence=$1 since=$2 summary errors trip first last latch_errors cooldown recovered retry paused="" state line
+  local evidence=$1 since=$2 summary errors trip last latch_errors cooldown recovered retry paused="" state line
   case "$since" in ''|*[!0-9]*) since=0 ;; esac
   # shellcheck source=bin/fm-supervision-engine-lib.sh
   . "$SCRIPT_DIR/fm-supervision-engine-lib.sh" || return 0
@@ -381,9 +381,9 @@ engine_snapshot() {  # <evidence-file> <since-epoch>
       last = $1; latch_errors = $3; cooldown = $4
     }
     $2 == "recovered" && first { recovered = $1 }
-    END { printf "%d|%s|%s|%s|%s|%s|%s\n", errors, trip, first, last, latch_errors, cooldown, recovered }
+    END { printf "%d|%s|%s|%s|%s|%s\n", errors, trip, last, latch_errors, cooldown, recovered }
   ' "$STATE/.supervision-host.log" 2>/dev/null) || summary=
-  IFS='|' read -r errors trip first last latch_errors cooldown recovered <<EOF
+  IFS='|' read -r errors trip last latch_errors cooldown recovered <<EOF
 $summary
 EOF
   if fm_supervision_host_config "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" "$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null)" \
@@ -401,7 +401,7 @@ EOF
   fi
   if [ -n "$trip" ] && [ "$trip" -ge "$since" ] && { [ -z "$paused" ] || [ -z "$recovered" ]; }; then
     line="the supervision session latched at $(epoch_to_iso "$trip") after $latch_errors consecutive engine errors and paused away supervision (at least ${errors:-0} engine error(s) in the window, last cooldown $cooldown); $state"
-  elif [ -n "$paused" ] && [ -n "$first" ] && [ "$first" -lt "$since" ] && [ -z "$recovered" ]; then
+  elif [ -n "$paused" ] && [ -n "$trip" ] && [ -z "$recovered" ]; then
     line="the supervision session was already latched after engine errors when the window began; $state"
   elif [ -n "$paused" ] || { [ -z "$trip" ] && [ -n "$last" ] && [ "$last" -ge "$since" ]; }; then
     line="the supervision session latched after engine errors and paused away supervision (trip time unavailable, at least ${errors:-0} engine error(s) in the window); $state"
