@@ -249,7 +249,9 @@ The host copies the Pi branch's broken-session policy ([pi-supervision-branch.md
 Two consecutive engine errors latch the session: every wake reaches main for a five-minute cooldown, the attended close unchanged and the away close with a `supervision-host:` line, after which one wake probes the engine, and each probe that ends in another engine error doubles the cooldown up to one hour.
 A turn that records a report without an engine error clears the latch; a turn with a complete engine result but no report neither counts toward it nor clears it, while an engine error counts even if no report was recorded.
 The first trip adds one `supervision-host:` line to the failing turn's handback; a recovery is only recorded in the host ledger, so a routine probe stays off main.
-The away return brief (`bin/fm-afk-return.sh`) lists a latch or engine errors inside the window with what failed, naming the trip time (or that it is unavailable when the bounded ledger no longer holds it), a lower bound on the window's engine-error count (the host ledger is bounded), and whether the session is still paused or recovered.
+The away return brief (`bin/fm-afk-return.sh`) reports engine errors in the window and any latch visible at return, using a lower bound for the window's error count because the host ledger is bounded.
+It names the trip time only when the ledger retains the initial-trip row: a failed-probe row cannot establish that time or prove the latch predated the window, and a paused latch with no initial-trip row is reported with "trip time unavailable" even if the ledger is missing.
+The brief also says whether the latch is still paused or has recovered.
 The latch belongs to one main session, engine, and model, so a new main session or another engine or model starts clean.
 
 ### Lost ownership
