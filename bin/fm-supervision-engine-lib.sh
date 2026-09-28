@@ -170,6 +170,7 @@ fm_supervision_host_health_key() {
 
 # The latch's first cooldown in seconds: the host's initial trip sets it, and
 # each failed probe after that doubles it.
+# shellcheck disable=SC2034 # Shared with the sourcing host and return brief.
 FM_SUPERVISION_HOST_COOLDOWN=300
 
 # fm_supervision_host_paused_until <state-dir>: while that latch holds, from
