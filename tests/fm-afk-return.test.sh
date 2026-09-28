@@ -1054,8 +1054,36 @@ $((now + 120))${tab}latch${tab}errors=3${tab}cooldown=600s"
   : > "$dir/home/state/.fake-drain"
   out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
     "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "engine errors with no blocker should not hold the gate: $out"
-  assert_contains "$out" '  - 1 supervision engine turn(s) ended in an engine error during the away window without latching; not paused at return' \
+  assert_contains "$out" '  - at least 1 supervision engine turn(s) ended in an engine error during the away window without latching; not paused at return' \
     "engine errors that did not latch were not reported"
+
+  # A paused latch record whose trip row the bounded ledger no longer holds,
+  # or whose ledger is missing, is still a failure, named without a trip time.
+  dir="$TMP_ROOT/brief-engine-trimmed"
+  install_runner "$dir"
+  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  now=$(date +%s)
+  seed_host_latch "$dir" 3 600 "$((now + 600))" "$now${tab}failed${tab}turn=t.9${tab}posture=away${tab}rc=1${tab}reports=0${tab}unacked=2${tab}error=1 cost=0${tab}boom${tab}signal: a"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "a trimmed latch with no blocker should not hold the gate: $out"
+  assert_contains "$out" '  - the supervision session latched after engine errors and paused away supervision (trip time unavailable, at least 1 engine error(s) in the window); still paused at return: every wake reaches main until ' \
+    "a paused latch whose trip row was trimmed was not reported"
+
+  dir="$TMP_ROOT/brief-engine-no-ledger"
+  install_runner "$dir"
+  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  seed_host_latch "$dir" 2 300 "$((now + 300))" ""
+  rm -f "$dir/home/state/.supervision-host.log"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "a latch with no ledger and no blocker should not hold the gate: $out"
+  section=$(printf '%s\n' "$out" | sed -n '/^Tried and failed, or could not be fixed:$/,/^Landed, cleanup due:$/p')
+  assert_contains "$section" '  - the supervision session latched after engine errors and paused away supervision (trip time unavailable, at least 0 engine error(s) in the window); still paused at return' \
+    "a paused latch with no host ledger was not reported"
+  assert_not_contains "$section" '(nothing)' "a paused latch with no host ledger reported no failures"
   pass "the return brief's failures section names an engine latch inside the away window with its time, error count, and cooldown state"
 }
 
