@@ -322,29 +322,21 @@ return_guard() {
 # --- supervisor health, snapshotted before anything is shut down ------------
 
 health_snapshot() {  # <evidence-file>
-  local evidence=$1 beat_age marker_age state lines="" note=""
+  local evidence=$1 beat_age state lines="" note=""
   beat_age=$(fm_path_age "$STATE/.last-watcher-beat")
   if [ -e "$STATE/.watcher-down" ]; then
     # The marker survives past its episode in an acked:* state
-    # (fm-wake-lib.sh _fm_recovery_marker_ack). An open episode is the
-    # ordinary state of a wake being handled, or of a wake queued for
-    # handling, since every durable append opens one
+    # (fm-wake-lib.sh _fm_recovery_marker_ack). An open handling episode is
+    # the ordinary state of a wake being handled at return
     # (docs/watcher-continuity.md "Recovery episode acknowledgement"), so
-    # it is a gap only when a queued episode outlived the return grace. A
-    # marker this read cannot parse is treated as a gap, conservatively.
-    marker_age=$(fm_path_age "$STATE/.watcher-down")
+    # only an open downtime episode is a gap. A marker this read cannot
+    # parse is treated as a gap, conservatively.
     if fm_recovery_marker_snapshot "$STATE/.watcher-down"; then
       state=${FM_RECOVERY_MARKER_TOKEN%:*}
       case "$FM_RECOVERY_MARKER_TOKEN" in
-        '') lines="GAP: watcher downtime was detected during the away window (recovery marker present)" ;;
         acked:*) : ;;
-        *:handling:*) note="a wake was being handled at return (recovery marker $state, ${marker_age}s old); not a gap" ;;
-        *)
-          if [ "$marker_age" -ge "$RETURN_GRACE" ]; then
-            lines="GAP: watcher downtime was detected during the away window (recovery marker $state open ${marker_age}s at return, grace ${RETURN_GRACE}s)"
-          else
-            note="a wake was queued for handling at return (recovery marker $state, ${marker_age}s old); not a gap"
-          fi ;;
+        pending:handling:*|announced:handling:*) note="a wake was being handled at return (recovery marker $state); not a gap" ;;
+        *) lines="GAP: watcher downtime was detected during the away window (recovery marker present)" ;;
       esac
     else
       lines="GAP: watcher downtime was detected during the away window (recovery marker present)"
@@ -381,7 +373,7 @@ engine_snapshot() {  # <evidence-file> <since-epoch>
   summary=$(awk -F '\t' -v since="$since" '
     $1 !~ /^[0-9]+$/ || $1 < since { next }
     $2 == "failed" && ($5 != "rc=0" || $8 !~ /^error=0/) { errors++ }
-    $2 == "latch" { if (!latched) latched = $1; sub(/^errors=/, "", $3); sub(/^cooldown=/, "", $4); latch_errors = $3; cooldown = $4; recovered = "" }
+    $2 == "latch" { if (!latched || recovered != "") latched = $1; sub(/^errors=/, "", $3); sub(/^cooldown=/, "", $4); latch_errors = $3; cooldown = $4; recovered = "" }
     $2 == "recovered" && latched { recovered = $1 }
     END { printf "%d\t%s\t%s\t%s\t%s\n", errors, latched, latch_errors, cooldown, recovered }
   ' "$STATE/.supervision-host.log" 2>/dev/null) || return 0
@@ -403,7 +395,7 @@ EOF
     state="not paused at return"
   fi
   if [ -n "$latched" ]; then
-    line="the supervision session latched at $(epoch_to_iso "$latched") after $latch_errors consecutive engine errors and paused away supervision (${errors:-0} engine error(s) in the window, last cooldown $cooldown); $state"
+    line="the supervision session latched at $(epoch_to_iso "$latched") after $latch_errors consecutive engine errors and paused away supervision (at least ${errors:-0} engine error(s) in the window, last cooldown $cooldown); $state"
   elif [ "${errors:-0}" -gt 0 ]; then
     line="$errors supervision engine turn(s) ended in an engine error during the away window without latching; $state"
   elif [ "${state#still paused}" != "$state" ]; then
