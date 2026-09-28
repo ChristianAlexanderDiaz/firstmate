@@ -929,6 +929,127 @@ test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap() {
   pass "the return brief does not report an already-acked watcher-down marker as an open gap"
 }
 
+test_return_brief_reports_an_open_recovery_episode_as_a_gap_only_when_stale() {
+  local dir out token
+  # A wake mid-handling, or one just queued for handling, is the ordinary open
+  # episode at a return during supervision (3b live validation F6); only a
+  # queued episode older than the return grace is a gap.
+  for token in announced:handling pending:handling pending:downtime announced:downtime; do
+    dir="$TMP_ROOT/brief-open-marker-${token%%:*}-${token#*:}"
+    install_runner "$dir"
+    contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+    printf '%s:fixture-generation\n' "$token" > "$dir/home/state/.watcher-down"
+    touch "$dir/home/state/.last-watcher-beat"
+    : > "$dir/home/state/.fake-drain"
+    out=$(run_return "$dir" begin) || fail "$token: a clean fleet with an open episode should clear the gate: $out"
+    assert_not_contains "$out" 'GAP:' "$token: a fresh open episode was reported as a gap"
+    assert_contains "$out" 'no detected gap' "$token: a fresh open episode hid the clean health line"
+    case "$token" in
+      *:handling) assert_contains "$out" "a wake was being handled at return (recovery marker $token, " "$token: the handling state was not reported as information" ;;
+      *) assert_contains "$out" "a wake was queued for handling at return (recovery marker $token, " "$token: the queued state was not reported as information" ;;
+    esac
+  done
+  dir="$TMP_ROOT/brief-stale-marker"
+  install_runner "$dir"
+  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  printf 'pending:downtime:fixture-generation\n' > "$dir/home/state/.watcher-down"
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$(( $(date +%s) - 900 ))" '+%Y%m%d%H%M.%S')" "$dir/home/state/.watcher-down"
+  else touch -m -d "@$(( $(date +%s) - 900 ))" "$dir/home/state/.watcher-down"; fi
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) || fail "a clean fleet with a stale episode should still clear the gate: $out"
+  assert_contains "$out" 'GAP: watcher downtime was detected during the away window (recovery marker pending:downtime open ' "a stale queued episode was not reported as a gap"
+  assert_not_contains "$out" 'no detected gap' "a stale queued episode was reported as clean"
+  pass "the return brief reports a wake mid-handling or freshly queued at return as information, and only a stale open episode as a gap"
+}
+
+# A host home whose ledger and latch record carry the given lines, with a live
+# main-session lock so the latch record's key is the current one.
+seed_host_latch() {  # <case-dir> <errors> <cooldown> <retry-after> <log-lines>
+  local dir=$1 key f
+  for f in fm-supervision-engine-lib.sh fm-harness.sh fm-cursor-lib.sh fm-gemini-lib.sh; do
+    cp "$ROOT/bin/$f" "$dir/bin/"
+  done
+  printf 'claude sonnet\n' > "$dir/home/config/supervision-host"
+  # The test shell itself holds the lock: live for the whole case, nothing to reap.
+  printf '%s\n' "$$" > "$dir/home/state/.lock"
+  printf 'lab-session\n' > "$dir/home/state/.lock-session"
+  # shellcheck disable=SC2016 # expands in the child shell
+  key=$(FM_HOME="$dir/home" bash -c '. "$1/fm-wake-lib.sh" && . "$1/fm-supervision-engine-lib.sh" \
+    && fm_supervision_host_config "$2" claude && fm_supervision_host_health_key "$3"' _ \
+    "$dir/bin" "$dir/home/config" "$dir/home/state") || fail "could not compute the latch key"
+  printf 'key=%s\nerrors=%s\ncooldown=%s\nretry_after=%s\n' "$key" "$2" "$3" "$4" > "$dir/home/state/.supervision-host-health"
+  printf '%s\n' "$5" > "$dir/home/state/.supervision-host.log"
+}
+
+test_return_brief_reports_an_engine_latch_in_the_window() {
+  local dir out now before tab section retry
+  tab=$(printf '\t')
+  dir="$TMP_ROOT/brief-engine-latch"
+  install_runner "$dir"
+  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  now=$(date +%s)
+  before=$((now - 3600))
+  retry=$((now + 300))
+  seed_host_latch "$dir" 2 300 "$retry" "$before${tab}failed${tab}turn=old.1${tab}posture=attended${tab}rc=1${tab}reports=0${tab}unacked=1${tab}error=1 cost=0${tab}boom${tab}signal: before
+$now${tab}handled${tab}turn=t.1${tab}posture=away${tab}rc=0${tab}reports=1${tab}error=0 cost=0.1${tab}signal: a
+$now${tab}failed${tab}turn=t.2${tab}posture=away${tab}rc=0${tab}reports=0${tab}unacked=none${tab}error=0 cost=0.1${tab}${tab}signal: no report, not an engine error
+$now${tab}failed${tab}turn=t.3${tab}posture=away${tab}rc=1${tab}reports=0${tab}unacked=3${tab}error=1 cost=0${tab}[unrecognized_model]${tab}signal: b
+$now${tab}latch${tab}errors=2${tab}cooldown=300s
+$now${tab}failed${tab}turn=t.4${tab}posture=away${tab}rc=1${tab}reports=0${tab}unacked=4${tab}no-result${tab}[unrecognized_model]${tab}signal: c
+$now${tab}to-main${tab}the away session could not take this wake: the engine turn failed (exit 1); this wake is yours"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "a latch with no blocker should not hold the gate: $out"
+  section=$(printf '%s\n' "$out" | sed -n '/^Tried and failed, or could not be fixed:$/,/^Landed, cleanup due:$/p')
+  assert_contains "$section" "  - the supervision session latched at $(date -u -r "$now" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "@$now" '+%Y-%m-%dT%H:%M:%SZ') after 2 consecutive engine errors and paused away supervision (2 engine error(s) in the window, last cooldown 300s)" \
+    "the failures section did not name the latch, its time, and the window's engine errors"
+  assert_contains "$section" "still paused at return: every wake reaches main until $(date -u -r "$retry" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "@$retry" '+%Y-%m-%dT%H:%M:%SZ')" \
+    "the failures section did not name the cooldown state"
+  assert_not_contains "$section" '(nothing)' "a latched window reported no failures"
+
+  # The latch cleared by a probe inside the window reads as recovered, and
+  # engine errors without a trip are still reported.
+  dir="$TMP_ROOT/brief-engine-recovered"
+  install_runner "$dir"
+  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  now=$(date +%s)
+  seed_host_latch "$dir" 0 0 0 "$now${tab}latch${tab}errors=2${tab}cooldown=300s
+$now${tab}recovered${tab}after a successful probe"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "a recovered latch should not hold the gate: $out"
+  assert_contains "$out" 'it recovered at ' "a latch cleared inside the window was not reported as recovered"
+
+  # A latch from before the window whose cooldown has ended still holds until
+  # a probe succeeds.
+  dir="$TMP_ROOT/brief-engine-cooled"
+  install_runner "$dir"
+  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  seed_host_latch "$dir" 2 300 1 "$((now - 3600))${tab}latch${tab}errors=2${tab}cooldown=300s"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "a cooled latch should not hold the gate: $out"
+  assert_contains "$out" '  - the supervision session was already latched after engine errors when the window began; still paused at return: its cooldown has ended, so the next wake probes the engine again' \
+    "a latch held past its cooldown was not reported with its probe state"
+
+  dir="$TMP_ROOT/brief-engine-errors"
+  install_runner "$dir"
+  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  now=$(date +%s)
+  seed_host_latch "$dir" 1 0 0 "$now${tab}failed${tab}turn=t.1${tab}posture=away${tab}rc=124${tab}reports=0${tab}unacked=2${tab}no-result${tab}${tab}signal: a"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "engine errors with no blocker should not hold the gate: $out"
+  assert_contains "$out" '  - 1 supervision engine turn(s) ended in an engine error during the away window without latching; not paused at return' \
+    "engine errors that did not latch were not reported"
+  pass "the return brief's failures section names an engine latch inside the away window with its time, error count, and cooldown state"
+}
+
 test_return_brief_without_a_record_reports_the_legacy_flag() {
   local dir out
   dir="$TMP_ROOT/brief-legacy"
@@ -1037,4 +1158,6 @@ test_statusful_leftover_record_lets_catchup_clear
 test_return_guard_refuses_while_the_record_exists
 test_return_brief_health_leads_with_a_gap
 test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap
+test_return_brief_reports_an_open_recovery_episode_as_a_gap_only_when_stale
+test_return_brief_reports_an_engine_latch_in_the_window
 test_return_brief_without_a_record_reports_the_legacy_flag
