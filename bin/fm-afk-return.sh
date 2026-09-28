@@ -367,18 +367,27 @@ $note" "$evidence"
 # An engine error is a failed turn that exited nonzero or lacked a clean
 # engine result, the latch's own definition.
 engine_snapshot() {  # <evidence-file> <since-epoch>
-  local evidence=$1 since=$2 summary errors trip last latch_errors cooldown recovered retry paused="" state line
+  local evidence=$1 since=$2 summary errors trip last latch_errors cooldown recovered retry paused="" state line session_start lock_start sidecar_start
   case "$since" in ''|*[!0-9]*) since=0 ;; esac
   # shellcheck source=bin/fm-supervision-engine-lib.sh
   . "$SCRIPT_DIR/fm-supervision-engine-lib.sh" || return 0
-  summary=$(awk -F '\t' -v since="$since" -v base="${FM_SUPERVISION_HOST_COOLDOWN}s" '
-    $1 !~ /^[0-9]+$/ { next }
+  # fm-session-start.sh acquires fm-lock.sh first. That writer refreshes .lock
+  # on takeover and replaces .lock-session on a session-id change, but leaves
+  # both untouched on same-session confirmation. Both contribute to the host key.
+  # shellcheck source=bin/fm-lock-lib.sh
+  . "$SCRIPT_DIR/fm-lock-lib.sh" || return 0
+  lock_start=$(fm_lock_path_mtime "$STATE/.lock" 2>/dev/null) || lock_start=0
+  sidecar_start=$(fm_lock_path_mtime "$STATE/.lock-session" 2>/dev/null) || sidecar_start=0
+  session_start=$lock_start
+  [ "$sidecar_start" -le "$session_start" ] || session_start=$sidecar_start
+  summary=$(awk -F '\t' -v since="$since" -v session_start="$session_start" -v base="${FM_SUPERVISION_HOST_COOLDOWN}s" '
+    $1 !~ /^[0-9]+$/ || $1 < session_start { next }
     $1 >= since && $2 == "failed" && ($5 != "rc=0" || $8 !~ /^error=0/) { errors++ }
     $2 == "latch" {
       sub(/^errors=/, "", $3); sub(/^cooldown=/, "", $4)
-      if ($4 == base) { first = $1; trip = $1; recovered = "" }
+      if ($4 == base) { first = $1; trip = $1; latch_errors = $3; recovered = "" }
       else if (!first || recovered != "") { first = $1; trip = ""; recovered = "" }
-      last = $1; latch_errors = $3; cooldown = $4
+      last = $1; cooldown = $4
     }
     $2 == "recovered" && first { recovered = $1 }
     END { printf "%d|%s|%s|%s|%s|%s\n", errors, trip, last, latch_errors, cooldown, recovered }
