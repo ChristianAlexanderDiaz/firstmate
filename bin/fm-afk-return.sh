@@ -367,7 +367,7 @@ $note" "$evidence"
 # An engine error is a failed turn that exited nonzero or lacked a clean
 # engine result, the latch's own definition.
 engine_snapshot() {  # <evidence-file> <since-epoch>
-  local evidence=$1 since=$2 summary errors trip last latch_errors cooldown recovered retry paused="" state line session_start lock_start sidecar_start
+  local evidence=$1 since=$2 summary errors trip last latch_errors cooldown recovered retry paused="" state line session_start lock_start sidecar_start count_clause episodes episode_count episode
   case "$since" in ''|*[!0-9]*) since=0 ;; esac
   # shellcheck source=bin/fm-supervision-engine-lib.sh
   . "$SCRIPT_DIR/fm-supervision-engine-lib.sh" || return 0
@@ -381,19 +381,26 @@ engine_snapshot() {  # <evidence-file> <since-epoch>
   session_start=$lock_start
   [ "$sidecar_start" -le "$session_start" ] || session_start=$sidecar_start
   summary=$(awk -F '\t' -v since="$since" -v session_start="$session_start" -v base="${FM_SUPERVISION_HOST_COOLDOWN}s" '
-    $1 !~ /^[0-9]+$/ || $1 < session_start { next }
+    $1 !~ /^[0-9]+$/ || ($1 < since && $1 < session_start) { next }
     $1 >= since && $2 == "failed" && ($5 != "rc=0" || $8 !~ /^error=0/) { errors++ }
     $2 == "latch" {
       sub(/^errors=/, "", $3); sub(/^cooldown=/, "", $4)
-      if ($4 == base) { first = $1; trip = $1; latch_errors = $3; recovered = "" }
-      else if (!first || recovered != "") { first = $1; trip = ""; recovered = "" }
+      if ($4 == base) {
+        first = $1; trip = $1; recovered = ""
+        if ($1 >= since) { n++; trips[n] = $1; counts[n] = $3 }
+      } else if (!first || recovered != "") { first = $1; trip = ""; recovered = "" }
       last = $1; cooldown = $4
+      if (n) cools[n] = $4
     }
     $2 == "recovered" && first { recovered = $1 }
-    END { printf "%d|%s|%s|%s|%s|%s\n", errors, trip, last, latch_errors, cooldown, recovered }
+    END {
+      printf "%d|%s|%s|%s|%s|%d\n", errors, trip, last, cooldown, recovered, n
+      for (i = 1; i <= n; i++) printf "%s|%s|%s\n", trips[i], counts[i], cools[i]
+    }
   ' "$STATE/.supervision-host.log" 2>/dev/null) || summary=
-  IFS='|' read -r errors trip last latch_errors cooldown recovered <<EOF
-$summary
+  episodes=${summary#*$'\n'}
+  IFS='|' read -r errors trip last cooldown recovered episode_count <<EOF
+${summary%%$'\n'*}
 EOF
   if fm_supervision_host_config "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" "$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null)" \
     && retry=$(fm_supervision_host_paused_until "$STATE"); then
@@ -408,12 +415,23 @@ EOF
   else
     state="not paused at return"
   fi
-  if [ -n "$trip" ] && [ "$trip" -ge "$since" ] && { [ -z "$paused" ] || [ -z "$recovered" ]; }; then
-    line="the supervision session latched at $(epoch_to_iso "$trip") after $latch_errors consecutive engine errors and paused away supervision (at least ${errors:-0} engine error(s) in the window, last cooldown $cooldown); $state"
+  count_clause=""
+  [ "${errors:-0}" -eq 0 ] || count_clause="at least $errors engine error(s) in the window, "
+  if [ "${episode_count:-0}" -gt 0 ]; then
+    episode=0
+    while IFS='|' read -r trip latch_errors cooldown; do
+      episode=$((episode + 1))
+      line="the supervision session latched at $(epoch_to_iso "$trip") after $latch_errors consecutive engine errors and paused away supervision (${count_clause}last cooldown $cooldown)"
+      if [ "$episode" -eq "$episode_count" ]; then line="$line; $state"; fi
+      append_evidence engine "$line" "$evidence"
+    done <<EOF
+$episodes
+EOF
+    return 0
   elif [ -n "$paused" ] && [ -n "$trip" ] && [ -z "$recovered" ]; then
     line="the supervision session was already latched after engine errors when the window began; $state"
   elif [ -n "$paused" ] || { [ -z "$trip" ] && [ -n "$last" ] && [ "$last" -ge "$since" ]; }; then
-    line="the supervision session latched after engine errors and paused away supervision (trip time unavailable, at least ${errors:-0} engine error(s) in the window); $state"
+    line="the supervision session latched after engine errors and paused away supervision (trip time unavailable${count_clause:+, ${count_clause%, }}); $state"
   elif [ "${errors:-0}" -gt 0 ]; then
     line="at least $errors supervision engine turn(s) ended in an engine error during the away window without latching; $state"
   else
