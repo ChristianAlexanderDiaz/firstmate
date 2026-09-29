@@ -225,7 +225,7 @@ A captain may replace the Claude Code sailboat with a two-row sprite of their ow
 Firstmate ships no third-party art: the repository contains only the stock boat, and a captain supplying their own sprite is responsible for what they use.
 The sprite takes the hull's place on the same track and cadences, faces its travel direction by mirroring its frames while it travels left, steps through its frames once per move, and is painted in its own palette colors, with unset cells in the theme's boat color and transparent cells showing the water.
 The calm trough widens to keep a sprite wider than the hull in still water.
-Every other working-row guarantee above holds unchanged: reflow on resize, where the row appears and disappears, resuming within a session, and nothing rewritten.
+Every other working-row guarantee holds unchanged: reflow on resize, where the row appears and disappears, resuming within a session, and nothing rewritten.
 A row narrower than the sprite's declared width draws the stock boat and its narrow fallbacks at that width, and an absent, unreadable, or malformed file draws the stock boat, the malformed case naming its problem in the transient notice.
 
 ### Supervision notes on Claude Code
