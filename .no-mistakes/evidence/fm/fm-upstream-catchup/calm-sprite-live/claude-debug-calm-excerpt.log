@@ -1,0 +1,14 @@
+2026-09-29T02:06:04.945Z [DEBUG] hooks module firstmate-calm@skills-dir loaded (worker, environment 1, tier user); events: session.start,command.run,config.set,turn.step,ui.render
+2026-09-29T02:06:05.368Z [DEBUG] $.ui.toast (firstmate-calm): Calm sprite ignored: "version" must be 1
+2026-09-29T02:06:16.842Z [DEBUG] $.fs.write (firstmate-calm): /tmp/fm-calm-dbg/fmhome/config/calm (4 bytes)
+2026-09-29T02:06:16.843Z [DEBUG] $.ui.toast (firstmate-calm): Calm off
+2026-09-29T02:06:27.956Z [DEBUG] $.fs.write (firstmate-calm): /tmp/fm-calm-dbg/fmhome/config/calm (3 bytes)
+2026-09-29T02:06:27.956Z [DEBUG] $.ui.toast (firstmate-calm): Calm sprite ignored: "version" must be 1
+2026-09-29T02:10:10.472Z [DEBUG] $.fs.write (firstmate-calm): /tmp/fm-calm-dbg/fmhome/config/calm (4 bytes)
+2026-09-29T02:10:10.473Z [DEBUG] $.ui.toast (firstmate-calm): Calm off
+2026-09-29T02:10:15.153Z [DEBUG] $.fs.write (firstmate-calm): /tmp/fm-calm-dbg/fmhome/config/calm (3 bytes)
+2026-09-29T02:10:15.155Z [DEBUG] $.ui.toast (firstmate-calm): Calm on
+2026-09-29T02:12:25.604Z [DEBUG] $.fs.write (firstmate-calm): /tmp/fm-calm-dbg/fmhome/config/calm (4 bytes)
+2026-09-29T02:12:25.605Z [DEBUG] $.ui.toast (firstmate-calm): Calm off
+2026-09-29T02:12:31.345Z [DEBUG] $.fs.write (firstmate-calm): /tmp/fm-calm-dbg/fmhome/config/calm (3 bytes)
+2026-09-29T02:12:31.346Z [DEBUG] $.ui.toast (firstmate-calm): Calm sprite ignored: "version" must be 1

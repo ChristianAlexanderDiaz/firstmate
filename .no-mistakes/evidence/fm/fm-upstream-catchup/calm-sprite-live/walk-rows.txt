@@ -1,0 +1,9 @@
+Working-row custom sprite across successive captures of one live turn (column = sprite's left edge):
+walk-01.ansi col 17 frame ▗████▀▶ facing right
+walk-02.ansi col 22 frame ▐████▀▶ facing right
+walk-03.ansi col 23 frame ▗████▀▶ facing right
+walk-04.ansi col 23 frame ▗████▀▶ facing right
+walk-05.ansi col 23 frame ▗████▀▶ facing right
+walk-06.ansi col 24 frame ▐████▀▶ facing right
+walk-07.ansi col 24 frame ▐████▀▶ facing right
+walk-08.ansi col 25 frame ▗████▀▶ facing right

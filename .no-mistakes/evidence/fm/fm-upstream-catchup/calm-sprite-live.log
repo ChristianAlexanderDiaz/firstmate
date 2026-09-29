@@ -1,0 +1,47 @@
+ok: Calm mod hooks module loaded
+ok: custom sprite drew in the working row (3 captures, no stock hull)
+FAIL: never saw malformed sprite notice
+
+ ▐▛███▛█   Claude Code v2.1.284
+▝▜██████▀  Haiku 4.5 · Claude Max
+ ▝▝   ▝▝   /private/tmp/fm-calm-sprite-live.627Jgc/project
+
+▎ Debug mode enabled · logging to /tmp/fm-calm-sprite-live.627Jgc/debug.log
+
+❯ Run this exact bash command with the Bash tool: sleep 8; cat notes.txt   Then reply with one short sentence naming the three words.
+
+⏺ The three words are alpha, beta, and gamma.
+
+✻ Cooked for 14s · done 10:04 PM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 4.5  project  19%  $0
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+NOTE (added after the run): the scripted step 2 missed the transient toast because of this script's own polling timing,
+not a product failure. Driving the same steps by hand in the same kind of session showed the notice on load and on
+/calm (see calm-sprite-live/claude-debug-calm-excerpt.log, which records `$.ui.toast (firstmate-calm): Calm sprite ignored:
+"version" must be 1` on both paths) and the stock boat fallback (calm-sprite-live/stock-boat-fallback-working.txt).

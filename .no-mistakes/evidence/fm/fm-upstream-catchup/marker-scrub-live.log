@@ -1,0 +1,15 @@
+tmux global env CLAUDE_CODE_CHILD_SESSION entries: 0
+== inherited-markers-no-scrub: launch = claude --model haiku --dangerously-skip-permissions
+❯ Try "write a test for <filepath>"
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 to keep future tra…
+  Haiku 4.5  project  $0
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+RESULT inherited-markers-no-scrub: footer 'Transcript saving is off' PRESENT
+== inherited-markers-fm-spawn-scrub: launch = env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_EXECPATH -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_PID -u CLAUDE_EFFORT -u AI_AGENT -u CLAUDE_CODE_INVOKED_SKILLS claude --model haiku --dangerously-skip-permissions
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "write a test for <filepath>"
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 4.5  project  $0
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+RESULT inherited-markers-fm-spawn-scrub: footer 'Transcript saving is off' ABSENT
