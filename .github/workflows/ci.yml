@@ -208,6 +208,13 @@ jobs:
             exit 1
           }
           tmux -V
+      - name: Install pinned Treehouse
+        run: |
+          set -eu
+          # Real-tmux spawn E2E scripts acquire pooled worktrees through real
+          # treehouse (tests/fm-spawn-secondmate-clone-pool.test.sh).
+          bin/fm-install-treehouse.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install tasks-axi for backlog-handoff delegation
         run: |
           set -eu
