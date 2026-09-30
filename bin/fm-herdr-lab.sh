@@ -13,8 +13,9 @@
 #   fm-herdr-lab.sh teardown <session>
 #
 # Session names must begin with "fm-lab-" and can never be "default".
-# The name command sanitizes the label, caps it at 16 characters, and appends
-# process/random suffixes to keep generated socket paths short.
+# The name command sanitizes the label, caps it at 16 characters (fewer when
+# the home directory is long, so every session socket path fits macOS's
+# 103-byte limit), and appends process/random suffixes.
 # Every Herdr call made here carries --session <session>: trailing, or
 # immediately before the first -- delimiter so it stays a Herdr option instead
 # of becoming a passthrough argument such as an agent start argument.
@@ -36,6 +37,9 @@
 # ownership record until detach is confirmed or the session is stopped or
 # absent; teardown refuses when that stop cannot be confirmed.
 set -u
+
+# Fixed path pieces around the session name in Herdr's longest socket path.
+FM_HERDR_LAB_SOCKET_TAIL='/.config/herdr/sessions/fm-lab-/herdr-client.sock'
 
 fm_herdr_lab_error() {
   echo "fm-herdr-lab: $*" >&2
@@ -531,14 +535,23 @@ fm_herdr_lab_teardown() { # <session>
   fm_herdr_lab_verify_tripwire "$name"
 }
 
+# Herdr binds each named session's sockets at
+# ~/.config/herdr/sessions/<session>/<socket>, the longest being
+# herdr-client.sock, and macOS caps a Unix socket path at 103 bytes. A server
+# whose client socket cannot bind exits right after start, so the label is
+# shortened further whenever the home directory leaves less room than 16 bytes.
 fm_herdr_lab_name() { # <label>
-  local label=${1:-lab}
+  local label=${1:-lab} suffix room
   label=$(printf '%s' "$label" | tr -cd 'a-zA-Z0-9_-' | sed 's/^[^a-zA-Z0-9]*//; s/-*$//')
   [ -n "$label" ] || label=lab
-  label=${label:0:16}
+  suffix="-$$-$RANDOM"
+  room=$((103 - ${#HOME} - ${#FM_HERDR_LAB_SOCKET_TAIL} - ${#suffix}))
+  [ "$room" -le 16 ] || room=16
+  [ "$room" -ge 1 ] || room=1
+  label=${label:0:room}
   label=${label%-}
-  [ -n "$label" ] || label=lab
-  printf 'fm-lab-%s-%s-%s\n' "$label" "$$" "$RANDOM"
+  [ -n "$label" ] || label=l
+  printf 'fm-lab-%s%s\n' "$label" "$suffix"
 }
 
 fm_herdr_lab_usage() {

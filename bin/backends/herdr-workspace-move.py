@@ -22,6 +22,7 @@ Exit status:
 """
 
 import json
+import os
 import socket
 import sys
 import time
@@ -32,6 +33,8 @@ RESPONSE_TIMEOUT = 5.0
 RECV_CHUNK = 65536
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 REQUEST_ID = "fm-workspace-move"
+# macOS limits sun_path to 104 bytes including the terminating NUL.
+MAX_SOCKET_PATH_BYTES = 103
 
 
 def _read_line(sock, deadline):
@@ -71,7 +74,14 @@ def main(argv):
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(CONNECT_TIMEOUT)
-        sock.connect(socket_path)
+        if len(socket_path.encode("utf-8")) > MAX_SOCKET_PATH_BYTES:
+            # A canonical path through a symlinked config directory can exceed
+            # the platform's Unix socket path limit; connect relative to the
+            # socket's own directory instead.
+            os.chdir(os.path.dirname(socket_path))
+            sock.connect(os.path.basename(socket_path))
+        else:
+            sock.connect(socket_path)
     except OSError:
         return 2
 

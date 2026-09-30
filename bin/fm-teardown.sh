@@ -3696,6 +3696,14 @@ elif [ "$BACKEND" = herdr ] \
      && { [ -e "$HERDR_PRESENTATION_JOURNAL" ] || [ -L "$HERDR_PRESENTATION_JOURNAL" ]; }; then
   echo "warning: herdr presentation journal for $ID was not retired by its close; no workspace cleanup was attempted" >&2
 fi
+# Re-sort the session into the presentation order while the session lock is
+# still held. Presentation-only: it only moves workspaces and never fails
+# this teardown.
+if [ "$BACKEND" = herdr ] \
+   && teardown_herdr_session_lock_held "$TEARDOWN_HERDR_SESSION" \
+   && fm_backend_herdr_presentation_enabled "$CONFIG" "$STATE"; then
+  fm_backend_herdr_presentation_arrange "$TEARDOWN_HERDR_SESSION" || true
+fi
 # A refused, skipped, or failed Herdr close must never erase a live task's
 # durable endpoint identity: unless the exact pane is confirmed gone, retain
 # every record and stop before any removal below so a later rerun can retry

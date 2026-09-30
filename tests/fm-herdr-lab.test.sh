@@ -110,6 +110,22 @@ test_refuses_unsafe_names() {
   pass "fm-herdr-lab: names fail closed and require the lab prefix"
 }
 
+test_generated_names_fit_the_client_socket_under_a_long_home() {
+  local long_home generated socket
+  long_home="/Users/$(printf 'a%.0s' $(seq 1 26))"
+  generated=$(HOME="$long_home" fm_herdr_lab_name fm-herdr-presentation)
+  fm_herdr_lab_validate_name "$generated" || fail "long-home lab session name was refused: $generated"
+  socket="$long_home/.config/herdr/sessions/$generated/herdr-client.sock"
+  [ "${#socket}" -le 103 ] \
+    || fail "long-home lab client socket path exceeds the macOS limit (${#socket} bytes): $socket"
+  generated=$(HOME=/h fm_herdr_lab_name fm-herdr-presentation)
+  case "$generated" in
+    fm-lab-fm-herdr-present-*) ;;
+    *) fail "a short home no longer keeps the 16-character label: $generated" ;;
+  esac
+  pass "fm-herdr-lab: generated names keep Herdr's client socket within the macOS path limit"
+}
+
 test_provision_run_and_guarded_teardown() {
   local name='' line_count status=0 stop_line delete_line
   name="fm-lab-behavior-$$"
@@ -535,6 +551,7 @@ test_viewer_launcher_refuses_unsafe_arguments() {
 }
 
 test_refuses_unsafe_names
+test_generated_names_fit_the_client_socket_under_a_long_home
 test_provision_run_and_guarded_teardown
 test_run_scopes_session_before_double_dash
 test_missing_tripwire_blocks_destruction
