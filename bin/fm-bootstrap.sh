@@ -54,7 +54,7 @@
 #          on a feature branch instead of its default branch - a crewmate's work
 #          landed in the primary instead of its own worktree; restore it per the line.
 #          treehouse is also MISSING when its installed version lacks
-#          "treehouse get --lease" support or is older than 3.0.1.
+#          "treehouse get --lease" support or is older than 3.1.0.
 #          no-mistakes is also MISSING when its installed version is older than
 #          1.46.0 (structured pipeline attestation floor; see CONTRIBUTING.md).
 #          The AXI-family floor policy is owned beside GH_AXI_MIN and
@@ -839,10 +839,12 @@ NO_MISTAKES_MIN=1.46.0
 # from the same origin into the same projects/<name>) shares one pool. 3.0.0 is
 # the first release that reuses a pooled worktree only for the clone that
 # created it; an older one hands a secondmate its parent's idle copy, which the
-# spawn's Claude trust scope check then refuses. 3.0.0 itself misreads valid
+# spawn's Claude trust scope check then refuses. 3.0.0 also misreads valid
 # pre-3.0 pool state as corrupt on its first run and quarantines every existing
-# copy as leased; 3.0.1 adopts that state and recovers pools 3.0.0 rewrote.
-TREEHOUSE_MIN=3.0.1
+# copy as leased; 3.0.1 adopts pre-3.0 state but leaves copies 3.0.0 already
+# quarantined leased, and 3.1.0 is the first release that frees those safe
+# recovered copies automatically.
+TREEHOUSE_MIN=3.1.0
 # AXI-FAMILY FLOOR POLICY. Every axi-family floor is the CURRENT LATEST published
 # version of that tool, captain-bumped periodically to keep the whole fleet on the
 # newest axi tools. It is NOT the minimum feature-introduced version. These floors

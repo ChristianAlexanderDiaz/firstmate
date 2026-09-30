@@ -10,7 +10,7 @@
 # Usage:
 #   fm-install-treehouse.sh <destination-directory>
 #
-# Pins Treehouse v3.1.0, at or above bin/fm-bootstrap.sh's TREEHOUSE_MIN floor
+# Pins Treehouse v3.1.0, bin/fm-bootstrap.sh's TREEHOUSE_MIN floor
 # (clone-correct pool reuse, exercised by tests/fm-spawn-secondmate-clone-pool.test.sh).
 set -eu
 

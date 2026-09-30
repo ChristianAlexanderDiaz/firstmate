@@ -42,7 +42,7 @@ unset TMUX TMUX_PANE HERDR_ENV HERDR_PANE_ID HERDR_SESSION HERDR_SOCKET_PATH \
 
 # A fake toolchain where every required tool is present and gh is authenticated.
 # treehouse's `get --help` advertises --lease only when FM_FAKE_TREEHOUSE_LEASE_HELP=1,
-# and its --version reports FM_FAKE_TREEHOUSE_VERSION (default: the 3.0.1 floor).
+# and its --version reports FM_FAKE_TREEHOUSE_VERSION (default: the 3.1.0 floor).
 make_fake_toolchain() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
@@ -68,7 +68,7 @@ SH
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' "${FM_FAKE_TREEHOUSE_VERSION:-v3.0.1}"
+  printf '%s\n' "${FM_FAKE_TREEHOUSE_VERSION:-v3.1.0}"
   exit 0
 fi
 if [ "${1:-}" = get ] && [ "${2:-}" = --help ]; then
@@ -374,9 +374,10 @@ test_treehouse_min_version() {
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
     esac
   done <<'ROWS'
-minimum treehouse version is accepted^v3.0.1^empty
+minimum treehouse version is accepted^v3.1.0^empty
+treehouse 3.0.1 that keeps quarantined copies leased reports an upgrade^v3.0.1^missing
 treehouse 3.0.0 that quarantines existing pool state reports an upgrade^v3.0.0^missing
-newer treehouse minor is accepted^v3.1.0^empty
+newer treehouse minor is accepted^v3.2.0^empty
 newer treehouse major is accepted^v4.0.0^empty
 lease-capable treehouse below the clone-correct reuse floor reports an upgrade^v2.3.0^missing
 unparseable treehouse version reports an upgrade^treehouse development build^missing
