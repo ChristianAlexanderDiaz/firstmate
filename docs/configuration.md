@@ -1250,6 +1250,7 @@ An unknown resolved backend emits `BACKEND_INVALID` and blocks dispatch instead 
 
 Orca provides both the task worktree and terminal endpoint (see "Runtime backend" above), so `backend=orca` requires only `orca` on top of the universal toolchain and skips both `treehouse` and every other backend's session CLI.
 A herdr, zellij, or cmux home is therefore never told `tmux` is missing, and the `treehouse` durable-lease and version-floor upgrade check runs only for the backends that actually use treehouse.
+`TREEHOUSE_MIN` in [`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns that floor and its rationale.
 
 **Feature-specific requirements**
 
