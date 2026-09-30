@@ -362,7 +362,7 @@ SH
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' 'v3.0.0'
+  printf '%s\n' 'v3.0.1'
   exit 0
 fi
 if [ "${1:-}" = get ] && [ "${2:-}" = --help ]; then

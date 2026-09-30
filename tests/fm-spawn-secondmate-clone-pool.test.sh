@@ -10,8 +10,8 @@
 # Treehouse before 3.0.0 handed out whichever idle copy it found first, so a
 # secondmate's claude launch was refused with "... is not a worktree of project
 # ...", and once the secondmate held a copy of its own the parent's launches
-# could be refused the same way. bin/fm-bootstrap.sh's TREEHOUSE_MIN owns that
-# floor; this suite skips below it.
+# could be refused the same way. This suite skips below 3.0.0, where clone-correct
+# reuse began; bin/fm-bootstrap.sh's TREEHOUSE_MIN owns the fleet install floor.
 #
 # Drives the real bin/fm-spawn.sh against a real tmux server on a private
 # socket and a real Treehouse on a scratch pool root, with a throwaway HOME and
