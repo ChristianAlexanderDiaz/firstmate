@@ -1,0 +1,30 @@
+# Second mate spawn from its own clone: Treehouse 2.0.1 (old CI pin, pre-fix) vs 3.1.0 (new floor)
+# Same script both times: real bin/fm-spawn.sh, real tmux on a private socket, real treehouse,
+# scratch parent home + second mate home each with its own clone of one origin (shared pool).
+
+===== BEFORE: treehouse 2.0.1 =====
+treehouse: /tmp/fm-th-old.vPuZxE/bin/treehouse v2.0.1
+--- step 1: parent home (main) spawns main-a
+exit=0
+spawned main-a harness=claude kind=scout window=firstmate:fm-main-a worktree=fm-sm-clone-pool-repro.9btwrq/user-home/.treehouse/demo-012011/1/demo
+main-a copy: fm-sm-clone-pool-repro.9btwrq/user-home/.treehouse/demo-012011/1/demo
+--- pool status after main-a's worker exited:
+1     available    ~/.treehouse/demo-012011/1/demo
+--- step 2: second mate home spawns sm-a from ITS OWN clone fm-sm-clone-pool-repro.9btwrq/secondmate/projects/demo
+exit=1
+error: refusing to pre-register Claude trust: 'fm-sm-clone-pool-repro.9btwrq/user-home/.treehouse/demo-012011/1/demo' is not a worktree of project 'fm-sm-clone-pool-repro.9btwrq/secondmate/projects/demo'
+error: could not pre-register Claude workspace trust for fm-sm-clone-pool-repro.9btwrq/user-home/.treehouse/demo-012011/1/demo; refusing to launch a claude worker that would wedge on the trust dialog; inspect window firstmate:fm-sm-a
+
+===== AFTER: treehouse 3.1.0 =====
+treehouse: /Users/christianalexanderdiaz/.local/bin/treehouse v3.1.0
+--- step 1: parent home (main) spawns main-a
+exit=0
+spawned main-a harness=claude kind=scout window=firstmate:fm-main-a worktree=fm-sm-clone-pool-repro.ndaImc/pools/.treehouse/demo-baeff6/1/demo
+main-a copy: fm-sm-clone-pool-repro.ndaImc/pools/.treehouse/demo-baeff6/1/demo
+--- pool status after main-a's worker exited:
+base  main  (repository default)
+1     available    fm-sm-clone-pool-repro.ndaImc/pools/.treehouse/demo-baeff6/1/demo  (detached)
+--- step 2: second mate home spawns sm-a from ITS OWN clone fm-sm-clone-pool-repro.ndaImc/secondmate/projects/demo
+exit=0
+spawned sm-a harness=claude kind=scout window=firstmate:fm-sm-a worktree=fm-sm-clone-pool-repro.ndaImc/pools/.treehouse/demo-baeff6/2/demo
+sm-a copy: fm-sm-clone-pool-repro.ndaImc/pools/.treehouse/demo-baeff6/2/demo

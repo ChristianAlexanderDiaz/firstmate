@@ -1,0 +1,10 @@
+# bin/fm-bootstrap.sh on a scratch tmux-backend home, real treehouse binaries on PATH
+# (only treehouse lines shown; other lines reflect this host's unrelated toolchain)
+
+$ treehouse --version  -> v2.0.1
+$ bin/fm-bootstrap.sh | grep -i treehouse
+MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)
+
+$ treehouse --version  -> v3.1.0
+$ bin/fm-bootstrap.sh | grep -i treehouse
+<no treehouse diagnostic: floor satisfied>

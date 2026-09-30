@@ -1,0 +1,7 @@
+$ treehouse --version
+v3.1.0
+$ bash tests/fm-spawn-secondmate-clone-pool.test.sh
+ok - a secondmate spawn gets a copy of its own clone while the parent's copy is idle
+ok - a parent spawn gets a copy of its own clone while the secondmate's copy is idle
+bash tests/fm-spawn-secondmate-clone-pool.test.sh  3.12s user 4.32s system 33% cpu 22.224 total
+exit=0
