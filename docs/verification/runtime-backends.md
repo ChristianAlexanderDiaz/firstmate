@@ -1406,9 +1406,7 @@ HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
 Observed guarantees included:
 
 ```text
-ok - real Herdr lab: primary and two secondmate homes each own a top-level contiguous child block
 ok - real Herdr lab: concurrent primary/A/B spawns stay session-locked with zero focus drift
-ok - real Herdr lab: session lock contention from a secondmate home falls back flat with no journal
 ok - real Herdr lab: legacy projection labels and flat secondmate tabs are left unmigrated
 ok - real Herdr lab: multi-home exact-pane teardowns restore captain focus without workspace close authority
 ok - real Herdr lab validation completed on Herdr 0.7.4 with the default-session tripwire intact
@@ -1452,6 +1450,31 @@ ok - real Herdr lab validation completed on Herdr 0.8.0 with the default-session
 The projected spawn in that run used the historical empty opt-in file, so a home that had already enabled the projection keeps it without any migration step.
 One concurrent cross-home recovery case refused under contention on a loaded machine and passed on an immediate rerun; recovery-path presentation lock contention is a deliberate hard refusal rather than a flat fallback, which default-on now makes reachable from any Herdr home.
 That run measured the default-on projection on Herdr 0.8.0 only, while the focus-flash regression below was last run on 0.7.5 before the flip, so neither run covered a defective release under default-on projection; the version floor and the focus-flash suite's Part C close that gap.
+
+The whole-sidebar presentation order ran on 2026-09-30 against Herdr 0.9.0 protocol 22 on macOS 27.0 arm64, whose `~/.config/herdr` is a symlink into another directory:
+
+```sh
+HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
+  tests/fm-backend-herdr-presentation-order-e2e.test.sh
+HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
+  tests/fm-backend-herdr-presentation-e2e.test.sh
+```
+
+Observed ordering guarantees:
+
+```text
+ok - real Herdr lab: firstmate, each second mate with its own and its covered primary workers, primary work, then personal spaces
+ok - real Herdr lab: teardowns keep the sorted order
+ok - real Herdr lab: a busy presentation lock is waited out and the worker still gets its own sorted workspace
+ok - real Herdr lab: presentation order validation completed on herdr 0.9.0 with the default-session tripwire intact
+ok - real Herdr lab: a busy presentation lock is waited out and the worker still gets its own workspace
+ok - real Herdr lab: concurrent primary workers sort below the second mates in create order with no needless moves or focus drift
+ok - real Herdr lab: each second mate's workers sit under it, and primary workers for no second mate's project follow them
+ok - real Herdr lab validation completed on Herdr 0.9.0 with the default-session tripwire intact
+```
+
+Before the fix, the same order test failed on its first case with the sidebar reading `life firstmate 2ndmate-alpha 2ndmate-bravo dotfiles pa`: the primary worker for alpha's project stayed at the bottom.
+On that host every `workspace.move` also failed, because the canonical session socket path through the symlinked config directory exceeded the 103-byte Unix socket limit, and a 16-character lab label made Herdr's `herdr-client.sock` path too long for the lab server to start.
 
 The restored-shell session-start cleanup ran on 2026-07-24 against Herdr 0.7.5 protocol 17:
 

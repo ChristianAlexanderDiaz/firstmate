@@ -412,6 +412,28 @@ spawn_task() {  # <id> <home> <project>
     "$ROOT/bin/fm-spawn.sh" "$id" "$project" "sh -c 'while :; do sleep 60; done'" --mode no-mistakes --yolo off --backend herdr
 }
 
+# finish_same_project_spawn: wait for one of several concurrent spawns on the
+# same project. Same-project spawns refuse rather than race for a Treehouse
+# slot, so a refused spawn is rerun once the others have finished.
+finish_same_project_spawn() {  # <pid> <id> <home> <project> <stdout> <stderr> <case>
+  local pid=$1 id=$2 home=$3 project=$4 out=$5 err=$6 case_name=$7
+  wait "$pid" && return 0
+  grep -F "another Treehouse slot allocation or return is in progress" "$err" >/dev/null 2>&1 \
+    || fail "$case_name failed: $(cat "$err")"
+  SAME_PROJECT_RETRY+=("$id|$home|$project|$out|$err|$case_name")
+}
+
+retry_same_project_spawns() {
+  local entry id home project out err case_name
+  for entry in ${SAME_PROJECT_RETRY[@]+"${SAME_PROJECT_RETRY[@]}"}; do
+    IFS='|' read -r id home project out err case_name <<<"$entry"
+    spawn_task "$id" "$home" "$project" > "$out" 2> "$err" \
+      || fail "$case_name retry failed: $(cat "$err")"
+  done
+  SAME_PROJECT_RETRY=()
+}
+SAME_PROJECT_RETRY=()
+
 finish_concurrent_spawn() {  # <id> <status> <stdout> <stderr>
   local id=$1 status=$2 out=$3 err=$4
   [ "$status" -ne 0 ] || return 0
@@ -1102,23 +1124,10 @@ spawn_task acw "$SECOND_HOME_A" "$PROJECT_DIR" > "$TMP_ROOT/acw.out" 2> "$TMP_RO
 ACW_PID=$!
 spawn_task bcw "$SECOND_HOME_B" "$PROJECT_DIR" > "$TMP_ROOT/bcw.out" 2> "$TMP_ROOT/bcw.err" &
 BCW_PID=$!
-# Same-project spawns refuse rather than race for a Treehouse slot; retry any
-# that did once the others have finished.
-finish_cross_home_spawn() {  # <id> <home> <pid>
-  local id=$1 home=$2 pid=$3
-  wait "$pid" && return 0
-  grep -F "another Treehouse slot allocation or return is in progress" "$TMP_ROOT/$id.err" >/dev/null 2>&1 \
-    || fail "cross-home concurrent $id failed: $(cat "$TMP_ROOT/$id.err")"
-  CROSS_RETRY="$CROSS_RETRY $id:$home"
-}
-CROSS_RETRY=
-finish_cross_home_spawn pcw "$HOME_DIR" "$PCW_PID"
-finish_cross_home_spawn acw "$SECOND_HOME_A" "$ACW_PID"
-finish_cross_home_spawn bcw "$SECOND_HOME_B" "$BCW_PID"
-for CROSS_ENTRY in $CROSS_RETRY; do
-  spawn_task "${CROSS_ENTRY%%:*}" "${CROSS_ENTRY#*:}" "$PROJECT_DIR" > "$TMP_ROOT/${CROSS_ENTRY%%:*}.out" 2> "$TMP_ROOT/${CROSS_ENTRY%%:*}.err" \
-    || fail "cross-home $CROSS_ENTRY retry failed: $(cat "$TMP_ROOT/${CROSS_ENTRY%%:*}.err")"
-done
+finish_same_project_spawn "$PCW_PID" pcw "$HOME_DIR" "$PROJECT_DIR" "$TMP_ROOT/pcw.out" "$TMP_ROOT/pcw.err" "cross-home concurrent primary"
+finish_same_project_spawn "$ACW_PID" acw "$SECOND_HOME_A" "$PROJECT_DIR" "$TMP_ROOT/acw.out" "$TMP_ROOT/acw.err" "cross-home concurrent A"
+finish_same_project_spawn "$BCW_PID" bcw "$SECOND_HOME_B" "$PROJECT_DIR" "$TMP_ROOT/bcw.out" "$TMP_ROOT/bcw.err" "cross-home concurrent B"
+retry_same_project_spawns
 remember_meta_worktree "$HOME_DIR/state/pcw.meta" >/dev/null
 remember_meta_worktree "$SECOND_HOME_A/state/acw.meta" >/dev/null
 remember_meta_worktree "$SECOND_HOME_B/state/bcw.meta" >/dev/null
@@ -1291,8 +1300,11 @@ spawn_task "$PRIMARY_WAVE_ID" "$HOME_DIR" "$RECOVERY_PROJECT_DIR" > "$TMP_ROOT/p
 PRIMARY_WAVE_PID=$!
 spawn_task "$BRAVO_WAVE_ID" "$SECOND_HOME_B" "$RECOVERY_PROJECT_DIR" > "$TMP_ROOT/bravo-wave-resume.out" 2> "$TMP_ROOT/bravo-wave-resume.err" &
 BRAVO_WAVE_PID=$!
-wait "$PRIMARY_WAVE_PID" || fail "concurrent primary recovery failed: $(cat "$TMP_ROOT/primary-wave-resume.err")"
-wait "$BRAVO_WAVE_PID" || fail "concurrent secondmate recovery failed: $(cat "$TMP_ROOT/bravo-wave-resume.err")"
+finish_same_project_spawn "$PRIMARY_WAVE_PID" "$PRIMARY_WAVE_ID" "$HOME_DIR" "$RECOVERY_PROJECT_DIR" \
+  "$TMP_ROOT/primary-wave-resume.out" "$TMP_ROOT/primary-wave-resume.err" "concurrent primary recovery"
+finish_same_project_spawn "$BRAVO_WAVE_PID" "$BRAVO_WAVE_ID" "$SECOND_HOME_B" "$RECOVERY_PROJECT_DIR" \
+  "$TMP_ROOT/bravo-wave-resume.out" "$TMP_ROOT/bravo-wave-resume.err" "concurrent secondmate recovery"
+retry_same_project_spawns
 PRIMARY_WAVE_NEW_WT=$(remember_meta_worktree "$PRIMARY_WAVE_META")
 BRAVO_WAVE_NEW_WT=$(remember_meta_worktree "$BRAVO_WAVE_META")
 PRIMARY_WAVE_NEW_PANE=$(grep '^herdr_pane_id=' "$PRIMARY_WAVE_META" | cut -d= -f2-)
