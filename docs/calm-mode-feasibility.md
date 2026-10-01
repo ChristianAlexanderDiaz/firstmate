@@ -741,7 +741,7 @@ Three further observations, recorded so they are not read as failures: the `ctrl
 
 ### The shipped mod
 
-`.claude/mods/firstmate-calm` holds the plugin: its manifest, `hooks/hooks.json` naming the one module, `hooks/register.ts` (the only file that touches `$`), and pure libraries the tests drive under Node: the sprite core both harnesses share, the Raster packing, the presentation policy, and a port of `bin/fm-operational-input.sh`'s `classify` guarded by a corpus parity test.
+`.claude/mods/firstmate-calm` holds the plugin: its manifest, `hooks/hooks.json` naming the one module, `hooks/register.ts` (the only file that touches `$`), and pure libraries the tests drive under Node: the sprite core both harnesses share, the optional captain-local sprite parser, the Raster packing, the presentation policy, and a port of `bin/fm-operational-input.sh`'s `classify` guarded by a corpus parity test.
 `.agents/skills/firstmate-calm` is a symlink to it, so the project's `.claude/skills` scan adopts it, and it carries no `SKILL.md` so other harnesses' skill loaders see nothing.
 The mod declares no command file, skill, agent, or classic hook; its function-hooks handlers independently require the exact environment opt-in before `/calm` registration or any other side effect, including when Claude Code loads the module through its rollout flag.
 Working-note and preserved-reply keys are recorded from `turn.step` per text block and seeded from `$.session.messages()` for a restored transcript, with [`calm.md`](calm.md#claude-code) owning the exact Claude Code visibility contract.
