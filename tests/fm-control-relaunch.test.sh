@@ -2118,6 +2118,14 @@ herdr_case_or_skip() {  # <name> <id> [session] [surviving-pane]
 
 test_herdr_relaunch_resumes_only_the_registered_pi_session() {
   local dir out rc=0 command registered
+  # Both loop iterations relaunch with --harness pi, which fm-spawn.sh resolves
+  # against a real pi executable on PATH (resolve_pi_executable) even though the
+  # rest of this case runs against the herdr fake, so a host with no pi CLI
+  # installed must skip rather than fail.
+  command -v pi >/dev/null 2>&1 || {
+    echo "skip - herdr Pi relaunch needs the pi CLI (fm-spawn.sh resolves a real pi executable on PATH even under the herdr fake)"
+    return 0
+  }
   for registered in pi claude; do
     herdr_case_or_skip "resume-$registered" "resume-$registered" || {
       echo "skip - herdr relaunch needs jq (the herdr adapter parses JSON with it)"
