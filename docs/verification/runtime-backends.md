@@ -393,6 +393,44 @@ Removing the `--force` arm makes the forced generic case refuse; honoring `--for
 Restoring `fm_backend_orca_kill`'s swallowed tool check makes the CLI-absent adapter case report success.
 Dropping the retention-is-not-durable line makes the refusal claim a retention teardown does not own.
 
+## Claude usage-limit prompt
+
+Verified 2026-10-01 on Claude Code 2.1.287 with herdr 0.9.0, against a Claude account at its weekly limit.
+`bin/fm-account-failover.sh` builds on three facts this run proved.
+
+A prompt to that account ends its turn through the `StopFailure` hook with this payload (session fields omitted):
+
+```json
+{"hook_event_name": "StopFailure", "error": "rate_limit",
+ "last_assistant_message": "You've hit your weekly limit · resets <reset time>"}
+```
+
+Claude then opens this menu on its own:
+
+```text
+   What do you want to do?
+   ❯ 1. Stop and wait for limit to reset
+     2. Wait here, then continue automatically at <reset time>
+     3. Switch to usage credits
+     4. Upgrade your plan
+   Enter to confirm · Esc to cancel
+```
+
+Escape closes it to an empty idle composer without choosing an option; Herdr reports the pane's agent status as `unknown` while the menu is open and for a moment after it closes, then `idle`.
+The opt-in live guard reproduces the hook record and the Escape outcome through the production recorder and recognizer:
+
+```sh
+FM_ACCOUNT_FAILOVER_LIVE=1 FM_ACCOUNT_FAILOVER_LIVE_ROOT=ordinary tests/fm-account-failover-live-e2e.test.sh
+```
+
+```text
+# 2.1.287 (Claude Code): StopFailure record: message=You've hit your weekly limit · resets <reset time>
+# 2.1.287 (Claude Code): limit prompt recognized, closed with Escape to an idle composer
+ok - account failover live: 2.1.287 (Claude Code) records the usage limit and its prompt closes on Escape alone
+```
+
+A full move was also run once in an isolated Herdr lab home: a real scout spawned on the limited account was moved by `fm-account-failover.sh tick` to a second signed-in account with room (`moved <id> <limited> <other>`, task record `claude_account=<other>`), and the replacement started under that account and completed its brief.
+
 ## Claude workspace trust
 
 Verified 2026-09-03 on Claude Code 2.1.259.

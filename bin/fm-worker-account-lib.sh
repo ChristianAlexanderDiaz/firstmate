@@ -2,10 +2,14 @@
 # fm-worker-account-lib.sh - the single owner of the opt-in per-home worker
 # account pin: which runners can be pinned, how a pin file is parsed and
 # resolved, the launch-time sign-in check under it, and the environment
-# credentials a pinned Claude launch sheds.
+# credentials a pinned Claude launch sheds. It also owns the opt-in Claude
+# account failover map (config/claude-failover): how that file is parsed and
+# how one of its named accounts resolves to the Claude config root a moved
+# worker launches under.
 #
-# docs/configuration.md "Worker account pin" owns the operator-facing contract.
-# Sourced by bin/fm-spawn.sh and bin/fm-control.sh.
+# docs/configuration.md "Worker account pin" and "Claude account failover" own
+# the operator-facing contracts.
+# Sourced by bin/fm-spawn.sh, bin/fm-control.sh, and bin/fm-account-failover.sh.
 #
 # Pinnable runners, each a credential store inside a root its vendor lets a
 # process select:
@@ -278,4 +282,125 @@ fm_worker_account_claude_shed() {
     prefix="$prefix -u $var"
   done
   printf '%s\n' "$prefix"
+}
+
+# --- Claude account failover map (config/claude-failover) --------------------
+#
+# Opt-in; an absent file is no failover. The file names the Claude accounts a
+# worker may be moved between, each by the account name `quota-axi
+# --all-accounts` reports for it, and optionally the quota floor:
+#   account <name> <ordinary | absolute CLAUDE_CONFIG_DIR>
+#   floor <whole percent 0-99>
+# Blank lines and lines starting with # are ignored. `ordinary` means
+# CLAUDE_CONFIG_DIR unset, for the same Keychain reason the pin above gives.
+# Names are [A-Za-z0-9][A-Za-z0-9._-]* and unique; at most one floor line; a
+# path is the rest of its line, absolute, with no control characters.
+
+FM_WORKER_ACCOUNT_FAILOVER_FILE=claude-failover
+FM_WORKER_ACCOUNT_FAILOVER_DEFAULT_FLOOR=5
+
+# fm_worker_account_failover_read <file>
+# Prints "floor<TAB><n>" once (the default when the file names none), then one
+# "account<TAB><name><TAB><declared>" line per account in file order. Returns 0
+# on success, 3 when the file does not exist, 4 when it cannot be inspected
+# (one error already printed), 5 when it is not a readable regular file, and 6
+# when it is malformed (one error naming the line already printed).
+fm_worker_account_failover_read() {
+  perl -MErrno=ENOENT -e '
+    my ($f, $default_floor) = @ARGV;
+    unless (lstat $f) {
+      exit 3 if $! == ENOENT;
+      print STDERR "error: cannot inspect configuration source at $f: $!\n";
+      exit 4;
+    }
+    (-f $f && -r _) or exit 5;
+    open(my $fh, "<", $f) or exit 5;
+    my ($floor, %seen, @accounts);
+    my $n = 0;
+    while (my $line = <$fh>) {
+      $n++;
+      $line =~ s/\n\z//;
+      my $bad = sub { print STDERR "error: config/claude-failover line $n: $_[0]: $f\n"; exit 6 };
+      $bad->("control characters are not allowed") if $line =~ /[\x00-\x1f\x7f]/;
+      next if $line =~ /\A\s*(?:#.*)?\z/;
+      if ($line =~ /\Aaccount +([A-Za-z0-9][A-Za-z0-9._-]*) +(ordinary|\/.*?) *\z/) {
+        $bad->("account $1 is named twice") if $seen{$1}++;
+        push @accounts, "account\t$1\t$2\n";
+      } elsif ($line =~ /\Afloor +([0-9]{1,2}) *\z/) {
+        $bad->("floor is set twice") if defined $floor;
+        $floor = $1 + 0;
+      } else {
+        $bad->("expected \"account <name> <ordinary|/absolute/path>\" or \"floor <0-99>\"");
+      }
+    }
+    print "floor\t", (defined $floor ? $floor : $default_floor), "\n", @accounts;
+  ' -- "$1" "$FM_WORKER_ACCOUNT_FAILOVER_DEFAULT_FLOOR"
+}
+
+# fm_worker_account_failover_load <config-dir>
+# Prints the parsed map for this home (the read format above). Prints nothing
+# and returns 0 when the home has no map. On refusal prints one error and
+# returns 1.
+fm_worker_account_failover_load() {
+  local cfg="$1/$FM_WORKER_ACCOUNT_FAILOVER_FILE" out rc
+  out=$(fm_worker_account_failover_read "$cfg")
+  rc=$?
+  case "$rc" in
+  0) printf '%s\n' "$out" ;;
+  3) return 0 ;;
+  5)
+    echo "error: config/$FM_WORKER_ACCOUNT_FAILOVER_FILE must be a readable regular file: $cfg" >&2
+    return 1
+    ;;
+  *) return 1 ;;
+  esac
+}
+
+# fm_worker_account_failover_resolve <config-dir> <name>
+# Prints "declared<TAB>root" for one named account of this home's map, where
+# root is empty for `ordinary` (CLAUDE_CONFIG_DIR unset). Refuses, printing one
+# error and returning 1, when the home has no map, the map is malformed, it
+# does not name the account, the account's root is unusable, or the home also
+# pins every Claude worker with config/claude-account, because a moved worker
+# would break that pin.
+fm_worker_account_failover_resolve() {
+  local config=$1 name=$2 map line declared root
+  if [ -e "$config/claude-account" ] || [ -L "$config/claude-account" ]; then
+    echo "error: config/claude-account pins every Claude worker in this home to one account, so a worker cannot run on failover account '$name'; remove one of config/claude-account and config/$FM_WORKER_ACCOUNT_FAILOVER_FILE" >&2
+    return 1
+  fi
+  map=$(fm_worker_account_failover_load "$config") || return 1
+  [ -n "$map" ] || {
+    echo "error: this home has no config/$FM_WORKER_ACCOUNT_FAILOVER_FILE, so Claude account '$name' names nothing" >&2
+    return 1
+  }
+  line=$(printf '%s\n' "$map" | awk -F'\t' -v n="$name" '$1 == "account" && $2 == n { print; exit }')
+  [ -n "$line" ] || {
+    echo "error: config/$FM_WORKER_ACCOUNT_FAILOVER_FILE names no Claude account '$name'" >&2
+    return 1
+  }
+  declared=${line#account$'\t'"$name"$'\t'}
+  root=$declared
+  [ "$declared" != ordinary ] || root=
+  if [ -n "$root" ] && { [ ! -d "$root" ] || [ ! -r "$root" ] || [ ! -x "$root" ]; }; then
+    echo "error: config/$FM_WORKER_ACCOUNT_FAILOVER_FILE account '$name' must name a readable, searchable existing directory (ordinary means ~/.claude with CLAUDE_CONFIG_DIR unset): $root" >&2
+    return 1
+  fi
+  printf '%s\t%s\n' "$declared" "$root"
+}
+
+# fm_worker_account_failover_select <config-dir> <name> <executable>
+# The launch-time decision for a worker recorded on a failover account: the
+# resolve above plus the same sign-in check a pin gets. Prints
+# "declared<TAB>root" on success; on refusal prints one error and returns 1.
+fm_worker_account_failover_select() {
+  local config=$1 name=$2 executable=$3 selection declared root
+  selection=$(fm_worker_account_failover_resolve "$config" "$name") || return 1
+  declared=${selection%%$'\t'*}
+  root=${selection#*$'\t'}
+  if ! fm_worker_account_check claude "$declared" "$root" "$executable" 2>/dev/null; then
+    echo "error: config/$FM_WORKER_ACCOUNT_FAILOVER_FILE account '$name' ($declared) is not signed in (claude auth status); sign in to it, or remove it from the map" >&2
+    return 1
+  fi
+  printf '%s\n' "$selection"
 }

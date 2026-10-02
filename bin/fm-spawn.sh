@@ -52,7 +52,7 @@
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
-#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
+#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>] [--claude-account <name>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded worktree, reusing its recorded endpoint when that
 #   endpoint still exists, instead of creating either from scratch. It is
@@ -63,8 +63,9 @@
 #   backend, kind, project or home, worktree, endpoint - comes from the task's
 #   validated state/<id>.meta, so --backend, --scout, --secondmate, a project
 #   positional, and batch pairs are all refused alongside it; only harness,
-#   model, and effort may change, which is what makes a harness switch one
-#   ordinary relaunch. It refuses unless the recorded endpoint is positively
+#   model, effort, and a Claude worker's failover account (--claude-account,
+#   below) may change, which is what makes a harness switch one ordinary
+#   relaunch. It refuses unless the recorded endpoint is positively
 #   agent-free on a backend with a recovery-grade agent-state classifier (tmux
 #   or herdr), and clears the previous harness's per-task wiring before arming
 #   the new incarnation. Two verdicts are agent-free: a `dead` endpoint is
@@ -376,6 +377,15 @@
 #   account_provider=) in the task record and on the spawned line. A local
 #   secondmate reads this launching home's file; pins are never inherited.
 #   bin/fm-worker-account-lib.sh owns parsing, the check, and the shed list.
+# Claude account failover (config/claude-failover; --claude-account <name>):
+#   Opt-in, relaunch only. `--relaunch --claude-account <name>` moves a ship or
+#   scout Claude worker onto one named account of config/claude-failover,
+#   sign-in checked before any endpoint changes, launched like a pinned root,
+#   and recorded as claude_account= in the task record and on the spawned
+#   line; every later relaunch keeps it until `--claude-account default` or a
+#   harness change. It refuses beside config/claude-account. Every Claude
+#   ship and scout StopFailure hook also runs bin/fm-account-failover.sh
+#   record, which writes nothing without the map; that script owns the move.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode
@@ -711,6 +721,8 @@ BRANCH_PREFIX_SET=0
 BASE_BRANCH=
 BASE_BRANCH_SET=0
 TRACEPARENT_SET=0
+CLAUDE_ACCOUNT_ARG=
+CLAUDE_ACCOUNT_SET=0
 RELAUNCH=0
 # Opt-in only: exact-resume presentation-order lock waits instead of refusing.
 # Absent/unset keeps upstream refuse-on-contention. See header.
@@ -761,6 +773,10 @@ for a in "$@"; do
     traceparent)
       TRACEPARENT_ARG=$a
       TRACEPARENT_SET=1
+      ;;
+    claude-account)
+      CLAUDE_ACCOUNT_ARG=$a
+      CLAUDE_ACCOUNT_SET=1
       ;;
     *)
       echo "error: internal parser state for --$want_value" >&2
@@ -826,6 +842,11 @@ for a in "$@"; do
     TRACEPARENT_ARG=${a#--traceparent=}
     TRACEPARENT_SET=1
     ;;
+  --claude-account) want_value=claude-account ;;
+  --claude-account=*)
+    CLAUDE_ACCOUNT_ARG=${a#--claude-account=}
+    CLAUDE_ACCOUNT_SET=1
+    ;;
   *) POS+=("$a") ;;
   esac
 done
@@ -859,6 +880,14 @@ done
 }
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || {
   echo "error: --traceparent requires a non-empty value" >&2
+  exit 1
+}
+[ "$CLAUDE_ACCOUNT_SET" -eq 0 ] || [ -n "$CLAUDE_ACCOUNT_ARG" ] || {
+  echo "error: --claude-account requires a non-empty value" >&2
+  exit 1
+}
+[ "$CLAUDE_ACCOUNT_SET" -eq 0 ] || [ "$RELAUNCH" -eq 1 ] || {
+  echo "error: --claude-account applies to --relaunch only; it moves an existing task's worker onto another account of config/claude-failover" >&2
   exit 1
 }
 # A parent-delivered carrier replaces this home's own resolution, so it is
@@ -1904,6 +1933,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fi
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
+  CLAUDE_ACCOUNT_PRIOR=$(fm_meta_get "$RELAUNCH_META" claude_account)
   if [ "$KIND" = ship ]; then
     BRANCH=$(fm_meta_get "$RELAUNCH_META" branch)
     [ -n "$BRANCH" ] || BRANCH="fm/$ID"
@@ -2537,6 +2567,41 @@ WORKER_ACCOUNT_ROOT=${WORKER_ACCOUNT_ROOT%%$'\t'*}
 if [ -n "$WORKER_ACCOUNT" ] && [ "$HARNESS" = claude ]; then
   if [ -n "$WORKER_ACCOUNT_ROOT" ]; then
     export CLAUDE_CONFIG_DIR=$WORKER_ACCOUNT_ROOT
+  else
+    unset CLAUDE_CONFIG_DIR
+  fi
+fi
+# Claude account failover (header above): a relaunch onto a named account of
+# config/claude-failover, and every later relaunch of a task already moved,
+# resolves and sign-in checks that account here, before any endpoint changes.
+# An explicit `default` returns the task to this home's ordinary launch
+# account. A task never moved, and every launch in a home without the map,
+# selects nothing here.
+CLAUDE_ACCOUNT=
+CLAUDE_ACCOUNT_ROOT=
+if [ "$RELAUNCH" -eq 1 ]; then
+  if [ "$CLAUDE_ACCOUNT_SET" -eq 1 ]; then
+    [ "$CLAUDE_ACCOUNT_ARG" = default ] || CLAUDE_ACCOUNT=$CLAUDE_ACCOUNT_ARG
+  elif [ "$HARNESS" = claude ]; then
+    CLAUDE_ACCOUNT=${CLAUDE_ACCOUNT_PRIOR:-}
+  fi
+fi
+if [ -n "$CLAUDE_ACCOUNT" ]; then
+  if [ "$HARNESS" != claude ] || [ "$RAW_LAUNCH" != 0 ]; then
+    echo "error: Claude account '$CLAUDE_ACCOUNT' applies only to the canonical claude launch, not '$HARNESS'" >&2
+    exit 1
+  fi
+  case "$KIND" in
+  ship | scout) ;;
+  *)
+    echo "error: Claude account failover moves ship and scout workers only; a $KIND keeps its home's launch account" >&2
+    exit 1
+    ;;
+  esac
+  CLAUDE_ACCOUNT_ROOT=$(fm_worker_account_failover_select "$CONFIG" "$CLAUDE_ACCOUNT" claude) || exit 1
+  CLAUDE_ACCOUNT_ROOT=${CLAUDE_ACCOUNT_ROOT#*$'\t'}
+  if [ -n "$CLAUDE_ACCOUNT_ROOT" ]; then
+    export CLAUDE_CONFIG_DIR=$CLAUDE_ACCOUNT_ROOT
   else
     unset CLAUDE_CONFIG_DIR
   fi
@@ -4709,7 +4774,10 @@ if [ "$KIND" != secondmate ]; then
     busy_suffix="--gen $(shell_quote "$BUSY_GEN") --source claude-hook"
     j_submit=$(json_escape "$busy_cmd_prefix busy $busy_suffix --event user-prompt-submit 2>/dev/null || true")
     j_stop=$(json_escape "touch $(shell_quote "$TURNEND"); $busy_cmd_prefix idle $busy_suffix --event stop 2>/dev/null || true")
-    j_stopfail=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null || true")
+    # StopFailure also hands its payload to the Claude account failover
+    # recorder, which writes nothing in a home without config/claude-failover.
+    failover_record="$(shell_quote "$FM_ROOT/bin/fm-account-failover.sh") record $(shell_quote "$CONFIG") $(shell_quote "$STATE_REAL") $(shell_quote "$ID") $(shell_quote "$BUSY_GEN")"
+    j_stopfail=$(json_escape "$failover_record 2>/dev/null; $busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null || true")
     j_sessionend=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event session-end 2>/dev/null || true")
     cat >"$WT/.claude/settings.local.json" <<EOF
 {"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
@@ -5116,7 +5184,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider claude_account busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5140,6 +5208,8 @@ preserve_relaunch_meta() {
   # task record stays byte-identical.
   [ -z "$WORKER_ACCOUNT" ] || echo "account=$WORKER_ACCOUNT_DECLARED"
   [ -z "$WORKER_ACCOUNT_PROVIDER" ] || echo "account_provider=$WORKER_ACCOUNT_PROVIDER"
+  # The Claude account failover account, only for a task moved onto one.
+  [ -z "$CLAUDE_ACCOUNT" ] || echo "claude_account=$CLAUDE_ACCOUNT"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
@@ -5407,6 +5477,15 @@ if [ -n "$WORKER_ACCOUNT" ]; then
     LAUNCH="PI_CODING_AGENT_DIR=$(shell_quote "$WORKER_ACCOUNT_ROOT") $LAUNCH"
     ;;
   esac
+elif [ -n "$CLAUDE_ACCOUNT" ]; then
+  # A task moved onto a Claude account failover account launches exactly as a
+  # pinned one does: that root, or the ordinary account, with the outranking
+  # environment credentials shed.
+  if [ -n "$CLAUDE_ACCOUNT_ROOT" ]; then
+    LAUNCH="$(fm_worker_account_claude_shed) CLAUDE_CONFIG_DIR=$(shell_quote "$CLAUDE_ACCOUNT_ROOT") $LAUNCH"
+  else
+    LAUNCH="$(fm_worker_account_claude_shed) -u CLAUDE_CONFIG_DIR $LAUNCH"
+  fi
 elif [ "$HARNESS" = claude ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
   LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$CLAUDE_CONFIG_DIR") $LAUNCH"
 fi
@@ -5777,6 +5856,7 @@ SPAWN_DELIVERY=
 SPAWN_ACCOUNT=
 [ -z "$WORKER_ACCOUNT" ] || SPAWN_ACCOUNT=" account=$WORKER_ACCOUNT_DECLARED"
 [ -z "$WORKER_ACCOUNT_PROVIDER" ] || SPAWN_ACCOUNT="$SPAWN_ACCOUNT account_provider=$WORKER_ACCOUNT_PROVIDER"
+[ -z "$CLAUDE_ACCOUNT" ] || SPAWN_ACCOUNT="$SPAWN_ACCOUNT claude_account=$CLAUDE_ACCOUNT"
 # Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
 [ ! -e "$CONFIG/fleet-ledger" ] || [ "$RELAUNCH" -eq 1 ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" dispatched "$ID" "$KIND" "${PROJ_ABS##*/}" "$HARNESS" "$MODEL" || true
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT$SPAWN_ACCOUNT"

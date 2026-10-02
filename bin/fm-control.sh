@@ -6,6 +6,7 @@
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
+#                                         [--claude-account <name>]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -79,6 +80,12 @@
 #              For ships and scouts, the same pre-stop refusal applies to this
 #              home's worker tool exclusions (bin/fm-exclude-tools-lib.sh): a
 #              malformed list, or a replacement runtime that cannot hide the tools.
+#              --claude-account <name> moves a ship or scout Claude worker onto
+#              that named account of config/claude-failover (docs/configuration.md
+#              "Claude account failover"), and `default` returns it to the
+#              home's ordinary launch account; a task already moved keeps its
+#              recorded account. Either way the account is resolved and sign-in
+#              checked here, before the old agent stops.
 #              --note is required for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
@@ -253,6 +260,8 @@ MODEL_SET=0
 EFFORT_SET=0
 NOTE=
 NOTE_SET=0
+NEW_CLAUDE_ACCOUNT=
+CLAUDE_ACCOUNT_SET=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -264,6 +273,7 @@ for control_arg in "$@"; do
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
+      claude_account) NEW_CLAUDE_ACCOUNT=$control_arg; CLAUDE_ACCOUNT_SET=1 ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
         NOTE=$(cat "$control_arg")
@@ -282,6 +292,8 @@ for control_arg in "$@"; do
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
+    --claude-account) control_want_value=claude_account ;;
+    --claude-account=*) NEW_CLAUDE_ACCOUNT=${control_arg#--claude-account=}; CLAUDE_ACCOUNT_SET=1 ;;
     --note-file) control_want_value=note_file ;;
     --note-file=*)
       [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
@@ -293,13 +305,16 @@ for control_arg in "$@"; do
 done
 if [ -n "$control_want_value" ]; then
   [ "$control_want_value" = note_file ] && die "--note-file requires a value"
+  [ "$control_want_value" = claude_account ] && die "--claude-account requires a value"
   die "--$control_want_value requires a value"
 fi
 
 if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
+    && [ "$CLAUDE_ACCOUNT_SET" = 0 ] \
+    || die "--harness, --model, --effort, --claude-account, and --note apply to 'relaunch' only"
 fi
+[ "$CLAUDE_ACCOUNT_SET" = 0 ] || [ -n "$NEW_CLAUDE_ACCOUNT" ] || die "--claude-account requires a non-empty value"
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
@@ -789,6 +804,8 @@ PRIOR_EFFORT=
 TARGET_HARNESS=$HARNESS
 TARGET_MODEL=
 TARGET_EFFORT=
+PRIOR_CLAUDE_ACCOUNT=
+TARGET_CLAUDE_ACCOUNT=
 
 journal_write() {  # <phase> [extra-line]...
   local phase=$1
@@ -808,6 +825,8 @@ journal_write() {  # <phase> [extra-line]...
     echo "to_harness=$TARGET_HARNESS"
     echo "to_model=$TARGET_MODEL"
     echo "to_effort=$TARGET_EFFORT"
+    echo "from_claude_account=$PRIOR_CLAUDE_ACCOUNT"
+    echo "to_claude_account=$TARGET_CLAUDE_ACCOUNT"
     local line
     for line in "$@"; do
       echo "$line"
@@ -971,6 +990,28 @@ resolve_relaunch_profile() {
   # agent stops. Secondmate agents are not covered.
   if [ "$KIND" != secondmate ]; then
     fm_exclude_tools_check "$TARGET_HARNESS" 0 "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" >/dev/null || return 1
+  fi
+  # The same pre-stop rule for a Claude account failover account: the one this
+  # relaunch names, or the one a task already moved keeps (fm-spawn --relaunch
+  # owns the carry-forward this mirrors).
+  PRIOR_CLAUDE_ACCOUNT=$(fm_meta_get "$META" claude_account)
+  if [ "$CLAUDE_ACCOUNT_SET" = 1 ]; then
+    TARGET_CLAUDE_ACCOUNT=$NEW_CLAUDE_ACCOUNT
+  elif [ "$TARGET_HARNESS" = claude ]; then
+    TARGET_CLAUDE_ACCOUNT=$PRIOR_CLAUDE_ACCOUNT
+  else
+    TARGET_CLAUDE_ACCOUNT=
+  fi
+  [ "$TARGET_CLAUDE_ACCOUNT" != default ] || TARGET_CLAUDE_ACCOUNT=
+  if [ -n "$TARGET_CLAUDE_ACCOUNT" ]; then
+    [ "$TARGET_HARNESS" = claude ] \
+      || die "Claude account '$TARGET_CLAUDE_ACCOUNT' applies only to a claude replacement, not '$TARGET_HARNESS'"
+    case "$KIND" in
+      ship|scout) ;;
+      *) die "Claude account failover moves ship and scout workers only; task $ID is a $KIND" ;;
+    esac
+    fm_worker_account_failover_select "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
+      "$TARGET_CLAUDE_ACCOUNT" claude >/dev/null || return 1
   fi
 }
 
@@ -1148,6 +1189,7 @@ do_relaunch() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
+  [ "$CLAUDE_ACCOUNT_SET" = 0 ] || spawn_args+=(--claude-account "$NEW_CLAUDE_ACCOUNT")
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
@@ -1181,7 +1223,7 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
-  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
+  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT${TARGET_CLAUDE_ACCOUNT:+ claude_account=$TARGET_CLAUDE_ACCOUNT} backend=$BACKEND endpoint=$T worktree=$WT"
 }
 
 # --- verbs ------------------------------------------------------------------

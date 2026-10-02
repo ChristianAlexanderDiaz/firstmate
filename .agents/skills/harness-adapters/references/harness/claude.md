@@ -14,6 +14,13 @@ Busy hooks verified 2026-07-28 on Claude Code 2.1.220.
 | Effort | `--effort <low\|medium\|high\|xhigh\|max>`, verified on 2.1.196. |
 | Permissions | `--dangerously-skip-permissions` by default, or `--permission-mode auto` when `config/claude-permission-mode` is `auto`; the `auto` shape verified on 2.1.269. See [`Claude permission mode`](../../../../../docs/configuration.md#claude-permission-mode-configclaude-permission-mode) for the launch grant and configuration. |
 
+## Usage-limit prompt
+
+Verified 2026-10-01 on Claude Code 2.1.287 against an account at its weekly limit.
+The turn ends through `StopFailure` with `"error": "rate_limit"` and `last_assistant_message` carrying Claude's limit text, such as "You've hit your weekly limit · resets Oct 3 at 4pm (America/New_York)", and Claude then opens a "What do you want to do?" menu: "Stop and wait for limit to reset", "Wait here, then continue automatically at ...", "Switch to usage credits", and "Upgrade your plan", ending "Enter to confirm · Esc to cancel".
+Escape closes the menu to an empty idle composer without choosing an option, the same stopped outcome as its first option, so it is the only key Firstmate sends there; Enter or a number could select a paid option if the order ever changed.
+`../../../bin/fm-account-failover.sh` owns the opt-in move to another account (`../../../docs/configuration.md` "Claude account failover").
+
 ## Workspace trust
 
 Claude gates a folder it has never seen behind an interactive workspace-trust dialog (titled "Quick safety check: Is this a project you created or one you trust?"), so every fresh task worktree would hit it, and so would every secondmate home no operator has opened by hand.
