@@ -827,6 +827,20 @@ fm_pr_poll_snapshot_matches() {
   [ "$reg_identity" = "$FM_PR_POLL_SNAPSHOT_REG_IDENTITY" ]
 }
 
+# 0 when <id> still has an armed PR-merge poll: its registration exists and no
+# retirement receipt has been published for it yet. A lightweight existence
+# read for a non-authoritative caller deciding whether to defer OTHER behavior
+# around an outstanding poll (bin/fm-watch.sh's ready-PR declared-wait
+# absorption); it is not the strict identity proof fm_pr_poll_artifacts_valid
+# performs before trusting a poll's own check execution, and grants no
+# authority of its own.
+fm_pr_poll_armed() {  # <state> <id>
+  local state=$1 id=$2
+  fm_pr_task_id_valid "$id" || return 1
+  [ -f "$state/$id.pr-poll-registration" ] || return 1
+  [ ! -e "$state/$id.pr-poll-retirement" ] && [ ! -L "$state/$id.pr-poll-retirement" ]
+}
+
 fm_pr_poll_retirement_parse() {
   local file=$1 version id provider url host path number data_hash template_hash
   local data_identity check_identity reg_hash reg_identity result _extra

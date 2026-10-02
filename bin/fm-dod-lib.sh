@@ -517,6 +517,21 @@ fm_dod_pr_url_from_done_note() {  # <note>
   printf '%s\n' "$url"
 }
 
+# 0 when <status-line> is a ready-PR done report: a `done` verb whose note
+# parses as the `PR <url>...` shape fm_dod_pr_url_from_done_note reads - the
+# no-mistakes CI-ready report (`PR <url> checks green`), the direct-PR report
+# (`PR <url>`), or a Gerrit published-for-review report. A local-only `ready in
+# branch ...` report and a no-mistakes pre-validation `done: {summary}`
+# handoff both fail this test, because neither note starts with `PR <url>`.
+# bin/fm-watch.sh uses this to recognize a declared ready-PR wait.
+fm_dod_done_reports_ready_pr() {  # <status-line>
+  local line=$1 note
+  [ -n "$line" ] || return 1
+  [ "$(status_line_verb "$line")" = "done" ] || return 1
+  note=$(status_line_note "$line")
+  fm_dod_pr_url_from_done_note "$note" >/dev/null
+}
+
 # The last recorded <key>= value in <meta>, or empty.
 fm_dod_meta_value() {  # <meta> <key>
   grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2-

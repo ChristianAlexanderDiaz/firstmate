@@ -187,6 +187,11 @@ WATCH_HOME_EXISTED=0
 . "$SCRIPT_DIR/fm-push-transition-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# Single owner of the `done: PR <url>...` ready-report shape, which the
+# declared-wait classification below (ready_pr_call_stale_bound) reads through
+# fm_dod_done_reports_ready_pr rather than re-deriving the note grammar here.
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 # Only for the arm-time check on FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS below;
 # the per-cycle reconcile itself runs as a separate process.
 # shellcheck source=bin/fm-procevent-lib.sh
@@ -1882,6 +1887,33 @@ captain_call_stale_bound() {  # <window-key> <task>
   stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
 }
 
+# Bound a due stale alarm for a task whose latest status line reports a ready
+# PR - no-mistakes `done: PR <url> checks green` or direct-PR `done: PR
+# <url>` (fm_dod_done_reports_ready_pr) - while its PR-merge poll stays armed
+# (fm_pr_poll_armed). Both conditions are re-read fresh on every call rather
+# than cached, so either one ending - a later status append (including the
+# worker's own next line) or the poll's own retirement once it reports merged,
+# closed, or otherwise resolved - starts alarming again on the very next poll.
+# A ready-PR report with no armed poll (one never registered, or already
+# retired before this sighting) is NOT a declared wait and keeps today's
+# unbounded stale path, so a genuinely wedged worker with no poll watching its
+# PR is never silenced by this case.
+# Deliberately the same declaration and throttle shape as
+# captain_call_stale_bound just above, keyed by stale_wait_declaration's plain
+# status-log signature rather than captain_call_declaration's backlog-hold
+# identity: a ready PR awaiting merge is not a captain-held backlog transfer,
+# so it carries no hold identity to bind to.
+ready_pr_call_stale_bound() {  # <window-key> <task>
+  local key=$1 task=$2 last
+  STALE_WAIT_DECLARATION=
+  last=$(last_status_line "$STATE/$task.status")
+  fm_dod_done_reports_ready_pr "$last" || return 1
+  fm_pr_poll_armed "$STATE" "$task" || return 1
+  STALE_WAIT_DECLARATION=$(stale_wait_declaration "$task")
+  afk_record_present && return 0
+  stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
+}
+
 # Surface a stale pane no classifier could resolve, so firstmate inspects it: it
 # may have finished through an interactive menu that wrote no status, be waiting on
 # a decision, or be wedged. pause_state_class deliberately answers `none` for a
@@ -3090,6 +3122,15 @@ EOF
               rm -f "$ssf"
               clear_write_tracking "$key"
               triage_log "absorbed stale (open captain call already surfaced for this status): $w"
+            elif ready_pr_call_stale_bound "$key" "$task"; then
+              # The line reports a ready PR with its merge poll still armed:
+              # further NEW pane hashes with the same status-log state have
+              # nothing to add while the merge is pending. Same bound as the
+              # open-captain-call case just above, never the backlog's.
+              printf '%s' "$h" > "$sf"
+              rm -f "$ssf"
+              clear_write_tracking "$key"
+              triage_log "absorbed stale (ready PR awaiting merge, poll still armed): $w"
             else
               fm_wake_append stale "$w" "stale: $w" || exit 1
               stale_wait_record "$key"

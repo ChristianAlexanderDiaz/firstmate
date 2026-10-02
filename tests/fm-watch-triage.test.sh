@@ -4118,6 +4118,148 @@ test_stale_churn_without_a_captain_call_still_alarms() {
 }
 
 
+# --- ready PR awaiting merge, poll still armed: pane churn must not re-alarm ---
+# The regression this task exists to fix: a worker whose PR is green and only
+# waiting on the captain's merge word (no-mistakes `done: PR <url> checks
+# green`, or direct-PR `done: PR <url>`) kept raising a fresh "stale:" wake
+# every couple of minutes as its idle pane's display ticked and produced a new
+# pane hash, because no line predicate could see that the task's own
+# `*.pr-poll-registration` sidecar (bin/fm-pr-lib.sh) was still watching for
+# the merge. ready_pr_call_stale_bound (bin/fm-watch.sh) reads that sidecar
+# directly, with no backlog hold and no tasks-axi involved, so this is the
+# same bound as test_open_captain_call_bounds_stale_churn above but keyed on
+# the armed poll instead of a captain-held backlog item.
+ready_pr_fixture_key() {  # <name>
+  printf 'test:fm-%s' "$1" | tr ':/.' '___'
+}
+
+make_ready_pr_home() {  # <name> <status-line> <armed|unarmed>
+  local name=$1 line=$2 armed=$3 dir state window
+  dir=$(make_case "$name"); state="$dir/state"
+  window="test:fm-$name"
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" \
+    > "$state/$name.meta"
+  printf '%s\n' "$line" > "$state/$name.status"
+  printf '%s' "$(seen_sig "$state/$name.status")" > "$state/.seen-${name}_status"
+  if [ "$armed" = armed ]; then
+    : > "$state/$name.pr-poll-registration"
+  fi
+  printf '%s\n' "$dir"
+}
+
+ready_pr_watch_launch() {  # <dir> <name> <out> <capture>
+  local dir=$1 name=$2 out=$3 capture=$4
+  PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="test:fm-$name" \
+    FM_FAKE_TMUX_CAPTURE="$capture" FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    FM_FAKE_CREW_STATE='state: stopped · source: pane · bare shell' \
+    FM_WATCH_HANDLING_SUCCESSOR=1 \
+    FM_STATE_OVERRIDE="$dir/state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_PAUSE_RESURFACE_SECS="${FM_READY_PR_PAUSE_RESURFACE_SECS:-999}" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >> "$out" 2>&1 &
+  READY_PR_WATCH_PID=$!
+}
+READY_PR_WATCH_PID=
+
+ready_pr_watch_surface() {  # <dir> <name> <out> <capture> <pane-text>
+  local dir=$1 name=$2 out=$3 capture=$4 text=$5
+  printf '%s\n' "$text" > "$capture"
+  ready_pr_watch_launch "$dir" "$name" "$out" "$capture"
+  wait_for_exit "$READY_PR_WATCH_PID" 100 || { reap "$READY_PR_WATCH_PID"; return 1; }
+  return 0
+}
+
+ready_pr_watch_churn() {  # <dir> <name> <out> <capture> <label> <count>
+  local dir=$1 name=$2 out=$3 capture=$4 label=$5 count=$6 i=1 c
+  local state="$dir/state"
+  printf '%s 0\n' "$label" > "$capture"
+  ready_pr_watch_launch "$dir" "$name" "$out" "$capture"
+  while [ "$i" -le "$count" ]; do
+    printf '%s %s\n' "$label" "$i" > "$capture"
+    c=0
+    while [ "$c" -lt 3 ]; do
+      wait_poll_cycle "$state" "$READY_PR_WATCH_PID" 300 \
+        || { reap "$READY_PR_WATCH_PID"; return 1; }
+      c=$((c + 1))
+    done
+    i=$((i + 1))
+  done
+  reap "$READY_PR_WATCH_PID"
+  return 0
+}
+
+ready_pr_stale_wakes() {  # <state> <name>
+  awk -F '\t' -v w="test:fm-$2" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+    "$1/.wake-queue" 2>/dev/null || echo 0
+}
+
+test_ready_pr_poll_bounds_stale_churn() {
+  local spec name line dir state out capture throttle wakes
+  for spec in \
+    'ready-pr-nm|done: PR https://example.invalid/pull/1 checks green' \
+    'ready-pr-direct|done: PR https://example.invalid/pull/1'
+  do
+    name=${spec%%|*}; line=${spec#*|}
+    dir=$(make_ready_pr_home "$name" "$line" armed) \
+      || fail "[$name] could not build an armed ready-PR-poll fixture"
+    state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane.txt"
+    throttle="$state/.paused-resurfaced-$(ready_pr_fixture_key "$name")"
+
+    # First sight still alarms: the poll bounds repetition, never the first look.
+    ready_pr_watch_surface "$dir" "$name" "$out" "$capture" 'idle, elapsed 1s' \
+      || fail "[$name] first sight of a ready PR did not surface"
+    wakes=$(ready_pr_stale_wakes "$state" "$name")
+    [ "$wakes" -eq 1 ] || fail "[$name] first sight produced $wakes wakes instead of one"
+    ack_stopped_cycle "$state" || fail "[$name] could not acknowledge the first surface"
+
+    # The pane churns (a ticking display) while the poll stays armed. None of
+    # these may re-alarm: this is the exact bug this task exists to fix.
+    ready_pr_watch_churn "$dir" "$name" "$out" "$capture" 'idle, tick' 2 \
+      || fail "[$name] watcher exited during pane churn instead of supervising through it"
+    wakes=$(ready_pr_stale_wakes "$state" "$name")
+    [ "$wakes" -eq 0 ] \
+      || fail "[$name] pane churn re-alarmed a ready PR $wakes time(s) inside the re-surface window"
+
+    # After the window ends, the next new pane hash re-surfaces exactly once,
+    # so a forgotten merge on a churning pane cannot hide behind the bound.
+    [ -e "$throttle" ] || fail "[$name] the absorbed churn recorded no re-surface cadence to elapse"
+    set_mtime "$(( $(date +%s) - 5000 ))" "$throttle"
+    ready_pr_watch_surface "$dir" "$name" "$out" "$capture" 'idle, elapsed 9s' \
+      || fail "[$name] a ready PR did not re-surface once its re-surface window elapsed"
+    wakes=$(ready_pr_stale_wakes "$state" "$name")
+    [ "$wakes" -eq 1 ] \
+      || fail "[$name] elapsed re-surface window produced $wakes wakes instead of one"
+  done
+  pass "a ready PR with an armed merge poll surfaces once, absorbs pane churn, then re-surfaces when the window elapses"
+}
+
+# The other half of the same bound: the identical fixtures with NO armed poll
+# (never registered, or already retired) must keep alarming on every new
+# hash, exactly as before this task - a ready-PR report alone is never enough.
+test_ready_pr_without_poll_still_alarms() {
+  local spec name line dir state out capture round wakes
+  for spec in \
+    'unarmed-ready-pr-nm|done: PR https://example.invalid/pull/1 checks green' \
+    'unarmed-ready-pr-direct|done: PR https://example.invalid/pull/1'
+  do
+    name=${spec%%|*}; line=${spec#*|}
+    dir=$(make_ready_pr_home "$name" "$line" unarmed) \
+      || fail "[$name] could not build an unarmed ready-PR fixture"
+    state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane.txt"
+    round=1
+    while [ "$round" -le 2 ]; do
+      ready_pr_watch_surface "$dir" "$name" "$out" "$capture" "idle, elapsed ${round}s" \
+        || fail "[$name] an unarmed ready PR stopped alarming on round $round"
+      wakes=$(ready_pr_stale_wakes "$state" "$name")
+      [ "$wakes" -eq 1 ] \
+        || fail "[$name] round $round produced $wakes wakes instead of one"
+      ack_stopped_cycle "$state" || fail "[$name] could not acknowledge round $round"
+      round=$((round + 1))
+    done
+  done
+  pass "a ready PR with no armed merge poll keeps alarming on every new hash, same as a genuinely wedged worker"
+}
+
+
 # The cadence marker may never outlive the wake it claims to record. Recording it
 # before publishing the durable wake turned a delayed alarm into a lost one: the
 # append fails, the watcher exits with nothing queued, and the next sighting
@@ -6712,6 +6854,8 @@ test_wedge_threshold_parked_gate_is_off_until_armed
 test_wedge_defer_refuses_a_half_filled_wait_record
 test_open_captain_call_bounds_stale_churn
 test_stale_churn_without_a_captain_call_still_alarms
+test_ready_pr_poll_bounds_stale_churn
+test_ready_pr_without_poll_still_alarms
 test_failed_wake_append_does_not_arm_the_captain_hold_throttle
 test_reheld_captain_call_starts_its_own_resurface_window
 test_secondmate_paused_resurfaces_in_normal_mode
