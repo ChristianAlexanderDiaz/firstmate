@@ -1,0 +1,18 @@
+# pane shell (inherits lab tmux server env) markers:
+AI_AGENT=claude-code_2-1-288_agent
+CLAUDECODE=1
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000
+CLAUDE_CODE_CHILD_SESSION=1
+CLAUDE_CODE_ENTRYPOINT=sdk-cli
+CLAUDE_CODE_EXECPATH=/Users/christianalexanderdiaz/.local/share/claude/versions/2.1.288
+CLAUDE_CODE_MESSAGING_SOCKET=/tmp/cc-socks/85983.sock
+CLAUDE_CODE_SESSION_ATTENDED=0
+CLAUDE_CODE_SESSION_ID=4ba03222-a471-4853-b7fc-726c6600c891
+CLAUDE_CONFIG_DIR=/Users/christianalexanderdiaz/.claude-alt
+CLAUDE_EFFORT=high
+CLAUDE_PID=85983
+# claude launched by fm-spawn's launch string, markers:
+CLAUDE_CONFIG_DIR=/Users/christianalexanderdiaz/.claude-alt
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000
+CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false
+CLAUDE_CODE_SEND_FEEDBACK=0
