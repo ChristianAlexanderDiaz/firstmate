@@ -986,6 +986,9 @@ Firstmate's monitoring then, within one cycle:
 3. Stops the task's own active no-mistakes run through `no-mistakes axi abort --run <id>` and confirms it ended, and moves nothing while a run it cannot read or stop may still be active.
 4. Relaunches the worker on the chosen account through `bin/fm-control.sh <id> relaunch --claude-account <name>` with a handoff note, so the replacement resumes from the task's instructions and durable records.
 
+The move always starts a fresh agent and never resumes the old conversation.
+Prompt caching does not carry across accounts, so resuming would resend the whole transcript uncached, while a fresh agent reads only the task's instructions, its local copy with every uncommitted change, and a short note.
+
 The task record then carries `claude_account=<name>`, every later relaunch keeps that account, and `--claude-account default` returns the task to the home's ordinary launch account.
 When no account qualifies, the worker stays stopped and its status gets one `blocked:` line naming each account's remaining quota and reset time.
 A task moved within the last 30 minutes is not moved again (`FM_ACCOUNT_FAILOVER_REPEAT_SECS`); it stays stopped with the same kind of line.

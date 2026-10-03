@@ -45,7 +45,10 @@
 #   6. Relaunches the worker through bin/fm-control.sh relaunch
 #      --claude-account <name> with a handoff note, so the replacement resumes
 #      from the task's instructions and durable records and the task record
-#      carries claude_account=<name>.
+#      carries claude_account=<name>. It never resumes the old conversation:
+#      prompt caching does not carry across accounts, so resuming would resend
+#      the whole transcript uncached on the new account, while a fresh agent
+#      reads only the instructions, the local copy, and a short note.
 #   7. Refuses a second move of the same task within
 #      FM_ACCOUNT_FAILOVER_REPEAT_SECS (1800) of the last one, raising the same
 #      blocked line instead, so a misread account can never ping-pong a worker.
