@@ -1,0 +1,11 @@
+ ▐▛███▛█   Claude Code v2.1.288
+▝▜██████▀  Opus 5.5 with high effort · Claude Team
+ ▝▝   ▝▝   ~/.no-mistakes/worktrees/8ef411716190/01M3ZXRP5M5ZQ3BVPH68ZSF86E
+❯ Reply with only the word ok-scrubbed.
+⏺ ok-scrubbed
+✻ Baked for 2s · done 11:55 PM
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  team  Opus 5.5 high  01M3ZXRP5M5ZQ3BVPH68ZSF86E HEAD  6%  $0  5h 18% ↻4h44m  7d 70%
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

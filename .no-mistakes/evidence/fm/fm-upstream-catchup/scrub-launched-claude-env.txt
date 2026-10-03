@@ -1,0 +1,16 @@
+Live: env of real claude started by fm-spawn's generated launch prefix, in a pane that inherited this Claude Code session's markers
+pane shell env markers:
+AI_AGENT=<set>
+CLAUDECODE=<set>
+CLAUDE_CODE_CHILD_SESSION=<set>
+CLAUDE_CODE_ENTRYPOINT=<set>
+CLAUDE_CODE_EXECPATH=<set>
+CLAUDE_CODE_MESSAGING_SOCKET=<set>
+CLAUDE_CODE_SESSION_ATTENDED=<set>
+CLAUDE_CODE_SESSION_ID=<set>
+CLAUDE_EFFORT=<set>
+CLAUDE_PID=<set>
+launched claude (pid 85421) env markers:
+CLAUDE_CONFIG_DIR=/Users/christianalexanderdiaz/.claude-alt
+CLAUDE_CODE_SEND_FEEDBACK=0
+(end)
