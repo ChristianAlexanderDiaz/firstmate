@@ -463,6 +463,50 @@ That warning rendered in the same shape as the trust dialog, with the selection 
 That gate is not a production blocker, because a normal environment has already accepted it and the treatment arm above ran against the real config and saw neither dialog.
 This change does not address that warning and does not claim to.
 
+### Session-identity marker scrub
+
+Verified 2026-09-18 on Claude Code 2.1.276 (`claude --version`).
+A claude-harness spawn's pane, tmux server, or herdr server can carry `CLAUDECODE`/`CLAUDE_CODE_*`/`AI_AGENT` inherited from whichever ancestor Claude Code process started it (a primary's own tool-shell environment, or a herdr server itself launched from inside one), and the freshly launched `claude` process then reads that ancestor's own session identity instead of starting a clean session.
+
+`grep -a -o` against the installed Bun-compiled binary isolates the exact gate:
+
+```sh
+grep -a -o "Transcript saving[^\"'\`]\{0,150\}" ~/.local/share/claude/versions/2.1.276
+```
+
+```text
+Transcript saving is off \u2014 CLAUDE_CODE_SKIP_PROMPT_HISTORY is set
+Transcript saving is off \u2014 inherited CLAUDE_CODE_CHILD_SESSION marker
+```
+
+The adjoining function decides the second reason:
+
+```sh
+grep -a -o 'function iBe(){[^}]*}' ~/.local/share/claude/versions/2.1.276
+```
+
+```text
+function iBe(){if(a.CLAUDE_CODE_FORCE_SESSION_PERSISTENCE)return!1;if(!(a.CLAUDE_CODE_CHILD_SESSION&&Yd()&&!sa()))return!1;return!n().isChildSessionMarkerAmbientInTmux()}
+```
+
+`CLAUDE_CODE_CHILD_SESSION` truthy is the direct trigger; with persistence disabled the session's transcript is never written to `~/.claude/projects/<project>/<session-id>.jsonl`, so it cannot be resumed natively if it dies.
+The same binary's subprocess-environment key list, which `spawnEnvKeys()` merges into every tool-spawn environment, names the session-identity markers the fix clears alongside ordinary process names such as `SHELL`, `TMUX`, and `TMPDIR` that it leaves alone:
+
+```sh
+grep -a -o 'var FPo=\[[^.]*' ~/.local/share/claude/versions/2.1.276
+```
+
+```text
+var FPo=["SHELL","GIT_EDITOR","CLAUDECODE","AI_AGENT","CLAUDE_CODE_SESSION_ID","CLAUDE_CODE_CHILD_SESSION","CLAUDE_CODE_SESSION_ATTENDED","CLAUDE_PID","TRACEPARENT","CLAUDE_CODE_EXECPATH","TMUX","TMPDIR","CLAUDE_CODE_TMPDIR","TMPPREFIX","BUN_OPTIONS","TEMP","TMP","GIT_CONFIG_PARAMETERS","CLAUDE_EFFORT","CLAUDE_CODE_INVOKED_SKILLS",
+```
+
+Reproduced live: a crewmate task spawned by `bin/fm-spawn.sh` from a primary running Claude Code 2.1.276 carried `CLAUDECODE=1`, `CLAUDE_CODE_CHILD_SESSION=1`, `CLAUDE_CODE_SESSION_ID=<the primary's own session id>`, `CLAUDE_CODE_SESSION_ATTENDED=1`, and `CLAUDE_CODE_ENTRYPOINT=cli` in its own tool-shell environment (`env` inside the crewmate's pane), and no transcript file existed anywhere under `~/.claude/projects/` for that crewmate's own session id, confirming the footer's claim against a live session rather than the disassembly alone.
+A herdr server started from inside a Claude Code 2.1.273 session additionally carried `CLAUDE_CODE_MESSAGING_SOCKET`/`CLAUDE_CODE_MESSAGING_TOKEN` (path- and value-scoped to that ancestor's own pid), which every pane it hosts inherits before `bin/fm-spawn.sh` runs.
+
+Fix: the claude branch of the post-substitution `env -u` prefix stage in `bin/fm-spawn.sh` (the `case "$HARNESS"` block that runs after every launch placeholder is filled) clears `CURSOR_AGENT`, `CURSOR_INVOKED_AS`, `GEMINI_CLI`, `CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `AI_AGENT`, and `CLAUDE_CODE_INVOKED_SKILLS` before every claude-harness exec, for every kind (crewmate, scout, secondmate) and every runtime backend, since the same generated launch string executes wherever the backend delivers it to the pane.
+`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (captain configuration) and this same launch's own `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION`/`CLAUDE_CODE_SEND_FEEDBACK` are deliberately left untouched.
+`tests/fm-spawn-dispatch-profile.test.sh`'s `test_claude_launch_clears_inherited_parent_session_markers` executes the generated launch in a shell seeded with every marker above and asserts the launched `claude` inherits none of them while still receiving `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`.
+
 ### Secondmate homes
 
 Verified 2026-09-11 on Claude Code 2.1.269.

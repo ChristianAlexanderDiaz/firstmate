@@ -159,6 +159,44 @@ The Claude Code mod reloads it on every `session.start`, including same-process 
 It also loads the preference lazily before any row that can draw ahead of that event, including during `claude --continue` restoration.
 This preference is local to each Firstmate home and is not part of secondmate inherited configuration.
 
+## Calm custom sprite (config/calm-sprite.json)
+
+The Claude Code Calm mod optionally draws a captain-supplied two-row sprite in place of its working-row sailboat, read from gitignored `config/calm-sprite.json` in the same config directory as `config/calm`, resolved the same way.
+Firstmate ships no such file and no third-party art: the repository contains only the stock boat, and a captain who supplies their own sprite is responsible for having the right to use what they draw.
+The file is one JSON object with these fields, and any other field is refused:
+
+- `version`: the number `1`.
+- `width`: an integer from 1 to 64, the sprite's width in terminal columns.
+- `palette`: optional; an object mapping single non-space characters to `"#rrggbb"` colors.
+- `right`: 1 to 8 frames drawn while the sprite travels right.
+
+Left-facing frames are always produced by mirroring: while the sprite travels left, each `right` frame is drawn with its cells reversed and paired glyphs such as `▌`/`▐`, `◢`/`◣`, `/`/`\`, and `(`/`)` swapped, and any other glyph mirrors onto itself.
+Each frame is an object with `glyphs`, and optionally `fg` and `bg`, each an array of exactly two strings of exactly `width` characters.
+The upper `glyphs` row draws above the water and the lower row sits in the water row where the hull would.
+Every glyph must be one terminal column; control characters, combining marks, zero-width characters, and East Asian wide and emoji characters are refused.
+Each `fg` or `bg` character names a palette key for that cell's foreground or background; a space leaves the foreground in the theme's boat color and the background at the terminal default.
+A cell whose glyph is a space and whose `bg` is a space is transparent: the upper row shows blank padding there and the lower row shows the water.
+Frames step once per sprite move, so a multi-frame list plays as a walk cycle in time with travel.
+Pi reads no custom sprite and always draws its stock boat.
+
+A minimal example, a plain hand-drawn shape seven columns wide with a two-frame walk, to copy into `config/calm-sprite.json` and replace with your own art:
+
+```json
+{
+  "version": 1,
+  "width": 7,
+  "palette": { "y": "#f8d030", "r": "#e04040" },
+  "right": [
+    { "glyphs": ["  ▄▄▄  ", "▐████▀▶"], "fg": ["  yyy  ", "yyyyyy "] },
+    { "glyphs": ["  ▄▄▄  ", "▗████▀▶"], "fg": ["  yyy  ", "yyyyyy "], "bg": ["       ", "     r "] }
+  ]
+}
+```
+
+The mod reads the file when a session loads and again whenever `/calm` turns Calm on, so an edited file shows after turning Calm off and on.
+An absent or unreadable file draws the stock boat silently, and a file that does not parse draws the stock boat and names the first problem in a transient `Calm sprite ignored: <problem>` notice under the prompt, which stands in for "Calm on" when `/calm` turns Calm on.
+This file is local to each Firstmate home and is not part of secondmate inherited configuration.
+
 ## Pi supervision branch
 
 On a Pi primary, an in-process supervision branch handles eligible task-local wake rows and selected heartbeat reviews.

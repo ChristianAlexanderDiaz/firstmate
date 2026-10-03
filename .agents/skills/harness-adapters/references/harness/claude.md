@@ -55,6 +55,13 @@ As defense in depth, `fm_composer_strip_ghost` in `../../../bin/fm-composer-lib.
 `../../../docs/herdr-backend.md` under "Composer and injection safety" owns dark-TRUECOLOR tradeoffs and `../../../docs/verification/runtime-backends.md` owns captures.
 Styled capture stays internal to the boolean detector; `fm-peek` and model-facing captures remain plain, without escapes.
 
+## Session-identity markers
+
+A claude spawn's own pane, tmux server, or herdr server can carry `CLAUDECODE`/`CLAUDE_CODE_*`/`AI_AGENT` set by whichever ancestor Claude Code process happened to start it (a primary's tool shell, or a herdr server itself started inside one), rather than by the captain.
+On 2.1.276 an inherited `CLAUDE_CODE_CHILD_SESSION` turns transcript saving off, shown in the worker's footer as `Transcript saving is off - inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 to keep future transcripts`, so that worker cannot be resumed natively if it dies.
+Every claude-harness spawn (crewmate, scout, and secondmate, on every runtime backend) therefore clears the ancestor's session-identity markers before exec, while leaving captain configuration such as `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` untouched.
+The claude branch of the post-substitution `env -u` prefix stage in `../../../../../bin/fm-spawn.sh` owns the exact scrub list and the reason for each exclusion; `../../../../../docs/verification/runtime-backends.md` under "Session-identity marker scrub" owns the dated binary and live evidence.
+
 ## Feedback drafts
 
 The spawn disables Claude's `/bug` and `/feedback` model-drafted feedback flow for every Claude worker and secondmate, preventing a fleet-launched agent from queuing or submitting a bug report on the captain's behalf.

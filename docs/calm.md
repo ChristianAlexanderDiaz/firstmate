@@ -221,6 +221,13 @@ The theme family follows the `theme` setting by its prefix, `dark` or `light`, a
 It uses the light set as the both-readable fallback for `auto`, custom, missing, or unreadable values.
 The Pi extension keeps its standard ANSI blue and yellow.
 
+A captain may replace the Claude Code sailboat with a two-row sprite of their own in the gitignored local file [`configuration.md`](configuration.md#calm-custom-sprite-configcalm-spritejson) owns.
+Firstmate ships no third-party art: the repository contains only the stock boat, and a captain supplying their own sprite is responsible for what they use.
+The sprite takes the hull's place on the same track and cadences, faces its travel direction by mirroring its frames while it travels left, steps through its frames once per move, and is painted in its own palette colors, with unset cells in the theme's boat color and transparent cells showing the water.
+The calm trough widens to keep a sprite wider than the hull in still water.
+Every other working-row guarantee holds unchanged: reflow on resize, where the row appears and disappears, resuming within a session, and nothing rewritten.
+A row narrower than the sprite's declared width draws the stock boat and its narrow fallbacks at that width, and an absent, unreadable, or malformed file draws the stock boat, the malformed case naming its problem in the transient notice.
+
 ### Supervision notes on Claude Code
 
 With the flag on, the mod shows the supervision notes Pi shows, whether Calm is on or off, because on Pi they are supervision UI rather than Calm UI.
