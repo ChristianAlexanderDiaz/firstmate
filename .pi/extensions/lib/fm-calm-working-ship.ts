@@ -46,8 +46,7 @@ const RESET = "\u001b[39m";
 
 export const CALM_WORKING_SHIP_WIDGET_KEY = "firstmate-calm-working-ship";
 
-// Pi draws only the stock boat: the captain's custom sprite is a Claude Code mod option.
-export type CalmWorkingShipAnimation = Omit<CalmWorkingShipSprite, "frame" | "useCustomSprite"> & {
+export type CalmWorkingShipAnimation = Omit<CalmWorkingShipSprite, "frame"> & {
   /** Render one frame that exactly fits `width`, clamping the track to it first. */
   render(width: number): string[];
 };

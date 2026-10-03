@@ -25,9 +25,7 @@
 // draws as zero height. Calm off returns every drawing to the
 // engine. A toggle invalidates every hooked drawing, so rows already on screen redraw.
 // The boat is painted in Claude Code's own theme colors: the family is read from the
-// `theme` setting at load and re-read when a `config.set` changes it. The captain's
-// optional local sprite (../lib/fm-calm-custom-sprite.ts) is read at load and again
-// whenever `/calm` turns Calm on; an absent, unreadable, or malformed file keeps the boat.
+// `theme` setting at load and re-read when a `config.set` changes it.
 //
 // Supervision notes, whether Calm is on or off, as Pi shows them regardless of Calm: a
 // slow timer follows the outcome store's display tail copy and the supervision host's
@@ -55,9 +53,7 @@ import {
   packCalmShipRasterCells,
   type CalmShipRasterPalette,
 } from "../lib/fm-calm-ship-raster.ts";
-import { parseCalmCustomSprite } from "../lib/fm-calm-custom-sprite.ts";
 import {
-  calmCustomSpritePath,
   calmPreferencePath,
   parseCalmPreference,
   classifyRestoredTranscript,
@@ -88,7 +84,6 @@ const CALM_COMMAND = "calm";
 // same as a new Pi extension lifetime.
 let calm = false;
 let preferencePath: string | undefined;
-let customSpritePath: string | undefined;
 let activation: Promise<boolean> | undefined;
 let loading: Promise<void> | undefined;
 let ticker: { cancel(): void } | undefined;
@@ -162,33 +157,16 @@ async function readTheme($: EngineInterface): Promise<unknown> {
   }
 }
 
-/**
- * Draw the captain's local sprite when its file parses, and the stock boat otherwise.
- * An absent or unreadable file is silent; a present file that does not parse returns
- * the notice the caller shows, so a typo is visible without breaking the working row.
- */
-async function loadCustomSprite($: EngineInterface): Promise<string | undefined> {
-  const text = customSpritePath === undefined ? undefined : await readText($, customSpritePath);
-  if (text === undefined) {
-    sprite.useCustomSprite(undefined);
-    return undefined;
-  }
-  const parsed = parseCalmCustomSprite(text);
-  sprite.useCustomSprite(parsed.ok ? parsed.sprite : undefined);
-  return parsed.ok ? undefined : `Calm sprite ignored: ${parsed.reason}`;
-}
-
 async function load($: EngineInterface): Promise<void> {
-  const env = {
-    FM_HOME: await $.env.get("FM_HOME"),
-    FM_ROOT_OVERRIDE: await $.env.get("FM_ROOT_OVERRIDE"),
-    FM_CONFIG_OVERRIDE: await $.env.get("FM_CONFIG_OVERRIDE"),
-  };
-  preferencePath = calmPreferencePath(env, $.plugin.root);
-  customSpritePath = calmCustomSpritePath(env, $.plugin.root);
+  preferencePath = calmPreferencePath(
+    {
+      FM_HOME: await $.env.get("FM_HOME"),
+      FM_ROOT_OVERRIDE: await $.env.get("FM_ROOT_OVERRIDE"),
+      FM_CONFIG_OVERRIDE: await $.env.get("FM_CONFIG_OVERRIDE"),
+    },
+    $.plugin.root,
+  );
   calm = parseCalmPreference(await readText($, preferencePath));
-  const spriteNotice = await loadCustomSprite($);
-  if (spriteNotice !== undefined && calm) $.ui.toast(spriteNotice);
   palette = CALM_SHIP_RASTER_PALETTES[calmShipPaletteFamily(await readTheme($))];
   try {
     const restored = classifyRestoredTranscript(await $.session.messages());
@@ -214,14 +192,12 @@ async function resetSession($: EngineInterface): Promise<void> {
   if (loading !== undefined) await loading.catch(() => undefined);
   calm = false;
   preferencePath = undefined;
-  customSpritePath = undefined;
   loading = undefined;
   workingNotes.clear();
   finalReplies.clear();
   doorbellVerdicts.clear();
   sites.clear();
   sprite.reset();
-  sprite.useCustomSprite(undefined);
   palette = CALM_SHIP_RASTER_PALETTES.light;
   await ensureLoaded($);
 }
@@ -418,12 +394,10 @@ export const register: Register = (on) => {
       $.ui.toast(`Calm unchanged: could not save ${preferencePath ?? "the preference"} (${reason})`);
       return {};
     }
-    // Turning Calm on rereads the local sprite, so an edited file shows without a restart.
-    const spriteNotice = active ? await loadCustomSprite($) : undefined;
     calm = active;
     if (!calm) sites.clear();
     invalidateDrawings($);
-    $.ui.toast(active ? (spriteNotice ?? "Calm on") : "Calm off");
+    $.ui.toast(active ? "Calm on" : "Calm off");
     // No `text`: the toggle leaves no output row in the transcript, as on Pi.
     return {};
   });

@@ -8,8 +8,6 @@
 #     is byte-for-byte the shared frame painted with standard ANSI codes, so extracting
 #     the core changed nothing Pi draws;
 #   - the Raster packing of that frame and its base64 encoder;
-#   - the captain's optional local sprite parser, its mirrored facing, and the shared
-#     sprite's freeze and resume with a custom sprite drawn;
 #   - the pure presentation policy: home resolution, preference values, working notes;
 #   - the pure supervision-note lines over a tail copy bin/fm-branch-outcome.sh writes;
 #   - the operational-input classifier's parity with bin/fm-operational-input.sh over
@@ -523,64 +521,6 @@ JS
   pass "the mod's operational-input classifier agrees with bin/fm-operational-input.sh on all $count corpus cases: every current kind the owner encodes, every legacy shape, and every near miss"
 }
 
-test_custom_sprite() {
-  local out
-  cat >"$TMP_ROOT/custom.mjs" <<JS
-import { pathToFileURL } from "node:url";
-const core = await import(pathToFileURL(${MOD@Q} + "/lib/fm-calm-working-ship-sprite.ts").href);
-const custom = await import(pathToFileURL(${MOD@Q} + "/lib/fm-calm-custom-sprite.ts").href);
-const check = (condition, message) => { if (!condition) throw new Error(message); };
-const cells = (row) => row.map((run) => run.text).join("");
-const base = { version: 1, width: 4, palette: { a: "#102030" }, right: [{ glyphs: ["▐██▖", "(██>"], fg: ["a   ", "    "] }] };
-const parsed = custom.parseCalmCustomSprite(JSON.stringify(base));
-check(parsed.ok, "a valid sprite did not parse: " + parsed.reason);
-const glyphs = (frame, row) => frame[row].map((cell) => cell.glyph).join("");
-check(glyphs(parsed.sprite.left[0], 0) === "▗██▌" && glyphs(parsed.sprite.left[0], 1) === "<██)", "the left frame is not the mirrored right frame");
-check(parsed.sprite.right[0][0][0].foreground === 0x102030 && parsed.sprite.right[0][1][0].foreground === undefined, "palette keys did not map onto cells");
-for (const [label, document] of [
-  ["array", []],
-  ["unknown field", { ...base, speed: 2 }],
-  ["declared left frames", { ...base, left: base.right }],
-  ["zero width", { ...base, width: 0 }],
-  ["too wide", { ...base, width: 65 }],
-  ["no frames", { ...base, right: [] }],
-  ["nine frames", { ...base, right: Array(9).fill(base.right[0]) }],
-  ["one row", { ...base, right: [{ glyphs: ["████"] }] }],
-  ["bad color", { ...base, palette: { a: "red" } }],
-  ["space key", { ...base, palette: { " ": "#000000" } }],
-  ["control glyph", { ...base, right: [{ glyphs: ["\\u0007███", "████"] }] }],
-  ["combining glyph", { ...base, right: [{ glyphs: ["e\\u0301██", "████"] }] }],
-  ["emoji-presentation symbol", { ...base, right: [{ glyphs: ["\\u26a1███", "████"] }] }],
-  ["wide CJK glyph", { ...base, right: [{ glyphs: ["\\u4e2d███", "████"] }] }],
-  ["zero-width space", { ...base, right: [{ glyphs: ["\\u200b███", "████"] }] }],
-]) {
-  const result = custom.parseCalmCustomSprite(JSON.stringify(document));
-  check(!result.ok && typeof result.reason === "string" && result.reason.length > 0, "a malformed sprite parsed: " + label);
-}
-check(!custom.parseCalmCustomSprite("x".repeat(70000)).ok, "an oversized file parsed");
-// Narrow symbols a pixel sprite draws with stay accepted, including legacy-computing sextants.
-check(custom.parseCalmCustomSprite(JSON.stringify({ version: 1, width: 4, right: [{ glyphs: ["\\u{1fb00}▀▄█", "◿é░ "] }] })).ok, "narrow block and sextant glyphs were refused");
-// Freeze and resume keep the facing and walk frame with the rest of the state.
-const walk = custom.parseCalmCustomSprite(JSON.stringify({ version: 1, width: 3, right: [{ glyphs: ["   ", "AB>"] }, { glyphs: ["   ", "ab>"] }] }));
-check(walk.ok, "the walk sprite did not parse");
-const sprite = core.createCalmWorkingShipSprite();
-sprite.useCustomSprite(walk.sprite);
-sprite.frame(8);
-for (let step = 0; step < 4 * 5; step += 1) sprite.tick();
-const painted = cells(sprite.frame(8)[1]);
-check(sprite.direction() === -1 && painted.includes("<ba"), "five moves on a five-column track did not turn left on the second, mirrored frame: " + painted);
-for (let step = 0; step < 7; step += 1) sprite.tick();
-sprite.restoreLastRendered();
-check(cells(sprite.frame(8)[1]) === painted, "resume did not repaint the frozen frame");
-sprite.useCustomSprite(undefined);
-check(cells(sprite.frame(8)[1]).includes("╲▁▁▁╱"), "clearing the custom sprite did not restore the stock hull");
-console.log("custom-ok");
-JS
-  out=$(run_node "$TMP_ROOT/custom.mjs" 2>&1) || fail "custom sprite: $out"
-  assert_contains "$out" "custom-ok" "the custom sprite checks did not complete"
-  pass "the custom sprite parser mirrors every frame to face left, maps palette colors, refuses every malformed shape, and the shared sprite freezes and resumes its facing and walk frame"
-}
-
 # The record-backed doorbell: the port's parse plus its record classification must match
 # the owner's doorbell-kind on doorbells the owner itself writes and on every near miss.
 test_doorbell_parity_with_shell_owner() {
@@ -660,7 +600,6 @@ JS
 test_plugin_shape
 test_shared_sprite_and_pi_rendering
 test_raster_packing
-test_custom_sprite
 test_presentation_policy
 test_branch_notes_over_the_store_owner
 test_classifier_parity_with_shell_owner

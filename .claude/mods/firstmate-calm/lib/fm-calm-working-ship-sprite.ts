@@ -25,13 +25,6 @@
 // wall time, and the next working period resumes from that exact logical state. A fresh
 // session or new extension lifetime calls reset() and starts at the normal initial
 // position. State is never a module-level or process-global singleton.
-//
-// Custom sprite: a caller may swap the stock boat for a captain-supplied two-row sprite
-// (parsed by ./fm-calm-custom-sprite.ts) through useCustomSprite(). The custom sprite
-// takes the hull's place in the same track, cadences, and freeze/resume state, faces
-// its travel direction, and steps through its frames once per boat move. Any width it
-// cannot fit paints the stock boat and its narrow fallbacks instead, so the stock
-// geometry stays the fallback in every case.
 
 // The asymmetric three-cell sail is centered over a five-cell hull. The one-cell
 // quarter triangle keeps the left sail lighter than the full right sail, and the whole
@@ -66,8 +59,6 @@ const WAVE_MAX_LEVEL = CALM_WORKING_SHIP_WAVE_BARS.length - 1;
 const WAVE_HALF_LENGTH_MIN = 9;
 const WAVE_HALF_LENGTH_SPAN = 5;
 const WAVE_TROUGH_RADIUS = 5;
-// A custom sprite wider than the hull widens the trough so its whole body stays in calm water.
-const WAVE_TROUGH_MARGIN = 3;
 
 /** Scheduler period. One tick advances the water by one phase. */
 export const CALM_WORKING_SHIP_TICK_MS = 220;
@@ -83,40 +74,10 @@ export const CALM_WORKING_SHIP_TICKS_PER_MOVE = 4;
  */
 export type CalmWorkingShipColor = "plain" | "water" | "boat";
 
-/**
- * One same-colored run of cells inside a frame row. A custom sprite's cells are
- * `boat` runs that may carry explicit `0x00RRGGBB` colors; a harness that can paint
- * RGB uses them, and an absent one keeps the class color or the default background.
- */
+/** One same-colored run of cells inside a frame row. */
 export type CalmWorkingShipRun = {
   readonly text: string;
   readonly color: CalmWorkingShipColor;
-  readonly foreground?: number;
-  readonly background?: number;
-};
-
-/**
- * One cell of a custom sprite frame. A transparent cell draws nothing of its own: plain
- * padding on the upper row and the water beneath it on the lower row.
- */
-export type CalmCustomSpriteCell = {
-  readonly glyph: string;
-  readonly transparent: boolean;
-  readonly foreground?: number;
-  readonly background?: number;
-};
-
-/** One custom sprite frame: exactly two rows of exactly `width` cells, left to right. */
-export type CalmCustomSpriteFrame = readonly [
-  readonly CalmCustomSpriteCell[],
-  readonly CalmCustomSpriteCell[],
-];
-
-/** A validated custom sprite: its declared width, its frames, and their mirrored left facing. */
-export type CalmCustomSprite = {
-  readonly width: number;
-  readonly right: readonly CalmCustomSpriteFrame[];
-  readonly left: readonly CalmCustomSpriteFrame[];
 };
 
 /** One painted frame: one or two rows of runs, each row exactly the requested width. */
@@ -142,24 +103,10 @@ export type CalmWorkingShipSprite = {
   direction(): number;
   /** Current quarter-cell wave phase, exposed for deterministic swell assertions. */
   waterPhase(): number;
-  /**
-   * Draw `custom` in the hull's place from the next frame on, or the stock boat when
-   * undefined. Column, direction, phase, and cadence carry over unchanged.
-   */
-  useCustomSprite(custom: CalmCustomSprite | undefined): void;
 };
 
-/** The custom sprite when it fits `width`, otherwise undefined so the stock boat draws. */
-function fittingCustom(
-  custom: CalmCustomSprite | undefined,
-  width: number,
-): CalmCustomSprite | undefined {
-  return custom !== undefined && width >= custom.width ? custom : undefined;
-}
-
 /** Longest hull start column that still fits the sprite in `width` usable cells. */
-function trackSpan(width: number, custom: CalmCustomSprite | undefined): number {
-  if (custom !== undefined) return width - custom.width;
+function trackSpan(width: number): number {
   if (width >= HULL_WIDTH) return width - HULL_WIDTH;
   if (width >= SAIL_WIDTH) return width - SAIL_WIDTH;
   return 0;
@@ -209,13 +156,12 @@ function waveLevel(
   hullCenter: number,
   direction: number,
   phase: number,
-  troughRadius: number,
 ): number {
   const displacement =
     hullCenter + (direction * phase) / CALM_WORKING_SHIP_TICKS_PER_MOVE;
   const coordinate = column - displacement;
-  if (Math.abs(coordinate) <= troughRadius) return 0;
-  const beyondTrough = coordinate - Math.sign(coordinate) * troughRadius;
+  if (Math.abs(coordinate) <= WAVE_TROUGH_RADIUS) return 0;
+  const beyondTrough = coordinate - Math.sign(coordinate) * WAVE_TROUGH_RADIUS;
   return Math.max(
     0,
     Math.min(WAVE_MAX_LEVEL, Math.round(waveAmplitude(beyondTrough))),
@@ -233,7 +179,6 @@ export function createCalmWorkingShipSprite(): CalmWorkingShipSprite {
   let renderedSpan = span;
   let renderedPhase = phase;
   let renderedTicks = ticks;
-  let custom: CalmCustomSprite | undefined;
 
   // Reversing the moment the boat lands on an endpoint means the endpoint frame already
   // carries the new wave direction, so the trough follows the next boat movement.
@@ -249,7 +194,7 @@ export function createCalmWorkingShipSprite(): CalmWorkingShipSprite {
       position = 0;
       return;
     }
-    span = trackSpan(width, fittingCustom(custom, width));
+    span = trackSpan(width);
     position = Math.min(position, span);
     settleDirectionAtEdges();
   };
@@ -275,11 +220,10 @@ export function createCalmWorkingShipSprite(): CalmWorkingShipSprite {
     from: number,
     count: number,
     hullCenter: number,
-    troughRadius = WAVE_TROUGH_RADIUS,
   ): CalmWorkingShipRun[] => {
     const runs: CalmWorkingShipRun[] = [];
     for (let column = from; column < from + count; column += 1) {
-      const level = waveLevel(column, hullCenter, direction, phase, troughRadius);
+      const level = waveLevel(column, hullCenter, direction, phase);
       runs.push({
         text: CALM_WORKING_SHIP_WAVE_BARS[level] ?? CALM_WORKING_SHIP_WAVE_BARS[0],
         color: "water",
@@ -292,47 +236,10 @@ export function createCalmWorkingShipSprite(): CalmWorkingShipSprite {
   const sail = (): CalmWorkingShipRun[] => [{ text: CALM_WORKING_SHIP_SAIL, color: "boat" }];
   const hull = (): CalmWorkingShipRun[] => [{ text: CALM_WORKING_SHIP_HULL, color: "boat" }];
 
-  const customCell = (cell: CalmCustomSpriteCell): CalmWorkingShipRun => ({
-    text: cell.glyph,
-    color: "boat",
-    ...(cell.foreground === undefined ? {} : { foreground: cell.foreground }),
-    ...(cell.background === undefined ? {} : { background: cell.background }),
-  });
-
-  // The facing follows travel, and the frame advances once per boat move, so a walk
-  // cycle steps in time with the column it crosses and freezes with the rest of the state.
-  const customFrame = (fitting: CalmCustomSprite, width: number): CalmWorkingShipFrame => {
-    const frames = direction < 0 ? fitting.left : fitting.right;
-    const moves = Math.floor(ticks / CALM_WORKING_SHIP_TICKS_PER_MOVE);
-    const [upper, lower] = frames[moves % frames.length]!;
-    const hullCenter = position + Math.floor(fitting.width / 2);
-    const troughRadius = Math.max(
-      WAVE_TROUGH_RADIUS,
-      Math.floor(fitting.width / 2) + WAVE_TROUGH_MARGIN,
-    );
-    const top: CalmWorkingShipRun[] = [];
-    if (position > 0) top.push({ text: " ".repeat(position), color: "plain" });
-    for (const cell of upper) {
-      top.push(cell.transparent ? { text: " ", color: "plain" } : customCell(cell));
-    }
-    const bottom: CalmWorkingShipRun[] = [...water(0, position, hullCenter, troughRadius)];
-    lower.forEach((cell, index) => {
-      if (cell.transparent) bottom.push(...water(position + index, 1, hullCenter, troughRadius));
-      else bottom.push(customCell(cell));
-    });
-    const after = position + fitting.width;
-    bottom.push(...water(after, width - after, hullCenter, troughRadius));
-    return [top, bottom];
-  };
-
   return {
     position: () => position,
     direction: () => direction,
     waterPhase: () => phase,
-
-    useCustomSprite(next: CalmCustomSprite | undefined): void {
-      custom = next;
-    },
 
     restoreLastRendered: restoreLastRenderedState,
 
@@ -367,13 +274,6 @@ export function createCalmWorkingShipSprite(): CalmWorkingShipSprite {
       // A resize lands here before the next frame, so recompute and clamp the track
       // immediately rather than trusting a position measured against the old width.
       applyWidth(width);
-
-      const fitting = fittingCustom(custom, width);
-      if (fitting !== undefined) {
-        const frame = customFrame(fitting, width);
-        commitRenderedState();
-        return frame;
-      }
 
       const hullCenter =
         position +

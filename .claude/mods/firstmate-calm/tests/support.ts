@@ -10,7 +10,6 @@ import { mock, type MockClock } from "claude-code/testing";
 
 export const HOME = "/fm/home";
 export const PREFERENCE = `${HOME}/config/calm`;
-export const CUSTOM_SPRITE = `${HOME}/config/calm-sprite.json`;
 
 export type Journal = {
   /** Every `$.command.register` name, in order. */
@@ -50,10 +49,6 @@ export type World = {
 export type WorldOptions = {
   /** The stored preference text; absent means no file. */
   preference?: string;
-  /** The stored custom sprite text; absent means no file. */
-  sprite?: string;
-  /** Deny every read of the custom sprite with this reason, as an unreadable file does. */
-  spriteUnreadable?: string;
   /** Extra environment beside FM_HOME; pass `{}` with `home: undefined` to unset FM_HOME. */
   env?: Record<string, string>;
   /** Function-hooks opt-in value; omitted options default to the active value `1`. */
@@ -83,7 +78,6 @@ export function world(on: On, options: WorldOptions = {}): World {
   const files = new Map<string, string>();
   const mtimes = new Map<string, number>();
   if (options.preference !== undefined) files.set(PREFERENCE, options.preference);
-  if (options.sprite !== undefined) files.set(CUSTOM_SPRITE, options.sprite);
   const journal: Journal = {
     commands: [],
     toasts: [],
@@ -101,7 +95,6 @@ export function world(on: On, options: WorldOptions = {}): World {
 
   on("fs.read", async (_$, e) => {
     journal.fsReads.push(e.path);
-    if (e.path === CUSTOM_SPRITE && options.spriteUnreadable !== undefined) return { deny: options.spriteUnreadable };
     return files.has(e.path) ? { value: files.get(e.path)! } : { deny: `ENOENT: ${e.path}` };
   });
   on("fs.exists", async (_$, e) => ({ value: files.has(e.path) }));
