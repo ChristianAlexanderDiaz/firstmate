@@ -1246,8 +1246,8 @@ assert_contains "$intr_out" "handled: $intr_id 1" \
   || fail "the interrupted conclude was never finished by the repeated acknowledgement"
 pass "an interrupted conclude leaves the ended board unpollable and finishes on retry"
 
-# --- end-user-aligned regression: a failed re-arm keeps the last generation ---
-# Re-arm publishes the next generation and acknowledges the round it replaces.
+# --- legacy reply regression: a failed re-arm keeps the last generation -------
+# On the legacy path, re-arm publishes the next generation and acknowledges the round it replaces.
 # When that acknowledgement cannot be recorded the whole re-arm has to be off,
 # leaving the generation the board is actually running untouched.
 HROLL="$TMP_ROOT/hrollback"; new_home "$HROLL"
@@ -1303,10 +1303,10 @@ wait_for_lines "$ROLL_ROOT/replies" 2 \
   || fail "the retried re-arm did not hand the board its generation's reply exactly once"
 pass "a re-arm that cannot acknowledge its round leaves the running generation alone"
 
-# --- end-user-aligned regression: re-arm is acknowledgement, nothing else -----
+# --- legacy reply regression: re-arm is acknowledgement, nothing else --------
 # The board is armed once and re-armed only to acknowledge a captured round. A
 # worker that re-arms while its listener is still waiting would replace the
-# generation carrying the reply it already handed over, and that reply would be
+# generation carrying its staged legacy reply, and that reply would be
 # swept away without ever reaching the board.
 HREARM="$TMP_ROOT/hrearm"; new_home "$HREARM"
 REARM_ROOT="$TMP_ROOT/lavish-rearm-root"; mkdir -p "$REARM_ROOT"; export REARM_ROOT

@@ -201,8 +201,8 @@ test_completed_turn_no_report_triggers_one_recovery() {
   pass "completed turn with no report triggers exactly one recovery"
 }
 
-# A mate waiting on its own open decision is never poked by the recovery; the
-# recovery stays unattempted and runs once the decision closes.
+# With config/wait-no-turns present, recovery leaves a mate's own open decision
+# alone; the recovery stays unattempted and runs once the decision closes.
 test_recovery_waits_while_the_mate_has_an_open_decision() {
   local home state corr hook_log
   home=$(setup_parent decision-wait)

@@ -26,9 +26,9 @@
 #   6. Dead panes: the doorbell line is a shell no-op when executed by a bare
 #      shell, the ring skips an agent the backend classifies dead, and the
 #      watcher surfaces such a record exactly once instead of re-ringing.
-#   7. A fire-and-forget record stays outside the ladder, but one whose first
-#      ring did not land gets exactly one retry ring and never escalates. The
-#      retry waits while the worker has an open decision of its own.
+#   7. A fire-and-forget record stays outside the ladder. With config/wait-no-turns
+#      present, one whose first ring did not land gets one retry and never escalates.
+#      The retry waits while the worker has an open decision of its own.
 set -u
 
 # shellcheck source=tests/wake-helpers.sh

@@ -99,7 +99,7 @@
 # (bin/fm-branch-report.sh), so it still reaches main when the host dies at the
 # turn's end or its owner drops the handoff, as a superseded Cursor park does.
 #
-# THE LATCH. An opted-in host persists engine health across short-lived
+# THE LATCH. The host persists engine health across short-lived
 # parks; docs/supervision-host.md "The broken-session latch" owns the policy.
 #
 # THE PARK BOUNDARY. Claude drops the exit 2 of a Stop hook it terminated at

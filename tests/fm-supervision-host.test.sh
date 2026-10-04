@@ -1026,7 +1026,7 @@ test_off_written_while_parked_passes_the_next_attended_close_to_main() {
 # The live failure this guards: a main-only pass-through used to exit without
 # a watcher, so nothing restarted short-lived listeners until the session
 # armed again. The close still reaches main unchanged, and the successor
-# cycle stays up for the session's next arm to attach to.
+# cycle stays up for the session's next park to take over.
 test_main_only_pass_through_leaves_the_successor_watcher_running() {
   local home pid
   home=$(make_home main-only-successor attended)

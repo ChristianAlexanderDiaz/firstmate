@@ -235,8 +235,9 @@ fm_lint_classify_root() {  # <rc> <root-stderr-file>
   esac
 }
 
-# Run one ShellCheck invocation under the given deadline and the per-root
-# address-space limit, returning its exit status in FM_LINT_LAST_RC.
+# Run one ShellCheck invocation, returning its exit status in FM_LINT_LAST_RC.
+# When bounds are enabled, apply the given deadline and per-root address-space
+# limit; otherwise run unbounded.
 fm_lint_exec_root() {  # <path> <stdout-file> <stderr-file> <rss-file> <seconds> <args...>
   local path=$1 root_out=$2 root_err=$3 rss_file=$4 seconds=$5 invocation_rc=0
   shift 5
@@ -295,9 +296,9 @@ fm_lint_run_root() {  # <index> <path> <output-dir> <shard-index>
   reason=$(fm_lint_classify_root "$invocation_rc" "$root_err")
   initial_rc=$invocation_rc
   initial_reason=$reason
-  # The retry spends what is left of this root's one deadline rather than a
-  # fresh one, so both attempts together still fit the budget CI sized its job
-  # timeout around.
+  # When bounds are enforced, the retry spends what is left of this root's
+  # original deadline, so both attempts fit CI's per-root budget. An unbounded
+  # invocation ignores this duration on both attempts.
   fallback_secs=$(( (start_ms + FM_LINT_INTERNAL_ROOT_SECS * 1000 - $(fm_lint_now_ms)) / 1000 ))
   if [ "$reason" = memory ] \
     && [ "${FM_LINT_INTERNAL_FOLLOW_SOURCES:-1}" -eq 1 ] \

@@ -26,7 +26,7 @@
 # for the writer's primary (fm_supervision_host_enabled, checked before
 # anything else runs: by default on Claude, never with an `off` file), the
 # hook runs in a genuine primary checkout, and this session holds the fleet
-# lock, so a home that opted out or never opted in, a crewmate worktree, and a
+# lock, so a home that does not run the host, a crewmate worktree, and a
 # read-only second session write nothing and print nothing.
 #
 # FILE. $STATE/.host-mirror.jsonl, one JSON object per line:

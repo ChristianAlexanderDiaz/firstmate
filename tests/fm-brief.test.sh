@@ -1033,9 +1033,9 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
-# Contract: a waiting worker spends no turns. A decision wait ends the turn, an
-# external wait sleeps in one bounded blocking shell command sized per harness,
-# and a waiting worker neither polls its inbox nor polls a pipeline between holds.
+# With config/wait-no-turns present, a decision wait ends the turn, an external
+# wait sleeps in one bounded blocking shell command sized per harness, and a
+# waiting worker neither polls its inbox nor polls a pipeline between holds.
 test_workers_wait_without_spending_turns() {
   local home id brief
   home="$TMP_ROOT/wait-home"

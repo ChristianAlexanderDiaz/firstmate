@@ -529,8 +529,9 @@ inbox_steer_escalate_unavailable() {  # <window> <task> <record>
 # stale path instead of silently re-ringing forever; acknowledgement or teardown
 # still makes the race quiet. The attempt is data-plane typing or a
 # composer-protected skip, never a wake, so normal retries keep the watcher
-# blocking. A fire-and-forget record's one retry ring follows the same busy
-# wait, also waits while the worker has an open decision or blocker of its own
+# blocking. The optional fire-and-forget retry (config/wait-no-turns; policy
+# owner above) follows the same busy wait and also waits while the worker has
+# an open decision or blocker of its own
 # (status_own_open_decisions), and never escalates: a dead pane just spends it.
 # Runs for secondmates
 # too: their pane-staleness exemption is about quiet panes being healthy,
@@ -1884,16 +1885,16 @@ captain_call_stale_bound() {  # <window-key> <task>
 # Surface a stale pane no classifier could resolve, so firstmate inspects it: it
 # may have finished through an interactive menu that wrote no status, be waiting on
 # a decision, or be wedged. pause_state_class deliberately answers `none` for a
-# still-LIVE agent even under a declared wait, so a worker genuinely waiting on a
-# decision is never silenced - which routes every parked-but-live worker here, on
-# first sight of each distinct stale hash.
+# still-LIVE agent even under a declared wait, so a parked-but-live worker
+# reaches this path on first sight of each distinct stale hash. The wait bounds
+# below decide whether to surface it; captain-held work stays silent while away.
 #
 # So a legitimate wait bounds this path to the same once-per-PAUSE_RESURFACE_SECS
 # cadence resurface_absorbed owns for the absorbed paths, throttled by this
 # window's own .paused-resurfaced-<key> marker: an idle parked pane still churns
 # its hash (a clock, a token counter), and each new hash re-enters this path, so
 # without that bound one wait re-alarms firstmate for its whole duration.
-# The FIRST sight still wakes, keeping the inspect-an-inconclusive-state intent,
+# An unthrottled sight still wakes, keeping the inspect-an-inconclusive-state intent,
 # and the throttle is read BEFORE anything is queued and advanced only by a wake
 # that really fires - a throttle written by the wake it should have prevented, or
 # read after that wake was already appended, bounds nothing.
