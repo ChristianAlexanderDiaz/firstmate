@@ -1663,6 +1663,8 @@ async function assertStockHtmlRendering(command, submitData) {
   editorText = command;
   terminalInputHandler(submitData);
   const htmlRenderer = createToolHtmlRenderer({
+    // Pi 1.0.1 renamed the lookup; keep both names for earlier Pi versions.
+    getToolRenderers: (name) => tools.find((tool) => tool.name === name),
     getToolDefinition: (name) => tools.find((tool) => tool.name === name),
     theme,
     cwd: process.cwd(),
@@ -1694,6 +1696,7 @@ getKeybindings().setUserBindings({ "tui.input.submit": "alt+s" });
 editorText = "/export remapped.html";
 terminalInputHandler("\r");
 const unmatchedRenderer = createToolHtmlRenderer({
+  getToolRenderers: (name) => tools.find((tool) => tool.name === name),
   getToolDefinition: (name) => tools.find((tool) => tool.name === name),
   theme,
   cwd: process.cwd(),
