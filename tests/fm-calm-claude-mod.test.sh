@@ -2,8 +2,8 @@
 # Portable checks for the Claude Code Calm mod (.claude/mods/firstmate-calm) that need
 # no Claude Code binary, so CI enforces them wherever Node runs:
 #   - the plugin's declared shape: one hooks module and nothing else, reached from the
-#     project's .claude/skills auto-load path through the tracked symlink, so nothing
-#     of it can load while CLAUDE_CODE_ENABLE_FUNCTION_HOOKS is off;
+#     project's .claude/skills auto-load path through the tracked symlink, with no
+#     command, skill, agent, or classic hook path around its exact opt-in;
 #   - the harness-neutral sprite core both harnesses share: the Pi widget's rendering
 #     is byte-for-byte the shared frame painted with standard ANSI codes, so extracting
 #     the core changed nothing Pi draws;

@@ -4,8 +4,8 @@
 # The source under test is a fake blocking process that returns only when its
 # trigger file appears, so completion is a real process event and no test here
 # depends on a discovery timer. The Lavish adapter is exercised through its own
-# public commands against the currently published poll shape; no live Lavish
-# server is started.
+# public commands against the published poll and synchronous reply shapes;
+# no live Lavish server is started.
 #
 # Delivery is deliberately NOT asserted as at-least-once or lossless: the
 # published Lavish poll clears feedback destructively before returning it, so

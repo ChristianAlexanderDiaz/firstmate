@@ -1098,8 +1098,8 @@ unit_daemon_quiet_entry_holds_nothing_for_a_return() {
 
 # /quiet where the attended supervision host runs is a statement: quiet-check
 # says quiet mode needs nothing, or that the session is paused while its
-# broken-session latch holds, and a quiet enter writes nothing. Without the
-# opt-in, or on Pi, quiet-check says nothing and quiet mode is the daemon's.
+# broken-session latch holds, and a quiet enter writes nothing. Outside that
+# attended-host path, quiet-check silently defers to the quiet skill's procedure.
 unit_supervision_host_quiet_statement() {
   local st out rc key harness
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-quiet.XXXXXX")

@@ -15,7 +15,8 @@
 #      with a notice, and the steer is still durably sent (exit 0).
 #   5. A failed doorbell is still a sent steer (exit 0, record durable): the
 #      watcher's re-ring ladder owns delivery from the record on. A
-#      fire-and-forget record whose ring did not land is owed one retry ring.
+#      fire-and-forget record whose ring did not land is owed one retry ring
+#      when config/wait-no-turns is present.
 #   6. Carve-outs keep the typed plane: a leading "/" (any harness), a leading
 #      "$" to codex, an explicit backend target, and the --key path.
 #   7. A marked secondmate steer carries its marker + corr token in the record
@@ -242,8 +243,8 @@ test_failed_ring_is_still_sent() {
   pass "fm-send inbox: a failed doorbell is still a durably sent steer"
 }
 
-# Contract: a fire-and-forget record stays outside the re-ring ladder, so a
-# ring that did not land at enqueue is owed exactly one retry by the watcher.
+# With config/wait-no-turns present, a fire-and-forget record stays outside the
+# re-ring ladder but a ring that did not land at enqueue is owed one retry.
 test_fire_and_forget_unlanded_ring_owes_one_retry() {
   local dir err rc
   dir=$(setup_case faf-retry)

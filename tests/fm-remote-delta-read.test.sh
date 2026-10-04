@@ -9,9 +9,9 @@
 #   * an incomplete tail line is withheld until a newline completes it
 #   * exit 75 when the wait window closes with nothing appended
 #   * the per-poll executable boundary: an unchanged log costs one stat per
-#     sample, and the bounded capture/hashing path runs only when the file's
-#     stat identity changed - a same-size in-place rewrite still breaks the
-#     continuity hash, so statting cheaper never hides a change.
+#     sample after its initial snapshot when subsecond timestamps are available;
+#     later bounded captures run when that identity changes, or on every sample
+#     when timestamps are coarse. A same-size rewrite still breaks continuity.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -51,8 +51,8 @@ assert_contains "$OUT" 'payload_bytes=11' 'the payload byte count is wrong'
 [ "$(tail -n 1 "$TMP_ROOT/growth.out")" = 'first line' ] || fail 'the delta did not carry the appended line'
 pass 'an appended line produces a delta with exact offsets, hashes, and payload'
 
-# An unchanged log closes the window with 75 and never runs the snapshot path:
-# one stat per sample is the whole per-poll cost.
+# An unchanged log closes the window with 75 after its initial snapshot:
+# subsecond timestamps let later samples skip capture and hashing.
 DELTA_SHIM="$TMP_ROOT/delta-shim"
 EXEC_LOG="$TMP_ROOT/delta-execs"
 mkdir -p "$DELTA_SHIM"

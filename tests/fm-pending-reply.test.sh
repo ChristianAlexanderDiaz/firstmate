@@ -296,8 +296,7 @@ test_recovery_grace_measures_from_turn_completion() {
 
   # One second after the turn completed: grace has not elapsed from that
   # completion (age 1), even though it long ago elapsed from delivery (age
-  # 301). On the tip this fires immediately because grace is measured from
-  # delivery.
+  # 301). Recovery must still wait for the completion grace.
   export FM_PENDING_REPLY_NOW=20301
   if fm_pending_reply_send_recovery "$state" "$corr" 2>/dev/null; then
     fail "recovery must not fire before grace elapses from the turn's completion"
@@ -461,8 +460,7 @@ test_escalation_grace_measures_from_recovery_turn_completion() {
   fm_pending_reply_mark_turn_completed "$state" "$corr" recovery
 
   # One second after the recovery turn completed: grace has not elapsed from
-  # that completion. On the tip nothing gates this at all, so escalation
-  # fires the instant completion is observed.
+  # that completion, so escalation must still wait.
   export FM_PENDING_REPLY_NOW=40421
   if fm_pending_reply_maybe_escalate "$state" "$corr" 2>/dev/null; then
     fail "escalation must not fire before grace elapses from the recovery turn's completion"
