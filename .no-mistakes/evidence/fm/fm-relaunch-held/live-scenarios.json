@@ -1,0 +1,44 @@
+[
+  {
+    "name": "A held investigation replaces its worker, retains its hold, identity, and unfinished notes",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-relaunch.log",
+    "reason": ""
+  },
+  {
+    "name": "A held and dependency-blocked investigation replaces its worker without clearing either restriction",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-relaunch.log",
+    "reason": ""
+  },
+  {
+    "name": "Away supervision replaces a held blocked worker even at the fresh-dispatch spend cap",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-relaunch.log",
+    "reason": ""
+  },
+  {
+    "name": "A held queued replacement refuses while the original worker and records remain intact",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-relaunch.log",
+    "reason": ""
+  },
+  {
+    "name": "A completed replacement refuses while the original worker remains alive",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-relaunch.log",
+    "reason": ""
+  },
+  {
+    "name": "A replacement with no owning backlog item refuses without stopping its worker",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-relaunch.log",
+    "reason": ""
+  }
+]

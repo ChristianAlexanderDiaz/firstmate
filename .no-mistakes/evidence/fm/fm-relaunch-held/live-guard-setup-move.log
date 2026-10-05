@@ -1,0 +1,740 @@
+$ mktemp -d /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.XXXXXX
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew
+
+[exit 0]
+$ bin/fm-lab-home.sh create /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew
+
+[exit 0]
+$ bin/fm-lab-home.sh tmux-dir /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew
+/tmp/fml.PpwgrO
+
+[exit 0]
+$ tmux -L fm-lab -f /dev/null new-session -d -s primary -x 120 -y 40 -c /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS -e FM_HOME=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew 'codex --no-daemon'
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary -S -100
+
+  Update available · 0.159.3 → 0.160.0
+  Release notes: https://github.com/openai/codex/releases/latest
+
+› 1. Update now (runs `npm install -g @openai/codex`)
+  2. Skip
+  3. Skip until next version
+
+  enter continue · esc skip
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab display-message -p -t primary '#{socket_path},#{pid},0'
+/private/tmp/fml.PpwgrO/tmux-501/fm-lab,37626,0
+
+[exit 0]
+$ git init -q /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/projects/probe
+
+[exit 0]
+$ git -C /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/projects/probe add README.md
+
+[exit 0]
+$ git -C /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/projects/probe -c user.name=Lab -c user.email=lab@example.invalid -c commit.gpgsign=false commit -qm 'Initial fixture'
+
+[exit 0]
+$ git -C /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/projects/probe worktree add -qb probe /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/probe-worktree
+
+[exit 0]
+$ tasks-axi add lab-relaunch-37160 'Disposable investigation' --kind scout --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: added lab-relaunch-37160 (scout) -> Queued
+task:
+  id: lab-relaunch-37160
+  title: Disposable investigation
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: scout
+  repo: "-"
+  priority: "-"
+  created: 2026-10-05
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start lab-relaunch-37160 --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to move it to in flight
+  - Run `tasks-axi block lab-relaunch-37160 --by <other> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to record a dependency
+
+[exit 0]
+$ tasks-axi start lab-relaunch-37160 --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: start lab-relaunch-37160 -> In flight
+help[1]:
+  - Run `tasks-axi done lab-relaunch-37160 --pr <url> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` when it ships
+
+[exit 0]
+$ tmux -L fm-lab new-window -d -t primary: -n fm-lab-relaunch-37160 -c /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS -e PATH=/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin 'bash --noprofile --norc'
+
+[exit 0]
+$ tmux -L fm-lab set-window-option -t primary:fm-lab-relaunch-37160 automatic-rename off
+
+[exit 0]
+$ tmux -L fm-lab send-keys -t primary:fm-lab-relaunch-37160 -l 'codex --no-daemon --dangerously-bypass-approvals-and-sandbox --disable hooks -c model_reasoning_effort=low "Reply exactly LAB_READY. Do not use any tools. Then wait."'
+
+[exit 0]
+$ tmux -L fm-lab send-keys -t primary:fm-lab-relaunch-37160 Enter
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-37160 -S -100
+bash-5.3$ codex --no-daemon --dangerously-bypass-approvals-and-sandbox --disable hooks -c model_reasoning_effort=low "Re
+ply exactly LAB_READY. Do not use any tools. Then wait."
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-37160 -S -100
+╭─────────────────────────────────────────────────╮
+│ ✨ Update available! 0.159.3 -> 0.160.0         │
+│ Run npm install -g @openai/codex to update.     │
+│                                                 │
+│ See full release notes:                         │
+│ https://github.com/openai/codex/releases/latest │
+╰─────────────────────────────────────────────────╯
+
+
+  >_ OpenAI Codex (v0.159.3)
+     ~/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS
+  permissions: YOLO mode
+
+  A long time ago, in a directory not so far away…
+
+
+› Reply exactly LAB_READY. Do not use any tools. Then wait.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+• Starting MCP servers (1/3): codex_apps, cua_repl (0s • esc to interrupt)
+
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol low · ~/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS
+  ? for shortcuts
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-37160 -S -100
+╭─────────────────────────────────────────────────╮
+│ ✨ Update available! 0.159.3 -> 0.160.0         │
+│ Run npm install -g @openai/codex to update.     │
+│                                                 │
+│ See full release notes:                         │
+│ https://github.com/openai/codex/releases/latest │
+╰─────────────────────────────────────────────────╯
+
+
+  >_ OpenAI Codex (v0.159.3)
+     ~/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS
+  permissions: YOLO mode
+
+  A long time ago, in a directory not so far away…
+
+
+› Reply exactly LAB_READY. Do not use any tools. Then wait.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+• Working (2s • esc to interrupt)
+
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol low · ~/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS · ⠸
+  ? for shortcuts
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-37160 -S -100
+╭─────────────────────────────────────────────────╮
+│ ✨ Update available! 0.159.3 -> 0.160.0         │
+│ Run npm install -g @openai/codex to update.     │
+│                                                 │
+│ See full release notes:                         │
+│ https://github.com/openai/codex/releases/latest │
+╰─────────────────────────────────────────────────╯
+
+
+  >_ OpenAI Codex (v0.159.3)
+     ~/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS
+  permissions: YOLO mode
+
+  A long time ago, in a directory not so far away…
+
+
+› Reply exactly LAB_READY. Do not use any tools. Then wait.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+• Working (4s • esc to interrupt)
+
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol low · ~/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS · ⠸
+  ? for shortcuts
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-37160 -S -100
+╭─────────────────────────────────────────────────╮
+│ ✨ Update available! 0.159.3 -> 0.160.0         │
+│ Run npm install -g @openai/codex to update.     │
+│                                                 │
+│ See full release notes:                         │
+│ https://github.com/openai/codex/releases/latest │
+╰─────────────────────────────────────────────────╯
+
+
+  >_ OpenAI Codex (v0.159.3)
+     ~/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS
+  permissions: YOLO mode
+
+  A long time ago, in a directory not so far away…
+
+
+› Reply exactly LAB_READY. Do not use any tools. Then wait.
+
+
+• LAB_READY
+
+  Worked for 5s • 3:45 PM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol low · ~/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS · Reply LAB_READY
+  ? for shortcuts
+
+[exit 0]
+$ tasks-axi add dependency-37160 'Unfinished dependency' --kind ship --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: added dependency-37160 (ship) -> Queued
+task:
+  id: dependency-37160
+  title: Unfinished dependency
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-10-05
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start dependency-37160 --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to move it to in flight
+  - Run `tasks-axi block dependency-37160 --by <other> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to record a dependency
+
+[exit 0]
+
+SCENARIO Fresh dispatch refuses held queued work before creating a worker
+$ tasks-axi add fresh-lab-relaunch-37160 'Guarded new dispatch' --kind scout --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: added fresh-lab-relaunch-37160 (scout) -> Queued
+task:
+  id: fresh-lab-relaunch-37160
+  title: Guarded new dispatch
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: scout
+  repo: "-"
+  priority: "-"
+  created: 2026-10-05
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start fresh-lab-relaunch-37160 --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to move it to in flight
+  - Run `tasks-axi block fresh-lab-relaunch-37160 --by <other> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to record a dependency
+
+[exit 0]
+$ tasks-axi hold fresh-lab-relaunch-37160 --reason 'pending choice' --kind captain --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: hold fresh-lab-relaunch-37160 -> held (captain)
+task:
+  id: fresh-lab-relaunch-37160
+  title: Guarded new dispatch
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: pending choice
+  hold_kind: captain
+  hold_until: "-"
+  kind: scout
+  repo: "-"
+  priority: "-"
+  created: 2026-10-05
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi unhold fresh-lab-relaunch-37160 --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to resume dispatch
+  - Run `tasks-axi ready --include-held --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to review paused work
+
+[exit 0]
+$ bin/fm-spawn.sh fresh-lab-relaunch-37160 /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/projects/probe --scout --harness codex --backend tmux
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+error: this home's backlog item fresh-lab-relaunch-37160 is not dispatchable in state queued yes no; refusing before creating its endpoint or local copy
+
+[exit 1]
+$ tmux -L fm-lab list-windows -t primary -F '#{window_name}'
+node
+fm-lab-relaunch-37160
+
+[exit 0]
+$ tasks-axi rm fresh-lab-relaunch-37160 --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: removed fresh-lab-relaunch-37160
+help[1]:
+  - Run `tasks-axi list --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to see remaining tasks
+
+[exit 0]
+
+SCENARIO Fresh dispatch refuses dependency-blocked queued work before creating a worker
+$ tasks-axi add fresh-lab-relaunch-37160 'Guarded new dispatch' --kind scout --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: added fresh-lab-relaunch-37160 (scout) -> Queued
+task:
+  id: fresh-lab-relaunch-37160
+  title: Guarded new dispatch
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: scout
+  repo: "-"
+  priority: "-"
+  created: 2026-10-05
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start fresh-lab-relaunch-37160 --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to move it to in flight
+  - Run `tasks-axi block fresh-lab-relaunch-37160 --by <other> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to record a dependency
+
+[exit 0]
+$ tasks-axi block fresh-lab-relaunch-37160 --by dependency-37160 --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: block fresh-lab-relaunch-37160 -> blocked-by dependency-37160
+help[2]:
+  - Run `tasks-axi unblock fresh-lab-relaunch-37160 --by <other> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to clear it
+  - Run `tasks-axi ready --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to see what is still dispatchable
+
+[exit 0]
+$ bin/fm-spawn.sh fresh-lab-relaunch-37160 /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/projects/probe --scout --harness codex --backend tmux
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: this home's backlog item fresh-lab-relaunch-37160 is not dispatchable in state queued no yes; refusing before creating its endpoint or local copy
+
+[exit 1]
+$ tmux -L fm-lab list-windows -t primary -F '#{window_name}'
+node
+fm-lab-relaunch-37160
+
+[exit 0]
+$ tasks-axi rm fresh-lab-relaunch-37160 --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: removed fresh-lab-relaunch-37160
+help[1]:
+  - Run `tasks-axi list --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to see remaining tasks
+
+[exit 0]
+
+SCENARIO Fresh dispatch refuses held in-flight work before creating a worker
+$ tasks-axi add fresh-lab-relaunch-37160 'Guarded new dispatch' --kind scout --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: added fresh-lab-relaunch-37160 (scout) -> Queued
+task:
+  id: fresh-lab-relaunch-37160
+  title: Guarded new dispatch
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: scout
+  repo: "-"
+  priority: "-"
+  created: 2026-10-05
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start fresh-lab-relaunch-37160 --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to move it to in flight
+  - Run `tasks-axi block fresh-lab-relaunch-37160 --by <other> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to record a dependency
+
+[exit 0]
+$ tasks-axi start fresh-lab-relaunch-37160 --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: start fresh-lab-relaunch-37160 -> In flight
+help[1]:
+  - Run `tasks-axi done fresh-lab-relaunch-37160 --pr <url> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` when it ships
+
+[exit 0]
+$ tasks-axi hold fresh-lab-relaunch-37160 --reason 'pending choice' --kind captain --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: hold fresh-lab-relaunch-37160 -> held (captain)
+task:
+  id: fresh-lab-relaunch-37160
+  title: Guarded new dispatch
+  state: in_flight
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: pending choice
+  hold_kind: captain
+  hold_until: "-"
+  kind: scout
+  repo: "-"
+  priority: "-"
+  created: 2026-10-05
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi unhold fresh-lab-relaunch-37160 --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to resume dispatch
+  - Run `tasks-axi ready --include-held --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to review paused work
+
+[exit 0]
+$ bin/fm-spawn.sh fresh-lab-relaunch-37160 /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/projects/probe --scout --harness codex --backend tmux
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: this home's backlog item fresh-lab-relaunch-37160 is not dispatchable in state in_flight yes no; refusing before creating its endpoint or local copy
+
+[exit 1]
+$ tmux -L fm-lab list-windows -t primary -F '#{window_name}'
+node
+fm-lab-relaunch-37160
+
+[exit 0]
+$ tasks-axi rm fresh-lab-relaunch-37160 --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: removed fresh-lab-relaunch-37160
+help[1]:
+  - Run `tasks-axi list --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to see remaining tasks
+
+[exit 0]
+$ bin/fm-afk-contract.sh enter --spend 10 --words 'Keep existing work running; leave pending choices for return.'
+Away posture recorded at 2026-10-05T19:45:26Z: hold-for-return only. No phone channel is configured; anything that needs you waits for your return. Your away instructions are recorded verbatim; the away session will carry them out where it can, and anything it is unsure of, or that needs you, waits for your return. Destructive, irreversible, and security-sensitive actions are never pre-authorizable, whatever the words say. Expected return: not given. Spend cap: 10 concurrent workers.
+Away posture (recorded):
+  entered: 2026-10-05T19:45:26Z
+  expected return: not given
+  spend cap: 10 concurrent workers
+  reach: hold-for-return only. No phone channel is configured; anything that needs you waits for your return.
+  your words (verbatim):
+    Keep existing work running; leave pending choices for return.
+
+[exit 0]
+$ bin/fm-afk-contract.sh validate
+
+[exit 0]
+
+SCENARIO Away supervision refuses new dispatch of an already in-flight item
+$ tasks-axi add fresh-lab-relaunch-37160 'Guarded new dispatch' --kind scout --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: added fresh-lab-relaunch-37160 (scout) -> Queued
+task:
+  id: fresh-lab-relaunch-37160
+  title: Guarded new dispatch
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: scout
+  repo: "-"
+  priority: "-"
+  created: 2026-10-05
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start fresh-lab-relaunch-37160 --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to move it to in flight
+  - Run `tasks-axi block fresh-lab-relaunch-37160 --by <other> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to record a dependency
+
+[exit 0]
+$ tasks-axi start fresh-lab-relaunch-37160 --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: start fresh-lab-relaunch-37160 -> In flight
+help[1]:
+  - Run `tasks-axi done fresh-lab-relaunch-37160 --pr <url> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` when it ships
+
+[exit 0]
+$ bin/fm-spawn.sh fresh-lab-relaunch-37160 /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/projects/probe --scout --harness codex --backend tmux
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew
+note: new-task spawn (fm-spawn) proceeds for the supervision branch under the away-posture record: main is parked and its standing authority is relocated; this script's own gate still applies (docs/pi-supervision-branch.md "Postures")
+note: new-task spawn (fm-spawn) proceeds for the supervision branch under the away-posture record: main is parked and its standing authority is relocated; this script's own gate still applies (docs/pi-supervision-branch.md "Postures")
+error: spawn refused - the supervision branch under the away-posture record may dispatch only queued unblocked work (already queued, or filed by the branch from the captain's away words); task fresh-lab-relaunch-37160 has no dispatchable backlog item in this home
+
+[exit 1]
+$ tmux -L fm-lab list-windows -t primary -F '#{window_name}'
+node
+fm-lab-relaunch-37160
+
+[exit 0]
+$ tasks-axi rm fresh-lab-relaunch-37160 --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: removed fresh-lab-relaunch-37160
+help[1]:
+  - Run `tasks-axi list --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to see remaining tasks
+
+[exit 0]
+$ tasks-axi hold lab-relaunch-37160 --reason 'four pending choices' --kind captain --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: hold lab-relaunch-37160 -> held (captain)
+task:
+  id: lab-relaunch-37160
+  title: Disposable investigation
+  state: in_flight
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: four pending choices
+  hold_kind: captain
+  hold_until: "-"
+  kind: scout
+  repo: "-"
+  priority: "-"
+  created: 2026-10-05
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi unhold lab-relaunch-37160 --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to resume dispatch
+  - Run `tasks-axi ready --include-held --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to review paused work
+
+[exit 0]
+$ tasks-axi mv lab-relaunch-37160 --to queued --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+ok: mv lab-relaunch-37160 -> /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/queued
+help[1]:
+  - Run `tasks-axi list --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to see remaining tasks
+
+[exit 0]
+
+SCENARIO A held queued replacement refuses while the original worker and records remain intact
+$ tmux -L fm-lab display-message -p -t primary:fm-lab-relaunch-37160 '#{pane_pid}'
+51226
+
+[exit 0]
+WORKER_CODEX_PIDS [56436]
+$ bin/fm-control.sh lab-relaunch-37160 relaunch --model gpt-6.1-sol --effort low --note 'Must refuse before stopping.'
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew
+error: task lab-relaunch-37160 has no backlog item in this home; refusing to relaunch a worker no record owns
+
+[exit 1]
+$ tmux -L fm-lab display-message -p -t primary:fm-lab-relaunch-37160 '#{pane_pid}'
+51226
+
+[exit 0]
+WORKER_CODEX_PIDS [56436]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-37160 -S -100
+╭─────────────────────────────────────────────────╮
+│ ✨ Update available! 0.159.3 -> 0.160.0         │
+│ Run npm install -g @openai/codex to update.     │
+│                                                 │
+│ See full release notes:                         │
+│ https://github.com/openai/codex/releases/latest │
+╰─────────────────────────────────────────────────╯
+
+
+  >_ OpenAI Codex (v0.159.3)
+     ~/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS
+  permissions: YOLO mode
+
+  A long time ago, in a directory not so far away…
+
+
+› Reply exactly LAB_READY. Do not use any tools. Then wait.
+
+
+• LAB_READY
+
+  Worked for 5s • 3:45 PM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol low · ~/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS · Reply LAB_READY
+  ? for shortcuts
+
+[exit 0]
+
+STATE queued held refusal
+$ tasks-axi show lab-relaunch-37160 --full --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md
+error: "Task \"lab-relaunch-37160\" not found in this backlog"
+code: NOT_FOUND
+help[1]: Run `tasks-axi list --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew/data/backlog.md` to see existing tasks
+
+[exit 1]
+$ tmux -L fm-lab kill-server
+
+[exit 0]
+$ bin/fm-lab-home.sh teardown /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew
+
+[exit 0]
+$ rm -rf /tmp/fm-lab-relaunch-37160
+
+[exit 0]
+$ rm -rf /tmp/fm-lab-relaunch-37160+8691e5979feb9d31a45975b7b20873e23ad9aca9b75955933c996f07064ab364
+
+[exit 0]
+$ chmod -R u+w /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew
+
+[exit 0]
+$ rm -rf /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.I6FGew
+
+[exit 0]

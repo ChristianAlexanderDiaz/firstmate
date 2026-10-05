@@ -1,0 +1,293 @@
+ok - fm-control relaunch: a same-harness relaunch replaces the agent in the same endpoint and worktree
+ok - fm-control relaunch: pending composer text refuses before the exit command is typed
+ok - fm-control relaunch: an unreadable composer fails safe before the exit command is typed
+ok - fm-control relaunch: a linked spawning home preserves committed and unfinished work in the recorded copy
+ok - fm-control relaunch: durable task metadata survives replacement launch publication
+ok - fm-control relaunch: delivery and concurrent task metadata publication serialize
+ok - fm-control relaunch: disabling tracing clears metadata and pane context
+ok - fm-control relaunch: progress and the Firstmate-worktree worker identity reach the replacement
+ok - fm-control relaunch: a ship task refuses without the progress note its replacement needs
+ok - fm-control relaunch: switching harness is one ordinary relaunch, and the old wiring goes with the old agent
+ok - fm-control relaunch: a harness switch resets model and effort unless they are named too
+ok - fm-control relaunch: a prefixed recorded harness can switch adapters transactionally
+ok - fm-control relaunch: a prefixed command requires an explicit replacement harness
+ok - fm-control relaunch: a same-harness relaunch keeps the profile axes it was running with
+ok - native Ultra relaunch preserves its profile and rejects an unsupported model before stopping
+ok - fm-control relaunch: a signed-out worker account pin refuses before the old agent stops
+ok - fm-control relaunch: the replacement follows the home's current worker account pin
+ok - fm-control relaunch: explicit model and effort win over the recorded ones
+ok - fm-control relaunch: refuses to relaunch onto an adapter with no verified mechanics
+ok - fm-control relaunch: the retired incarnation's global turn-end token is revoked
+ok - fm-control relaunch: wiring cleanup failure refuses replacement arming
+ok - fm-control-lib: one owner resolves each harness's turn-end registry entry, and refuses a malformed token
+not ok - a configured secondmate harness should relaunch
+error: secondmate home cannot be inside the firstmate repo: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/smpin-4735/smhome
+error: the replacement agent for sm3 could not be launched on codex
+error: sm3's agent was stopped but the replacement did not launch; no agent is running, and its work plus the recorded progress note are preserved at /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/smpin-4735/smhome: expected exit 0, got 1
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state/rl4.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/switch-17723: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state/rl-ultra.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/native-ultra-19856: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state/rl1.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/same-17492: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state/rl28.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/metadata-race-30814: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state/rl19.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/durable-meta-13042: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state/rl6.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/keepprofile-6141: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state/rl5.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/profile-6067: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state/rl32.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/prefixcontrol-16885: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state/rl33.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/trace-off-15390: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state/rl9.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/grokauth-26916: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state/rl-acct.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/acct-11881: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state/rl2.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/note-5140: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state/rl42.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/linked-home-32289: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state/rl7.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK/explicit-8448: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-control-relaunch.KCxADK: Directory not empty

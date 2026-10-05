@@ -1,0 +1,23 @@
+[
+  {
+    "name": "A held investigation upgrades from GPT-6-Luna to GPT-6.1-Sol and answers with its replacement",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-model-recovery.log",
+    "reason": ""
+  },
+  {
+    "name": "An already stopped held investigation can launch its replacement in the same task",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-model-recovery.log",
+    "reason": ""
+  },
+  {
+    "name": "Relaunch repairs an unheld queued row to in-flight while keeping the same task and unfinished work",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-model-recovery.log",
+    "reason": ""
+  }
+]

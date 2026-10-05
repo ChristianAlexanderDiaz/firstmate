@@ -1,0 +1,22 @@
+{
+  "fm-control-relaunch.test.sh": [
+    "test_explicit_model_wins_over_the_recorded_one",
+    "test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint",
+    "test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it",
+    "test_relaunch_moves_a_drifted_item_back_in_flight",
+    "test_relaunch_of_a_held_in_flight_item_succeeds_and_keeps_the_hold",
+    "test_relaunch_of_a_held_queued_item_refuses_before_stopping_the_agent",
+    "test_spawn_relaunch_of_a_held_in_flight_item_succeeds_and_keeps_the_hold",
+    "test_branch_relaunch_under_the_away_posture_of_a_held_in_flight_item_succeeds"
+  ],
+  "fm-backlog-atomicity.test.sh": [
+    "test_dispatch_refuses_a_held_row_before_creating_resources",
+    "test_dispatch_refuses_a_blocked_row_before_creating_resources",
+    "test_dispatch_refuses_a_held_in_flight_row_before_relaunch",
+    "test_deferred_signal_reads_back_preserved_state",
+    "test_deferred_signal_verification_outlives_an_unresponsive_tasks_axi",
+    "test_fm_tasks_axi_fallback_bounds_the_call_without_a_timeout_binary",
+    "test_fm_tasks_axi_fallback_bounds_a_wrapper_scripts_grandchild",
+    "test_spawn_refuses_a_special_file_tasks_config"
+  ]
+}

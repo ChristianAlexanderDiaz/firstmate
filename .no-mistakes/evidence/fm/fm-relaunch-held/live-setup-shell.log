@@ -1,0 +1,1081 @@
+$ mktemp -d /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.XXXXXX
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ
+
+[exit 0]
+$ bin/fm-lab-home.sh create /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ
+
+[exit 0]
+$ bin/fm-lab-home.sh tmux-dir /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ
+/tmp/fml.meOv2U
+
+[exit 0]
+$ tmux -L fm-lab -f /dev/null new-session -d -s primary -x 120 -y 40 -c /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS -e FM_HOME=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ codex
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary -S -100
+
+  Update available · 0.159.3 → 0.160.0
+  Release notes: https://github.com/openai/codex/releases/latest
+
+› 1. Update now (runs `npm install -g @openai/codex`)
+  2. Skip
+  3. Skip until next version
+
+  enter continue · esc skip
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab display-message -p -t primary '#{socket_path},#{pid},0'
+/private/tmp/fml.meOv2U/tmux-501/fm-lab,59135,0
+
+[exit 0]
+$ git init -q /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ/projects/probe
+
+[exit 0]
+$ git -C /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ/projects/probe add README.md
+
+[exit 0]
+$ git -C /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ/projects/probe -c user.name=Lab -c user.email=lab@example.invalid -c commit.gpgsign=false commit -qm 'Initial fixture'
+
+[exit 0]
+$ git -C /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ/projects/probe worktree add -qb probe /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ/probe-worktree
+
+[exit 0]
+$ tasks-axi add lab-relaunch-58526 'Disposable investigation' --kind scout --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ/data/backlog.md
+ok: added lab-relaunch-58526 (scout) -> Queued
+task:
+  id: lab-relaunch-58526
+  title: Disposable investigation
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: scout
+  repo: "-"
+  priority: "-"
+  created: 2026-10-05
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start lab-relaunch-58526 --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ/data/backlog.md` to move it to in flight
+  - Run `tasks-axi block lab-relaunch-58526 --by <other> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ/data/backlog.md` to record a dependency
+
+[exit 0]
+$ tasks-axi start lab-relaunch-58526 --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ/data/backlog.md
+ok: start lab-relaunch-58526 -> In flight
+help[1]:
+  - Run `tasks-axi done lab-relaunch-58526 --pr <url> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ/data/backlog.md` when it ships
+
+[exit 0]
+$ tmux -L fm-lab new-window -d -t primary: -n fm-lab-relaunch-58526 -c /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ/probe-worktree 'zsh -f'
+
+[exit 0]
+$ tmux -L fm-lab set-window-option -t primary:fm-lab-relaunch-58526 automatic-rename off
+
+[exit 0]
+$ tmux -L fm-lab send-keys -t primary:fm-lab-relaunch-58526 'export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin' Enter
+
+[exit 0]
+$ tmux -L fm-lab send-keys -t primary:fm-lab-relaunch-58526 'codex --dangerously-bypass-approvals-and-sandbox --disable hooks -c model_reasoning_effort=low "Reply exactly LAB_READY. Do not use any tools. Then wait."' Enter
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexande
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-58526 -S -100
+export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/f
+m-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-dar
+win-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/codex-arg0L9MMhK:/Users/c
+hristianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-
+apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.local/bin:/Users/christianal
+exanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-user/christianalexanderdiaz
+/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ch
+ristianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexanderdiaz/.cargo/bin:/Users/
+christianalexanderdiaz/bin:/usr/local/sbin
+Christians-MacBook-Pro% export PATH=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN12
+3QXNTAJS/.test-runtime/fm-lab.Z85EGQ/bin:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_m
+odules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/christianalexanderdiaz/.codex/tmp/arg0/c
+odex-arg0L9MMhK:/Users/christianalexanderdiaz/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darw
+in-arm64/vendor/aarch64-apple-darwin/codex-path:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/christianalexanderdiaz/.loca
+l/bin:/Users/christianalexanderdiaz/.npm-global/bin:/Users/christianalexanderdiaz/.nix-profile/bin:/etc/profiles/per-use
+r/christianalexanderdiaz/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/
+usr/sbin:/sbin:/Users/christianalexanderdiaz/.orbstack/bin:/Users/christianalexanderdiaz/go/bin:/Users/christianalexande
+rdiaz/.cargo/bin:/Users/christianalexanderdiaz/bin:/usr/local/sbin
+codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangero
+Christians-MacBook-Pro% codex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dangerously-bcodex --dang
+erously-bcodex --dangerously-bcodex --dangerously-bcodex --
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab kill-server
+
+[exit 0]
+$ bin/fm-lab-home.sh teardown /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ
+
+[exit 0]
+$ rm -rf /tmp/fm-lab-relaunch-58526
+
+[exit 0]
+$ rm -rf /tmp/fm-lab-relaunch-58526+172f281c228b51c0cab7aa39502c11b03465269b1fe506b3936ecb1a0905559f
+
+[exit 0]
+$ chmod -R u+w /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ
+
+[exit 0]
+$ rm -rf /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.Z85EGQ
+
+[exit 0]

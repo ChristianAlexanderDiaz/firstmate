@@ -1,0 +1,51 @@
+[
+  {
+    "name": "Fresh dispatch refuses held queued work before creating a worker",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-guards.log",
+    "reason": ""
+  },
+  {
+    "name": "Fresh dispatch refuses dependency-blocked queued work before creating a worker",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-guards.log",
+    "reason": ""
+  },
+  {
+    "name": "Fresh dispatch refuses held in-flight work before creating a worker",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-guards.log",
+    "reason": ""
+  },
+  {
+    "name": "Away supervision refuses new dispatch of an already in-flight item",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-guards.log",
+    "reason": ""
+  },
+  {
+    "name": "A held queued replacement refuses while the original worker and records remain intact",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-guards.log",
+    "reason": ""
+  },
+  {
+    "name": "A completed replacement refuses while the original worker remains alive",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-guards.log",
+    "reason": ""
+  },
+  {
+    "name": "A replacement with no owning backlog item refuses without stopping its worker",
+    "result": "pass",
+    "live": true,
+    "evidence": "live-guards.log",
+    "reason": ""
+  }
+]

@@ -1,0 +1,12 @@
+[
+  {
+    "case": "normal_existing_login",
+    "loggedIn": true,
+    "authMethod": "claude.ai"
+  },
+  {
+    "case": "disposable_configuration",
+    "loggedIn": false,
+    "authMethod": "none"
+  }
+]

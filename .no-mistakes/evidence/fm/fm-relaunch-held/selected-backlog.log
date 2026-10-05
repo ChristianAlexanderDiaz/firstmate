@@ -1,0 +1,8 @@
+ok - dispatch refuses held rows before creating resources
+ok - dispatch refuses dependency-blocked rows before creating resources
+ok - dispatch refuses held In-flight rows before relaunch
+ok - a signal-deferred spawn verifies its preserved state and repairs a row that did not move
+ok - a signal-deferred spawn bounds its verification so an unresponsive tasks-axi cannot hold the meta lock forever
+ok - fm_tasks_axi bounds the call through its perl watchdog when no timeout binary exists
+ok - fm_tasks_axi's perl watchdog terminates the whole process group, not just the direct child
+ok - spawn refuses a special-file tasks-axi config instead of blocking on it

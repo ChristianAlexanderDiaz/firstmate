@@ -1,0 +1,2021 @@
+$ mktemp -d /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.XXXXXX
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG
+
+[exit 0]
+$ bin/fm-lab-home.sh create /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG
+
+[exit 0]
+$ bin/fm-lab-home.sh tmux-dir /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG
+/tmp/fml.wgZfyk
+
+[exit 0]
+$ tmux -L fm-lab -f /dev/null new-session -d -s primary -x 120 -y 40 -c /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS -e FM_HOME=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG codex
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary -S -100
+
+  >_ OpenAI Codex (v0.159.3)
+     ~/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS
+
+  What are we cooking up?
+
+
+
+
+
+
+                                                       ⣀⣤⣤⣤⣀⣀
+                                                    ⣠⣶⣿⣿⣿⣿⣿⣿⣿⣿⣦⣤⣤⣤⣤⣤⣤⡀
+                                                  ⢀⣾⣿⣿⠿⠋⠉⠉⢉⣭⣿⣿⣿⣿⣿⠿⣿⣿⣿⣿⣷⣄
+                                                 ⣀⣾⣿⣿⠃ ⣀⣴⣾⣿⣿⡿⠟⠋ ⣀⡀ ⠈⠙⢿⣿⣿⣧
+                                              ⣀⣶⣿⣿⣿⣿⡇ ⢸⣿⣿⡿⠛⠉⢀⣠⣴⣿⣿⣿⣷⣦⣀⠈⢻⣿⣿⡇
+                                             ⣰⣿⣿⡿⢿⣿⣿⡇ ⢸⣿⣿⢀⣤⣶⣿⣿⣿⠟⠛⠻⣿⣿⣿⣿⣮⣿⣿⡷
+                                            ⢰⣿⣿⡟⠁⢸⣿⣿⡇ ⢸⣿⣿⣿⣿⠿⠿⣿⣿⣿⣦⣄⡀⠈⠛⠿⣿⣿⣿⣧⡀
+                                            ⣾⣿⣿⠃ ⢸⣿⣿⡇ ⢸⣿⣿⠋⠁  ⠈⠙⢻⣿⣿⣿⣶⣤⡀ ⠹⢿⣿⣷⡄
+                                            ⢸⣿⣿⣇ ⠸⣿⣿⣷⣦⣼⣿⣿      ⢸⣿⣿⠻⢿⣿⣿⡇ ⠘⣿⣿⣿
+                                            ⠈⢿⣿⣿⣦⡀⠈⠛⠿⣿⣿⣿⣿⣄⡀  ⢀⣠⣼⣿⣿  ⣿⣿⡇  ⣿⣿⣿⠇
+                                              ⢻⣿⣿⣿⣷⣦⣀⠈⠙⠻⣿⣿⣿⣶⣶⣿⣿⣿⣿⣿  ⣿⣿⡇ ⣠⣿⣿⣿
+                                              ⢸⣿⣿⡿⢿⣿⣿⣿⣦⣠⣴⣿⣿⣿⡿⠟⠋⢸⣿⣿  ⣿⣿⣷⣴⣿⣿⣿⠃
+                                              ⠘⣿⣿⣷ ⠈⠛⢿⣿⣿⣿⠿⠋⠉ ⣠⣴⣿⣿⣿  ⣿⣿⣿⣿⣿⠟⠁
+                                               ⠻⣿⣿⣿⣤⣀ ⠈⠉ ⢀⣤⣶⣿⣿⣿⠿⠟⠁ ⣰⣿⣿⡟⠋⠁
+                                                ⠈⠿⣿⣿⣿⣿⣶⣾⣿⣿⣿⣿⠟⠋⠁  ⣠⣼⣿⣿⡟
+                                                   ⠙⠛⠛⠛⠻⠛⢿⣿⣿⣿⣿⣷⣾⣿⣿⣿⡿⠏
+                                                          ⠈⠙⠛⠿⠿⠿⠿⠛⠉
+
+
+
+
+
+
+
+
+› Ask Codex to do anything
+
+
+  ? for shortcuts
+
+[exit 0]
+$ tmux -L fm-lab display-message -p -t primary '#{socket_path},#{pid},0'
+/private/tmp/fml.wgZfyk/tmux-501/fm-lab,7983,0
+
+[exit 0]
+$ git init -q /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG/projects/probe
+
+[exit 0]
+$ git -C /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG/projects/probe add README.md
+
+[exit 0]
+$ git -C /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG/projects/probe -c user.name=Lab -c user.email=lab@example.invalid -c commit.gpgsign=false commit -qm 'Initial fixture'
+
+[exit 0]
+$ git -C /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG/projects/probe worktree add -qb probe /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG/probe-worktree
+
+[exit 0]
+$ tasks-axi add lab-relaunch-7196 'Disposable investigation' --kind scout --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG/data/backlog.md
+ok: added lab-relaunch-7196 (scout) -> Queued
+task:
+  id: lab-relaunch-7196
+  title: Disposable investigation
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: scout
+  repo: "-"
+  priority: "-"
+  created: 2026-10-05
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start lab-relaunch-7196 --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG/data/backlog.md` to move it to in flight
+  - Run `tasks-axi block lab-relaunch-7196 --by <other> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG/data/backlog.md` to record a dependency
+
+[exit 0]
+$ tasks-axi start lab-relaunch-7196 --file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG/data/backlog.md
+ok: start lab-relaunch-7196 -> In flight
+help[1]:
+  - Run `tasks-axi done lab-relaunch-7196 --pr <url> --file=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG/data/backlog.md` when it ships
+
+[exit 0]
+$ tmux -L fm-lab new-window -d -t primary: -n fm-lab-relaunch-7196 -c /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG/probe-worktree 'zsh -f'
+
+[exit 0]
+$ tmux -L fm-lab set-window-option -t primary:fm-lab-relaunch-7196 automatic-rename off
+
+[exit 0]
+$ tmux -L fm-lab send-keys -t primary:fm-lab-relaunch-7196 'codex --dangerously-bypass-approvals-and-sandbox --disable hooks -c model_reasoning_effort=low "Reply exactly LAB_READY. Do not use any tools. Then wait."' Enter
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+codex --dangerously-bypass-approvals-and-sandbox --disable hooks -c model_reasoning_effort=low "Reply exactly LAB_READY.
+ Do not use any tools. Then wait."
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab capture-pane -p -t primary:fm-lab-relaunch-7196 -S -100
+
+  Folder access
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/probe-worktree
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2
+  VwLG/projects/probe
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[exit 0]
+$ tmux -L fm-lab kill-server
+
+[exit 0]
+$ bin/fm-lab-home.sh teardown /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG
+
+[exit 0]
+$ rm -rf /tmp/fm-lab-relaunch-7196
+
+[exit 0]
+$ rm -rf /tmp/fm-launch-7a6ace5996a7cfe6e392261e3ef1a6d7819164988bb6dedfe73d8564d449d4bd-lab-relaunch-7196
+
+[exit 0]
+$ rm -rf /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R3WV9B8XCFN123QXNTAJS/.test-runtime/fm-lab.M2VwLG
+
+[exit 0]
