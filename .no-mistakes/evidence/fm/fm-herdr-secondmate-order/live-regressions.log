@@ -1,0 +1,108 @@
+spawned lv83966-po harness=sh kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-herdr-orde-84316-31949:w6:p2 worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/fleet-tools-08f0f0/1/fleet-tools
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary-data-override/lv83966-po/launch-brief.md records no ship branch; defaulting to legacy branch fm/lv83966-po
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary-data-override/lv83966-po/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned lv83966-pa harness=sh kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-herdr-orde-84316-31949:w7:p2 worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/alpha-app-d13aab/1/alpha-app
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary-data-override/lv83966-pa/launch-brief.md records no ship branch; defaulting to legacy branch fm/lv83966-pa
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary-data-override/lv83966-pa/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned lv83966-pb harness=sh kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-herdr-orde-84316-31949:w8:p2 worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/bravo-app-9e7f89/1/bravo-app
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary-data-override/lv83966-pb/launch-brief.md records no ship branch; defaulting to legacy branch fm/lv83966-pb
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary-data-override/lv83966-pb/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+scenario: primary-effective-record-directories
+sidebar: firstmate 2ndmate-alpha lv83966-pa 2ndmate-bravo lv83966-pb lv83966-po life dotfiles
+focused: w1
+spawned lv83966-px harness=sh kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-herdr-orde-84316-31949:w9:p2 worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/fleet-tools-08f0f0/2/fleet-tools
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary-data-override/lv83966-px/launch-brief.md records no ship branch; defaulting to legacy branch fm/lv83966-px
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary-data-override/lv83966-px/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+scenario: primary-later-pass-with-overrides
+sidebar: firstmate 2ndmate-alpha lv83966-pa 2ndmate-bravo lv83966-pb lv83966-po lv83966-px life dotfiles
+focused: w1
+spawned lv83966-a1 harness=sh kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-herdr-orde-84316-31949:wA:p2 worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/alpha-app-d13aab/2/alpha-app
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/alpha-home/data/lv83966-a1/launch-brief.md records no ship branch; defaulting to legacy branch fm/lv83966-a1
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/alpha-home/data/lv83966-a1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned lv83966-b1 harness=sh kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-herdr-orde-84316-31949:wB:p2 worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/bravo-app-9e7f89/2/bravo-app
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/bravo-home/data/lv83966-b1/launch-brief.md records no ship branch; defaulting to legacy branch fm/lv83966-b1
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/bravo-home/data/lv83966-b1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+scenario: every-home-metadata-ownership
+sidebar: firstmate 2ndmate-alpha lv83966-pa lv83966-a1 2ndmate-bravo lv83966-pb lv83966-b1 lv83966-po lv83966-px life dotfiles
+focused: w1
+viewer attached to fm-lab-fm-herdr-orde-84316-31949 (pid 43370)
+scenario: later-pass-with-version-one-journals
+sidebar: firstmate 2ndmate-alpha lv83966-pa lv83966-a1 2ndmate-bravo lv83966-pb lv83966-b1 lv83966-po lv83966-px life dotfiles
+focused: w1
+ok - valid task metadata preserves ownership on later passes without a spawn hint or restart binding
+spawned lv83966-a2 harness=sh kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-herdr-orde-84316-31949:wC:p2 worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/alpha-app-d13aab/3/alpha-app
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/alpha-home/data/lv83966-a2/launch-brief.md records no ship branch; defaulting to legacy branch fm/lv83966-a2
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/alpha-home/data/lv83966-a2/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+scenario: registered-mate-state-override
+sidebar: firstmate 2ndmate-alpha lv83966-pa lv83966-a1 lv83966-a2 2ndmate-bravo lv83966-pb lv83966-b1 lv83966-po lv83966-px life dotfiles
+focused: w1
+A new version of treehouse is available: v3.1.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/projects/alpha-app: already current
+teardown lv83966-a2 complete (window fm-lab-fm-herdr-orde-84316-31949:wC:p2, worktree /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/alpha-app-d13aab/3/alpha-app)
+Backlog: lv83966-a2 just finished (this home keeps no markdown backlog at /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/alpha-home/data/backlog.md). Update /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/alpha-home/data/backlog.md - move lv83966-a2 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  2 task(s) in flight, but no live watcher process holds this home lock (last beat: 49s ago).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+teardown: reaping leaked worktree process(es) for lv83966-a2: 51757 59267 59278
+teardown: force-killing leaked worktree process(es) for lv83966-a2: 51757
+WARNING: watcher still down (same stale episode; last beat: 55s ago, grace 300s) - full banner already printed this episode.
+spawned lv83966-sh harness=sh kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-herdr-orde-84316-31949:wD:p2 worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/shared-app-22952f/1/shared-app
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary/data/lv83966-sh/launch-brief.md records no ship branch; defaulting to legacy branch fm/lv83966-sh
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary/data/lv83966-sh/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+scenario: overlapping-coverage
+sidebar: firstmate 2ndmate-alpha lv83966-pa lv83966-a1 2ndmate-bravo lv83966-pb lv83966-b1 lv83966-po lv83966-px lv83966-sh life dotfiles
+focused: w1
+scenario: no-adjacency-inference
+sidebar: firstmate 2ndmate-alpha lv83966-pa lv83966-a1 2ndmate-bravo lv83966-pb lv83966-b1 lv83966-po lv83966-px lv83966-sh notes life dotfiles
+focused: w1
+spawned lv83966-po harness=sh kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-herdr-orde-84316-31949:w6:p2 worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/fleet-tools-08f0f0/1/fleet-tools
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary/data/lv83966-po/launch-brief.md records no ship branch; defaulting to legacy branch fm/lv83966-po
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary/data/lv83966-po/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+scenario: relaunch-adopts-and-sorts
+sidebar: firstmate 2ndmate-alpha lv83966-pa lv83966-a1 2ndmate-bravo lv83966-pb lv83966-b1 lv83966-po lv83966-px lv83966-sh life notes dotfiles
+focused: w1
+spawned lv83966-po harness=sh kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-herdr-orde-84316-31949:w2:p2 worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/fleet-tools-08f0f0/1/fleet-tools
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary/data/lv83966-po/launch-brief.md records no ship branch; defaulting to legacy branch fm/lv83966-po
+warning: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary/data/lv83966-po/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+scenario: relaunch-recreates-and-sorts
+sidebar: firstmate 2ndmate-alpha lv83966-pa lv83966-a1 2ndmate-bravo lv83966-pb lv83966-b1 lv83966-px lv83966-sh life notes dotfiles
+focused: w1
+A new version of treehouse is available: v3.1.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/projects/fleet-tools: already current
+teardown lv83966-px complete (window fm-lab-fm-herdr-orde-84316-31949:w9:p2, worktree /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/fleet-tools-08f0f0/2/fleet-tools)
+Backlog: lv83966-px just finished (this home keeps no markdown backlog at /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary/data/backlog.md). Update /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/primary/data/backlog.md - move lv83966-px to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  5 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+teardown: reaping leaked worktree process(es) for lv83966-px: 15097 22123 22129
+teardown: force-killing leaked worktree process(es) for lv83966-px: 15097
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+scenario: cleanup-heals-drift
+sidebar: firstmate 2ndmate-alpha lv83966-pa lv83966-a1 2ndmate-bravo lv83966-pb lv83966-b1 lv83966-sh life notes dotfiles
+focused: w1
+A new version of treehouse is available: v3.1.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/projects/alpha-app: already current
+teardown lv83966-a1 complete (window fm-lab-fm-herdr-orde-84316-31949:wA:p2, worktree /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/treehouse/.treehouse/alpha-app-d13aab/2/alpha-app)
+Backlog: lv83966-a1 just finished (this home keeps no markdown backlog at /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/alpha-home/data/backlog.md). Update /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-herdr-order-e2e.zLubpV/alpha-home/data/backlog.md - move lv83966-a1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+WARNING: watcher still down (same stale episode; last beat: 90s ago, grace 300s) - full banner already printed this episode.
+teardown: reaping leaked worktree process(es) for lv83966-a1: 24109 28602 28622
+teardown: force-killing leaked worktree process(es) for lv83966-a1: 24109
+unknown option: --tab
+not ok - teardown alpha failed: REFUSED: Herdr endpoint metadata for task alpha is malformed or inconsistent; preserving task state.

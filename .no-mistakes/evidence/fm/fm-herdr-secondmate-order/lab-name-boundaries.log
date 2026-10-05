@@ -1,0 +1,4 @@
+multibyte-with-room: exit=0, name=fm-lab-presentation-26367-7055, socket_bytes=103, error=
+multibyte-no-room: exit=1, name=, socket_bytes=None, error=fm-herdr-lab: home directory leaves no room for a lab session name within the 103-byte socket path limit
+ascii-no-room: exit=1, name=, socket_bytes=None, error=fm-herdr-lab: home directory leaves no room for a lab session name within the 103-byte socket path limit
+default-session refusal: exit=1, error=fm-herdr-lab: refusing session name 'default'

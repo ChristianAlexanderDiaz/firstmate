@@ -1,0 +1,1 @@
+- bravo - Retirement fixture. (home: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-lab-retire.ehcSoE/bravo; scope: shared; projects: shared-app; added 2026-10-05)

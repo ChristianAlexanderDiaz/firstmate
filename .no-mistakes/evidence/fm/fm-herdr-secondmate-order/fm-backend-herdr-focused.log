@@ -1,0 +1,6 @@
+ok - herdr presentation order: one pass sorts firstmate, each second mate with its workers, primary workers, then other spaces, and a second pass does nothing
+ok - herdr presentation order: a worker whose second mate has no workspace sorts with the primary's other workers
+ok - herdr presentation order: ambiguous layouts, missing support, and failed or unverifiable moves warn and stop without failing
+ok - herdr presentation order: every home keeps published worker ownership without a restart binding or spawn hint
+ok - herdr presentation order: effective state and data directories survive later passes and stay scoped to the running home
+ok - herdr workspace mover: a socket path past the Unix limit (a symlinked config dir) is still reached

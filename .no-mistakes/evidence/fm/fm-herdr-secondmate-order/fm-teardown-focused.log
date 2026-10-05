@@ -1,0 +1,3 @@
+ok - herdr teardown: final sorting follows successful registry removal under the session lock
+ok - herdr teardown: recorded-session eligibility sorts despite an older ambient session
+ok - herdr teardown: effective record directories supply surviving workers and project coverage

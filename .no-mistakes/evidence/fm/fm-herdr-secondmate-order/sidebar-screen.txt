@@ -1,0 +1,40 @@
+ spaces                  │   1      +                                                                                   
+                         │.test-phase/tmp/fm-herdr-order-e2e.zLubpV on  HEAD [?]                                       
+ · firstmate             │❯ 1u                                                                                          
+ · 2ndmate-alpha         │                                                                                              
+ · └ lv83966-pa · p:h0…  │                                                                                              
+   master                │                                                                                              
+ · └ lv83966-a1 · p:U6…  │                                                                                              
+   master                │                                                                                              
+ · 2ndmate-bravo         │                                                                                              
+ · └ lv83966-pb · p:dE…  │                                                                                              
+   master                │                                                                                              
+ · └ lv83966-b1 · p:3g…  │                                                                                              
+   master                │                                                                                              
+ · └ lv83966-po · p:v2…  │                                                                                              
+   master                │                                                                                              
+ · └ lv83966-px · p:8Q…  │                                                                                              
+   master                │                                                                                              
+ · life                  │                                                                                              
+ · dotfiles              │                                                                                              
+ new               ● menu│                                                                                              
+─────────────────────────│                                                                                              
+ agents           grouped│                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                        «│                                                                                              

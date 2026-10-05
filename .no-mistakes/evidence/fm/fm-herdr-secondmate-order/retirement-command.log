@@ -1,0 +1,8 @@
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  3 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+teardown alpha complete (window fm-lab-retire-order-85800-22283:w3:p1, worktree /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-phase/tmp/fm-lab-retire.ehcSoE/alpha)
