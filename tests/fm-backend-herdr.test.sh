@@ -3170,7 +3170,7 @@ test_presentation_arrange_sorts_the_whole_session_and_is_idempotent() {
   owners='{"wPb":"2ndmate-bravo","wPo":"firstmate","wBo":"2ndmate-bravo","wAo":"2ndmate-alpha"}'
   out=$(order_fixture_arrange "$dir" "$owners")
   [ -z "$out" ] || fail "a clean presentation sort warned: $out"
-  [ "$(order_fixture_ids "$dir/order.json")" = "wF wA wAo u1 wB wPb wBo wPo life lounge-card dotfiles" ] \
+  [ "$(order_fixture_ids "$dir/order.json")" = "wF wA wAo wB wPb wBo wPo life lounge-card u1 dotfiles" ] \
     || fail "presentation sort produced the wrong order: $(order_fixture_ids "$dir/order.json")"
   [ "$(wc -l < "$dir/restore.log" | tr -d ' ')" = "$(wc -l < "$dir/mover.log" | tr -d ' ')" ] \
     || fail "presentation sort did not check focus after every move"
@@ -3265,7 +3265,7 @@ c.close()
 }
 
 test_presentation_owners_follow_journals_and_the_registry_from_every_home() {
-  local dir primary alpha bravo out expected
+  local dir primary alpha bravo out expected home project owner sorted
   dir="$TMP_ROOT/presentation-owners"
   primary="$dir/primary"
   alpha="$dir/alpha-home"
@@ -3299,6 +3299,30 @@ test_presentation_owners_follow_journals_and_the_registry_from_every_home() {
     out=$(FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_presentation_owners fmtest' "$ROOT" | jq -cS .)
     [ "$out" = "$expected" ] || fail "presentation owners from $(basename "$home") were wrong: $out"
   done
+  printf 'version=1\ntask_id=current\nprojection_id=AbCdEfGhIjKlMnOpQrStUv\n' > "$primary/state/current.herdr-presentation"
+  sorted="$dir/sort"
+  order_fixture_env "$sorted"
+  while IFS=$'\t' read -r home project owner; do
+    out=$(FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_presentation_owners fmtest wNew "$1"' "$ROOT" "$project")
+    [ "$(printf '%s' "$out" | jq -r '.wNew')" = "$owner" ] \
+      || fail "current-spawn ownership depended on a restart binding: $out"
+    order_fixture_list notes wF wA wNew wB wB1 > "$sorted/order.json"
+    order_fixture_arrange "$sorted" "$out" >/dev/null
+    case "$owner" in
+      firstmate) expected="wF wA wB wB1 wNew notes" ;;
+      2ndmate-alpha) expected="wF wA wNew wB wB1 notes" ;;
+      2ndmate-bravo) expected="wF wA wB wNew wB1 notes" ;;
+    esac
+    [ "$(order_fixture_ids "$sorted/order.json")" = "$expected" ] \
+      || fail "current worker followed its predecessor instead of its owner: $(order_fixture_ids "$sorted/order.json")"
+  done <<EOF
+$primary	/p/firstmate	firstmate
+$primary	/p/projects/alpha-app	2ndmate-alpha
+$primary	/p/projects/bravo-app	2ndmate-bravo
+$primary	/p/projects/shared	firstmate
+$alpha	/p/projects/bravo-app	2ndmate-alpha
+$bravo	/p/firstmate	2ndmate-bravo
+EOF
   pass "herdr presentation order: every home reads the same owners, and a primary worker goes under the one second mate covering its project"
 }
 

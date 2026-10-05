@@ -15,7 +15,8 @@
 # Session names must begin with "fm-lab-" and can never be "default".
 # The name command sanitizes the label, caps it at 16 characters (fewer when
 # the home directory is long, so every session socket path fits macOS's
-# 103-byte limit), and appends process/random suffixes.
+# 103-byte limit), and appends process/random suffixes. It fails if no valid
+# name fits.
 # Every Herdr call made here carries --session <session>: trailing, or
 # immediately before the first -- delimiter so it stays a Herdr option instead
 # of becoming a passthrough argument such as an agent start argument.
@@ -541,13 +542,16 @@ fm_herdr_lab_teardown() { # <session>
 # whose client socket cannot bind exits right after start, so the label is
 # shortened further whenever the home directory leaves less room than 16 bytes.
 fm_herdr_lab_name() { # <label>
-  local label=${1:-lab} suffix room
+  local LC_ALL=C label=${1:-lab} suffix room
   label=$(printf '%s' "$label" | tr -cd 'a-zA-Z0-9_-' | sed 's/^[^a-zA-Z0-9]*//; s/-*$//')
   [ -n "$label" ] || label=lab
   suffix="-$$-$RANDOM"
   room=$((103 - ${#HOME} - ${#FM_HERDR_LAB_SOCKET_TAIL} - ${#suffix}))
   [ "$room" -le 16 ] || room=16
-  [ "$room" -ge 1 ] || room=1
+  if [ "$room" -lt 1 ]; then
+    fm_herdr_lab_error "home directory leaves no room for a lab session name within the 103-byte socket path limit"
+    return 1
+  fi
   label=${label:0:room}
   label=${label%-}
   [ -n "$label" ] || label=l

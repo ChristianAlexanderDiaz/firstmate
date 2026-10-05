@@ -1474,17 +1474,35 @@ fm_backend_herdr_presentation_primary_home() {
   printf '%s' "$FM_SECONDMATE_PARENT_HOME"
 }
 
+fm_backend_herdr_presentation_worker_owner() {  # <owner-label> <project> [<registry>]
+  local owner=$1 project=$2 registry=${3:-} line covering= count=0
+  if [ "$owner" = firstmate ] && [ -n "$registry" ] && [ -f "$registry" ]; then
+    project=${project%/}
+    project=${project##*/}
+    if [ -n "$project" ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        secondmate_registry_parse_line "$line" || continue
+        if printf '%s\n' "$SECONDMATE_REGISTRY_PROJECTS" | tr ',' '\n' \
+          | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -Fqx -- "$project"; then
+          covering=$SECONDMATE_REGISTRY_ID
+          count=$((count + 1))
+        fi
+      done < "$registry"
+    fi
+    [ "$count" -eq 1 ] && owner="2ndmate-$covering"
+  fi
+  printf '%s' "$owner"
+}
+
 # fm_backend_herdr_presentation_journal_owners: print one
 # "<workspace-id><TAB><owner-label>" line for every exact version 2
 # presentation journal in <state-dir> bound to <session>. The owner is the
 # journal's recorded parent label (firstmate or 2ndmate-<id>). With a primary
 # <state-dir> and a readable <registry>, a primary worker whose task project
 # appears in exactly one second mate's projects list is owned by that second
-# mate instead. A worker whose task record is not published yet takes its
-# project from the optional <new-workspace-id> <new-project> pair.
-# Unreadable or unbound journals are skipped.
-fm_backend_herdr_presentation_journal_owners() {  # <session> <state-dir> [<registry> [<new-workspace-id> <new-project>]]
-  local session=$1 state=$2 registry=${3:-} new_workspace=${4:-} new_project=${5:-} journal id owner project line covering count
+# mate instead. Unreadable or unbound journals are skipped.
+fm_backend_herdr_presentation_journal_owners() {  # <session> <state-dir> [<registry>]
+  local session=$1 state=$2 registry=${3:-} journal id owner project
   [ -d "$state" ] || return 0
   for journal in "$state"/*"$FM_BACKEND_HERDR_PRESENTATION_JOURNAL_SUFFIX"; do
     [ -f "$journal" ] || continue
@@ -1492,29 +1510,8 @@ fm_backend_herdr_presentation_journal_owners() {  # <session> <state-dir> [<regi
     fm_backend_herdr_projection_journal_snapshot "$journal" "$id" || continue
     [ "$FM_BACKEND_HERDR_JOURNAL_VERSION" = 2 ] || continue
     [ "$FM_BACKEND_HERDR_JOURNAL_SESSION" = "$session" ] || continue
-    owner=$FM_BACKEND_HERDR_JOURNAL_PARENT_LABEL
-    if [ "$owner" = firstmate ] && [ -n "$registry" ] && [ -f "$registry" ]; then
-      project=$(grep '^project=' "$state/$id.meta" 2>/dev/null | head -n 1 | cut -d= -f2-)
-      if [ -z "$project" ] && [ -n "$new_workspace" ] \
-        && [ "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" = "$new_workspace" ]; then
-        project=$new_project
-      fi
-      project=${project%/}
-      project=${project##*/}
-      covering=
-      count=0
-      if [ -n "$project" ]; then
-        while IFS= read -r line || [ -n "$line" ]; do
-          secondmate_registry_parse_line "$line" || continue
-          if printf '%s\n' "$SECONDMATE_REGISTRY_PROJECTS" | tr ',' '\n' \
-            | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -Fqx -- "$project"; then
-            covering=$SECONDMATE_REGISTRY_ID
-            count=$((count + 1))
-          fi
-        done < "$registry"
-      fi
-      [ "$count" -eq 1 ] && owner="2ndmate-$covering"
-    fi
+    project=$(grep '^project=' "$state/$id.meta" 2>/dev/null | head -n 1 | cut -d= -f2-)
+    owner=$(fm_backend_herdr_presentation_worker_owner "$FM_BACKEND_HERDR_JOURNAL_PARENT_LABEL" "$project" "$registry")
     printf '%s\t%s\n' "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" "$owner"
   done
 }
@@ -1523,15 +1520,15 @@ fm_backend_herdr_presentation_journal_owners() {  # <session> <state-dir> [<regi
 # known projected workspace id in <session> to its owner label, gathered from
 # the primary home, every local second mate home in its registry, and this
 # home itself. The optional pair names a worker this home just created, whose
-# task record is not published yet.
+# task record is not published yet, independently of its journal version.
 fm_backend_herdr_presentation_owners() {  # <session> [<new-workspace-id> <new-project>]
-  local session=$1 new_workspace=${2:-} new_project=${3:-} primary registry line home seen records
+  local session=$1 new_workspace=${2:-} new_project=${3:-} primary registry= line home seen records owner
   seen=
   records=
   primary=$(fm_backend_herdr_presentation_primary_home 2>/dev/null) || primary=
   if [ -n "$primary" ]; then
     registry="$primary/data/secondmates.md"
-    records=$(fm_backend_herdr_presentation_journal_owners "$session" "$primary/state" "$registry" "$new_workspace" "$new_project")
+    records=$(fm_backend_herdr_presentation_journal_owners "$session" "$primary/state" "$registry")
     seen=$(fm_backend_herdr_projection_home_identity "$primary" 2>/dev/null || printf '%s' "$primary")
     if [ -f "$registry" ]; then
       while IFS= read -r line || [ -n "$line" ]; do
@@ -1551,6 +1548,12 @@ $(fm_backend_herdr_projection_home_identity "$home" 2>/dev/null || printf '%s' "
     records="$records
 $(fm_backend_herdr_presentation_journal_owners "$session" "$FM_HOME/state")"
   fi
+  if [ -n "$new_workspace" ]; then
+    owner=$(fm_backend_herdr_workspace_label)
+    owner=$(fm_backend_herdr_presentation_worker_owner "$owner" "$new_project" "$registry")
+    records="$records
+$(printf '%s\t%s' "$new_workspace" "$owner")"
+  fi
   printf '%s\n' "$records" | jq -Rn '
     [inputs | select(length > 0) | split("\t") | select(length == 2) | {(.[0]): .[1]}]
     | add // {}
@@ -1565,8 +1568,7 @@ $(fm_backend_herdr_presentation_journal_owners "$session" "$FM_HOME/state")"
 # 2ndmate-<id> home in its current relative order, followed by its workers;
 # the primary home's remaining workers; then every other space in its current
 # relative order. A worker's owner comes from <owners-json>, or from a legacy
-# owner-prefixed label; an unowned └ worker stays with whatever group its
-# current predecessor belongs to, so the plan is idempotent.
+# owner-prefixed label; an unowned workspace stays with the other spaces.
 # Every move lifts one workspace to a smaller index, so insert_index means the
 # same thing before and after the moved workspace is removed.
 fm_backend_herdr_presentation_arrange_plan() {  # <owners-json>
@@ -1574,9 +1576,6 @@ fm_backend_herdr_presentation_arrange_plan() {  # <owners-json>
     def is_top_level:
       (.label | type) == "string"
       and ((.label == "firstmate") or (.label | test("^2ndmate-[^/]+$")));
-    def is_new_child:
-      (.label | type) == "string"
-      and (.label | test("^└ .+ · p:[A-Za-z0-9_-]{22}$"));
     def legacy_owner:
       if (.label | type) == "string"
       then ([.label | capture("^(?<o>firstmate|2ndmate-[^/]+)/.+ · p:[A-Za-z0-9_-]{22}$")] | .[0].o)
@@ -1594,21 +1593,18 @@ fm_backend_herdr_presentation_arrange_plan() {  # <owners-json>
         then $owner
         else "firstmate-workers"
         end;
-    (reduce $s[] as $w ({current: "other", out: []};
+    ([$s[] as $w |
       (if ($w | is_top_level) then
          (if $w.label == "firstmate" then "firstmate" else $w.label end)
        elif ($owners[$w.workspace_id] | type) == "string" then
          group_for($owners[$w.workspace_id])
        elif ($w | legacy_owner) != null then
          group_for($w | legacy_owner)
-       elif ($w | is_new_child) then
-         .current
        else
          "other"
        end) as $group
-      | .current = $group
-      | .out += [{id: $w.workspace_id, group: $group, parent: ($w | is_top_level)}]
-    )).out as $classified
+      | {id: $w.workspace_id, group: $group, parent: ($w | is_top_level)}
+    ]) as $classified
     | def members($group):
         [$classified[] | select(.group == $group and .parent) | .id]
         + [$classified[] | select(.group == $group and (.parent | not)) | .id];

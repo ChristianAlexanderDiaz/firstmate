@@ -280,12 +280,14 @@ Firstmate keeps the whole Herdr sidebar in one presentation order, top to bottom
 3. The primary home's other workers, including one whose project no second mate or more than one second mate lists, or whose second mate has no workspace in the session.
 4. Every other space, such as the captain's personal spaces, in its existing relative order.
 
+Presentation coverage uses the `projects:` list in `data/secondmates.md`.
 Workers inside one group keep their current relative order, so a new worker joins the end of its group.
 A worker's owner comes from each home's version 2 presentation journal, read from the primary home, every local second mate home in its registry, and the running home, whose parent binding names the primary.
 An old owner-prefixed label names its owner directly.
-An unowned `└` worker stays with the group of the space above it, so the order is stable from one pass to the next.
+The current spawn supplies its workspace, home, and project independently of whether its restart binding was saved.
+An unowned workspace stays with the other spaces.
 
-One idempotent pass, `fm_backend_herdr_presentation_arrange`, runs under the session lock after every Herdr spawn, relaunch, and cleanup in a home whose projection is enabled, including a second mate's own flat workspace.
+One idempotent pass, `fm_backend_herdr_presentation_arrange`, runs under the session lock at the shared endpoint handoff for every fresh Herdr spawn and relaunch, and after cleanup in a home whose projection is enabled, including a second mate's own flat workspace.
 It does nothing when the order is already right, and otherwise lifts each out-of-place workspace to its index in turn.
 Protocol 16 exposes `workspace.move` over the named session socket but no CLI subcommand.
 `bin/backends/herdr-workspace-move.py` sends only that whitelisted method, and the pass verifies the complete returned order after every move.

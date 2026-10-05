@@ -1458,7 +1458,7 @@ spawn_herdr_presentation_order_lock_release() {
 # Presentation-only; never fails the spawn.
 spawn_herdr_presentation_arrange() {  # <session>
   local session=$1 acquired=0
-  fm_backend_herdr_presentation_enabled "$CONFIG" "$STATE" || return 0
+  HERDR_SESSION="$session" fm_backend_herdr_presentation_enabled "$CONFIG" "$STATE" || return 0
   # A lock this spawn already waited out in vain is not waited on twice.
   [ "${HERDR_PRESENTATION_LOCK_WEDGED:-0}" = 0 ] || return 0
   if [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" != 1 ]; then
@@ -3827,7 +3827,6 @@ EOF
       exit 1
     fi
     T="$HERDR_SES:$HERDR_PANE_ID"
-    spawn_herdr_presentation_arrange "$HERDR_SES" || true
     ;;
   zellij)
     ZELLIJ_SES=$(fm_backend_zellij_container_ensure) || exit 1
@@ -3879,6 +3878,9 @@ EOF
     T="$ORCA_TERMINAL"
     ;;
   esac
+fi
+if [ "$BACKEND" = herdr ]; then
+  spawn_herdr_presentation_arrange "${T%%:*}" || true
 fi
 if [ "$KIND" = secondmate ]; then
   FM_INHERITABLE_CONFIG=trace-context \
