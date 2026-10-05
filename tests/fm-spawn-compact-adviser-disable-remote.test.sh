@@ -32,7 +32,21 @@ HERDR_STATE="$TMP_ROOT/remote-herdr.state"
 CLAIMS="$TMP_ROOT/claims"
 mkdir -p "$PARENT/data" "$PARENT/state" "$PARENT/config" "$PARENT/projects" \
   "$REMOTE_ROOT" "$CLAIMS" "$PROBEBIN" "$TMP_ROOT/pane-home"
-trap 'FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true; if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then kill "$(cat "$TMP_ROOT/remote-jobs/worker.pid")" 2>/dev/null || true; fi; rm -rf -- "$TMP_ROOT"' EXIT
+cleanup() {
+  local worker_pid=''
+  FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
+    "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
+  if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
+    worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid")
+    # Stop the detached restart supervisor as well as its serving child.
+    . "$ROOT/bin/fm-remote-job-lib.sh"
+    fm_remote_job_stop_worker_tree "$worker_pid" || true
+  fi
+  # The spawn's immutable Git-hook directory needs the shared writable-tree
+  # cleanup; plain rm leaves it behind and can race a restarted worker.
+  fm_test_cleanup
+}
+trap cleanup EXIT
 
 # A synthetic value the remote launch must override rather than inherit, so a
 # launch that only forwarded the ambient environment cannot pass as a floor.

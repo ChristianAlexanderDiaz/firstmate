@@ -619,6 +619,57 @@ test_matrix_pi_separated_needs_identity() {
   pass "matrix: pi's separated composer needs identity + structure; the blank row alone never proves it"
 }
 
+test_matrix_pi_dollar_status_footer_is_empty() {
+  # Pi's status row `$0.000 (sub) 5.4%/272k (auto)` at column 0 used to read
+  # as a dead-shell prompt, so an idle separated composer classified unknown.
+  # A counters-first footer never took that path. A real `$` or `$ ls` prompt,
+  # and the same cost string typed between the separators, still refuse.
+  local dollar typed dead_shell dead_cmd spaced footer_only inside wrap dollar_status
+  local pi_idle pi_working none out
+  pi_idle=$(printf 'pi\tidle'); pi_working=$(printf 'pi\tworking'); none=$(printf 'zsh\t')
+  dollar_status=$'$0.000 (sub) 5.4%/272k (auto)'
+  dollar=$'transcript\n────────────────────────\n\n────────────────────────\n'"$dollar_status"
+
+  assert_screen "pi dollar-first status on herdr" empty "$CAPS_STYLED" "$dollar" '' "$pi_idle"
+  assert_screen "pi dollar-first status on tmux" empty "$CAPS_TMUX" "$dollar" 2 "$pi_idle"
+
+  [ "$(fm_composer_classify_screen "$CAPS_STYLED" "$dollar")" = need-identity ] \
+    || fail "a dollar-first Pi footer must still request the lazy identity probe"
+  assert_screen "dollar-first status without identity capability" unknown "$CAPS_PLAIN" "$dollar"
+  assert_screen "working pi with dollar-first status defers" unknown \
+    "$CAPS_STYLED" "$dollar" '' "$pi_working"
+  assert_screen "non-pi identity with dollar-first status defers" unknown \
+    "$CAPS_STYLED" "$dollar" '' "$none"
+
+  typed=$'────────────────────────\nfix the flaky test\n────────────────────────\n'"$dollar_status"
+  assert_screen "pi typed text above dollar-first status" pending \
+    "$CAPS_STYLED" "$typed" '' "$pi_idle"
+  inside=$'────────────────────────\n'"$dollar_status"$'\n────────────────────────'
+  assert_screen "dollar-first string typed into the pi composer" pending \
+    "$CAPS_STYLED" "$inside" '' "$pi_idle"
+
+  dead_shell=$'transcript\n────────────────────────\n\n────────────────────────\n$'
+  dead_cmd=$'transcript\n────────────────────────\n\n────────────────────────\n$ ls -la'
+  spaced=$'transcript\n────────────────────────\n\n────────────────────────\n$ 0.000 (sub)'
+  assert_screen "real dead shell below a pi pair" unknown "$CAPS_STYLED" "$dead_shell" '' "$pi_idle"
+  assert_screen "dead-shell command below a pi pair" unknown "$CAPS_STYLED" "$dead_cmd" '' "$pi_idle"
+  assert_screen "spaced dollar below a pi pair" unknown "$CAPS_STYLED" "$spaced" '' "$pi_idle"
+
+  footer_only=$'transcript\n'"$dollar_status"
+  assert_screen "dollar-first status with no pi pair" unknown \
+    "$CAPS_STYLED" "$footer_only" '' "$pi_idle"
+
+  wrap=$'❯\n$ ls -la'
+  out=$(fm_composer_classify_screen "$CAPS_STYLED" "$wrap")
+  [ "$out" = unknown ] \
+    || fail "a real dead shell below a bare glyph must still invalidate cursorless selection, got '$out'"
+  wrap=$'❯\n$ '
+  out=$(fm_composer_classify_screen "$CAPS_STYLED" "$wrap")
+  [ "$out" = unknown ] \
+    || fail "a bare dollar prompt below a glyph must still invalidate cursorless selection, got '$out'"
+  pass "matrix: a dollar-first pi status footer reads empty; dead shells still refuse"
+}
+
 test_matrix_opencode_leftbar_signals() {
   # Real idle opencode: `┃`-prefixed rows holding an "Ask anything" hint,
   # blanks, and a Build-mode footer. Two independent idle signals: the shared
@@ -678,6 +729,59 @@ test_matrix_grok_titled_bottom_border() {
   malformed=$'  ╭──────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                        │\n  ╰────────────────────────────────────────────────────────── unknown surface ─╯'
   assert_screen "oversized unknown title on herdr" unknown "$CAPS_STYLED" "$malformed"
   pass "matrix: grok's real oversized titled bottom is empty while typed and unproved panes stay safe"
+}
+
+test_matrix_claude_titled_top_rule() {
+  # A named Claude Code session draws its title into the composer's TOP rule
+  # (issues #5601 and #5558; observed on herdr as
+  # `─── Firstmate operational input 1790546042 ─`). The strict separator
+  # predicate rejects that row, so the pair never opened, the closing rule
+  # read as a lower unmatched separator, and a visibly empty composer read
+  # `unknown` on every cursorless backend, refusing steers, exit, and relaunch.
+  local rule title top bottom footer screen ansi typed claude_idle
+  local scrollback short nonascii flush blank
+  claude_idle=$(printf 'claude\tidle')
+  rule='────────────────────────────────────────────────────────────'
+  title=' Firstmate operational input 1790546042 '
+  top="${rule}───${title}─"
+  bottom="${rule}────────────────────────────────────────────"
+  footer='  ⏵⏵ bypass permissions on (shift+tab to cycle)'
+  screen="recap: earlier work"$'\n'"$top"$'\n❯'"$NBSP"$'\n'"$bottom"$'\n'"$footer"
+  ansi="${ESC}[38;2;128;130;131mrecap: earlier work${ESC}[0m"$'\n'
+  ansi+="${ESC}[0m${ESC}[38;2;121;129;134m${rule}─── ${ESC}[38;2;177;185;249m${title# }${ESC}[38;2;121;129;134m─${ESC}[0m"$'\n'
+  ansi+="${ESC}[0m${ESC}[38;2;128;130;131m❯${NBSP}${ESC}[0m"$'\n'
+  ansi+="${ESC}[0m${ESC}[38;2;121;129;134m${bottom}${ESC}[0m"$'\n'"$footer"
+  assert_screen "titled claude idle on herdr" empty "$CAPS_STYLED" "$screen" '' "$claude_idle"
+  assert_screen "titled claude idle on herdr (ansi)" empty "$CAPS_STYLED" "$ansi" '' "$claude_idle"
+  assert_screen "titled claude idle on zellij (ansi)" empty "$CAPS_STYLED_NOID" "$ansi"
+  assert_screen "titled claude idle on cmux/orca" empty "$CAPS_PLAIN" "$screen"
+  assert_screen "titled claude idle on tmux" empty "$CAPS_TMUX" "$ansi" 2 probe-absent
+  typed="$top"$'\n❯ fix the login bug\n'"$bottom"$'\n'"$footer"
+  assert_screen "titled claude typed on herdr" pending "$CAPS_STYLED" "$typed" '' "$claude_idle"
+  assert_screen "titled claude typed on zellij" pending "$CAPS_STYLED_NOID" "$typed"
+  assert_screen "titled claude typed on tmux" pending "$CAPS_TMUX" "$typed" 1 probe-absent
+  assert_screen "titled claude typed on plain backends" unknown "$CAPS_PLAIN" "$typed"
+  # The staleness rule still holds: a titled sandwich stranded in scrollback,
+  # with transcript rows between it and a lower unmatched rule, stays unknown.
+  scrollback="$top"$'\n❯'"$NBSP"$'\n'"$bottom"$'\nlater transcript output\n'"$bottom"$'\nmore output'
+  assert_screen "titled sandwich in scrollback" unknown "$CAPS_STYLED_NOID" "$scrollback"
+  # Width is proven, not assumed: a titled rule narrower than its closing rule
+  # is not that composer's top edge.
+  short="${rule}${title}─"$'\n❯'"$NBSP"$'\n'"$bottom"
+  assert_screen "mismatched titled rule width" unknown "$CAPS_STYLED_NOID" "$short"
+  # A non-ASCII title leaves residue and refuses rather than guessing width.
+  nonascii="${rule}─── ✳ Firstmate operational input 179054604 ─"$'\n❯'"$NBSP"$'\n'"$bottom"
+  assert_screen "non-ASCII titled rule" unknown "$CAPS_STYLED_NOID" "$nonascii"
+  # The rule must open with the strict separator's dash run.
+  flush=" Firstmate operational input 1790546042 ${rule}────"$'\n❯'"$NBSP"$'\n'"$bottom"
+  assert_screen "title flush at the rule's start" unknown "$CAPS_STYLED_NOID" "$flush"
+  # The strict blank-row posture is untouched: no glyph row, no proof.
+  blank="$top"$'\n\n'"$bottom"
+  assert_screen "titled rule over a blank row" unknown "$CAPS_STYLED_NOID" "$blank"
+  # The untitled pair keeps its verdict alongside the new shape.
+  assert_screen "untitled claude idle on herdr" empty "$CAPS_STYLED" \
+    "$bottom"$'\n❯'"$NBSP"$'\n'"$bottom"$'\n'"$footer" '' "$claude_idle"
+  pass "matrix: claude's titled top rule proves an idle composer empty and a draft pending (#5601, #5558)"
 }
 
 test_matrix_kimi_bordered_shell_glyph_box() {
@@ -928,8 +1032,10 @@ test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_omp_status_row_bounds_bare_composer
 test_matrix_codex_idle_starfield_furniture
 test_matrix_pi_separated_needs_identity
+test_matrix_pi_dollar_status_footer_is_empty
 test_matrix_opencode_leftbar_signals
 test_matrix_grok_titled_bottom_border
+test_matrix_claude_titled_top_rule
 test_matrix_kimi_bordered_shell_glyph_box
 test_matrix_claude_inside_zellij_ansi_dump
 test_strict_blank_row_divergence

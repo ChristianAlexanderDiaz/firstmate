@@ -17,7 +17,7 @@
 # quota-axi keeps working unchanged. FM_QUOTA_ROW_JQ is the one join used to
 # bind a candidate to its row under either schema.
 
-FM_QUOTA_AXI_MIN=0.1.29
+FM_QUOTA_AXI_MIN=0.1.51
 FM_QUOTA_PROVIDER_ID_RE='^[a-z0-9]+(-[a-z0-9]+)*\z'
 
 # The eligibility section of .agents/skills/quota-array-dispatch/SKILL.md
@@ -145,15 +145,16 @@ fm_quota_single_provider_table() {
     'muse meta'
 }
 
+# Reads the whole table before answering: leaving the loop early closes the
+# pipe mid-write, and where SIGPIPE is ignored the writer prints a broken-pipe
+# error on stderr.
 fm_quota_single_provider_for_harness() {
-  local harness provider
+  local harness provider found=''
   while read -r harness provider; do
-    if [ "$harness" = "$1" ]; then
-      printf '%s\n' "$provider"
-      return 0
-    fi
+    [ -z "$found" ] && [ "$harness" = "$1" ] && found=$provider || :
   done < <(fm_quota_single_provider_table)
-  return 1
+  [ -n "$found" ] || return 1
+  printf '%s\n' "$found"
 }
 
 fm_quota_provider_for_harness() {
