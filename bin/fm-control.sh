@@ -964,16 +964,11 @@ record_note() {
   esac
 }
 
-# The replacement launch (fm-spawn.sh --relaunch) is the one place that may
-# move this row, and it refuses a row fm_backlog_row_dispatchable's --relaunch
-# mode does not accept (bin/fm-backlog-transition-lib.sh: the same predicate
-# fm-spawn's own preflight and locked commit-time check use). Proving that
-# here, before anything about the old agent is touched, is what keeps a
-# refused replacement from ever stopping a worker it cannot replace - a
-# captain-held or dependency-blocked row is the ordinary shape of a task
-# parked on a captain call (captain-hold-lifecycle) and must relaunch
-# normally, but a row that is not In flight at all still refuses exactly as
-# it always has.
+# Check the same backlog gate and relaunch predicate as fm-spawn.sh before
+# checkpointing or stopping the old agent. The launch owner alone repairs
+# eligible Queued drift and rechecks the row at commit; a later backlog change
+# can still refuse the replacement, but an already-ineligible row refuses here
+# while the old agent is untouched.
 require_relaunch_backlog_eligible() {
   local applies_status=0
   if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then

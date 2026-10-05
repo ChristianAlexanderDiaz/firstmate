@@ -2472,9 +2472,8 @@ test_branch_relaunch_under_the_away_posture_of_a_held_in_flight_item_succeeds() 
   pass "fm-control relaunch: the away-posture branch relaunches a captain-held In-flight item and keeps the hold"
 }
 
-# A row that is not In flight at all - here, held while still queued - is not
-# the "already in flight, replace its agent" case relaunch exists for, and
-# must still refuse before the old agent is ever touched.
+# A held Queued row cannot use the unheld, unblocked Queued drift-heal
+# exception, so it must refuse before the old agent is ever touched.
 test_relaunch_of_a_held_queued_item_refuses_before_stopping_the_agent() {
   local dir out rc=0
   command -v tasks-axi >/dev/null 2>&1 || {

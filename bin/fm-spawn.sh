@@ -444,12 +444,13 @@
 # Publishing the record and moving this home's backlog item to In flight are one
 # step, not two: bin/fm-backlog-transition-lib.sh owns that invariant, and this
 # script performs the transition under the task's own meta lock before it reports
-# success. A ship or scout dispatch therefore REFUSES up front, before any
+# success. A fresh ship or scout dispatch therefore REFUSES up front, before any
 # endpoint, worktree, or record exists, unless the home's backlog has an
 # unheld, unblocked Queued or In flight item for the id; a transition that fails
 # after publication removes the record it just wrote rather than leaving a
-# worker the backlog does not own. A relaunch re-reads the row instead of
-# re-running the transition, so an eligible In-flight item is left untouched.
+# worker the backlog does not own. A relaunch uses fm_backlog_row_dispatchable's
+# --relaunch mode, leaving an eligible In-flight item untouched or repairing
+# eligible Queued drift.
 # The transition is
 # skipped entirely for --secondmate spawns (persistent agents are not work
 # items), on a config/backlog-backend=manual home, and in a markdown home that
@@ -3471,11 +3472,10 @@ herdr_projection_existing_meta_allows_flat() { # <meta>
   esac
 }
 
-# Backlog preflight (bin/fm-backlog-transition-lib.sh). This spawn is about to
-# become the sole owner of the row's In-flight transition, so prove the row is
-# transitionable BEFORE any endpoint, worktree, or record exists: a refusal here
-# costs nothing to unwind, while the same refusal after publication would strand
-# a live pane. The authoritative mutation still runs under the meta lock below.
+# Backlog preflight (bin/fm-backlog-transition-lib.sh). Check eligibility before
+# a fresh spawn creates an endpoint, worktree, or record, and before a relaunch
+# mutates its existing task. Refusing here avoids a launch that cannot commit;
+# the authoritative transition re-reads the row under the meta lock at commit.
 BACKLOG_TRANSITION=0
 BACKLOG_ROW_STATE=
 # A relaunch replaces the agent of a task that is already In flight, so its
@@ -3483,7 +3483,7 @@ BACKLOG_ROW_STATE=
 # captain call, captain-hold-lifecycle) without that refusing the relaunch;
 # fm_backlog_row_dispatchable owns the exact rule for each mode, and the
 # commit below (spawn_commit_backlog_transition) passes the same mode so the
-# preflight and the locked commit-time check never disagree.
+# preflight and the locked commit-time check apply the same eligibility rule.
 BACKLOG_DISPATCH_MODE=
 [ "$RELAUNCH" -ne 1 ] || BACKLOG_DISPATCH_MODE=--relaunch
 if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
