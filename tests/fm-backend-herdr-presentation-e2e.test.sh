@@ -844,6 +844,10 @@ FAIL_CLOSED_PANES=$(sed -n "$((FAIL_START + 1)),\$p" "$HERDR_CALL_LOG" | awk -F 
   || fail "move-failure spawn closed its exact task pane"
 assert_no_ordering_lifecycle_calls_since "$FAIL_START" "failed presentation ordering"
 lab workspace close "$NOTES_WSID" >/dev/null || fail "could not remove the move-failure case's personal space"
+# Herdr 0.7.4's explicit fixture close can focus the neighboring worker.
+# Reset the captain tab before measuring production abort cleanup.
+lab tab focus "$SECOND_TWO_TAB" >/dev/null || fail "could not restore captain focus after the move-failure fixture"
+assert_focus_is "$CAPTAIN_FOCUS" "move-failure fixture cleanup"
 pass "real Herdr lab: forced workspace.move failure leaves a successful worker in default order with a warning and no cleanup"
 
 mkdir -p "$POST_CREATE_ABORT_CONTROL"
