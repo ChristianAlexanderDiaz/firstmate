@@ -7,7 +7,8 @@
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
 #                                         [--claude-account <name>]
-#                                         (--note <text> | --note-file <path>)
+#                                         (--note <text> | --note-file <path>
+#                                          | --usage-limit)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
 # DATA plane: conversational text for the agent to read, always routing-marked
@@ -82,11 +83,12 @@
 #              malformed list, or a replacement runtime that cannot hide the tools.
 #              --claude-account <name> moves a ship or scout Claude worker onto
 #              that named account of config/claude-failover (docs/configuration.md
-#              "Claude account failover"), and `default` returns it to the
-#              home's ordinary launch account; a task already moved keeps its
-#              recorded account. Either way the account is resolved and sign-in
-#              checked here, before the old agent stops.
-#              --note is required for a ship or scout, whose replacement
+#              "Claude account failover"); every name is literal, and a task
+#              already moved keeps its recorded account. The account is resolved,
+#              sign-in checked, and paid usage refused before the old agent stops.
+#              --usage-limit handles the recorded limit under this transaction
+#              boundary, with its generation check and automatic handoff.
+#              A manual relaunch requires --note for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
 #              standing charter is never rewritten.
@@ -222,6 +224,11 @@ control_cleanup() {
   if [ -n "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
     rm -f "$FM_COMPOSER_DIALOG_SINK"
   fi
+  if [ "$status" != 0 ] && [ "$CONTROL_LOCK_HELD" = 1 ] \
+     && [ "${USAGE_LIMIT:-0}" = 1 ] && [ "${NOTE_SET:-0}" = 1 ]; then
+    printf 'blocked: Claude usage limit reached; replacement failed; inspect %s and the control error\n' "$JOURNAL" >> "$STATE/$ID.status"
+    printf 'blocked %s replacement failed; inspect %s and the control error\n' "$ID" "$JOURNAL"
+  fi
   if [ "$CONTROL_LOCK_HELD" = 1 ]; then
     CONTROL_LOCK_HELD=0
     fm_lock_release "$CONTROL_LOCK" || true
@@ -262,6 +269,7 @@ NOTE=
 NOTE_SET=0
 NEW_CLAUDE_ACCOUNT=
 CLAUDE_ACCOUNT_SET=0
+USAGE_LIMIT=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -284,6 +292,7 @@ for control_arg in "$@"; do
     continue
   fi
   case "$control_arg" in
+    --usage-limit) USAGE_LIMIT=1 ;;
     --harness) control_want_value=harness ;;
     --harness=*) NEW_HARNESS=${control_arg#--harness=}; HARNESS_SET=1 ;;
     --model) control_want_value=model ;;
@@ -311,8 +320,13 @@ fi
 
 if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    && [ "$CLAUDE_ACCOUNT_SET" = 0 ] \
-    || die "--harness, --model, --effort, --claude-account, and --note apply to 'relaunch' only"
+    && [ "$CLAUDE_ACCOUNT_SET" = 0 ] && [ "$USAGE_LIMIT" = 0 ] \
+    || die "--harness, --model, --effort, --claude-account, and --note/--usage-limit apply to 'relaunch' only"
+fi
+if [ "$USAGE_LIMIT" = 1 ]; then
+  [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] \
+    && [ "$NOTE_SET" = 0 ] && [ "$CLAUDE_ACCOUNT_SET" = 0 ] \
+    || die "--usage-limit cannot be combined with replacement overrides"
 fi
 [ "$CLAUDE_ACCOUNT_SET" = 0 ] || [ -n "$NEW_CLAUDE_ACCOUNT" ] || die "--claude-account requires a non-empty value"
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
@@ -1002,7 +1016,6 @@ resolve_relaunch_profile() {
   else
     TARGET_CLAUDE_ACCOUNT=
   fi
-  [ "$TARGET_CLAUDE_ACCOUNT" != default ] || TARGET_CLAUDE_ACCOUNT=
   if [ -n "$TARGET_CLAUDE_ACCOUNT" ]; then
     [ "$TARGET_HARNESS" = claude ] \
       || die "Claude account '$TARGET_CLAUDE_ACCOUNT' applies only to a claude replacement, not '$TARGET_HARNESS'"
@@ -1250,6 +1263,12 @@ case "$VERB" in
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)
-    do_relaunch
+    if [ "$USAGE_LIMIT" = 1 ]; then
+      # shellcheck source=bin/fm-account-failover.sh
+      . "$SCRIPT_DIR/fm-account-failover.sh"
+      fm_account_failover_recover
+    else
+      do_relaunch
+    fi
     ;;
 esac

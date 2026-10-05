@@ -356,7 +356,7 @@ fm_worker_account_failover_load() {
   esac
 }
 
-# fm_worker_account_failover_resolve <config-dir> <name>
+# fm_worker_account_failover_resolve <config-dir> <name> [parsed-map]
 # Prints "declared<TAB>root" for one named account of this home's map, where
 # root is empty for `ordinary` (CLAUDE_CONFIG_DIR unset). Refuses, printing one
 # error and returning 1, when the home has no map, the map is malformed, it
@@ -364,12 +364,14 @@ fm_worker_account_failover_load() {
 # pins every Claude worker with config/claude-account, because a moved worker
 # would break that pin.
 fm_worker_account_failover_resolve() {
-  local config=$1 name=$2 map line declared root
+  local config=$1 name=$2 map=${3:-} line declared root
   if [ -e "$config/claude-account" ] || [ -L "$config/claude-account" ]; then
     echo "error: config/claude-account pins every Claude worker in this home to one account, so a worker cannot run on failover account '$name'; remove one of config/claude-account and config/$FM_WORKER_ACCOUNT_FAILOVER_FILE" >&2
     return 1
   fi
-  map=$(fm_worker_account_failover_load "$config") || return 1
+  if [ -z "$map" ]; then
+    map=$(fm_worker_account_failover_load "$config") || return 1
+  fi
   [ -n "$map" ] || {
     echo "error: this home has no config/$FM_WORKER_ACCOUNT_FAILOVER_FILE, so Claude account '$name' names nothing" >&2
     return 1
@@ -390,16 +392,34 @@ fm_worker_account_failover_resolve() {
 }
 
 # fm_worker_account_failover_select <config-dir> <name> <executable>
+#                                   [snapshot-json] [parsed-map]
 # The launch-time decision for a worker recorded on a failover account: the
-# resolve above plus the same sign-in check a pin gets. Prints
+# resolve above, the same sign-in check a pin gets, and a fresh quota reading
+# proving paid usage disabled. Without a supplied snapshot, reads quota-axi
+# --all-accounts --json at launch. Prints
 # "declared<TAB>root" on success; on refusal prints one error and returns 1.
 fm_worker_account_failover_select() {
-  local config=$1 name=$2 executable=$3 selection declared root
-  selection=$(fm_worker_account_failover_resolve "$config" "$name") || return 1
+  local config=$1 name=$2 executable=$3 snapshot=${4:-} map=${5:-} selection declared root
+  selection=$(fm_worker_account_failover_resolve "$config" "$name" "$map") || return 1
   declared=${selection%%$'\t'*}
   root=${selection#*$'\t'}
   if ! fm_worker_account_check claude "$declared" "$root" "$executable" 2>/dev/null; then
     echo "error: config/$FM_WORKER_ACCOUNT_FAILOVER_FILE account '$name' ($declared) is not signed in (claude auth status); sign in to it, or remove it from the map" >&2
+    return 1
+  fi
+  if [ -z "$snapshot" ]; then
+    snapshot=$(fm_run_timed "${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}" quota-axi --all-accounts --json 2>/dev/null </dev/null) || {
+      echo "error: Claude account '$name' paid usage could not be checked" >&2
+      return 1
+    }
+  fi
+  if ! printf '%s' "$snapshot" | jq -e --arg name "$name" '
+    [.providers[] | select(.provider == "claude" and .account == $name)] |
+    length == 1 and (.[0] | .state.status == "fresh" and .state.stale != true
+      and .quotaSemantics.status == "known" and (.windows | type) == "array"
+      and any(.windows[]; .kind == "session" or .kind == "weekly")
+      and all(.windows[]; .kind != "credits" and .id != "extra_usage"))' >/dev/null 2>&1; then
+    echo "error: Claude account '$name' has paid usage enabled or its paid usage status is unknown" >&2
     return 1
   fi
   printf '%s\n' "$selection"

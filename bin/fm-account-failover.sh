@@ -23,8 +23,8 @@
 # Claude printed. It never fails the hook.
 #
 # The move. `tick` (run by bin/fm-watch.sh once per cycle) hands each recorded
-# task to `run`, which consumes the record first so a limit is handled exactly
-# once, then:
+# task to `run`, which enters the control plane's gate, lease, and lifecycle
+# boundary before consuming the generation-bound record exactly once, then:
 #   1. Drops the record silently when it is stale (another incarnation, a task
 #      no longer a canonical claude ship or scout) or names no usage limit: the
 #      hook's limit text and the rendered limit prompt are two independent
@@ -49,9 +49,6 @@
 #      prompt caching does not carry across accounts, so resuming would resend
 #      the whole transcript uncached on the new account, while a fresh agent
 #      reads only the instructions, the local copy, and a short note.
-#   7. Refuses a second move of the same task within
-#      FM_ACCOUNT_FAILOVER_REPEAT_SECS (1800) of the last one, raising the same
-#      blocked line instead, so a misread account can never ping-pong a worker.
 # `run` prints one line for its caller: `moved <id> <from> <to>`,
 # `blocked <id> <reason>`, or `skipped <id> <reason>`. Secondmates are not
 # moved: they carry no StopFailure hook, and a supervisor's account is also the
@@ -62,17 +59,16 @@
 # name, every quota scope that applies to the worker's model (all_models plus
 # each model:<family> scope the model id names; every model scope when the
 # model is unknown) is known, none of those scopes is exhausted now or bounded
-# by a credits window, and the lowest of them is above the map's floor
-# (default 5 percent). The worker's current account never qualifies. Above the
-# floor, the plan windows still have room, so the next turns draw on the plan
-# rather than on paid extra usage. Qualifying accounts rank by spendPriority
+# by a credits window, paid extra usage is disabled, its root is usable and
+# signed in, and the lowest scope is above the map's floor (default 5 percent).
+# The worker's current account never qualifies. Qualifying accounts rank by
+# spendPriority
 # (quota-axi's own spend-first ranker, known before unknown), then remaining
 # percent, then map order. It prints `pick<TAB><account><TAB><percent>` and
 # exits 0, or `none<TAB><summary>` and exits 1; a malformed input exits 2.
 #
 # Environment knobs:
 #   FM_ACCOUNT_FAILOVER_QUOTA_SECONDS  bound on the quota snapshot (90)
-#   FM_ACCOUNT_FAILOVER_REPEAT_SECS    no second move inside this window (1800)
 #   FM_ACCOUNT_FAILOVER_MENU_WAIT      seconds to wait for the prompt to render
 #                                      or to close after Escape (5)
 #   FM_ACCOUNT_FAILOVER_NM_SECONDS     bound on each no-mistakes call (20)
@@ -215,7 +211,19 @@ cmd_choose() {
     echo "error: snapshot '$snapshot' is not a quota-axi --all-accounts --json snapshot" >&2
     return 2
   }
+  verdicts=$(choose_usable "$verdicts" "$map" "$(cat "$snapshot")" "$(dirname "$map_file")") || return 2
   choose_print "$verdicts"
+}
+
+choose_usable() {
+  local verdicts=$1 map=$2 snapshot=$3 config=$4 name reason
+  while IFS= read -r name; do
+    if ! reason=$(fm_worker_account_failover_select "$config" "$name" claude "$snapshot" "$map" 2>&1); then
+      verdicts=$(printf '%s' "$verdicts" | jq -c --arg n "$name" --arg r "$reason" \
+        'map(if .name == $n then .ok = false | .why = $r else . end)') || return 1
+    fi
+  done < <(printf '%s' "$verdicts" | jq -r '.[] | select(.ok) | .name')
+  printf '%s\n' "$verdicts"
 }
 
 # choose_print <verdicts-json>: the pick/none line and its exit status.
@@ -354,51 +362,33 @@ nm_run_terminal() {  # <run-id>
 }
 
 cmd_run() {
-  ID=${1:-}
-  [ -n "$ID" ] || die "run needs a task id"
-  [ -n "${FM_HOME:-}" ] && [ -d "$FM_HOME" ] || die "FM_HOME must name this firstmate home"
-  STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+  exec "$SCRIPT_DIR/fm-control.sh" "${1:-}" relaunch --usage-limit
+}
+
+fm_account_failover_recover() {
   CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
-  case "$ID" in *[!A-Za-z0-9._-]* | .*) die "'$ID' is not a valid task id" ;; esac
-  META="$STATE/$ID.meta"
   NM_SECONDS=${FM_ACCOUNT_FAILOVER_NM_SECONDS:-20}
-  local marker_file="$STATE/$ID.usage-limit" marker message gen menu=0 now ledger last_ts
-  local snapshot current pick choice to note run_id out recent=${FM_ACCOUNT_FAILOVER_REPEAT_SECS:-1800}
+  local marker_file="$STATE/$ID.usage-limit" marker message gen menu=0
+  local snapshot current pick choice to run_id
   local menu_wait=${FM_ACCOUNT_FAILOVER_MENU_WAIT:-5} quota_seconds=${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}
 
-  # shellcheck source=bin/fm-backend.sh
-  . "$SCRIPT_DIR/fm-backend.sh"
-  # shellcheck source=bin/fm-wake-lib.sh
-  . "$SCRIPT_DIR/fm-wake-lib.sh"
   # shellcheck source=bin/fm-nm-run-lib.sh
   . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 
-  local lock="$STATE/.account-failover-$ID.lock"
-  fm_lock_try_acquire "$lock" || skipped "another failover is already running for this task"
-  # shellcheck disable=SC2064  # The lock path is fixed now, by design.
-  trap "fm_lock_release '$lock' >/dev/null 2>&1 || true" EXIT
-
   [ -f "$marker_file" ] || skipped "no usage-limit record"
   marker=$(cat "$marker_file" 2>/dev/null) || marker=
+  gen=$(marker_field "$marker" gen)
+  if [ -z "$gen" ] || [ "$gen" != "$(fm_meta_get "$META" busy_gen)" ]; then
+    rm -f "$marker_file" || die "could not consume $marker_file"
+    skipped "the usage-limit record belongs to an earlier incarnation"
+  fi
   rm -f "$marker_file" || die "could not consume $marker_file"
 
   MAP=$(fm_worker_account_failover_load "$CONFIG" 2>/dev/null) || MAP=invalid
   [ -n "$MAP" ] || skipped "this home has no config/$FM_WORKER_ACCOUNT_FAILOVER_FILE"
-  [ -f "$META" ] || skipped "no task record"
-  [ "$(fm_meta_get "$META" harness)" = claude ] || skipped "not a canonical claude worker"
-  KIND=$(fm_meta_get "$META" kind)
-  [ -n "$KIND" ] || KIND=ship
+  [ "$RECORDED_HARNESS" = claude ] || skipped "not a canonical claude worker"
   case "$KIND" in ship | scout) ;; *) skipped "a $KIND is not moved between accounts" ;; esac
-  [ -z "$(fm_meta_get "$META" remote_host)" ] || skipped "a remotely placed worker"
-  gen=$(marker_field "$marker" gen)
-  [ -n "$gen" ] && [ "$gen" = "$(fm_meta_get "$META" busy_gen)" ] \
-    || skipped "the usage-limit record belongs to an earlier incarnation"
-  WT=$(fm_meta_get "$META" worktree)
   message=$(marker_field "$marker" message)
-
-  fm_backend_validate_task_endpoint "$META" "$ID" >/dev/null 2>&1 || skipped "the task endpoint does not validate"
-  BACKEND=$FM_BACKEND_VALIDATED_BACKEND
-  T=$FM_BACKEND_VALIDATED_TARGET
 
   # Two independent signals confirm a usage limit rather than a transient 429.
   if wait_menu shown "$menu_wait"; then
@@ -424,17 +414,6 @@ cmd_run() {
     status_blocked "Claude usage limit reached ($limit_text); config/claude-account pins every Claude worker to one account, so the worker was left stopped"
   fi
 
-  ledger="$STATE/$ID.account-failover"
-  now=$(date +%s)
-  last_ts=$(tail -1 "$ledger" 2>/dev/null | awk '{print $1}')
-  case "$last_ts" in
-    '' | *[!0-9]*) ;;
-    *)
-      [ $((now - last_ts)) -ge "$recent" ] \
-        || status_blocked "Claude usage limit reached ($limit_text) again within $((recent / 60)) minutes of moving this worker to another account, so it was left stopped rather than moved twice"
-      ;;
-  esac
-
   command -v quota-axi >/dev/null 2>&1 \
     || status_blocked "Claude usage limit reached ($limit_text); quota-axi is not installed, so no other account could be checked and the worker was left stopped"
   snapshot="$STATE/.$ID.account-failover-quota.$$.json"
@@ -446,6 +425,10 @@ cmd_run() {
   choice=$(choose_json "$MAP" "$snapshot" "$current" "$(fm_meta_get "$META" model)" 2>/dev/null) || {
     rm -f "$snapshot"
     status_blocked "Claude usage limit reached ($limit_text); the quota-axi --all-accounts snapshot was unreadable, so the worker was left stopped"
+  }
+  choice=$(choose_usable "$choice" "$MAP" "$(cat "$snapshot")" "$CONFIG") || {
+    rm -f "$snapshot"
+    status_blocked "Claude usage limit reached ($limit_text); account eligibility could not be checked"
   }
   rm -f "$snapshot"
   if ! pick=$(choose_print "$choice"); then
@@ -463,23 +446,19 @@ cmd_run() {
       || status_blocked "Claude usage limit reached ($limit_text); no-mistakes run $run_id did not stop after its abort, so the worker was left stopped"
   fi
 
-  note="$STATE/.$ID.account-failover-note.$$"
-  {
+  NOTE=$({
     echo "Your previous agent stopped at its Claude account's usage limit (\"$limit_text\")."
     echo "Firstmate chose that limit's stop option and moved this task to another signed-in Claude account with room; nothing was paid for."
     if [ -n "$run_id" ]; then
       echo "This task's no-mistakes run $run_id was aborted cleanly before the move; when you reach validation again, start a fresh run as your Definition of done describes."
     fi
     echo "Re-read your instructions and durable records, inspect git status and git log in this local copy, and continue the task from where the work stands."
-  } > "$note" || die "could not write the handoff note"
+  })
+  NOTE_SET=1
+  NEW_CLAUDE_ACCOUNT=$to
+  CLAUDE_ACCOUNT_SET=1
   wait_classified "${FM_ACCOUNT_FAILOVER_SETTLE_WAIT:-20}" || true
-  if ! out=$("$SCRIPT_DIR/fm-control.sh" "$ID" relaunch --claude-account "$to" --note-file "$note" 2>&1); then
-    rm -f "$note"
-    status_blocked "Claude usage limit reached ($limit_text); the move to another Claude account failed: $(printf '%s\n' "$out" | grep -m1 '^error:' || printf '%s\n' "$out" | tail -1)"
-  fi
-  rm -f "$note"
-  printf '%s %s %s\n' "$now" "${current:-unknown}" "$to" >> "$ledger" \
-    || echo "error: could not append to $ledger" >&2
+  do_relaunch >/dev/null
   printf 'moved %s %s %s\n' "$ID" "${current:-unknown}" "$to"
 }
 
@@ -499,6 +478,7 @@ cmd_tick() {
   return 0
 }
 
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
 case "${1:-}" in
   record) shift; cmd_record "$@" ;;
   choose) shift; cmd_choose "$@" ;;
@@ -507,3 +487,4 @@ case "${1:-}" in
   -h | --help) usage ;;
   *) usage >&2; exit 2 ;;
 esac
+fi

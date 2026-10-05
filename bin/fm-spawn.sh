@@ -380,10 +380,10 @@
 # Claude account failover (config/claude-failover; --claude-account <name>):
 #   Opt-in, relaunch only. `--relaunch --claude-account <name>` moves a ship or
 #   scout Claude worker onto one named account of config/claude-failover,
-#   sign-in checked before any endpoint changes, launched like a pinned root,
-#   and recorded as claude_account= in the task record and on the spawned
-#   line; every later relaunch keeps it until `--claude-account default` or a
-#   harness change. It refuses beside config/claude-account. Every Claude
+#   sign-in and paid-usage checked before any endpoint changes, launched like
+#   a pinned root, and recorded as claude_account= in the task record and on the spawned
+#   line; every later relaunch keeps it until another literal account name or
+#   a harness change. It refuses beside config/claude-account. Every Claude
 #   ship and scout StopFailure hook also runs bin/fm-account-failover.sh
 #   record, which writes nothing without the map; that script owns the move.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
@@ -2573,15 +2573,14 @@ if [ -n "$WORKER_ACCOUNT" ] && [ "$HARNESS" = claude ]; then
 fi
 # Claude account failover (header above): a relaunch onto a named account of
 # config/claude-failover, and every later relaunch of a task already moved,
-# resolves and sign-in checks that account here, before any endpoint changes.
-# An explicit `default` returns the task to this home's ordinary launch
-# account. A task never moved, and every launch in a home without the map,
-# selects nothing here.
+# resolves, sign-in checks, and refuses paid usage for that account here,
+# before any endpoint changes. Every account name is literal. A task never
+# moved, and every launch in a home without the map, selects nothing here.
 CLAUDE_ACCOUNT=
 CLAUDE_ACCOUNT_ROOT=
 if [ "$RELAUNCH" -eq 1 ]; then
   if [ "$CLAUDE_ACCOUNT_SET" -eq 1 ]; then
-    [ "$CLAUDE_ACCOUNT_ARG" = default ] || CLAUDE_ACCOUNT=$CLAUDE_ACCOUNT_ARG
+    CLAUDE_ACCOUNT=$CLAUDE_ACCOUNT_ARG
   elif [ "$HARNESS" = claude ]; then
     CLAUDE_ACCOUNT=${CLAUDE_ACCOUNT_PRIOR:-}
   fi

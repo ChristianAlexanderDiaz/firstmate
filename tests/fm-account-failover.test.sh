@@ -250,7 +250,7 @@ choose() {  # <snapshot-json> [choose args...]
   local snap="$CASE/snap.json"
   printf '%s\n' "$1" > "$snap"
   shift
-  "$FAILOVER" choose --map "$CASE/home/config/claude-failover" --snapshot "$snap" "$@"
+  case_env "$FAILOVER" choose --map "$CASE/home/config/claude-failover" --snapshot "$snap" "$@"
 }
 
 test_choose_picks_by_quota_and_respects_the_floor() {
@@ -289,7 +289,8 @@ test_choose_refuses_unknown_quota_and_paid_usage() {
   expect_code 1 "$rc" "availability that counts paid credits must not qualify"
   assert_contains "$out" "counts paid usage credits" "paid usage is named"
   out=$(choose "$(quota_snapshot 0 81 '.providers[1].windows += [{id: "extra_usage", kind: "credits", percentRemaining: 26}]')" --current limited); rc=$?
-  expect_code 0 "$rc" "an account whose plan windows have room qualifies even with extra usage switched on"
+  expect_code 1 "$rc" "enabled extra usage must refuse even when the plan has room"
+  assert_contains "$out" "paid usage enabled" "enabled extra usage is named"
   out=$(choose "$(quota_snapshot 0 81 '.providers[1].quotaSemantics.effectiveAvailability[1].effectivePercentRemaining = 2')" --current limited --model claude-fable-5-1); rc=$?
   expect_code 1 "$rc" "a fable worker must respect the fable model scope"
   out=$(choose "$(quota_snapshot 0 81 '.providers[1].quotaSemantics.effectiveAvailability[1].effectivePercentRemaining = 2')" --current limited --model claude-opus-5-5); rc=$?
@@ -317,8 +318,8 @@ test_limit_prompt_is_answered_with_stop_and_the_worker_moves_to_an_account_with_
   assert_grep "stopped at its Claude account's usage limit" "$CASE/home/data/t3/brief.md" "the replacement must get the handoff note"
   [ ! -e "$CASE/home/state/t3.usage-limit" ] || fail "the usage-limit record must be consumed"
   [ -z "$(status_of t3)" ] || fail "a successful move raises no status line: $(status_of t3)"
-  assert_grep 'all-accounts' "$CASE/fake/quota-calls" "the choice must come from one --all-accounts snapshot"
-  [ "$(grep -c '' "$CASE/fake/quota-calls")" = 1 ] || fail "exactly one quota snapshot is taken"
+  assert_grep 'all-accounts' "$CASE/fake/quota-calls" "quota checks use all mapped accounts"
+  [ "$(grep -c '' "$CASE/fake/quota-calls")" = 3 ] || fail "selection, control, and spawn each check fresh quota"
   pass "run: the limit prompt gets its stop answer and the worker relaunches on an account with room"
 }
 
@@ -381,15 +382,26 @@ test_stale_or_unconfirmed_records_never_move_a_worker() {
   pass "run: stale records and rate-limit turn ends without a usage limit are skipped"
 }
 
-test_a_second_move_inside_the_repeat_window_is_refused() {
-  local out
+test_a_second_usage_limit_moves_to_a_third_account() {
+  local out gen
   new_case repeat t9
-  printf '%s limited spare\n' "$(date +%s)" > "$CASE/home/state/t9.account-failover"
+  mkdir -p "$CASE/accounts/third"
+  printf '{}\n' > "$CASE/accounts/third/.credentials.json"
+  printf 'account third %s\n' "$CASE/accounts/third" >> "$CASE/home/config/claude-failover"
+  quota_snapshot 0 6 '.providers += [.providers[1] | .account = "third"]' > "$CASE/fake/quota.json"
   record_limit t9
   out=$(case_env "$FAILOVER" run t9 2>&1)
-  assert_contains "$out" "blocked t9" "a second move this soon is refused: $out"
-  assert_no_grep '/exit' "$CASE/fake/literal" "the worker must not be moved twice"
-  pass "run: a task moved recently is left stopped rather than moved again"
+  assert_contains "$out" "moved t9 limited spare" "the first exhaustion moves: $out"
+  gen=$(sed -n 's/^busy_gen=//p' "$CASE/home/state/t9.meta" | tail -1)
+  printf '%s' "$LIMIT_SCREEN" > "$CASE/fake/screen"
+  quota_snapshot 0 0 '.providers += [.providers[1] | .account = "third" | .quotaSemantics.effectiveAvailability[] |= (.effectivePercentRemaining = 80 | .runway.status = "through_reset")]' > "$CASE/fake/quota.json"
+  jq -nc --arg m "$LIMIT_TEXT" '{error: "rate_limit", last_assistant_message: $m}' |
+    case_env CLAUDE_CONFIG_DIR="$CASE/accounts/spare" "$FAILOVER" record "$CASE/home/config" "$CASE/home/state" t9 "$gen"
+  out=$(case_env "$FAILOVER" run t9 2>&1)
+  assert_contains "$out" "moved t9 spare third" "a second exhaustion moves without delay: $out"
+  assert_grep 'claude_account=third' "$CASE/home/state/t9.meta" "the third account is recorded"
+  [ ! -e "$CASE/home/state/t9.account-failover" ] || fail "moves must not create a cooldown ledger"
+  pass "run: consecutive genuine usage limits can move onto another account"
 }
 
 # --- watcher -------------------------------------------------------------------
@@ -433,7 +445,7 @@ test_relaunch_refuses_an_unusable_account_before_stopping_the_worker() {
   pass "fm-control relaunch: an unknown, signed-out, or pin-conflicting account refuses before the worker stops"
 }
 
-test_a_moved_task_keeps_its_account_until_default() {
+test_a_moved_task_keeps_its_literal_account() {
   local out rc
   new_case keep t11
   rm -f "$CASE/fake/screen"
@@ -445,12 +457,140 @@ test_a_moved_task_keeps_its_account_until_default() {
   expect_code 0 "$rc" "a later relaunch should succeed: $out"
   assert_grep "CLAUDE_CONFIG_DIR='$CASE/accounts/spare'" "$CASE/fake/literal" "a later relaunch keeps the moved account"
   assert_grep 'claude_account=spare' "$CASE/home/state/t11.meta" "the record keeps the account"
+  printf 'account default ordinary\n' >> "$CASE/home/config/claude-failover"
+  quota_snapshot 80 81 '.providers[0].account = "default"' > "$CASE/fake/quota.json"
   : > "$CASE/fake/literal"
-  out=$(case_env "$CONTROL" t11 relaunch --claude-account default --note "back" 2>&1); rc=$?
-  expect_code 0 "$rc" "returning to the default account should succeed: $out"
-  assert_no_grep 'claude_account=' "$CASE/home/state/t11.meta" "default clears the account"
-  assert_no_grep "CLAUDE_CONFIG_DIR=" "$CASE/fake/literal" "default returns to the home's ordinary launch"
-  pass "fm-control relaunch: a moved task stays on its account across relaunches until --claude-account default"
+  out=$(case_env CLAUDE_CONFIG_DIR="$CASE/accounts/spare" "$CONTROL" t11 relaunch --claude-account default --note "back" 2>&1); rc=$?
+  expect_code 0 "$rc" "selecting the literal default account should succeed: $out"
+  assert_grep 'claude_account=default' "$CASE/home/state/t11.meta" "default is retained literally"
+  assert_no_grep "CLAUDE_CONFIG_DIR=" "$CASE/fake/literal" "the mapped ordinary root sheds the supervisor root"
+  : > "$CASE/fake/literal"
+  out=$(case_env "$CONTROL" t11 relaunch --note "keep literal" 2>&1); rc=$?
+  expect_code 0 "$rc" "the literal account must survive another relaunch: $out"
+  assert_grep 'claude_account=default' "$CASE/home/state/t11.meta" "the literal name survives control and spawn carry-forward"
+  pass "fm-control relaunch: every selected account name is literal and retained"
+}
+
+test_unusable_preferred_accounts_are_filtered_before_validation() {
+  local out mode
+  for mode in missing signed-out; do
+    new_case "candidate-$mode" t13
+    printf 'running' > "$CASE/fake/nm-state"
+    printf 'account preferred %s\n' "$CASE/accounts/preferred" >> "$CASE/home/config/claude-failover"
+    [ "$mode" != signed-out ] || mkdir -p "$CASE/accounts/preferred"
+    quota_snapshot 0 81 '.providers += [.providers[1] | .account = "preferred" | .quotaSemantics.effectiveAvailability[].selection.spendPriority = 1]' > "$CASE/fake/quota.json"
+    record_limit t13
+    out=$(case_env "$FAILOVER" run t13 2>&1)
+    assert_contains "$out" "moved t13 limited spare" "a $mode preferred root must not strand the worker: $out"
+    assert_grep 'claude_account=spare' "$CASE/home/state/t13.meta" "the usable candidate is launched"
+    assert_grep 'axi abort --run RUN1' "$CASE/fake/nm-calls" "validation still stops cleanly"
+  done
+  new_case candidate-none t18
+  printf 'running' > "$CASE/fake/nm-state"
+  rm -f "$CASE/accounts/spare/.credentials.json"
+  record_limit t18
+  out=$(case_env "$FAILOVER" run t18 2>&1)
+  assert_contains "$out" "blocked t18" "no usable alternative blocks before validation: $out"
+  [ ! -e "$CASE/fake/nm-calls" ] || fail "candidate refusal must not cancel validation"
+  pass "run: unusable and signed-out preferred accounts do not hide usable alternatives"
+}
+
+test_recovery_guards_precede_every_mutation() {
+  local out rc mode
+  for mode in gate lease lifecycle; do
+    new_case "guard-$mode" t14
+    printf 'running' > "$CASE/fake/nm-state"
+    record_limit t14
+    case "$mode" in
+      gate)
+        out=$(case_env FM_GATE_REFUSE_BYPASS=0 NO_MISTAKES_GATE=review "$FAILOVER" run t14 2>&1); rc=$?
+        expect_code 3 "$rc" "gate recovery must refuse: $out"
+        ;;
+      lease)
+        printf '%s\n' "$$" > "$CASE/home/state/.lock"
+        printf 'branch\t%s\t%s\n' "$$" "$(date +%s)" > "$CASE/home/state/.lease-t14"
+        out=$(case_env FM_SUPERVISION_ACTOR=main "$FAILOVER" run t14 2>&1); rc=$?
+        expect_code 6 "$rc" "foreign lease recovery must refuse: $out"
+        ;;
+      lifecycle)
+        mkdir "$CASE/home/state/.control-t14.lock"
+        printf '%s\n' "$$" > "$CASE/home/state/.control-t14.lock/pid"
+        out=$(case_env "$FAILOVER" run t14 2>&1); rc=$?
+        expect_code 1 "$rc" "concurrent lifecycle recovery must refuse: $out"
+        ;;
+    esac
+    [ -f "$CASE/home/state/t14.usage-limit" ] || fail "$mode refusal must preserve the event"
+    [ ! -s "$CASE/fake/keys" ] || fail "$mode refusal must not touch the terminal"
+    [ ! -e "$CASE/fake/nm-calls" ] || fail "$mode refusal must not mutate validation"
+    assert_equals running "$(cat "$CASE/fake/nm-state")" "$mode refusal preserves validation"
+    assert_grep 'busy_gen=g1' "$CASE/home/state/t14.meta" "$mode refusal preserves the generation"
+  done
+  pass "run: gate, lease, and lifecycle boundaries protect all recovery mutations"
+}
+
+test_manual_relaunch_cannot_race_the_quota_query() {
+  local out
+  new_case quota-race t15
+  cat > "$CASE/fakebin/quota-axi" <<SH
+#!/usr/bin/env bash
+if [ ! -e '$CASE/fake/race-result' ]; then
+  '$CONTROL' t15 relaunch --note 'manual replacement' > '$CASE/fake/race-output' 2>&1
+  printf '%s' "\$?" > '$CASE/fake/race-result'
+fi
+cat '$CASE/fake/quota.json'
+SH
+  record_limit t15
+  out=$(case_env "$FAILOVER" run t15 2>&1)
+  assert_contains "$out" "moved t15 limited spare" "guarded recovery completes: $out"
+  assert_equals 1 "$(cat "$CASE/fake/race-result")" "manual relaunch is excluded throughout quota selection"
+  assert_contains "$(cat "$CASE/fake/race-output")" "another lifecycle action" "the shared boundary refuses the race"
+  [ "$(grep -c '^text:/exit$' "$CASE/fake/events")" = 1 ] || fail "only the original worker is stopped"
+  pass "run: quota selection cannot race a manual replacement"
+}
+
+test_paid_usage_is_rejected_at_control_and_spawn_launch_boundaries() {
+  local out rc
+  new_case paid-control t16
+  rm -f "$CASE/fake/screen"
+  quota_snapshot 0 81 '.providers[1].windows += [{id: "extra_usage", kind: "credits", percentRemaining: 0}]' > "$CASE/fake/quota.json"
+  out=$(case_env "$CONTROL" t16 relaunch --claude-account spare --note "move" 2>&1); rc=$?
+  expect_code 1 "$rc" "paid-enabled account must refuse at control: $out"
+  assert_contains "$out" "paid usage enabled" "the control refusal names paid usage"
+  [ ! -s "$CASE/fake/literal" ] || fail "paid control refusal must precede stopping"
+
+  new_case paid-spawn t17
+  rm -f "$CASE/fake/screen"
+  cat > "$CASE/fakebin/quota-axi" <<SH
+#!/usr/bin/env bash
+printf 'read\n' >> '$CASE/fake/quota-calls'
+if [ "\$(wc -l < '$CASE/fake/quota-calls')" -gt 1 ]; then
+  jq '.providers[1].windows += [{id: "extra_usage", kind: "credits"}]' '$CASE/fake/quota.json'
+else
+  cat '$CASE/fake/quota.json'
+fi
+SH
+  out=$(case_env "$CONTROL" t17 relaunch --claude-account spare --note "move" 2>&1); rc=$?
+  expect_code 1 "$rc" "paid usage enabled after control must refuse at spawn: $out"
+  assert_contains "$out" "paid usage enabled" "spawn rechecks paid status"
+  assert_no_grep 'claude_account=' "$CASE/home/state/t17.meta" "failed spawn retains the prior record"
+  assert_no_grep 'encode launch-brief' "$CASE/fake/literal" "no paid replacement is started"
+  new_case paid-auto t19
+  rm -f "$CASE/fake/screen"
+  cat > "$CASE/fakebin/quota-axi" <<SH
+#!/usr/bin/env bash
+printf 'read\n' >> '$CASE/fake/quota-calls'
+if [ "\$(wc -l < '$CASE/fake/quota-calls')" -gt 1 ]; then
+  jq '.providers[1].windows += [{id: "extra_usage", kind: "credits"}]' '$CASE/fake/quota.json'
+else
+  cat '$CASE/fake/quota.json'
+fi
+SH
+  record_limit t19
+  out=$(case_env "$FAILOVER" run t19 2>&1)
+  assert_contains "$out" "blocked t19" "a changed paid setting produces a blocked recovery outcome: $out"
+  assert_contains "$(status_of t19)" "replacement failed" "the failed move wakes supervision"
+  [ ! -s "$CASE/fake/literal" ] || fail "paid recovery refusal must precede stopping"
+  pass "launch: control and spawn both refuse paid-enabled accounts"
 }
 
 test_record_writes_a_usage_limit_record_only_for_a_rate_limit_with_the_map
@@ -461,7 +601,11 @@ test_limit_prompt_is_answered_with_stop_and_the_worker_moves_to_an_account_with_
 test_no_qualifying_account_leaves_the_worker_stopped_with_one_blocked_line
 test_an_active_no_mistakes_run_is_aborted_before_the_move
 test_stale_or_unconfirmed_records_never_move_a_worker
-test_a_second_move_inside_the_repeat_window_is_refused
+test_a_second_usage_limit_moves_to_a_third_account
 test_the_watcher_moves_a_limited_worker_and_wakes_once
 test_relaunch_refuses_an_unusable_account_before_stopping_the_worker
-test_a_moved_task_keeps_its_account_until_default
+test_a_moved_task_keeps_its_literal_account
+test_unusable_preferred_accounts_are_filtered_before_validation
+test_recovery_guards_precede_every_mutation
+test_manual_relaunch_cannot_race_the_quota_query
+test_paid_usage_is_rejected_at_control_and_spawn_launch_boundaries
