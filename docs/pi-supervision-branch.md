@@ -435,7 +435,8 @@ Differing replies stay visible, including the first real handling after an empty
 Messages carrying tool calls always retain their prose, signed reasoning, and usage accounting.
 Pi's Markdown transformer API buffers retry prose while streaming on versions that expose it, so the complete reply can be compared before rendering.
 A retained reply renders when the message ends.
-Successful acknowledgement releases subsequent assistant output, and a real user message restores ordinary output immediately, including when a processing request rides that prompt.
+Acknowledgement through the last sequence in the active request releases subsequent assistant output; a partial acknowledgement keeps retry suppression active.
+A real user message restores ordinary output immediately, including when a processing request rides that prompt.
 
 ### Re-presentation pacing
 

@@ -3,7 +3,7 @@
 # (docs/turnend-guard.md, docs/sessionstart-nudge.md,
 # docs/supervision-protocols/cursor.md).
 #
-# Four layers, all hermetic over temp dirs with real processes and NO cursor
+# Three layers, all hermetic over temp dirs with real processes and NO cursor
 # installed, so CI enforces them everywhere:
 #   HOST GUARD  - bin/fm-hook-host-lib.sh, and each tracked Claude-shaped hook
 #                 entrypoint standing down on a Cursor-delivered payload, which

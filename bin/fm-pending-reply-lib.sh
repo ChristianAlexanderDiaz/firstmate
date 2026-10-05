@@ -959,7 +959,7 @@ fm_pending_reply_send_recovery() {  # <state-dir> <corr_id>
   now=$(fm_pending_reply_now)
   # Grace runs from the request turn's completion, not from delivery: delivery
   # only proves the request arrived, while the turn's completion is the
-  # earliest moment a correlated report could exist to race against.
+  # earliest moment a missing report can justify recovery.
   age=$((now - completed))
   [ "$age" -ge "$grace" ] || return 1
   task_id=$(fm_pending_reply_get "$rec" task_id)

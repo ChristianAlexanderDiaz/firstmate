@@ -2,7 +2,7 @@
 // working row while Calm is on, its cadence on the mocked clock, its size against the
 // viewport, and how it lets go of a site the surface no longer draws.
 import { describe, expect, test } from "claude-code/testing";
-import { calmCommand, decodeCells, isStock, rasterOf, spinner, themeChange, unmeasuredSpinner, world } from "./support.ts";
+import { HOME, calmCommand, decodeCells, isStock, rasterOf, spinner, themeChange, unmeasuredSpinner, world } from "./support.ts";
 
 const SAIL = "◿│◣";
 const HULL = "╲▁▁▁╱";
@@ -16,6 +16,26 @@ const TICK = 220;
 const TICKS_PER_MOVE = 4;
 
 describe("the working ship", () => {
+  test("keeps the stock boat when an old home retains a custom sprite, including after toggling Calm", async ($, on) => {
+    const { files } = world(on, { preference: "on\n" });
+    files.set(`${HOME}/config/calm-sprite.json`, JSON.stringify({
+      version: 1,
+      width: 5,
+      right: [{ glyphs: ["XXXXX", "XXXXX"] }],
+    }));
+    await $.session.start({ cwd: "/work", surface: "terminal", isInteractive: true });
+    for (let draw = 0; draw < 2; draw++) {
+      const raster = rasterOf(await $.ui.render(spinner()))!;
+      const { glyphs } = decodeCells(raster.cells, raster.columns!, raster.rows!);
+      expect(glyphs[0]!.includes(SAIL)).toBe(true);
+      expect(glyphs[1]!.includes(HULL)).toBe(true);
+      if (draw === 0) {
+        await $.command.run(calmCommand());
+        await $.command.run(calmCommand());
+      }
+    }
+  });
+
   test("replaces the spinner with a two-row raster sized to the row inside the transcript margin", async ($, on) => {
     world(on, { preference: "on\n" });
     const raster = rasterOf(await $.ui.render(spinner("agent-main", { columns: 40, rows: 24 })));
