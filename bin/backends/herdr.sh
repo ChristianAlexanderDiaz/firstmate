@@ -1494,30 +1494,32 @@ fm_backend_herdr_presentation_worker_owner() {  # <owner-label> <project> [<regi
   printf '%s' "$owner"
 }
 
-# fm_backend_herdr_presentation_journal_owners: print one
-# "<workspace-id><TAB><owner-label>" line for every exact version 2
-# presentation journal in <state-dir> bound to <session>. The owner is the
-# journal's recorded parent label (firstmate or 2ndmate-<id>). With a primary
-# <state-dir> and a readable <registry>, a primary worker whose task project
-# appears in exactly one second mate's projects list is owned by that second
-# mate instead. Unreadable or unbound journals are skipped.
-fm_backend_herdr_presentation_journal_owners() {  # <session> <state-dir> [<registry>]
-  local session=$1 state=$2 registry=${3:-} journal id owner project
-  [ -d "$state" ] || return 0
-  for journal in "$state"/*"$FM_BACKEND_HERDR_PRESENTATION_JOURNAL_SUFFIX"; do
-    [ -f "$journal" ] || continue
-    id=$(basename "$journal" "$FM_BACKEND_HERDR_PRESENTATION_JOURNAL_SUFFIX")
-    fm_backend_herdr_projection_journal_snapshot "$journal" "$id" || continue
-    [ "$FM_BACKEND_HERDR_JOURNAL_VERSION" = 2 ] || continue
-    [ "$FM_BACKEND_HERDR_JOURNAL_SESSION" = "$session" ] || continue
-    project=$(grep '^project=' "$state/$id.meta" 2>/dev/null | head -n 1 | cut -d= -f2-)
-    owner=$(fm_backend_herdr_presentation_worker_owner "$FM_BACKEND_HERDR_JOURNAL_PARENT_LABEL" "$project" "$registry")
-    printf '%s\t%s\n' "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" "$owner"
+# fm_backend_herdr_presentation_task_owners: print one
+# "<workspace-id><TAB><owner-label>" line for every validated Herdr task
+# record in <home>/state bound to <session>. The owner is the home's label
+# (firstmate or 2ndmate-<id>). With a primary home and a readable <registry>,
+# a primary worker whose task project appears in exactly one second mate's
+# projects list is owned by that second mate instead. Invalid records and
+# other sessions or backends are skipped.
+fm_backend_herdr_presentation_task_owners() {  # <session> <home> [<registry>]
+  local session=$1 home=$2 registry=${3:-} meta id owner project workspace parent
+  [ -d "$home/state" ] || return 0
+  parent=$(FM_HOME="$home" fm_backend_herdr_workspace_label)
+  for meta in "$home/state"/*.meta; do
+    [ -f "$meta" ] || continue
+    id=$(basename "$meta" .meta)
+    fm_backend_validate_task_endpoint "$meta" "$id" 2>/dev/null || continue
+    [ "$FM_BACKEND_VALIDATED_BACKEND" = herdr ] || continue
+    [ "$(fm_meta_get "$meta" herdr_session)" = "$session" ] || continue
+    workspace=$(fm_meta_get "$meta" herdr_workspace_id)
+    project=$(fm_meta_get "$meta" project)
+    owner=$(fm_backend_herdr_presentation_worker_owner "$parent" "$project" "$registry")
+    printf '%s\t%s\n' "$workspace" "$owner"
   done
 }
 
 # fm_backend_herdr_presentation_owners: print the JSON object mapping every
-# known projected workspace id in <session> to its owner label, gathered from
+# known task workspace id in <session> to its owner label, gathered from
 # the primary home, every local second mate home in its registry, and this
 # home itself. The optional pair names a worker this home just created, whose
 # task record is not published yet, independently of its journal version.
@@ -1528,7 +1530,7 @@ fm_backend_herdr_presentation_owners() {  # <session> [<new-workspace-id> <new-p
   primary=$(fm_backend_herdr_presentation_primary_home 2>/dev/null) || primary=
   if [ -n "$primary" ]; then
     registry="$primary/data/secondmates.md"
-    records=$(fm_backend_herdr_presentation_journal_owners "$session" "$primary/state" "$registry")
+    records=$(fm_backend_herdr_presentation_task_owners "$session" "$primary" "$registry")
     seen=$(fm_backend_herdr_projection_home_identity "$primary" 2>/dev/null || printf '%s' "$primary")
     if [ -f "$registry" ]; then
       while IFS= read -r line || [ -n "$line" ]; do
@@ -1537,7 +1539,7 @@ fm_backend_herdr_presentation_owners() {  # <session> [<new-workspace-id> <new-p
         home=$SECONDMATE_REGISTRY_HOME
         [ -d "$home/state" ] || continue
         records="$records
-$(fm_backend_herdr_presentation_journal_owners "$session" "$home/state")"
+$(fm_backend_herdr_presentation_task_owners "$session" "$home")"
         seen="$seen
 $(fm_backend_herdr_projection_home_identity "$home" 2>/dev/null || printf '%s' "$home")"
       done < "$registry"
@@ -1546,7 +1548,7 @@ $(fm_backend_herdr_projection_home_identity "$home" 2>/dev/null || printf '%s' "
   home=$(fm_backend_herdr_projection_home_identity "$FM_HOME" 2>/dev/null || printf '%s' "$FM_HOME")
   if ! printf '%s\n' "$seen" | grep -Fqx -- "$home"; then
     records="$records
-$(fm_backend_herdr_presentation_journal_owners "$session" "$FM_HOME/state")"
+$(fm_backend_herdr_presentation_task_owners "$session" "$FM_HOME")"
   fi
   if [ -n "$new_workspace" ]; then
     owner=$(fm_backend_herdr_workspace_label)

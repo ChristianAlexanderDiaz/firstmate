@@ -3146,7 +3146,7 @@ SH
 }
 
 # order_fixture_arrange: run one arrange pass with the given owners map as the
-# gathered journal owners; prints its stderr.
+# gathered task owners; prints its stderr.
 order_fixture_arrange() {  # <dir> <owners-json>
   local dir=$1
   PATH="$dir/fakebin:$PATH" FM_ORDER_FIXTURE_DIR="$dir" \
@@ -3264,8 +3264,8 @@ c.close()
   pass "herdr workspace mover: a socket path past the Unix limit (a symlinked config dir) is still reached"
 }
 
-test_presentation_owners_follow_journals_and_the_registry_from_every_home() {
-  local dir primary alpha bravo out expected home project owner sorted
+test_presentation_owners_follow_metadata_and_the_registry_from_every_home() {
+  local dir primary alpha bravo out expected home project owner sorted reader later
   dir="$TMP_ROOT/presentation-owners"
   primary="$dir/primary"
   alpha="$dir/alpha-home"
@@ -3279,31 +3279,35 @@ test_presentation_owners_follow_journals_and_the_registry_from_every_home() {
     printf -- '- alpha - Alpha fixture. (home: %s; scope: alpha work; projects: alpha-app, shared; added 2026-09-30)\n' "$alpha"
     printf -- '- bravo - Bravo fixture. (home: %s; scope: bravo work; projects: bravo-app, shared; added 2026-09-30)\n' "$bravo"
   } > "$primary/data/secondmates.md"
-  owner_journal() {  # <state> <id> <workspace> <parent-label> <session>
-    printf 'version=2\ntask_id=%s\nprojection_id=AbCdEfGhIjKlMnOpQrStUv\nhome=/h\nsession=%s\nworkspace_id=%s\ntab_id=%s:t1\npane_id=%s:p1\nparent_workspace_id=w1\nparent_label=%s\nworkspace_label=└ %s · p:AbCdEfGhIjKlMnOpQrStUv\ntask_label=fm-%s\n' \
-      "$2" "$5" "$3" "$3" "$3" "$4" "$2" "$2" > "$1/$2.herdr-presentation"
+  owner_task() {  # <state> <id> <workspace> <session> <project>
+    fm_write_meta "$1/$2.meta" "window=$4:$3:p1" "endpoint_task_id=$2" \
+      "worktree=/w/$2" "project=$5" "kind=ship" "backend=herdr" \
+      "herdr_session=$4" "herdr_workspace_id=$3" "herdr_tab_id=$3:t1" "herdr_pane_id=$3:p1"
   }
-  owner_journal "$primary/state" pa wPa firstmate fmtest
-  printf 'project=/p/projects/alpha-app\n' > "$primary/state/pa.meta"
-  owner_journal "$primary/state" ps wPs firstmate fmtest
-  printf 'project=/p/projects/shared\n' > "$primary/state/ps.meta"
-  owner_journal "$primary/state" po wPo firstmate fmtest
-  printf 'project=/p/firstmate\n' > "$primary/state/po.meta"
-  owner_journal "$primary/state" pother wOther firstmate othersession
-  printf 'project=/p/projects/alpha-app\n' > "$primary/state/pother.meta"
-  owner_journal "$alpha/state" a1 wA1 2ndmate-alpha fmtest
-  owner_journal "$bravo/state" b1 wB1 2ndmate-bravo fmtest
+  owner_task "$primary/state" pa wPa fmtest /p/projects/alpha-app
+  owner_task "$primary/state" ps wPs fmtest /p/projects/shared
+  owner_task "$primary/state" po wPo fmtest /p/firstmate
+  owner_task "$primary/state" pother wOther othersession /p/projects/alpha-app
+  owner_task "$alpha/state" a1 wA1 fmtest /p/projects/bravo-app
+  owner_task "$bravo/state" b1 wB1 fmtest /p/firstmate
   printf 'version=1\ntask_id=b2\nprojection_id=AbCdEfGhIjKlMnOpQrStUv\n' > "$bravo/state/b2.herdr-presentation"
+  owner_task "$primary/state" invalid wInvalid fmtest /p/projects/alpha-app
+  printf 'herdr_workspace_id=another\n' >> "$primary/state/invalid.meta"
+  owner_task "$primary/state" mismatched wMismatch fmtest /p/projects/alpha-app
+  sed 's/window=fmtest:/window=othersession:/' "$primary/state/mismatched.meta" > "$primary/state/replaced"
+  mv "$primary/state/replaced" "$primary/state/mismatched.meta"
+  ln -s pa.meta "$primary/state/symlink.meta"
+  fm_write_meta "$primary/state/tmux.meta" 'window=fmtest:fm-tmux' 'worktree=/w/tmux' 'project=/p/firstmate'
   expected='{"wA1":"2ndmate-alpha","wB1":"2ndmate-bravo","wPa":"2ndmate-alpha","wPo":"firstmate","wPs":"firstmate"}'
   for home in "$primary" "$alpha" "$bravo"; do
-    out=$(FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_presentation_owners fmtest' "$ROOT" | jq -cS .)
+    out=$(FM_HOME="$home" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source herdr; fm_backend_herdr_presentation_owners fmtest' "$ROOT" | jq -cS .)
     [ "$out" = "$expected" ] || fail "presentation owners from $(basename "$home") were wrong: $out"
   done
-  printf 'version=1\ntask_id=current\nprojection_id=AbCdEfGhIjKlMnOpQrStUv\n' > "$primary/state/current.herdr-presentation"
   sorted="$dir/sort"
   order_fixture_env "$sorted"
   while IFS=$'\t' read -r home project owner; do
-    out=$(FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_presentation_owners fmtest wNew "$1"' "$ROOT" "$project")
+    printf 'version=1\ntask_id=current\nprojection_id=AbCdEfGhIjKlMnOpQrStUv\n' > "$home/state/current.herdr-presentation"
+    out=$(FM_HOME="$home" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source herdr; fm_backend_herdr_presentation_owners fmtest wNew "$1"' "$ROOT" "$project")
     [ "$(printf '%s' "$out" | jq -r '.wNew')" = "$owner" ] \
       || fail "current-spawn ownership depended on a restart binding: $out"
     order_fixture_list notes wF wA wNew wB wB1 > "$sorted/order.json"
@@ -3315,6 +3319,17 @@ test_presentation_owners_follow_journals_and_the_registry_from_every_home() {
     esac
     [ "$(order_fixture_ids "$sorted/order.json")" = "$expected" ] \
       || fail "current worker followed its predecessor instead of its owner: $(order_fixture_ids "$sorted/order.json")"
+    owner_task "$home/state" current wNew fmtest "$project"
+    for reader in "$primary" "$alpha" "$bravo"; do
+      later=$(FM_HOME="$reader" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source herdr; fm_backend_herdr_presentation_owners fmtest' "$ROOT")
+      [ "$(printf '%s' "$later" | jq -r '.wNew')" = "$owner" ] \
+        || fail "a later pass lost the published worker's ownership from $reader: $later"
+    done
+    order_fixture_list notes wF wA wNew wB wB1 > "$sorted/order.json"
+    order_fixture_arrange "$sorted" "$later" >/dev/null
+    [ "$(order_fixture_ids "$sorted/order.json")" = "$expected" ] \
+      || fail "a later pass without a spawn hint lost the worker's group: $(order_fixture_ids "$sorted/order.json")"
+    rm "$home/state/current.meta"
   done <<EOF
 $primary	/p/firstmate	firstmate
 $primary	/p/projects/alpha-app	2ndmate-alpha
@@ -3323,7 +3338,14 @@ $primary	/p/projects/shared	firstmate
 $alpha	/p/projects/bravo-app	2ndmate-alpha
 $bravo	/p/firstmate	2ndmate-bravo
 EOF
-  pass "herdr presentation order: every home reads the same owners, and a primary worker goes under the one second mate covering its project"
+  mkdir -p "$dir/unregistered/state"
+  printf 'delta\n' > "$dir/unregistered/.fm-secondmate-home"
+  printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$primary" > "$dir/unregistered/.fm-secondmate-parent"
+  owner_task "$dir/unregistered/state" current wNew fmtest /p/firstmate
+  later=$(FM_HOME="$dir/unregistered" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source herdr; fm_backend_herdr_presentation_owners fmtest' "$ROOT")
+  [ "$(printf '%s' "$later" | jq -r '.wNew')" = 2ndmate-delta ] \
+    || fail "the running home's metadata was omitted when it was absent from the registry: $later"
+  pass "herdr presentation order: every home keeps published worker ownership without a restart binding or spawn hint"
 }
 
 test_presentation_session_lock_path_is_shared_across_homes() {
@@ -5830,7 +5852,7 @@ test_projection_label_builder_uses_corner_and_strips_owner_prefixes
 test_presentation_arrange_sorts_the_whole_session_and_is_idempotent
 test_presentation_arrange_primary_workers_without_their_second_mate_stay_with_firstmate_work
 test_presentation_arrange_refuses_ambiguous_layouts_and_failures
-test_presentation_owners_follow_journals_and_the_registry_from_every_home
+test_presentation_owners_follow_metadata_and_the_registry_from_every_home
 test_workspace_mover_connects_to_an_overlong_socket_path
 test_presentation_session_lock_path_is_shared_across_homes
 test_presentation_session_lock_path_rejects_malformed_socket
