@@ -4,7 +4,7 @@
 # Pi interactive case in tests/fm-calm-pi-extension.test.sh. It proves, against the
 # installed Claude Code and the shipped project auto-load path (.claude/skills):
 #   1. With CLAUDE_CODE_ENABLE_FUNCTION_HOOKS unset, the mod is a complete no-op even
-#      with the per-home preference already on: no hooks module loads, /calm is not a
+#      with the per-home preference already on: /calm is not a
 #      command, the stock working row shows, and tool rows draw as stock.
 #   2. With the flag on, the sailboat replaces the working row and moves, tool rows and
 #      a record-backed operational doorbell (the carrier Firstmate types into Claude
@@ -14,8 +14,9 @@
 #   3. `claude --continue` restores the transcript with those rows still hidden.
 #   4. With Calm off, the supervision notes draw from a store bin/fm-branch-outcome.sh
 #      writes: the session-start replay, new sailboat and anchor lines, and the latch
-#      note, without moving a store marker or reaching the model, and a resume shows
-#      each anchor once.
+#      note, each drawn behind the plugin's `fm:` label rather than `firstmate-calm:`,
+#      without moving a store marker or reaching the model, and a resume shows each
+#      anchor once.
 # The project and FM_HOME are isolated; Claude keeps using its existing managed
 # authentication and one trusted temporary folder. A few Haiku turns are submitted.
 # shellcheck disable=SC2016 # the model, not this test shell, reads the prompt text
@@ -58,12 +59,19 @@ mkdir -p "$PROJECT/.claude/skills" "$FM_HOME_DIR/config"
 ln -s "$MOD" "$PROJECT/.claude/skills/firstmate-calm"
 printf 'alpha\nbeta\ngamma\n' >"$PROJECT/notes.txt"
 printf 'on\n' >"$FM_HOME_DIR/config/calm"
+# An old home may retain its former custom sprite after the feature is removed.
+# The real working-row assertions below must still see the stock sailboat.
+printf '%s\n' '{"version":1,"width":5,"right":[{"glyphs":["XXXXX","XXXXX"]}]}' \
+  >"$FM_HOME_DIR/config/calm-sprite.json"
 
 # Claude Code refuses to nest inside another Claude session, so the inherited session
 # markers are dropped from the lab's environment; the flag is set per launch only.
 unset_inherited() {
   local name
   while IFS= read -r name; do
+    # Preserve explicit authentication and isolated storage, neither of which
+    # identifies an ancestor session.
+    case "$name" in CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CONFIG_DIR) continue ;; esac
     printf -- '-u %s ' "$name"
   done < <(env | grep -E '^(CLAUDECODE|CLAUDE_CODE_[A-Z_]+|CLAUDE_CONFIG_DIR)=' | cut -d= -f1 | sort -u)
 }
@@ -210,18 +218,14 @@ wait_settled() {  # <what> [iterations]
   fail "Claude Code $CLAUDE_VERSION never settled $what"
 }
 
-# Claude Code 2.1.280 logs `hooks module firstmate-calm@<source> loaded`; 2.1.272 had no
-# source suffix.
-MODULE_LOADED='hooks module firstmate-calm(@[^ ]+)? loaded'
+# Claude Code 2.1.280 logs `hooks module fm@<source> loaded`; 2.1.272 had no source suffix.
+MODULE_LOADED='hooks module fm(@[^ ]+)? loaded'
 
 # --- 1. Flag off: a complete no-op even with the preference on --------------------
 launch "$DEBUG_LOG_OFF" 0
 wait_idle
-grep -q 'hooks modules not loaded' "$DEBUG_LOG_OFF" \
-  || fail "Claude Code $CLAUDE_VERSION did not report hooks modules off with the flag unset"
-if grep -Eq "$MODULE_LOADED" "$DEBUG_LOG_OFF"; then
-  fail "Claude Code $CLAUDE_VERSION loaded the Calm hooks module although the flag was unset"
-fi
+# Claude's rollout may load modules with the flag unset; the public contract is
+# that every handler stays inert, proven by the command and drawing checks.
 if command_listed calm; then
   fail "Claude Code $CLAUDE_VERSION lists /calm although the flag is unset"
 fi
@@ -266,7 +270,7 @@ esac
 send '/exit'
 enter
 sleep 2
-pass "Claude Code $CLAUDE_VERSION with the flag unset: no hooks module, no /calm, stock working row, stock tool rows, preference on ignored"
+pass "Claude Code $CLAUDE_VERSION with the flag unset: no /calm, stock working row, stock tool rows, preference on ignored"
 
 # --- 2. Flag on: the boat, the hidden rows, the toggle, the persisted choice -------
 launch "$DEBUG_LOG_ON" 1
@@ -280,7 +284,7 @@ grep -Eq "$MODULE_LOADED" "$DEBUG_LOG_ON" \
   || fail "Claude Code $CLAUDE_VERSION did not load the Calm hooks module from the project's .claude/skills path with the flag on"
 # The engine logs one benign notice for every options-less hooks module ("options
 # requested but its manifest declares no userConfig"); anything else is a real problem.
-if grep -E '\[(WARN|ERROR)\].*firstmate-calm' "$DEBUG_LOG_ON" | grep -v 'declares no userConfig' >&2; then
+if grep -E '\[(WARN|ERROR)\].*(plugin fm[:@ ]|\[fm\]|module fm@)' "$DEBUG_LOG_ON" | grep -v 'declares no userConfig' >&2; then
   fail "Claude Code $CLAUDE_VERSION loaded the Calm mod with a warning or error"
 fi
 command_listed calm || fail "Claude Code $CLAUDE_VERSION does not list /calm with the flag on"
@@ -380,14 +384,14 @@ i=0
 while [ "$i" -lt 60 ]; do
   restored=$(screen)
   case "$restored" in
-    *'firstmate-calm'*|*'Calm off'*) ;;
+    *'fm: Calm'*|*'Calm off'*) ;;
     *) break ;;
   esac
   sleep 0.25
   i=$((i + 1))
 done
 case "$restored" in
-  *'firstmate-calm'*|*'Calm off'*)
+  *'fm: Calm'*|*'Calm off'*)
     printf '%s\n' "$restored" >&2
     fail "/calm left a Calm row in the transcript after its notice should have expired"
     ;;
@@ -455,19 +459,23 @@ printf 'key=live-key\nerrors=0\ncooldown=0\nretry_after=0\n' >"$STATE_DIR/.super
 printf 'off\n' >"$FM_HOME_DIR/config/calm"
 launch "$DEBUG_LOG_NOTES" 1
 wait_idle
-wait_screen '⚓ [seq 2] fm-live-b: LIVE_REPLAY_CAPTAIN still open' 'the session-start replay of an unprocessed captain outcome' 200
+wait_screen 'fm: ⚓ [seq 2] fm-live-b: LIVE_REPLAY_CAPTAIN still open' 'the session-start replay of an unprocessed captain outcome' 200
 outcome append --task fm-live-c --verdict routine --summary 'LIVE_ROUTINE_NOTE worker healthy'
 outcome append --task fm-live-d --verdict routine --summary 'LIVE_SILENT_NOTE no change' --silent true
 outcome append --task fm-live-e --verdict captain --summary 'LIVE_NEW_CAPTAIN PR ready for review'
-wait_screen '⛵ fm-live-c: LIVE_ROUTINE_NOTE worker healthy' 'the routine sailboat note' 200
-wait_screen '⚓ [seq 5] fm-live-e: LIVE_NEW_CAPTAIN PR ready for review' 'the new captain anchor line' 200
+wait_screen 'fm: ⛵ fm-live-c: LIVE_ROUTINE_NOTE worker healthy' 'the routine sailboat note' 200
+wait_screen 'fm: ⚓ [seq 5] fm-live-e: LIVE_NEW_CAPTAIN PR ready for review' 'the new captain anchor line' 200
 printf 'key=live-key\nerrors=2\ncooldown=300\nretry_after=0\n' >"$STATE_DIR/.supervision-host-health"
-wait_screen 'Supervision session paused after repeated engine errors' 'the latch-trip note' 200
+wait_screen 'fm: ⛵ Supervision session paused after repeated engine errors' 'the latch-trip note' 200
 notes_screen=$(screen)
 case "$notes_screen" in
   *'LIVE_PROCESSED_CAPTAIN'*|*'LIVE_SILENT_NOTE'*)
     printf '%s\n' "$notes_screen" >&2
     fail "a processed captain outcome or a silent routine outcome drew a supervision note"
+    ;;
+  *'firstmate-calm:'*)
+    printf '%s\n' "$notes_screen" >&2
+    fail "a supervision note drew behind the old firstmate-calm label"
     ;;
 esac
 [ "$(cat "$STATE_DIR/.branch-outcomes-cursor")" = 2 ] || fail "the supervision notes moved the store's read cursor"
@@ -482,7 +490,7 @@ sleep 2
 send '/exit'
 enter
 sleep 2
-notes_session=$(grep -rlF 'GREEN_HARBOR_LANTERN' "$HOME/.claude/projects/"*"$(basename "$LAB" | tr -c 'A-Za-z0-9\n' -)"* 2>/dev/null | head -n 1)
+notes_session=$(grep -rlF 'GREEN_HARBOR_LANTERN' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/"*"$(basename "$LAB" | tr -c 'A-Za-z0-9\n' -)"* 2>/dev/null | head -n 1)
 [ -n "$notes_session" ] || fail "could not find the session transcript Claude Code stored for the notes turn"
 if jq -e 'select(.type == "assistant") | .message.content | tostring | test("LIVE_")' "$notes_session" >/dev/null 2>&1; then
   fail "the model quoted a supervision note, so the notes reached its context: $notes_session"
@@ -491,7 +499,7 @@ fi
 # restores it on resume, so the resumed session replays only what it has not shown.
 outcome append --task fm-live-f --verdict captain --summary 'LIVE_WHILE_CLOSED captain outcome'
 launch "$DEBUG_LOG_NOTES" 1 --continue
-wait_screen '⚓ [seq 6] fm-live-f: LIVE_WHILE_CLOSED captain outcome' 'the replay of an outcome recorded while the session was closed' 400
+wait_screen 'fm: ⚓ [seq 6] fm-live-f: LIVE_WHILE_CLOSED captain outcome' 'the replay of an outcome recorded while the session was closed' 400
 sleep 4
 resumed_notes=$(screen)
 [ "$(printf '%s\n' "$resumed_notes" | grep -c 'LIVE_REPLAY_CAPTAIN')" = 1 ] || {
@@ -501,4 +509,4 @@ resumed_notes=$(screen)
 send '/exit'
 enter
 sleep 1
-pass "Claude Code $CLAUDE_VERSION with Calm off shows the supervision notes: the session-start anchor for an unprocessed captain outcome, a sailboat for a new routine outcome, an anchor for a new captain outcome, and the latch-trip note, skipping processed and silent outcomes, moving no store marker, never reaching the model, and on resume showing each anchor once"
+pass "Claude Code $CLAUDE_VERSION with Calm off shows the supervision notes: the session-start anchor for an unprocessed captain outcome, a sailboat for a new routine outcome, an anchor for a new captain outcome, and the latch-trip note, each behind the fm: label, skipping processed and silent outcomes, moving no store marker, never reaching the model, and on resume showing each anchor once"
