@@ -3102,7 +3102,7 @@ order_fixture_ids() {  # <list-json-file>
 
 # order_fixture_env: fake herdr + a mover that really reorders <dir>/order.json.
 # Every `workspace list` answers from that file; status, schema, and session
-# list report a protocol-16 session with a whitelisted workspace.move.
+# list report protocol 22 by default with a whitelisted workspace.move.
 order_fixture_env() {  # <dir>
   local dir=$1 fb
   mkdir -p "$dir/fakebin"
@@ -3240,8 +3240,8 @@ test_workspace_mover_connects_to_an_overlong_socket_path() {
   mkdir -p "$long"
   sock="$long/herdr.sock"
   [ "${#sock}" -gt 103 ] || fail "fixture socket path must exceed the Unix socket path limit"
-  # A one-shot fake server bound relative to its directory, the only way a
-  # server can own a path this long.
+  # Bind the one-shot fake server relative to its directory so the overlong
+  # absolute path does not prevent the fixture socket from being created.
   (cd "$long" && exec python3 -c '
 import json, socket
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

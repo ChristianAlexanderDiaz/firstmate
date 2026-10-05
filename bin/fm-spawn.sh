@@ -133,10 +133,11 @@
 #   A clean projected create or exact resume waits up to two minutes for the
 #   one session-scoped presentation-order lock (keyed by named session plus
 #   canonical socket, outside any home's state/) and holds it through launch
-#   handoff; only a lock still busy after that wait falls back to the ordinary
-#   flat layout before any projection mutation. After every Herdr endpoint is
-#   created (projected, flat, resumed, or a second mate's own workspace) in a
-#   home with presentation enabled, one idempotent
+#   handoff. A lock still busy after that wait makes a fresh projected create
+#   fall back flat before mutation, but refuses recovery of an existing journal.
+#   At endpoint handoff (fresh create, resume, relaunch adoption or recreation,
+#   or a second mate's own workspace) in a home with presentation enabled,
+#   one idempotent
 #   fm_backend_herdr_presentation_arrange pass sorts the whole session into
 #   the presentation order under that lock. Ordering never authorizes
 #   lifecycle cleanup, and any unavailable, ambiguous, or failed move warns
@@ -3740,8 +3741,9 @@ else
           ! fm_backend_herdr_presentation_default_supported "$STATE" "$HERDR_SES"; then
           :
         elif spawn_herdr_presentation_order_lock_acquire "$HERDR_SES"; then
-          # The projected child is placed and bound UNDER this launcher's exact
-          # parent workspace. Its own herdr pane identity names that workspace
+          # The projected child is bound to this launcher's exact parent
+          # workspace; sidebar position follows docs/herdr-backend.md "Ordering".
+          # Its own herdr pane identity names that workspace
           # directly; the label lookup is only the fallback for a launcher with
           # no herdr ancestry at all. A claimed-but-broken identity refuses here
           # rather than projecting under a guessed parent.

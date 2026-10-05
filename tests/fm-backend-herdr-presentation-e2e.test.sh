@@ -634,8 +634,7 @@ teardown_task default-on "$HOME_DIR" > "$TMP_ROOT/default-on-teardown.out" 2> "$
 if [ "$FLOOR_VERDICT" = 0 ] && lab workspace get "$DEFAULT_ON_WSID" >/dev/null 2>&1; then
   fail "default-on teardown left its disposable workspace behind"
 fi
-# The ordering scenarios below read the whole move log cumulatively against the
-# projected workspaces that are still live, so this retired one starts them clean.
+# Clear moves from the retired default-on fixture before the ordering scenarios.
 : > "$MOVE_CALL_LOG"
 
 SECOND_ONE_OUT=$(lab workspace create --cwd "$PROJECT_DIR" --label 2ndmate-alpha --no-focus) \
@@ -972,7 +971,7 @@ pass "real Herdr lab: three repeated concurrent create/order/cleanup waves have 
 
 # ------------------------------------------------------------------
 # Multi-home topology: real secondmate FM_HOME spawn paths, inheritance,
-# concurrent cross-home waves, and session-scoped lock contention.
+# concurrent cross-home waves, and restart recovery.
 # ------------------------------------------------------------------
 SECOND_HOME_A="$TMP_ROOT/home-2ndmate-alpha"
 SECOND_HOME_B="$TMP_ROOT/home-2ndmate-bravo"

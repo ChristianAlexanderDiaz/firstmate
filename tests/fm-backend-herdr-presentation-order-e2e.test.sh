@@ -11,7 +11,7 @@
 # when the shared presentation lock is busy for longer than a moment.
 #
 # This drives the REAL bin/fm-spawn.sh and bin/fm-teardown.sh against a named
-# lab session. Every lifecycle operation goes through bin/fm-herdr-lab.sh,
+# lab session. Lab provisioning, inspection, and retirement use bin/fm-herdr-lab.sh,
 # which verifies the default fleet session is unchanged after teardown
 # (tests/herdr-test-safety.sh).
 set -u
@@ -151,7 +151,7 @@ make_project "$TMP_ROOT/projects/alpha-app"
 make_project "$TMP_ROOT/projects/bravo-app"
 make_project "$TMP_ROOT/projects/fleet-tools"
 
-# The captain's own personal space sits on top and keeps focus throughout;
+# The captain's own personal space starts on top and keeps focus throughout;
 # another personal space sits below the fleet.
 read -r LIFE_WS LIFE_TAB <<EOF
 $(make_workspace life)
@@ -184,7 +184,7 @@ assert_sidebar "firstmate 2ndmate-alpha a1 2ndmate-bravo pb po life dotfiles" "a
 pass "real Herdr lab: teardowns keep the sorted order"
 
 # 3. A busy presentation lock is waited out: the worker still gets its own
-#    workspace in its place instead of a tab in the firstmate home.
+#    workspace in its place instead of a tab in its secondmate home.
 # shellcheck disable=SC2016 # the inner script expands its own positional arguments.
 LOCK_PATH=$(env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SOCKET_PATH HERDR_SESSION="$HERDR_LAB_SESSION" \
   bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_presentation_session_lock_path "$1"' \

@@ -1473,9 +1473,6 @@ ok - real Herdr lab: each second mate's workers sit under it, and primary worker
 ok - real Herdr lab validation completed on Herdr 0.9.0 with the default-session tripwire intact
 ```
 
-Before the fix, the same order test failed on its first case with the sidebar reading `life firstmate 2ndmate-alpha 2ndmate-bravo dotfiles pa`: the primary worker for alpha's project stayed at the bottom.
-On that host every `workspace.move` also failed, because the canonical session socket path through the symlinked config directory exceeded the 103-byte Unix socket limit, and a 16-character lab label made Herdr's `herdr-client.sock` path too long for the lab server to start.
-
 The restored-shell session-start cleanup ran on 2026-07-24 against Herdr 0.7.5 protocol 17:
 
 ```sh

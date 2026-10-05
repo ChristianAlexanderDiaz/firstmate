@@ -251,7 +251,7 @@ Only a fresh task with neither metadata nor an existing presentation journal is 
 Creation proceeds in this order:
 
 1. Firstmate atomically publishes a three-field version 1 journal containing a random 128-bit base64url token, before asking Herdr to create anything.
-2. After the new workspace converges to one exact task endpoint beneath one exact parent workspace id, the journal advances to a version 2 binding.
+2. After the new workspace converges to one exact task endpoint bound to one exact parent workspace id, the journal advances to a version 2 binding.
    That binding records the physical home, named session, endpoint, parent, and immutable expected labels.
 
 Another parent with the same presentation label does not prevent publication or participate in restart reclaim.
@@ -282,10 +282,11 @@ Firstmate keeps the whole Herdr sidebar in one presentation order, top to bottom
 
 Presentation coverage uses the `projects:` list in `data/secondmates.md`.
 Workers inside one group keep their current relative order, so a new worker joins the end of its group.
-A worker's owner comes from each home's validated task metadata, read from the primary home, every local second mate home in its registry, and the running home, whose parent binding names the primary.
+A worker's owner comes from each home's validated task metadata, read from the primary home, every local second mate home in its registry, and the running home.
+A local second mate's parent binding identifies the primary home when available.
 The running home uses its [effective record directories](configuration.md#root-and-directory-overrides); other homes use their own `state/` and `data/`.
 An old owner-prefixed label names its owner directly.
-The current spawn supplies its workspace, home, and project independently of whether its restart binding was saved.
+A projected spawn supplies its workspace, home, and project independently of whether its restart binding was saved.
 An unowned workspace stays with the other spaces.
 
 One idempotent pass, `fm_backend_herdr_presentation_arrange`, runs under the session lock at the shared endpoint handoff for every fresh Herdr spawn and relaunch, and after cleanup and any secondmate registry removal in a home whose projection is enabled, including a second mate's own flat workspace.
@@ -299,7 +300,7 @@ Duplicate home labels or workspace ids make the pass skip with a warning rather 
 Ordering only moves workspaces; it never closes, renames, relabels, or focuses one except to restore the exact pre-move focus.
 
 Ordering failure never fails the spawn or cleanup it follows.
-Firstmate does not retry, adopt, reuse, close, delete, or rename anything in response to an unavailable method, lock contention, ambiguous socket, lost response, failed move, or verification mismatch.
+Firstmate does not retry a failed or unverifiable move, or adopt, reuse, close, delete, or rename anything in response to an ordering failure.
 The workspaces stay in their current order until the next pass.
 
 A projected spawn holds the session lock through launch handoff, which also keeps concurrent spawns from racing for an isolated copy.
@@ -387,7 +388,7 @@ The replacement is allowed only when all of these agree:
 - The metadata endpoint.
 - The unique token match.
 - The workspace shape and labels.
-- The parent identity and placement.
+- The exact parent identity and label, independently of sidebar position.
 - The non-target focus snapshot.
 
 The replacement tab and pane are created and verified before the old pane is rechecked and closed.
@@ -400,7 +401,7 @@ These cases fall back flat without mutating the old projection when duplicate-ag
 - Version 1 journals.
 - Dead or missing panes.
 - Duplicate or absent tokens.
-- Renamed or detached spaces.
+- Renamed spaces or an absent or mismatched parent.
 - Cross-home mismatches.
 - Inconsistent endpoint bindings.
 - Active target tabs.
@@ -841,7 +842,7 @@ Tests use thin compatibility wrappers in `tests/herdr-test-safety.sh` and never 
 
 ## Active limits
 
-- Presentation ordering needs protocol 16 and Python and is best-effort only; it follows only local second mates, whose homes share this machine.
+- Presentation ordering is best-effort; [Ordering](#ordering) owns its prerequisites and grouping rules, and remote second mates' task records are not read.
 - Mutable labels can collide; they are never placement or destructive authority.
 - A Firstmate outside Herdr cannot resolve a launcher workspace, so a colliding home label refuses new spawns until the collision is cleared.
 - Ghost and placeholder recognition uses ANSI de-emphasis when available; an unstyled glyph row carrying trailing non-idle text fails safely to `unknown`.

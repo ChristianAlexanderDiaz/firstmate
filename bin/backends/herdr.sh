@@ -1496,7 +1496,7 @@ fm_backend_herdr_presentation_worker_owner() {  # <owner-label> <project> [<regi
 
 # fm_backend_herdr_presentation_task_owners: print one
 # "<workspace-id><TAB><owner-label>" line for every validated Herdr task
-# record in the home's state directory bound to <session>. The owner is the
+# record in the home's effective state directory bound to <session>. The owner is the
 # home's label (firstmate or 2ndmate-<id>). With a readable primary <registry>,
 # a primary worker whose task project appears in exactly one second mate's
 # projects list is owned by that second mate instead. Invalid records and
@@ -1570,10 +1570,8 @@ $(printf '%s\t%s' "$new_workspace" "$owner")"
 # on stdin and print the move plan that sorts the session into the presentation
 # order, as JSON {"moves":[{"id":W,"index":N,"after":[ids...]},...]}.
 # Prints nothing when the layout is ambiguous (duplicate parent labels or
-# workspace ids). The order, top to bottom: the firstmate home; each
-# 2ndmate-<id> home in its current relative order, followed by its workers;
-# the primary home's remaining workers; then every other space in its current
-# relative order. A worker's owner comes from <owners-json>, or from a legacy
+# workspace ids). The order is owned by docs/herdr-backend.md "Ordering".
+# A worker's owner comes from <owners-json>, or from a legacy
 # owner-prefixed label; an unowned workspace stays with the other spaces.
 # Every move lifts one workspace to a smaller index, so insert_index means the
 # same thing before and after the moved workspace is removed.
@@ -1639,7 +1637,7 @@ fm_backend_herdr_presentation_arrange_plan() {  # <owners-json>
 # relabels, or focuses a workspace for any other purpose than restoring the
 # exact pre-move focus, and does nothing when the order is already right.
 # Any unavailable, ambiguous, or unverifiable step warns and stops, leaving
-# the session in its current order. A spawn passes the workspace it just
+# the session in its current order. A projected spawn passes the workspace it just
 # created and that worker's project, because its task record is published
 # only after this step.
 fm_backend_herdr_presentation_arrange() {  # <session> [<new-workspace-id> <new-project>]
