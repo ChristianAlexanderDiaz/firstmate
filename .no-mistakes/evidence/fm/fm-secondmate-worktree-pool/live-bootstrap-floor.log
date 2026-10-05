@@ -1,0 +1,29 @@
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/floor/home
+
+=== Real Treehouse 2.3.0, tmux home bootstrap ===
+v2.3.0
+MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)
+MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)
+Observed: upgrade requested for incompatible version.
+
+=== Real Treehouse 3.0.0, tmux home bootstrap ===
+v3.0.0
+MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)
+MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)
+Observed: upgrade requested for incompatible version.
+
+=== Real Treehouse 3.0.1, tmux home bootstrap ===
+v3.0.1
+MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)
+MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)
+Observed: upgrade requested for incompatible version.
+
+=== Real Treehouse 3.1.0, tmux home bootstrap ===
+v3.1.0
+
+Observed: installed version accepted; no Treehouse upgrade requested.
+
+=== Orca home does not request Treehouse ===
+MISSING: orca (install: brew install orca  # or the platform's package manager)
+Observed: no Treehouse diagnostic for Orca.
+LIVE_FLOOR_SCENARIOS_COMPLETED

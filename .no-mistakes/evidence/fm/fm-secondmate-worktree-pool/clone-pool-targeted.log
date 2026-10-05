@@ -1,0 +1,2 @@
+ok - a secondmate spawn gets a copy of its own clone while the parent's copy is idle
+ok - a parent spawn gets a copy of its own clone while the secondmate's copy is idle

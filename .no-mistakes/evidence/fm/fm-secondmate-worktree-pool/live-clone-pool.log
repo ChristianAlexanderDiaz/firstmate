@@ -1,0 +1,68 @@
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/secondmate
+
+=== Parent creates the shared pool first ===
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main
+spawned main-a harness=bash kind=scout window=firstmate:fm-main-a worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/1/demo
+Worker task: main-a
+Working directory: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/1/demo
+Git common directory: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main/projects/demo/.git
+trusted: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/1/demo
+trusted (project root): /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main/projects/demo
+Claude CLI version: 2.1.289 (Claude Code)
+LIVE_WORKER_OK
+
+WORKER_COMPLETED
+ASSERT clone ownership: expected=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main/projects/demo/.git actual=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main/projects/demo/.git
+
+=== Parent copy is idle before secondmate launch ===
+[{"name":"1","path":"/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/1/demo","status":"available","branch":"","detached":true,"flavor":"git","lease_id":"","lease_holder":"","leased_at":null,"processes":[]}]
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/secondmate
+spawned sm-a harness=bash kind=scout window=firstmate:fm-sm-a worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/2/demo
+Worker task: sm-a
+Working directory: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/2/demo
+Git common directory: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/secondmate/projects/demo/.git
+trusted: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/2/demo
+trusted (project root): /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/secondmate/projects/demo
+Claude CLI version: 2.1.289 (Claude Code)
+LIVE_WORKER_OK
+
+WORKER_COMPLETED
+ASSERT clone ownership: expected=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/secondmate/projects/demo/.git actual=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/secondmate/projects/demo/.git
+
+=== Secondmate copy returns; parent reuses its own copy ===
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main
+spawned main-b harness=bash kind=scout window=firstmate:fm-main-b worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/1/demo
+Worker task: main-b
+Working directory: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/1/demo
+Git common directory: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main/projects/demo/.git
+trusted: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/1/demo
+trusted (project root): /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main/projects/demo
+Claude CLI version: 2.1.289 (Claude Code)
+LIVE_WORKER_OK
+
+WORKER_COMPLETED
+
+=== Only secondmate copy is idle before parent launch ===
+[{"name":"1","path":"/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/1/demo","status":"in-use","branch":"","detached":true,"flavor":"git","lease_id":"","lease_holder":"","leased_at":null,"processes":[{"pid":3606,"name":"bash"},{"pid":17960,"name":"bash"}]},{"name":"2","path":"/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/2/demo","status":"available","branch":"","detached":true,"flavor":"git","lease_id":"","lease_holder":"","leased_at":null,"processes":[]}]
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main
+spawned main-c harness=bash kind=scout window=firstmate:fm-main-c worktree=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/3/demo
+Worker task: main-c
+Working directory: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/3/demo
+Git common directory: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main/projects/demo/.git
+trusted: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/3/demo
+trusted (project root): /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main/projects/demo
+Claude CLI version: 2.1.289 (Claude Code)
+LIVE_WORKER_OK
+
+WORKER_COMPLETED
+ASSERT clone ownership: expected=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main/projects/demo/.git actual=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/main/projects/demo/.git
+
+=== Cross-clone trust registration actively refused ===
+error: refusing to pre-register Claude trust: '/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/1/demo' is not a worktree of project '/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/secondmate/projects/demo'
+Cross-clone registration exit: 1
+
+=== Final shared pool state ===
+[{"name":"1","path":"/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/1/demo","status":"in-use","branch":"","detached":true,"flavor":"git","lease_id":"","lease_holder":"","leased_at":null,"processes":[{"pid":3606,"name":"bash"},{"pid":17960,"name":"bash"},{"pid":43927,"name":"sleep"}]},{"name":"2","path":"/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/2/demo","status":"available","branch":"","detached":true,"flavor":"git","lease_id":"","lease_holder":"","leased_at":null,"processes":[]},{"name":"3","path":"/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/live/pools/.treehouse/demo-66945f/3/demo","status":"in-use","branch":"","detached":true,"flavor":"git","lease_id":"","lease_holder":"","leased_at":null,"processes":[{"pid":28800,"name":"bash"},{"pid":37948,"name":"bash"},{"pid":44008,"name":"sleep"}]}]
+
+LIVE_POOL_SCENARIOS_COMPLETED

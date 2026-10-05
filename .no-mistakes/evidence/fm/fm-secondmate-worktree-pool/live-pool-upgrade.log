@@ -1,0 +1,30 @@
+
+=== Create and return a pre-3.0 parent copy ===
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo. Run 'treehouse return ~/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo' to release it.
+🌳 Worktree returned to pool.
+[{"name":"1","path":"/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo","status":"available","flavor":"git","lease_id":"","lease_holder":"","leased_at":null,"processes":[]}]
+
+=== Historical dependency reuses the parent copy for a secondmate ===
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo. Run 'treehouse return ~/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo' to release it.
+Parent copy: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo
+Secondmate acquired: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo
+error: refusing to pre-register Claude trust: '/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo' is not a worktree of project '/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/secondmate/demo'
+Expected cross-clone trust refusal exit: 1
+🌳 Worktree returned to pool.
+
+=== Treehouse 3.0.0 rewrites the old pool as recovered leases ===
+[{"name":"1","path":"/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo","status":"leased","branch":"","detached":true,"flavor":"git","lease_id":"","lease_holder":"recovered: state file was corrupt or truncated; verify before reuse","leased_at":"2026-10-05T15:25:45.131734-04:00","processes":[]}]
+
+=== Treehouse 3.0.1 still leaves the quarantine leased ===
+[{"name":"1","path":"/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo","status":"leased","branch":"","detached":true,"flavor":"git","lease_id":"","lease_holder":"recovered: state file was corrupt or truncated; verify before reuse","leased_at":"2026-10-05T15:25:45.131734-04:00","processes":[]}]
+
+=== Treehouse 3.1.0 automatically restores the safe recovered copy ===
+[{"name":"1","path":"/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo","status":"available","branch":"","detached":true,"flavor":"git","lease_id":"","lease_holder":"","leased_at":null,"processes":[]}]
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo. Run 'treehouse return ~/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo' to release it.
+Recovered copy acquired by its original clone: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QZ8CAQCM8ERNVV3R2SQBM/.nm-test/migration/pools/.treehouse/demo-4ec3de/1/demo
+🌳 Worktree returned to pool.
+
+LIVE_RECOVERY_SCENARIOS_COMPLETED
