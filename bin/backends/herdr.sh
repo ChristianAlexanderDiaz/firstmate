@@ -1475,7 +1475,7 @@ fm_backend_herdr_presentation_primary_home() {
 }
 
 fm_backend_herdr_presentation_worker_owner() {  # <owner-label> <project> [<registry>]
-  local owner=$1 project=$2 registry=${3:-} line covering= count=0
+  local owner=$1 project=$2 registry=${3:-} line covering='' count=0
   if [ "$owner" = firstmate ] && [ -n "$registry" ] && [ -f "$registry" ]; then
     project=${project%/}
     project=${project##*/}
@@ -1528,7 +1528,7 @@ fm_backend_herdr_presentation_task_owners() {  # <session> <home> [<registry>]
 # home itself. The optional pair names a worker this home just created, whose
 # task record is not published yet, independently of its journal version.
 fm_backend_herdr_presentation_owners() {  # <session> [<new-workspace-id> <new-project>]
-  local session=$1 new_workspace=${2:-} new_project=${3:-} primary registry= line home seen records owner running_home
+  local session=$1 new_workspace=${2:-} new_project=${3:-} primary registry='' line home seen records owner running_home
   seen=
   records=
   running_home=$(fm_backend_herdr_projection_home_identity "$FM_HOME" 2>/dev/null || printf '%s' "$FM_HOME")
