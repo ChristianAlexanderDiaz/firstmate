@@ -159,6 +159,7 @@ fi
 }
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 [ -d "$STATE" ] || {
   echo "error: state dir '$STATE' is missing; fm-control cannot resolve tasks for FM_HOME '$FM_HOME'" >&2
   exit 1
@@ -174,6 +175,10 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-backlog-transition-lib.sh
+. "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 # shellcheck source=bin/fm-worker-account-lib.sh
 . "$SCRIPT_DIR/fm-worker-account-lib.sh"
 
@@ -959,10 +964,36 @@ record_note() {
   esac
 }
 
+# Check the same backlog gate and relaunch predicate as fm-spawn.sh before
+# checkpointing or stopping the old agent. The launch owner alone repairs
+# eligible Queued drift and rechecks the row at commit; a later backlog change
+# can still refuse the replacement, but an already-ineligible row refuses here
+# while the old agent is untouched.
+require_relaunch_backlog_eligible() {
+  local applies_status=0
+  if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
+    applies_status=0
+  else
+    applies_status=$?
+  fi
+  [ "$applies_status" -ne 2 ] \
+    || die "task $ID's backlog item could not be read before relaunch: $FM_BACKLOG_TRANSITION_ERROR"
+  [ "$applies_status" -eq 0 ] || return 0
+  fm_backlog_row_probe "$DATA" "$ID" || {
+    if [ "$FM_BACKLOG_ROW_RESULT" = not_found ]; then
+      die "task $ID has no backlog item in this home; refusing to relaunch a worker no record owns"
+    fi
+    die "task $ID's backlog item could not be read before relaunch ($FM_BACKLOG_ROW_ERROR)"
+  }
+  fm_backlog_row_dispatchable "$FM_BACKLOG_ROW_STATE" --relaunch \
+    || die "this home's backlog item $ID is not dispatchable in state $FM_BACKLOG_ROW_STATE; refusing before stopping its agent"
+}
+
 do_relaunch() {
   local exit_result state note_line
   local -a spawn_args
 
+  require_relaunch_backlog_eligible
   require_state_verified_backend relaunch
   resolve_relaunch_profile
 

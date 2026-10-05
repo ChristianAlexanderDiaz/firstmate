@@ -794,15 +794,43 @@ fm_backlog_meta_spawn_gen_optional() {  # <meta> <state>
   fm_backlog_meta_spawn_gen "$meta" "$state"
 }
 
-fm_backlog_row_dispatchable() {
-  case "$1" in
-    in_flight\ no\ no|queued\ no\ no) return 0 ;;
-    *) return 1 ;;
+# A fresh dispatch (no mode) may only claim a row already sitting at exactly
+# `in_flight no no` (a re-verify of a dispatch this process itself just
+# committed) or `queued no no`; a held or blocked row of either kind refuses,
+# and dispatch never touches hold or blocked state. An unrecognized mode is an
+# error (status 2), never a fresh dispatch.
+#
+# --relaunch replaces the agent of a task that is ALREADY in flight, so it
+# must accept an in-flight row whatever its hold or blocked flags read - a
+# captain-held or dependency-blocked scout is exactly the ordinary case
+# (captain-hold-lifecycle), not a reason to strand its worker with no
+# replacement. It keeps the same `queued no no` drift-heal exception fresh
+# dispatch gets (bin/fm-control.sh relaunch may run against a row that drifted
+# out of In flight while the task stayed live), but a held or blocked queued
+# row, a done row, or anything else still refuses exactly as it always has.
+fm_backlog_row_dispatchable() {  # <row> [--relaunch]
+  case "${2:-}" in
+    --relaunch)
+      case "$1" in
+        in_flight\ *|queued\ no\ no) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
+    '')
+      case "$1" in
+        in_flight\ no\ no|queued\ no\ no) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *)
+      FM_BACKLOG_TRANSITION_ERROR="unknown backlog dispatchability mode $2"
+      return 2
+      ;;
   esac
 }
 
-fm_backlog_dispatch_transition() {
-  local meta=$1 data=$2 id=$3 state=$4 row row_status
+fm_backlog_dispatch_transition() {  # <meta> <data> <id> <state> [--relaunch]
+  local meta=$1 data=$2 id=$3 state=$4 mode=${5:-} row row_status
   fm_backlog_record_present "$meta" "task record" "$state" || return 1
   fm_backlog_row_probe "$data" "$id"
   row_status=$?
@@ -815,12 +843,12 @@ fm_backlog_dispatch_transition() {
     return "$row_status"
   fi
   row=$FM_BACKLOG_ROW_STATE
-  if ! fm_backlog_row_dispatchable "$row"; then
+  if ! fm_backlog_row_dispatchable "$row" "$mode"; then
     FM_BACKLOG_TRANSITION_ERROR="backlog item $id is not dispatchable in state $row"
     return 1
   fi
   case "$row" in
-    in_flight\ no\ no) return 0 ;;
+    in_flight\ *) return 0 ;;
     queued\ no\ no) fm_backlog_start "$data" "$id" ;;
   esac
 }

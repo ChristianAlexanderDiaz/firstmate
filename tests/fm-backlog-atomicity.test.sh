@@ -333,9 +333,10 @@ make_fallback_bin() {  # <case-dir> <tasks-axi-stub-script>
 run_bounded_fm_tasks_axi() {  # <fallback-bin> <bound> [args...]
   local fb=$1 bound=$2 out rc=0
   shift 2
-  # The fallback shape itself: a PATH with no timeout variant on it, in force
-  # for the bounded call only. The library is sourced first under the ordinary
-  # PATH, as every real caller does.
+  # The fallback shape itself: a PATH with no timeout variant on it. Scoped to
+  # the fm_tasks_axi call alone, so the change cannot leak into other tests,
+  # and applied only after the library is sourced, since sourcing it needs
+  # ordinary tools (dirname) that the narrowed PATH deliberately lacks.
   out=$(
     . "$ROOT/bin/fm-backlog-transition-lib.sh"
     PATH="$fb" FM_TASKS_AXI_TIMEOUT="$bound" fm_tasks_axi "$@" 2>&1
@@ -358,6 +359,32 @@ exec sleep 300')
   [ $((SECONDS - started)) -lt 20 ] \
     || fail "the perl watchdog fallback did not bound the call (${SECONDS}s)"
   pass "fm_tasks_axi bounds the call through its perl watchdog when no timeout binary exists"
+}
+
+test_fm_tasks_axi_fallback_bounds_a_wrapper_scripts_grandchild() {
+  local case_dir fb out rc started stub
+  case_dir=$(make_home fm-tasks-axi-fallback-grandchild)
+  # A wrapper that does not exec: its `sleep` is a grandchild of the watchdog
+  # and holds the caller's output pipe open. Signaling only the direct child
+  # would leave that sleep running, so the caller's $(...) would wait out the
+  # whole 30s instead of the 2s bound - with TERM honored or ignored.
+  for stub in '#!/bin/bash
+sleep 30' '#!/bin/bash
+trap "" TERM
+sleep 30'; do
+    rm -rf "$case_dir/fallbackbin"
+    fb=$(make_fallback_bin "$case_dir" "$stub")
+    rc=0
+    started=$SECONDS
+    out=$(run_bounded_fm_tasks_axi "$fb" 2 show never-answers) || rc=$?
+    [ "$rc" -eq 124 ] \
+      || fail "the perl watchdog fallback did not report the wrapper as timed out (rc=$rc, out=$out)"
+    [ $((SECONDS - started)) -ge 2 ] \
+      || fail "the perl watchdog fallback fired before the bound elapsed"
+    [ $((SECONDS - started)) -lt 20 ] \
+      || fail "the perl watchdog fallback let a grandchild hold the caller past the bound (${SECONDS}s)"
+  done
+  pass "fm_tasks_axi's perl watchdog terminates the whole process group, not just the direct child"
 }
 
 test_fm_tasks_axi_fallback_passes_the_child_status_and_output_through() {
@@ -3069,6 +3096,7 @@ test_deferred_signal_reads_back_preserved_state
 test_deferred_signal_never_claims_unverified_preservation
 test_deferred_signal_verification_outlives_an_unresponsive_tasks_axi
 test_fm_tasks_axi_fallback_bounds_the_call_without_a_timeout_binary
+test_fm_tasks_axi_fallback_bounds_a_wrapper_scripts_grandchild
 test_fm_tasks_axi_fallback_passes_the_child_status_and_output_through
 test_fm_tasks_axi_fails_closed_when_nothing_can_bound_the_call
 test_fm_tasks_axi_gnu_timeout_forces_termination_of_a_sigterm_ignoring_child
