@@ -4304,37 +4304,53 @@ test_failed_wake_append_does_not_arm_the_captain_hold_throttle() {
 # first one's silence and absorbed its first sight. That is the one alarm this
 # bound must never swallow: a delivery announced twice is noise, but a decision
 # waiting on the captain that is never surfaced is invisible.
-# Measured at base c499f84 this fixture alarms on every sighting, so the
-# suppression was introduced by the bound itself rather than pre-existing.
 test_reheld_captain_call_starts_its_own_resurface_window() {
-  local dir state out capture wakes
+  local spec name line poll dir state out capture wakes
   command -v tasks-axi >/dev/null 2>&1 \
     || { echo "skip: tasks-axi not found (re-held captain call)"; return 0; }
-  dir=$(make_hold_home reheld-call 'done: PR https://example.invalid/pull/1 checks green' hold) \
-    || fail "could not build a captain-held backlog fixture"
-  state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane.txt"
+  for spec in \
+    'reheld-ready-nm|done: PR https://example.invalid/pull/1 checks green|armed' \
+    'reheld-ready-direct|done: PR https://example.invalid/pull/1|armed' \
+    'reheld-call|done: PR https://example.invalid/pull/1 checks green|unarmed' \
+    'reheld-worker-line|working: still tidying the branch|unarmed'
+  do
+    name=${spec%%|*}; poll=${spec##*|}; line=${spec#*|}; line=${line%|*}
+    dir=$(make_hold_home "$name" "$line" hold) \
+      || fail "[$name] could not build a captain-held backlog fixture"
+    state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane.txt"
+    if [ "$poll" = armed ]; then
+      : > "$state/held-merge.pr-poll-registration"
+    fi
 
-  hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 1s' \
-    || fail "first sight of the first captain call did not surface"
-  ack_stopped_cycle "$state" || fail "could not acknowledge the first call's surface"
-  hold_watch_churn "$dir" "$out" "$capture" 'idle, tick' 1 \
-    || fail "the first call's churn was not absorbed"
-  [ "$(hold_stale_wakes "$state")" -eq 0 ] \
-    || fail "the first call's churn re-alarmed inside its own window"
+    hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 1s' \
+      || fail "[$name] first sight of the first captain call did not surface"
+    [ "$(hold_stale_wakes "$state")" -eq 1 ] \
+      || fail "[$name] the first call did not produce exactly one wake"
+    ack_stopped_cycle "$state" || fail "[$name] could not acknowledge the first call's surface"
+    hold_watch_churn "$dir" "$out" "$capture" 'idle, tick' 1 \
+      || fail "[$name] the first call's churn was not absorbed"
+    [ "$(hold_stale_wakes "$state")" -eq 0 ] \
+      || fail "[$name] the first call's churn re-alarmed inside its own window"
 
-  # Answer and release, then re-hold: a second, distinct captain call on the same
-  # task id, with no status append, so the status signature cannot tell them apart.
-  printf 'go ahead\n' > "$dir/decision.txt"
-  run_hold "$dir" answer held-merge --decision-file "$dir/decision.txt" --release \
-    || fail "could not record the captain's answer"
-  run_hold "$dir" hold held-merge --reason 'awaiting the captain a second time' \
-    || fail "could not re-hold the task as a second captain call"
+    # Answer and release, then re-hold: a second, distinct captain call on the same
+    # task id, with no status append, so the status signature cannot tell them apart.
+    printf 'go ahead\n' > "$dir/decision.txt"
+    run_hold "$dir" answer held-merge --decision-file "$dir/decision.txt" --release \
+      || fail "[$name] could not record the captain's answer"
+    run_hold "$dir" hold held-merge --reason 'awaiting the captain a second time' \
+      || fail "[$name] could not re-hold the task as a second captain call"
 
-  hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 3s' \
-    || fail "the second captain call inherited the first call's silence"
-  wakes=$(hold_stale_wakes "$state")
-  [ "$wakes" -eq 1 ] \
-    || fail "the second captain call produced $wakes first wakes instead of one"
+    hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 3s' \
+      || fail "[$name] the second captain call inherited the first call's silence"
+    wakes=$(hold_stale_wakes "$state")
+    [ "$wakes" -eq 1 ] \
+      || fail "[$name] the second captain call produced $wakes first wakes instead of one"
+    ack_stopped_cycle "$state" || fail "[$name] could not acknowledge the second call's surface"
+    hold_watch_churn "$dir" "$out" "$capture" 'idle, second tick' 1 \
+      || fail "[$name] the second call's churn was not absorbed"
+    [ "$(hold_stale_wakes "$state")" -eq 0 ] \
+      || fail "[$name] the second call's churn re-alarmed inside its own window"
+  done
   pass "a released-then-re-held task is a distinct captain call whose first sight still alarms"
 }
 

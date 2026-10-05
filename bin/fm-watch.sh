@@ -1903,15 +1903,6 @@ captain_call_stale_bound() {  # <window-key> <task>
 # status-log signature rather than captain_call_declaration's backlog-hold
 # identity: a ready PR awaiting merge is not a captain-held backlog transfer,
 # so it carries no hold identity to bind to.
-# Deliberately does NOT clear STALE_WAIT_DECLARATION on entry or on either
-# early return: this is evaluated as the elif right after
-# captain_call_stale_bound, whose own first-sight alarm relies on that global
-# surviving into the caller's else branch so stale_wait_record can still
-# persist ITS throttle. Resetting it here unconditionally once silently
-# dropped every open-captain-call task's first-alarm throttle whenever this
-# function's own match failed, so the task never bounded again. Only a
-# successful match here is entitled to overwrite it with this function's own
-# declaration.
 ready_pr_call_stale_bound() {  # <window-key> <task>
   local key=$1 task=$2 last
   last=$(last_status_line "$STATE/$task.status")
@@ -3130,7 +3121,7 @@ EOF
               rm -f "$ssf"
               clear_write_tracking "$key"
               triage_log "absorbed stale (open captain call already surfaced for this status): $w"
-            elif ready_pr_call_stale_bound "$key" "$task"; then
+            elif [ -z "$STALE_WAIT_DECLARATION" ] && ready_pr_call_stale_bound "$key" "$task"; then
               # The line reports a ready PR with its merge poll still armed:
               # further NEW pane hashes with the same status-log state have
               # nothing to add while the merge is pending. Same bound as the
