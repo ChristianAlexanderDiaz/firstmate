@@ -1451,15 +1451,11 @@ test_successor_close_during_main_turn_is_delivered_at_the_next_turn_end() {
   pass "host+hook: a successor close that lands during main's turn is delivered at the next turn end"
 }
 
-# The live failure (2026-10-05): main's drain was refused, so its turn ended
-# with the wake still queued. Every following Stop's park took over the cycle
-# left for main, and the fresh watcher reopened the already-announced episode
-# under a new generation and woke main with check: rearm-resurface again, one
-# billed turn per Stop without bound. A confirmed take-over is not a new down
-# stretch: the undrained wake is presented once, the next turn end parks with
-# the episode's generation unchanged, and a genuinely new event still wakes
-# main with nothing lost. The home without the host attaches instead of taking
-# over and must park the same way.
+# A refused drain must not turn every following Stop into another billed turn.
+# Confirmed take-over must preserve the shown episode while its queued work
+# is unchanged (docs/watcher-continuity.md "Generation reuse"). The host-off
+# path attaches instead of taking over and must park the same way; a new event
+# must still wake main with both the undrained and new work available.
 assert_undrained_wake_is_presented_once() {  # <name> <host|host-off>
   local name=$1 home marker drained
   home=$(make_primary_home "$name")
