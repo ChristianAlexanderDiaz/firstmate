@@ -139,62 +139,6 @@ cmd_record() {
 
 # --- choose -----------------------------------------------------------------
 
-# choose_json <map-text> <snapshot-file> <current> <model>
-# Prints one JSON array of per-account verdicts in map order.
-choose_json() {
-  local map=$1 snapshot=$2 current=$3 model=$4 names
-  names=$(printf '%s\n' "$map" | awk -F'\t' '$1 == "account" { print $2 }' | jq -R . | jq -sc .)
-  jq -c --argjson names "$names" \
-    --arg current "$current" --arg model "$model" '
-    def short_time: if type == "string" then sub("\\.[0-9]+"; "") | sub(":[0-9]{2}(\\+00:00|Z)$"; "Z") else null end;
-    def model_family:
-      if type != "string" then null
-      else ascii_downcase | gsub("\\."; "-") |
-        [capture("^(?:claude-(?:[0-9]+-)*)?(?<family>opus|sonnet|fable|haiku)(?:-[0-9]+)*(?:-latest)?$").family] | first // null
-      end;
-    ($model | ascii_downcase | sub("\\[1m\\]$"; "")) as $model_name |
-    (if $model_name == "opusplan" then ["opus", "sonnet"]
-     elif $model_name == "best" then ["fable", "opus"]
-     else
-       [$model_name | model_family | select(. != null)] |
-       if length == 0 then null
-       elif . == ["haiku"] then ["haiku", "sonnet"]
-       else . end
-     end) as $families |
-    . as $snap |
-    if (($snap | type) != "object") or (($snap.providers | type) != "array") then error("snapshot has no providers array") else . end |
-    [ $names | to_entries[] | .key as $order | .value as $name |
-      [ $snap.providers[] | select(type == "object" and .provider == "claude" and .account == $name) ] as $rows |
-      { name: $name, order: $order } +
-      (if ($rows | length) == 0 then { ok: false, why: "no quota reading for this account" }
-      elif ($rows | length) > 1 then { ok: false, why: "more than one quota reading for this account" }
-      else
-        $rows[0] as $row |
-        ([ ($row.windows // [])[] | select(type == "object") ]) as $windows |
-        ([ ($row.quotaSemantics.effectiveAvailability // [])[] | select(type == "object") |
-           (.scope | if type == "string" then ascii_downcase | sub("^model:"; "") | sub("^seven_day_opus$"; "opus") else . end | model_family) as $family |
-           select(.scope == "all_models" or $families == null or $family == null or ($families | index($family)) != null) ]) as $scopes |
-        if ($row.state.stale // false) == true then { ok: false, why: "its quota reading is stale" }
-        elif ([ $scopes[] | select(.scope == "all_models") ] | length) != 1 then { ok: false, why: "its all-models quota is unknown" }
-        elif any($scopes[]; .status != "known" or ((.effectivePercentRemaining | type) != "number")) then { ok: false, why: "its quota is unknown" }
-        else
-          ($scopes | min_by(.effectivePercentRemaining)) as $limiting |
-          ($limiting.runway.limitingWindowId // (($limiting.limitingWindowIds // [])[0])) as $wid |
-          ([ $windows[] | select(.id == $wid) ][0].resetsAt | short_time) as $resets |
-          ([ $windows[] | select(.kind == "credits") | .id ]) as $credit_ids |
-          { percent: $limiting.effectivePercentRemaining, resets: $resets,
-            spend: (if ($limiting.selection.status // "") == "known" and (($limiting.selection.spendPriority | type) == "number")
-                    then $limiting.selection.spendPriority else null end) } +
-          if any($scopes[]; (.boundedBy // []) as $b | any($credit_ids[]; . as $c | ($b | index($c)) != null))
-          then { ok: false, why: "its availability counts paid usage credits" }
-          elif any($scopes[]; (.runway.status // "") == "exhausted_now") then { ok: false, why: "it is exhausted now" }
-          elif $limiting.effectivePercentRemaining <= 5 then { ok: false, why: "at or below the 5% safety margin" }
-          else { ok: true } end
-        end
-      end) |
-      if $name == $current then .ok = false | .why = "the account the worker just ran out on" else . end ]' "$snapshot"
-}
-
 cmd_choose() {
   local map_file='' snapshot='' current='' model='' map verdicts want
   while [ $# -gt 0 ]; do
@@ -219,18 +163,18 @@ cmd_choose() {
     echo "error: map '$map_file' is absent, unreadable, or malformed" >&2
     return 2
   }
-  verdicts=$(choose_json "$map" "$snapshot" "$current" "$model" 2>/dev/null) || {
+  verdicts=$(fm_worker_account_failover_quota "$map" "$(cat "$snapshot")" "$current" "$model" 2>/dev/null) || {
     echo "error: snapshot '$snapshot' is not a quota-axi --all-accounts --json snapshot" >&2
     return 2
   }
-  verdicts=$(choose_usable "$verdicts" "$map" "$(cat "$snapshot")" "$(dirname "$map_file")") || return 2
+  verdicts=$(choose_usable "$verdicts" "$map" "$(cat "$snapshot")" "$(dirname "$map_file")" "$model") || return 2
   choose_print "$verdicts"
 }
 
 choose_usable() {
-  local verdicts=$1 map=$2 snapshot=$3 config=$4 name reason
+  local verdicts=$1 map=$2 snapshot=$3 config=$4 model=$5 name reason
   while IFS= read -r name; do
-    if ! reason=$(fm_worker_account_failover_select "$config" "$name" claude "$snapshot" "$map" 2>&1); then
+    if ! reason=$(fm_worker_account_failover_select "$config" "$name" claude "$model" "$snapshot" "$map" 2>&1); then
       verdicts=$(printf '%s' "$verdicts" | jq -c --arg n "$name" --arg r "$reason" \
         'map(if .name == $n then .ok = false | .why = $r else . end)') || return 1
     fi
@@ -434,11 +378,11 @@ fm_account_failover_recover() {
     status_blocked "Claude usage limit reached ($limit_text); the quota-axi --all-accounts snapshot failed, so the worker was left stopped"
   fi
   current=$(current_account "$marker")
-  choice=$(choose_json "$MAP" "$snapshot" "$current" "$(fm_meta_get "$META" model)" 2>/dev/null) || {
+  choice=$(fm_worker_account_failover_quota "$MAP" "$(cat "$snapshot")" "$current" "$(fm_meta_get "$META" model)" 2>/dev/null) || {
     rm -f "$snapshot"
     status_blocked "Claude usage limit reached ($limit_text); the quota-axi --all-accounts snapshot was unreadable, so the worker was left stopped"
   }
-  choice=$(choose_usable "$choice" "$MAP" "$(cat "$snapshot")" "$CONFIG") || {
+  choice=$(choose_usable "$choice" "$MAP" "$(cat "$snapshot")" "$CONFIG" "$(fm_meta_get "$META" model)") || {
     rm -f "$snapshot"
     status_blocked "Claude usage limit reached ($limit_text); account eligibility could not be checked"
   }

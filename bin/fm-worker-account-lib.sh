@@ -5,7 +5,7 @@
 # credentials a pinned Claude launch sheds. It also owns the opt-in Claude
 # account failover map (config/claude-failover): how that file is parsed and
 # how one of its named accounts resolves to the Claude config root a moved
-# worker launches under.
+# worker launches under, and model-aware quota eligibility.
 #
 # docs/configuration.md "Worker account pin" and "Claude account failover" own
 # the operator-facing contracts.
@@ -385,15 +385,72 @@ fm_worker_account_failover_resolve() {
   printf '%s\t%s\n' "$declared" "$root"
 }
 
-# fm_worker_account_failover_select <config-dir> <name> <executable>
+# fm_worker_account_failover_quota <map-text> <snapshot-json> <current> <model>
+# Prints one JSON array of per-account verdicts in map order.
+fm_worker_account_failover_quota() {
+  local map=$1 snapshot=$2 current=$3 model=$4 names
+  names=$(printf '%s\n' "$map" | awk -F'\t' '$1 == "account" { print $2 }' | jq -R . | jq -sc .)
+  printf '%s' "$snapshot" | jq -c --argjson names "$names" \
+    --arg current "$current" --arg model "$model" '
+    def short_time: if type == "string" then sub("\\.[0-9]+"; "") | sub(":[0-9]{2}(\\+00:00|Z)$"; "Z") else null end;
+    def model_family:
+      if type != "string" then null
+      else ascii_downcase | gsub("\\."; "-") |
+        [capture("^(?:claude-(?:[0-9]+-)*)?(?<family>opus|sonnet|fable|haiku)(?:-[0-9]+)*(?:-latest)?$").family] | first // null
+      end;
+    ($model | ascii_downcase | sub("\\[1m\\]$"; "")) as $model_name |
+    (if $model_name == "opusplan" then ["opus", "sonnet"]
+     elif $model_name == "best" then ["fable", "opus"]
+     else
+       [$model_name | model_family | select(. != null)] |
+       if length == 0 then null
+       elif . == ["haiku"] then ["haiku", "sonnet"]
+       else . end
+     end) as $families |
+    . as $snap |
+    if (($snap | type) != "object") or (($snap.providers | type) != "array") then error("snapshot has no providers array") else . end |
+    [ $names | to_entries[] | .key as $order | .value as $name |
+      [ $snap.providers[] | select(type == "object" and .provider == "claude" and .account == $name) ] as $rows |
+      { name: $name, order: $order } +
+      (if ($rows | length) == 0 then { ok: false, why: "no quota reading for this account" }
+      elif ($rows | length) > 1 then { ok: false, why: "more than one quota reading for this account" }
+      else
+        $rows[0] as $row |
+        ([ ($row.windows // [])[] | select(type == "object") ]) as $windows |
+        ([ ($row.quotaSemantics.effectiveAvailability // [])[] | select(type == "object") |
+           (.scope | if type == "string" then ascii_downcase | sub("^model:"; "") | sub("^seven_day_opus$"; "opus") else . end | model_family) as $family |
+           select(.scope == "all_models" or $families == null or $family == null or ($families | index($family)) != null) ]) as $scopes |
+        if ($row.state.stale // false) == true then { ok: false, why: "its quota reading is stale" }
+        elif ([ $scopes[] | select(.scope == "all_models") ] | length) != 1 then { ok: false, why: "its all-models quota is unknown" }
+        elif any($scopes[]; .status != "known" or ((.effectivePercentRemaining | type) != "number")) then { ok: false, why: "its quota is unknown" }
+        else
+          ($scopes | min_by(.effectivePercentRemaining)) as $limiting |
+          ($limiting.runway.limitingWindowId // (($limiting.limitingWindowIds // [])[0])) as $wid |
+          ([ $windows[] | select(.id == $wid) ][0].resetsAt | short_time) as $resets |
+          ([ $windows[] | select(.kind == "credits") | .id ]) as $credit_ids |
+          { percent: $limiting.effectivePercentRemaining, resets: $resets,
+            spend: (if ($limiting.selection.status // "") == "known" and (($limiting.selection.spendPriority | type) == "number")
+                    then $limiting.selection.spendPriority else null end) } +
+          if any($scopes[]; (.boundedBy // []) as $b | any($credit_ids[]; . as $c | ($b | index($c)) != null))
+          then { ok: false, why: "its availability counts paid usage credits" }
+          elif any($scopes[]; (.runway.status // "") == "exhausted_now") then { ok: false, why: "it is exhausted now" }
+          elif $limiting.effectivePercentRemaining <= 5 then { ok: false, why: "at or below the 5% safety margin" }
+          else { ok: true } end
+        end
+      end) |
+      if $name == $current then .ok = false | .why = "the account the worker just ran out on" else . end ]'
+}
+
+# fm_worker_account_failover_select <config-dir> <name> <executable> <model>
 #                                   [snapshot-json] [parsed-map]
 # The launch-time decision for a worker recorded on a failover account: the
 # resolve above, the same sign-in check a pin gets, and a fresh quota reading
-# proving paid usage disabled; reused readings refuse. Without a supplied
-# snapshot, reads quota-axi --all-accounts --json --max-age 0 at launch. Prints
+# proving paid usage disabled and model quota above the fixed safety margin;
+# reused readings refuse. Without a supplied snapshot, reads
+# quota-axi --all-accounts --json --max-age 0 at launch. Prints
 # "declared<TAB>root" on success; on refusal prints one error and returns 1.
 fm_worker_account_failover_select() {
-  local config=$1 name=$2 executable=$3 snapshot=${4:-} map=${5:-} selection declared root
+  local config=$1 name=$2 executable=$3 model=$4 snapshot=${5:-} map=${6:-} selection declared root verdict reason
   selection=$(fm_worker_account_failover_resolve "$config" "$name" "$map") || return 1
   declared=${selection%%$'\t'*}
   root=${selection#*$'\t'}
@@ -414,6 +471,15 @@ fm_worker_account_failover_select() {
       and any(.windows[]; .kind == "session" or .kind == "weekly")
       and all(.windows[]; .kind != "credits" and .id != "extra_usage"))' >/dev/null 2>&1; then
     echo "error: Claude account '$name' has paid usage enabled or its paid usage status is unknown" >&2
+    return 1
+  fi
+  verdict=$(fm_worker_account_failover_quota "$(printf 'account\t%s\n' "$name")" "$snapshot" '' "$model" 2>/dev/null) || {
+    echo "error: Claude account '$name' quota could not be checked" >&2
+    return 1
+  }
+  if ! printf '%s' "$verdict" | jq -e '.[0].ok == true' >/dev/null; then
+    reason=$(printf '%s' "$verdict" | jq -r '.[0].why')
+    echo "error: Claude account '$name' cannot launch: $reason" >&2
     return 1
   fi
   printf '%s\n' "$selection"

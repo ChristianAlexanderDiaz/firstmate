@@ -85,7 +85,8 @@
 #              that named account of config/claude-failover (docs/configuration.md
 #              "Claude account failover"); every name is literal, and a task
 #              already moved keeps its recorded account. The account is resolved,
-#              sign-in checked, and paid usage refused before the old agent stops.
+#              sign-in checked, and checked for paid usage and model quota
+#              before the old agent stops.
 #              --usage-limit handles the recorded limit under this transaction
 #              boundary, with its generation check and automatic handoff.
 #              A manual relaunch requires --note for a ship or scout, whose replacement
@@ -1024,7 +1025,7 @@ resolve_relaunch_profile() {
       *) die "Claude account failover moves ship and scout workers only; task $ID is a $KIND" ;;
     esac
     fm_worker_account_failover_select "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
-      "$TARGET_CLAUDE_ACCOUNT" claude >/dev/null || return 1
+      "$TARGET_CLAUDE_ACCOUNT" claude "$account_model" >/dev/null || return 1
   fi
 }
 

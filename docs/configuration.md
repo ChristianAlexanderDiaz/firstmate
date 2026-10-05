@@ -998,6 +998,7 @@ Secondmates are never moved: they carry no `StopFailure` hook, and a supervisor'
 `config/claude-account` pins every Claude worker to one account, so a home with both files leaves limited workers stopped and says so.
 Accounts with a paid credits window or unknown paid usage status never qualify, even when their plan has room.
 Selection, control, and spawn require an unreused vendor reading and force `--max-age 0` for their quota queries before launching a worker on a mapped account; disable paid extra usage in the account itself before using it for failover.
+Control and spawn recheck every quota scope that applies to the replacement's model and refuse a launch when an applicable allowance is unknown, exhausted, or has 5% or less remaining.
 The recorded generation is checked inside the control plane's gate, supervision lease, and lifecycle lock before the event is consumed or the worker and validation run are changed.
 `bin/fm-account-failover.sh` owns detection, the choice, and the move, and its header lists the remaining tuning variables.
 

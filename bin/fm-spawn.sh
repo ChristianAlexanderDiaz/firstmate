@@ -380,8 +380,8 @@
 # Claude account failover (config/claude-failover; --claude-account <name>):
 #   Opt-in, relaunch only. `--relaunch --claude-account <name>` moves a ship or
 #   scout Claude worker onto one named account of config/claude-failover,
-#   sign-in and paid-usage checked before any endpoint changes, launched like
-#   a pinned root, and recorded as claude_account= in the task record and on the spawned
+#   sign-in, paid-usage, and model-quota checked before any endpoint changes,
+#   launched like a pinned root, and recorded as claude_account= in the task record and on the spawned
 #   line; every later relaunch keeps it until another literal account name or
 #   a harness change. It refuses beside config/claude-account. Every Claude
 #   ship and scout StopFailure hook also runs bin/fm-account-failover.sh
@@ -2573,7 +2573,7 @@ if [ -n "$WORKER_ACCOUNT" ] && [ "$HARNESS" = claude ]; then
 fi
 # Claude account failover (header above): a relaunch onto a named account of
 # config/claude-failover, and every later relaunch of a task already moved,
-# resolves, sign-in checks, and refuses paid usage for that account here,
+# resolves, sign-in checks, and checks paid usage and model quota here,
 # before any endpoint changes. Every account name is literal. A task never
 # moved, and every launch in a home without the map, selects nothing here.
 CLAUDE_ACCOUNT=
@@ -2597,7 +2597,7 @@ if [ -n "$CLAUDE_ACCOUNT" ]; then
     exit 1
     ;;
   esac
-  CLAUDE_ACCOUNT_ROOT=$(fm_worker_account_failover_select "$CONFIG" "$CLAUDE_ACCOUNT" claude) || exit 1
+  CLAUDE_ACCOUNT_ROOT=$(fm_worker_account_failover_select "$CONFIG" "$CLAUDE_ACCOUNT" claude "$MODEL") || exit 1
   CLAUDE_ACCOUNT_ROOT=${CLAUDE_ACCOUNT_ROOT#*$'\t'}
   if [ -n "$CLAUDE_ACCOUNT_ROOT" ]; then
     export CLAUDE_CONFIG_DIR=$CLAUDE_ACCOUNT_ROOT

@@ -690,7 +690,7 @@ if [ "\$max_age" != 0 ]; then
   cat "\$D/quota-cached.json"
 else
   printf 'vendor read\n' >> "\$D/vendor-reads"
-  if [ -f "\$D/quota-after.json" ] && [ "\$(wc -l < "\$D/vendor-reads")" -ge 2 ]; then
+  if [ -f "\$D/quota-after.json" ] && [ "\$(wc -l < "\$D/vendor-reads")" -ge ${1:-2} ]; then
     cat "\$D/quota-after.json"
   else
     cat "\$D/quota.json"
@@ -798,6 +798,106 @@ test_recovery_respects_legacy_versioned_and_unresolved_scopes() {
   pass "run: scope representations preserve relevant refusals and ordinary successful moves"
 }
 
+launch_scope_snapshot() {
+  quota_snapshot 0 6 '.providers[1] |= (
+    .windows[2].id = "model:claude-sonnet-4-6" | .windows[2].percentRemaining = 6 |
+    .quotaSemantics.effectiveAvailability[1] |= (
+      .scope = "model:claude-sonnet-4-6" |
+      .boundedBy = ["five_hour", "seven_day", "model:claude-sonnet-4-6"] |
+      .limitingWindowIds = ["model:claude-sonnet-4-6"] |
+      .runway.limitingWindowId = "model:claude-sonnet-4-6"))' | jq "$1"
+}
+
+test_remaining_quota_is_checked_at_control_and_spawn() {
+  local boundary problem filter out rc expected_reads
+  for boundary in control spawn; do
+    while read -r problem filter; do
+      new_case "headroom-$boundary-$problem" t26
+      printf 'model=opusplan\n' >> "$CASE/home/state/t26.meta"
+      rm -f "$CASE/fake/screen"
+      make_quota_cache_fake
+      if [ "$boundary" = control ]; then
+        launch_scope_snapshot "$filter" > "$CASE/fake/quota.json"
+        expected_reads=1
+      else
+        launch_scope_snapshot "$filter" > "$CASE/fake/quota-after.json"
+        expected_reads=2
+      fi
+      out=$(case_env "$CONTROL" t26 relaunch --claude-account spare --note "move" 2>&1); rc=$?
+      expect_code 1 "$rc" "$boundary must refuse $problem model-aware quota: $out"
+      assert_contains "$out" 'cannot launch' "remaining quota must cause the refusal: $out"
+      assert_equals "$expected_reads" "$(wc -l < "$CASE/fake/vendor-reads" | tr -d ' ')" "the refusal occurs at $boundary"
+      assert_no_grep 'claude_account=' "$CASE/home/state/t26.meta" "$boundary cannot publish an ineligible account"
+      assert_no_grep "CLAUDE_CONFIG_DIR='$CASE/accounts/spare'" "$CASE/fake/literal" "$boundary cannot launch an ineligible replacement"
+      if [ "$boundary" = control ]; then
+        assert_no_grep '/exit' "$CASE/fake/literal" "control refusal precedes stopping"
+        assert_equals claude "$(cat "$CASE/fake/command")" "the original agent stays alive"
+      else
+        assert_equals zsh "$(cat "$CASE/fake/command")" "the refused replacement stays stopped"
+      fi
+    done <<'QUOTA'
+all-margin .providers[1].quotaSemantics.effectiveAvailability[0].effectivePercentRemaining = 5
+all-exhausted .providers[1].quotaSemantics.effectiveAvailability[0].runway.status = "exhausted_now"
+model-margin .providers[1].quotaSemantics.effectiveAvailability[1].effectivePercentRemaining = 5
+model-zero .providers[1].quotaSemantics.effectiveAvailability[1].effectivePercentRemaining = 0
+model-exhausted .providers[1].quotaSemantics.effectiveAvailability[1].runway.status = "exhausted_now"
+model-unknown .providers[1].quotaSemantics.effectiveAvailability[1].status = "unknown"
+model-percent-unknown .providers[1].quotaSemantics.effectiveAvailability[1].effectivePercentRemaining = null
+all-missing .providers[1].quotaSemantics.effectiveAvailability |= map(select(.scope != "all_models"))
+QUOTA
+  done
+  pass "launch: both fresh launch readings enforce model certainty, exhaustion, and the fixed margin"
+}
+
+test_recovery_refuses_quota_exhausted_after_selection() {
+  local change_at out rc
+  for change_at in 2 3; do
+    new_case "headroom-race-$change_at" t27
+    make_quota_cache_fake "$change_at"
+    quota_snapshot 0 6 > "$CASE/fake/quota.json"
+    quota_snapshot 0 0 > "$CASE/fake/quota-after.json"
+    record_limit t27
+    out=$(case_env "$FAILOVER" run t27 2>&1); rc=$?
+    expect_code 1 "$rc" "quota exhausted after selection must refuse at reading $change_at: $out"
+    assert_contains "$out" 'cannot launch' "the fresh reading refuses the exhausted account: $out"
+    assert_contains "$(status_of t27)" 'replacement failed' "a refused replacement wakes supervision"
+    assert_equals "$change_at" "$(wc -l < "$CASE/fake/vendor-reads" | tr -d ' ')" "the fresh launch reading catches exhaustion"
+    assert_no_grep 'claude_account=' "$CASE/home/state/t27.meta" "an exhausted account cannot be published"
+    assert_no_grep "CLAUDE_CONFIG_DIR='$CASE/accounts/spare'" "$CASE/fake/literal" "an exhausted replacement cannot launch"
+    if [ "$change_at" = 2 ]; then
+      assert_no_grep '/exit' "$CASE/fake/literal" "control refuses before stopping the original"
+      assert_equals claude "$(cat "$CASE/fake/command")" "the original agent stays alive"
+    else
+      assert_equals zsh "$(cat "$CASE/fake/command")" "the exhausted replacement stays stopped"
+    fi
+  done
+  pass "run: quota exhausted between selection and either launch check blocks the move"
+}
+
+test_launch_checks_use_retained_and_overridden_models() {
+  local mode out rc
+  local -a relaunch_args
+  for mode in retained overridden; do
+    new_case "headroom-model-$mode" t28
+    rm -f "$CASE/fake/screen"
+    relaunch_args=(t28 relaunch --claude-account spare --note "move")
+    if [ "$mode" = retained ]; then
+      printf 'model=sonnet\n' >> "$CASE/home/state/t28.meta"
+    else
+      printf 'model=opusplan\n' >> "$CASE/home/state/t28.meta"
+      relaunch_args+=(--model sonnet)
+    fi
+    represented_scope_snapshot seven_day_opus > "$CASE/fake/quota.json"
+    out=$(case_env "$CONTROL" "${relaunch_args[@]}" 2>&1); rc=$?
+    expect_code 0 "$rc" "$mode Sonnet ignores unrelated Opus exhaustion at both launch checks: $out"
+    assert_grep 'claude_account=spare' "$CASE/home/state/t28.meta" "the safe account is published"
+    assert_grep 'model=sonnet' "$CASE/home/state/t28.meta" "the requested model is launched"
+    assert_grep "CLAUDE_CONFIG_DIR='$CASE/accounts/spare'" "$CASE/fake/literal" "the safe replacement launches on the selected root"
+    assert_equals claude "$(cat "$CASE/fake/command")" "the replacement is alive"
+  done
+  pass "launch: retained and overridden models preserve ordinary successful account moves"
+}
+
 test_record_writes_a_usage_limit_record_only_for_a_rate_limit_with_the_map
 test_absent_map_is_a_no_op
 test_choose_picks_by_quota_and_respects_the_fixed_margin
@@ -819,3 +919,6 @@ test_automatic_recovery_respects_alias_and_unresolved_model_scopes
 test_reused_quota_cannot_authorize_selection_or_launch
 test_model_scope_representations_constrain_the_same_families
 test_recovery_respects_legacy_versioned_and_unresolved_scopes
+test_remaining_quota_is_checked_at_control_and_spawn
+test_recovery_refuses_quota_exhausted_after_selection
+test_launch_checks_use_retained_and_overridden_models
