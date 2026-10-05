@@ -57,8 +57,9 @@
 # Choice. `choose` reads the map's account names in order and one snapshot,
 # and qualifies an account only when exactly one fresh claude row carries its
 # name, every quota scope that applies to the worker's model (all_models plus
-# each model:<family> scope the model id names; every model scope when the
-# model is unknown) is known, none of those scopes is exhausted now or bounded
+# each model:<family> scope its alias or full id can use, including both
+# opusplan phases and both best choices; every model scope when its family
+# cannot be resolved) is known, none of those scopes is exhausted now or bounded
 # by a credits window, paid extra usage is disabled, its root is usable and
 # signed in, and the lowest scope is above the map's floor (default 5 percent).
 # The worker's current account never qualifies. Qualifying accounts rank by
@@ -146,8 +147,17 @@ choose_json() {
   jq -c --argjson names "$names" --argjson floor "${floor:-$FM_WORKER_ACCOUNT_FAILOVER_DEFAULT_FLOOR}" \
     --arg current "$current" --arg model "$model" '
     def short_time: if type == "string" then sub("\\.[0-9]+"; "") | sub(":[0-9]{2}(\\+00:00|Z)$"; "Z") else null end;
-    (if ($model == "" or $model == "default") then null
-     else ($model | ascii_downcase | [splits("[^a-z0-9]+")] | map(select(length > 0))) end) as $tokens |
+    ($model | ascii_downcase | sub("\\[1m\\]$"; "")) as $model_name |
+    (if $model_name == "opusplan" then ["opus", "sonnet"]
+     elif $model_name == "best" then ["fable", "opus"]
+     else
+       (if (["opus", "sonnet", "fable", "haiku"] | index($model_name)) != null
+        then [$model_name]
+        else [$model_name | capture("^claude-(?:[0-9]+-)*(?<family>opus|sonnet|fable|haiku)(?:-[0-9]+)*(?:-latest)?$").family] end) |
+       if length == 0 then null
+       elif . == ["haiku"] then ["haiku", "sonnet"]
+       else . end
+     end) as $families |
     . as $snap |
     if (($snap | type) != "object") or (($snap.providers | type) != "array") then error("snapshot has no providers array") else . end |
     [ $names | to_entries[] | .key as $order | .value as $name |
@@ -161,7 +171,7 @@ choose_json() {
         ([ ($row.quotaSemantics.effectiveAvailability // [])[] | select(type == "object") |
            select(.scope == "all_models" or
              ((.scope | type) == "string" and (.scope | startswith("model:")) and
-              ($tokens == null or ((.scope[6:] | ascii_downcase) as $m | $tokens | index($m)) != null))) ]) as $scopes |
+              ($families == null or ((.scope[6:] | ascii_downcase) as $m | $families | index($m)) != null))) ]) as $scopes |
         if ($row.state.stale // false) == true then { ok: false, why: "its quota reading is stale" }
         elif ([ $scopes[] | select(.scope == "all_models") ] | length) != 1 then { ok: false, why: "its all-models quota is unknown" }
         elif any($scopes[]; .status != "known" or ((.effectivePercentRemaining | type) != "number")) then { ok: false, why: "its quota is unknown" }

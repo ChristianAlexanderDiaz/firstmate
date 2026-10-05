@@ -300,6 +300,86 @@ test_choose_refuses_unknown_quota_and_paid_usage() {
   pass "choose: unknown, missing, stale, and credit-backed quota never qualifies, and model scopes apply"
 }
 
+model_scope_snapshot() {
+  quota_snapshot 0 80 | jq --arg exhausted "${1:-}" '
+    .providers[1] |= (.quotaSemantics.effectiveAvailability[1] as $scope |
+      .windows += ["opus", "sonnet", "haiku", "future" |
+        {id: ("model:" + .), kind: "model", percentRemaining: 80}] |
+      .quotaSemantics.effectiveAvailability += ["opus", "sonnet", "haiku", "future" | . as $family |
+        $scope | .scope = ("model:" + $family) |
+        .boundedBy = ["five_hour", "seven_day", ("model:" + $family)]]) |
+    .providers[1].quotaSemantics.effectiveAvailability |= map(
+      if .scope == ("model:" + $exhausted) then
+        .effectivePercentRemaining = 0 | .runway.status = "exhausted_now"
+      else . end) |
+    .providers[1].windows |= map(
+      if .id == ("model:" + $exhausted) then .percentRemaining = 0 else . end)'
+}
+
+test_model_choices_check_every_family_they_can_use() {
+  local model families family out rc
+  new_case model-families c3
+  while read -r model families; do
+    out=$(choose "$(model_scope_snapshot)" --current limited --model "$model"); rc=$?
+    expect_code 0 "$rc" "$model must qualify when every family has room: $out"
+    for family in opus sonnet fable haiku future; do
+      out=$(choose "$(model_scope_snapshot "$family")" --current limited --model "$model"); rc=$?
+      case " $families " in
+        *" $family "*) expect_code 1 "$rc" "$model must refuse exhausted $family quota: $out" ;;
+        *) expect_code 0 "$rc" "$model must ignore unrelated $family quota: $out" ;;
+      esac
+    done
+  done <<'MODELS'
+opusplan opus sonnet
+opusplan[1m] opus sonnet
+best fable opus
+best[1m] fable opus
+opus opus
+opus[1m] opus
+sonnet sonnet
+sonnet[1m] sonnet
+fable fable
+haiku haiku sonnet
+claude-opus-5-5 opus
+claude-3-opus-20240229 opus
+claude-3-5-sonnet-latest sonnet
+claude-haiku-4-5-20251001 haiku sonnet
+default opus sonnet fable haiku future
+custom-v2 opus sonnet fable haiku future
+deployment-opus opus sonnet fable haiku future
+MODELS
+  out=$(choose "$(model_scope_snapshot | jq '.providers[1].quotaSemantics.effectiveAvailability |= map(if .scope == "model:sonnet" then .status = "unknown" else . end)')" --current limited --model opusplan); rc=$?
+  expect_code 1 "$rc" "opusplan must refuse unknown execution quota: $out"
+  pass "choose: aliases and full model ids check all usable families; unresolved names check every scope"
+}
+
+test_automatic_recovery_respects_alias_and_unresolved_model_scopes() {
+  local model family out
+  while read -r model family; do
+    new_case "model-blocked-$model" t20
+    printf 'model=%s\n' "$model" >> "$CASE/home/state/t20.meta"
+    printf 'running' > "$CASE/fake/nm-state"
+    model_scope_snapshot "$family" > "$CASE/fake/quota.json"
+    record_limit t20
+    out=$(case_env "$FAILOVER" run t20 2>&1)
+    assert_contains "$out" "blocked t20" "$model must not move onto exhausted $family quota: $out"
+    assert_no_grep '/exit' "$CASE/fake/literal" "no replacement can start on the exhausted family"
+    [ ! -e "$CASE/fake/nm-calls" ] || fail "ineligible model quota must precede validation cancellation"
+  done <<'MODELS'
+opusplan sonnet
+best opus
+custom-v2 future
+MODELS
+  new_case model-move t21
+  printf 'model=opusplan\n' >> "$CASE/home/state/t21.meta"
+  model_scope_snapshot fable > "$CASE/fake/quota.json"
+  record_limit t21
+  out=$(case_env "$FAILOVER" run t21 2>&1)
+  assert_contains "$out" "moved t21 limited spare" "opusplan can move when both phases have room: $out"
+  assert_grep 'model=opusplan' "$CASE/home/state/t21.meta" "the replacement retains its supported alias"
+  pass "run: recorded model choices constrain recovery and eligible aliases survive relaunch"
+}
+
 # --- run ---------------------------------------------------------------------
 
 test_limit_prompt_is_answered_with_stop_and_the_worker_moves_to_an_account_with_room() {
@@ -609,3 +689,5 @@ test_unusable_preferred_accounts_are_filtered_before_validation
 test_recovery_guards_precede_every_mutation
 test_manual_relaunch_cannot_race_the_quota_query
 test_paid_usage_is_rejected_at_control_and_spawn_launch_boundaries
+test_model_choices_check_every_family_they_can_use
+test_automatic_recovery_respects_alias_and_unresolved_model_scopes
