@@ -4123,15 +4123,26 @@ test_stale_churn_without_a_captain_call_still_alarms() {
 # waiting on the captain's merge word (no-mistakes `done: PR <url> checks
 # green`, or direct-PR `done: PR <url>`) kept raising a fresh "stale:" wake
 # every couple of minutes as its idle pane's display ticked and produced a new
-# pane hash, because no line predicate could see that the task's own
-# `*.pr-poll-registration` sidecar (bin/fm-pr-lib.sh) was still watching for
-# the merge. ready_pr_call_stale_bound (bin/fm-watch.sh) reads that sidecar
+# pane hash, because no line predicate could see that the task's own complete
+# merge poll (bin/fm-pr-lib.sh) was still watching for
+# the merge. ready_pr_call_stale_bound (bin/fm-watch.sh) validates those artifacts
 # directly, with no backlog hold and no tasks-axi involved, so this is the
 # same bound as test_open_captain_call_bounds_stale_churn above but keyed on
 # the armed poll instead of a captain-held backlog item.
 ready_pr_fixture_key() {  # <name>
   printf 'test:fm-%s' "$1" | tr ':/.' '___'
 }
+
+arm_ready_pr_poll() (
+  local state=$1 id=$2
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/fm-pr-lib.sh"
+  printf 'pr=https://github.com/o/r/pull/1\n' >> "$state/$id.meta"
+  fm_pr_poll_prepare "$state" "$id" github https://github.com/o/r/pull/1 github.com o/r 1 \
+    "$ROOT/bin/fm-pr-poll.sh" || return 1
+  fm_pr_poll_publish_prepared || return 1
+  touch "$state/.last-check"
+)
 
 make_ready_pr_home() {  # <name> <status-line> <armed|unarmed>
   local name=$1 line=$2 armed=$3 dir state window
@@ -4142,7 +4153,7 @@ make_ready_pr_home() {  # <name> <status-line> <armed|unarmed>
   printf '%s\n' "$line" > "$state/$name.status"
   printf '%s' "$(seen_sig "$state/$name.status")" > "$state/.seen-${name}_status"
   if [ "$armed" = armed ]; then
-    : > "$state/$name.pr-poll-registration"
+    arm_ready_pr_poll "$state" "$name" || return 1
   fi
   printf '%s\n' "$dir"
 }
@@ -4195,8 +4206,8 @@ ready_pr_stale_wakes() {  # <state> <name>
 test_ready_pr_poll_bounds_stale_churn() {
   local spec name line dir state out capture throttle wakes
   for spec in \
-    'ready-pr-nm|done: PR https://example.invalid/pull/1 checks green' \
-    'ready-pr-direct|done: PR https://example.invalid/pull/1'
+    'ready-pr-nm|done: PR https://github.com/o/r/pull/1 checks green' \
+    'ready-pr-direct|done: PR https://github.com/o/r/pull/1'
   do
     name=${spec%%|*}; line=${spec#*|}
     dir=$(make_ready_pr_home "$name" "$line" armed) \
@@ -4235,23 +4246,30 @@ test_ready_pr_poll_bounds_stale_churn() {
   pass "a ready PR with an armed merge poll surfaces once, absorbs pane churn, then re-surfaces when the window elapses"
 }
 
-# The other half of the same bound: the identical fixtures with NO armed poll
-# (never registered, or already retired) must keep alarming on every new
+# The other half of the same bound: the identical fixtures with NO complete poll
+# (never registered, incomplete, or already retired) must keep alarming on every new
 # hash, exactly as before this task - a ready-PR report alone is never enough.
 test_ready_pr_without_poll_still_alarms() {
-  local spec name line dir state out capture round wakes
+  local spec name line poll armed dir state out capture round wakes
   for spec in \
-    'unarmed-ready-pr-nm|done: PR https://example.invalid/pull/1 checks green' \
-    'unarmed-ready-pr-direct|done: PR https://example.invalid/pull/1'
+    'incomplete-ready-pr-nm|done: PR https://github.com/o/r/pull/1 checks green|missing-check' \
+    'incomplete-ready-pr-direct|done: PR https://github.com/o/r/pull/1|missing-check' \
+    'unarmed-ready-pr-nm|done: PR https://github.com/o/r/pull/1 checks green|unarmed' \
+    'unarmed-ready-pr-direct|done: PR https://github.com/o/r/pull/1|unarmed'
   do
-    name=${spec%%|*}; line=${spec#*|}
-    dir=$(make_ready_pr_home "$name" "$line" unarmed) \
-      || fail "[$name] could not build an unarmed ready-PR fixture"
+    name=${spec%%|*}; poll=${spec##*|}; line=${spec#*|}; line=${line%|*}
+    armed=unarmed
+    [ "$poll" != missing-check ] || armed=armed
+    dir=$(make_ready_pr_home "$name" "$line" "$armed") \
+      || fail "[$name] could not build a ready-PR fixture"
     state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane.txt"
+    if [ "$poll" = missing-check ]; then
+      rm -f "$state/$name.check.sh"
+    fi
     round=1
     while [ "$round" -le 2 ]; do
       ready_pr_watch_surface "$dir" "$name" "$out" "$capture" "idle, elapsed ${round}s" \
-        || fail "[$name] an unarmed ready PR stopped alarming on round $round"
+        || fail "[$name] a ready PR without a complete poll stopped alarming on round $round"
       wakes=$(ready_pr_stale_wakes "$state" "$name")
       [ "$wakes" -eq 1 ] \
         || fail "[$name] round $round produced $wakes wakes instead of one"
@@ -4259,7 +4277,7 @@ test_ready_pr_without_poll_still_alarms() {
       round=$((round + 1))
     done
   done
-  pass "a ready PR with no armed merge poll keeps alarming on every new hash, same as a genuinely wedged worker"
+  pass "a ready PR with no complete merge poll keeps alarming on every new hash"
 }
 
 
@@ -4312,8 +4330,8 @@ test_reheld_captain_call_starts_its_own_resurface_window() {
   command -v tasks-axi >/dev/null 2>&1 \
     || { echo "skip: tasks-axi not found (re-held captain call)"; return 0; }
   for spec in \
-    'reheld-ready-nm|done: PR https://example.invalid/pull/1 checks green|armed' \
-    'reheld-ready-direct|done: PR https://example.invalid/pull/1|armed' \
+    'reheld-ready-nm|done: PR https://github.com/o/r/pull/1 checks green|armed' \
+    'reheld-ready-direct|done: PR https://github.com/o/r/pull/1|armed' \
     'reheld-call|done: PR https://example.invalid/pull/1 checks green|unarmed' \
     'reheld-worker-line|working: still tidying the branch|unarmed'
   do
@@ -4322,7 +4340,7 @@ test_reheld_captain_call_starts_its_own_resurface_window() {
       || fail "[$name] could not build a captain-held backlog fixture"
     state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane.txt"
     if [ "$poll" = armed ]; then
-      : > "$state/held-merge.pr-poll-registration"
+      arm_ready_pr_poll "$state" held-merge || fail "[$name] could not arm a complete merge poll"
     fi
 
     hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 1s' \

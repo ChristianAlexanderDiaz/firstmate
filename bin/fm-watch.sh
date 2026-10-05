@@ -1894,7 +1894,7 @@ captain_call_stale_bound() {  # <window-key> <task>
 # than cached, so either one ending - a later status append (including the
 # worker's own next line) or the poll's own retirement once it reports merged,
 # closed, or otherwise resolved - starts alarming again on the very next poll.
-# A ready-PR report with no armed poll (one never registered, or already
+# A ready-PR report with no armed poll (one never registered, incomplete, or already
 # retired before this sighting) is NOT a declared wait and keeps today's
 # unbounded stale path, so a genuinely wedged worker with no poll watching its
 # PR is never silenced by this case.
@@ -1907,7 +1907,7 @@ ready_pr_call_stale_bound() {  # <window-key> <task>
   local key=$1 task=$2 last
   last=$(last_status_line "$STATE/$task.status")
   fm_dod_done_reports_ready_pr "$last" || return 1
-  fm_pr_poll_armed "$STATE" "$task" || return 1
+  fm_pr_poll_armed "$STATE" "$task" "$SCRIPT_DIR/fm-pr-poll.sh" || return 1
   STALE_WAIT_DECLARATION=$(stale_wait_declaration "$task")
   stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
 }
