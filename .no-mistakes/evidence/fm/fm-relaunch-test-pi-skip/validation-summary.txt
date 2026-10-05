@@ -1,0 +1,11 @@
+Change scope: test-only optional Pi dependency guard.
+Pi absent from PATH.
+Base isolated Pi case: exit 1, pi executable not found.
+Target isolated Pi case: exit 0, explicit pi CLI skip.
+Focused relaunch test file: exit 0 using native temporary directory; skip printed and subsequent cases completed.
+Initial in-worktree temporary directory was incompatible with secondmate fixture location guard; corrected setup.
+Observed read-only fixture cleanup leak; fixed test exit handler using shared cleanup helpers.
+Cleanup regression: fixture persisted before fix and was removed after fix.
+Final selected same-harness, missing-Pi, and following Herdr reclaim cases: exit 0; no fixture or registry paths remained.
+Temporary drivers and worktree artifacts removed; leftover native test fixture removed through shared test helper.
+No real harness or Herdr session launched. All checks are deterministic tests, not live product evidence.

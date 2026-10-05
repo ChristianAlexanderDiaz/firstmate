@@ -1,0 +1,2 @@
+skip - herdr Pi relaunch needs the pi CLI (fm-spawn.sh resolves a real pi executable on PATH even under the herdr fake)
+target_exit=0

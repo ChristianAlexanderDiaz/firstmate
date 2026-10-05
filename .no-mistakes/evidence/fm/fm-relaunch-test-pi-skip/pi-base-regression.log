@@ -1,0 +1,4 @@
+sed: 1: "/Users/christianalexand ...": command c expects \ followed by text
+not ok - Herdr Pi relaunch should complete (pi registration)
+error: pi executable not found on PATH; install it or select a different verified harness: expected exit 0, got 1
+base_exit=1

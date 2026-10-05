@@ -1,0 +1,5 @@
+ok - fm-control relaunch: a same-harness relaunch replaces the agent in the same endpoint and worktree
+skip - herdr Pi relaunch needs the pi CLI (fm-spawn.sh resolves a real pi executable on PATH even under the herdr fake)
+ok - reclaim: a herdr pane that outlived its stopped server is adopted, never orphaned beside a new tab
+final_exit=0
+remaining_fixture_or_registry_paths=[]

@@ -1,0 +1,6 @@
+before: exit=0; read-only fixture remains=true
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R2PM598QBV552D1ZFW461/.validation-tmp/fm-control-relaunch.BY6XY7/locked-hooks/hook: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R2PM598QBV552D1ZFW461/.validation-tmp/fm-control-relaunch.BY6XY7/locked-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46R2PM598QBV552D1ZFW461/.validation-tmp/fm-control-relaunch.BY6XY7: Directory not empty
+
+after: exit=0; read-only fixture remains=false
