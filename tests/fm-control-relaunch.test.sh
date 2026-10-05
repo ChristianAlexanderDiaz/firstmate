@@ -33,8 +33,8 @@ SPAWN="$ROOT/bin/fm-spawn.sh"
 PROMOTE="$ROOT/bin/fm-promote.sh"
 BRIEF="$ROOT/bin/fm-brief.sh"
 X_LINK="$ROOT/bin/fm-x-link.sh"
-# fm_test_tmproot's own cleanup trap fires when its command substitution exits,
-# so recreate the root before resolving it and clean it up from this file's trap.
+# This file's EXIT trap removes task roots outside TMP_ROOT and calls the
+# shared cleanup for registered resources, including the temp-root registry.
 TMP_ROOT=$(fm_test_tmproot fm-control-relaunch)
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd)
@@ -43,9 +43,10 @@ TASK_TMPS=()
 relaunch_cleanup() {
   local d
   for d in "${TASK_TMPS[@]:-}"; do
-    [ -n "$d" ] && rm -rf "$d"
+    [ -n "$d" ] && fm_test_remove_tree "$d"
   done
-  rm -rf "$TMP_ROOT"
+  fm_test_remove_tree "$TMP_ROOT"
+  fm_test_cleanup
 }
 trap relaunch_cleanup EXIT
 
@@ -182,7 +183,8 @@ SH
   chmod +x "$fb/sleep"
 }
 
-# new_case <name> [id] -> echoes a case dir with a live claude ship task.
+# new_case <name> [id] -> echoes a case dir with a tmux stub modelling a live
+# Claude agent; add_ship_task supplies the task record and worktree.
 new_case() {
   local id=${2:-t1} dir="$TMP_ROOT/$1-$RANDOM"
   mkdir -p "$dir/home/state" "$dir/home/data" "$dir/fake"
@@ -2149,6 +2151,14 @@ herdr_case_or_skip() {  # <name> <id> [session] [surviving-pane]
 
 test_herdr_relaunch_resumes_only_the_registered_pi_session() {
   local dir out rc=0 command registered
+  # Both loop iterations relaunch with --harness pi, which fm-spawn.sh resolves
+  # against a real pi executable on PATH (resolve_pi_executable) even though the
+  # rest of this case runs against the herdr fake, so a host with no pi CLI
+  # installed must skip rather than fail.
+  command -v pi >/dev/null 2>&1 || {
+    echo "skip - herdr Pi relaunch needs the pi CLI (fm-spawn.sh resolves a real pi executable on PATH even under the herdr fake)"
+    return 0
+  }
   for registered in pi claude; do
     herdr_case_or_skip "resume-$registered" "resume-$registered" || {
       echo "skip - herdr relaunch needs jq (the herdr adapter parses JSON with it)"
@@ -2157,7 +2167,7 @@ test_herdr_relaunch_resumes_only_the_registered_pi_session() {
     dir=$HERDR_CASE_DIR
     rm -f "$dir/fake/herdr-stopped"
     sed -i 's/^harness=claude$/harness=pi/' "$dir/home/state/resume-$registered.meta"
-    # Keep the pane's status authority registered to an existing Pi session,
+    # Keep the pane's status authority registered to the previous agent's session,
     # while process-info proves that its previous agent has exited.
     printf '{"result":{"agent":{"agent":"%s","agent_status":"idle","agent_session":{"kind":"path","value":"/tmp/pi-bound-session.jsonl"}}}}\n' \
       "$registered" > "$dir/fake/herdr-agent-registration"
