@@ -4209,6 +4209,9 @@ test_ready_pr_poll_bounds_stale_churn() {
       || fail "[$name] first sight of a ready PR did not surface"
     wakes=$(ready_pr_stale_wakes "$state" "$name")
     [ "$wakes" -eq 1 ] || fail "[$name] first sight produced $wakes wakes instead of one"
+    if grep -F 'command not found' "$out" >/dev/null; then
+      fail "[$name] ready-PR classification emitted a missing-command error"
+    fi
     ack_stopped_cycle "$state" || fail "[$name] could not acknowledge the first surface"
 
     # The pane churns (a ticking display) while the poll stays armed. None of

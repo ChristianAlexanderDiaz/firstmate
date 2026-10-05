@@ -1909,7 +1909,6 @@ ready_pr_call_stale_bound() {  # <window-key> <task>
   fm_dod_done_reports_ready_pr "$last" || return 1
   fm_pr_poll_armed "$STATE" "$task" || return 1
   STALE_WAIT_DECLARATION=$(stale_wait_declaration "$task")
-  afk_record_present && return 0
   stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
 }
 
