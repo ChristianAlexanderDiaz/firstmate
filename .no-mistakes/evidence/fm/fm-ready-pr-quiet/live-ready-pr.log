@@ -1,0 +1,2870 @@
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-lab-home.sh create /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s -f /dev/null new-session -d -s fm-lab-ready -n fm-ready -x 100 -y 30 -c /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ env HOME=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l HISTFILE=/dev/null bash --noprofile --norc -i
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s set-window-option -t fm-lab-ready:fm-ready automatic-rename off
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s display-message -p -t fm-lab-ready:fm-ready #{socket_path},#{pid},0
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s,94320,0
+$ bash -c . bin/fm-pr-lib.sh; fm_pr_poll_prepare "$FM_HOME/state" ready github https://github.com/fm-lab/ready/pull/1 github.com fm-lab/ready 1 "$PWD/bin/fm-pr-poll.sh" && fm_pr_poll_publish_prepared
+Armed a complete disposable monitor through production poll publication; forge network polling is outside this watcher-classification scenario.
+
+SCENARIO: Green ready PR surfaces once and absorbs repeated real pane changes
+DELIVERED WAKE
+1791232681	1	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+1791232681	2	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+
+WATCHER OUTPUT
+signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232681	2	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+wake annotation: latest wake-EVENT observed at drain, not current state: ready.status: done: PR https://github.com/fm-lab/ready/pull/1 checks green
+STATUS OUTCOME BACKSTOP (newest captain-facing task event has no covering branch outcome):
+ready done: PR https://github.com/fm-lab/ready/pull/1 checks green
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 96196.1791232681.QLbvA7
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher process holds this home lock (last beat: 5s ago).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  After draining queued wakes, repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 96196.1791232681.QLbvA7
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: first ready observation\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232690	3	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232690	3	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 3 --recovery-generation 22346.1791232691.B9opuT
+WARNING: watcher still down (same stale episode; last beat: 3s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 3 --recovery-generation 22346.1791232691.B9opuT
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: ready display tick 1\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+WATCHER TRIAGE
+[2026-10-05T16:38:17-0400] absorbed stale (ready PR awaiting merge, poll still armed): fm-lab-ready:fm-ready
+
+Watcher continued for two more polls; durable queue stayed empty.
+WATCHER OUTPUT
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: ready display tick 2\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+WATCHER TRIAGE
+[2026-10-05T16:38:26-0400] absorbed stale (ready PR awaiting merge, poll still armed): fm-lab-ready:fm-ready
+
+Watcher continued for two more polls; durable queue stayed empty.
+WATCHER OUTPUT
+PASS: Green ready PR surfaces once and absorbs repeated real pane changes
+
+SCENARIO: Ready PR resurfaces once after the existing four-hour recheck interval
+Advanced only the disposable cadence marker beyond the unmodified four-hour default.
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: after default recheck interval\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232713	4	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232713	4	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 4 --recovery-generation 15374.1791232713.YqmR5O
+WARNING: watcher still down (same stale episode; last beat: 2s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 4 --recovery-generation 15374.1791232713.YqmR5O
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: after one recheck\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+WATCHER TRIAGE
+[2026-10-05T16:38:42-0400] absorbed stale (ready PR awaiting merge, poll still armed): fm-lab-ready:fm-ready
+
+Watcher continued for two more polls; durable queue stayed empty.
+WATCHER OUTPUT
+PASS: Ready PR resurfaces once after the existing four-hour recheck interval
+
+SCENARIO: Direct PR delivery receives the same bounded quiet period
+DELIVERED WAKE
+1791232729	5	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+1791232729	6	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+
+WATCHER OUTPUT
+signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232729	6	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+wake annotation: latest wake-EVENT observed at drain, not current state: ready.status: done: PR https://github.com/fm-lab/ready/pull/1
+STATUS OUTCOME BACKSTOP (newest captain-facing task event has no covering branch outcome):
+ready done: PR https://github.com/fm-lab/ready/pull/1
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 6 --recovery-generation 85433.1791232729.gEAh3L
+WARNING: watcher still down (same stale episode; last beat: 5s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 6 --recovery-generation 85433.1791232729.gEAh3L
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: direct PR first observation\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232740	7	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232740	7	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 7 --recovery-generation 10030.1791232740.HPwpTh
+WARNING: watcher still down (same stale episode; last beat: 5s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 7 --recovery-generation 10030.1791232740.HPwpTh
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: direct PR display tick\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$ printf 'idle display: direct PR display tick\n'
+idle display: direct PR display tick
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$ printf 'idle display: direct PR display tick\n'
+idle display: direct PR display tick
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+WATCHER TRIAGE
+[2026-10-05T16:39:10-0400] absorbed stale (ready PR awaiting merge, poll still armed): fm-lab-ready:fm-ready
+
+Watcher continued for two more polls; durable queue stayed empty.
+WATCHER OUTPUT
+PASS: Direct PR delivery receives the same bounded quiet period
+
+SCENARIO: Missing, incomplete, and retiring merge monitors keep alarming
+$ bash -c . bin/fm-pr-lib.sh; fm_pr_poll_prepare "$FM_HOME/state" ready github https://github.com/fm-lab/ready/pull/1 github.com fm-lab/ready 1 "$PWD/bin/fm-pr-poll.sh" && fm_pr_poll_publish_prepared
+Armed a complete disposable monitor through production poll publication; forge network polling is outside this watcher-classification scenario.
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: missing executable observation 1\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$ printf 'idle display: direct PR display tick\n'
+idle display: direct PR display tick
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$ printf 'idle display: direct PR display tick\n'
+idle display: direct PR display tick
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232760	8	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232760	8	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 8 --recovery-generation 96985.1791232760.VnIorl
+WARNING: watcher still down (same stale episode; last beat: 3s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 8 --recovery-generation 96985.1791232760.VnIorl
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: missing executable observation 2\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$ printf 'idle display: direct PR display tick\n'
+idle display: direct PR display tick
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$ printf 'idle display: direct PR display tick\n'
+idle display: direct PR display tick
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232768	9	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232768	9	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 9 --recovery-generation 30219.1791232768.jg7Jto
+WARNING: watcher still down (same stale episode; last beat: 3s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 9 --recovery-generation 30219.1791232768.jg7Jto
+$ bash -c . bin/fm-pr-lib.sh; fm_pr_poll_prepare "$FM_HOME/state" ready github https://github.com/fm-lab/ready/pull/1 github.com fm-lab/ready 1 "$PWD/bin/fm-pr-poll.sh" && fm_pr_poll_publish_prepared
+Armed a complete disposable monitor through production poll publication; forge network polling is outside this watcher-classification scenario.
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: unregistered observation 1\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$ printf 'idle display: direct PR display tick\n'
+idle display: direct PR display tick
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$ printf 'idle display: direct PR display tick\n'
+idle display: direct PR display tick
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232776	10	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232776	10	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 10 --recovery-generation 64541.1791232776.GOdmMJ
+WARNING: watcher still down (same stale episode; last beat: 3s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 10 --recovery-generation 64541.1791232776.GOdmMJ
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: unregistered observation 2\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$ printf 'idle display: direct PR display tick\n'
+idle display: direct PR display tick
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$ printf 'idle display: direct PR display tick\n'
+idle display: direct PR display tick
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232783	11	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232783	11	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 11 --recovery-generation 93164.1791232783.UFd6la
+WARNING: watcher still down (same stale episode; last beat: 3s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 11 --recovery-generation 93164.1791232783.UFd6la
+$ bash -c . bin/fm-pr-lib.sh; fm_pr_poll_prepare "$FM_HOME/state" ready github https://github.com/fm-lab/ready/pull/1 github.com fm-lab/ready 1 "$PWD/bin/fm-pr-poll.sh" && fm_pr_poll_publish_prepared
+Armed a complete disposable monitor through production poll publication; forge network polling is outside this watcher-classification scenario.
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: retirement receipt observation 1\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$ printf 'idle display: direct PR display tick\n'
+idle display: direct PR display tick
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: first ready observation\n'
+idle display: first ready observation
+bash-5.3$ printf 'idle display: ready display tick 1\n'
+idle display: ready display tick 1
+bash-5.3$ printf 'idle display: ready display tick 2\n'
+idle display: ready display tick 2
+bash-5.3$ printf 'idle display: after default recheck interval\n'
+idle display: after default recheck interval
+bash-5.3$ printf 'idle display: after one recheck\n'
+idle display: after one recheck
+bash-5.3$ printf 'idle display: direct PR first observation\n'
+idle display: direct PR first observation
+bash-5.3$ printf 'idle display: direct PR display tick\n'
+idle display: direct PR display tick
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$
+
+
+
+
+
+DELIVERED WAKE
+1791232787	12	check	pr-poll-retirement	check: rejected unauthenticated PR poll retirement receipts: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.pr-poll-retirement
+
+FAIL: Expected stale, got 1791232787	12	check	pr-poll-retirement	check: rejected unauthenticated PR poll retirement receipts: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.pr-poll-retirement
+
+Traceback (most recent call last):
+  File "/Users/christianalexanderdiaz/.no-mistakes/evidence/01M46TBYYHZ4CMX5TQE795VRYJ/live-ready-pr.py", line 186, in <module>
+    run('Missing, incomplete, and retiring merge monitors keep alarming',boundaries)
+    ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/christianalexanderdiaz/.no-mistakes/evidence/01M46TBYYHZ4CMX5TQE795VRYJ/live-ready-pr.py", line 116, in run
+    fn(); results.append(dict(name=name,result='pass',live=True)); note('PASS: '+name)
+    ~~^^
+  File "/Users/christianalexanderdiaz/.no-mistakes/evidence/01M46TBYYHZ4CMX5TQE795VRYJ/live-ready-pr.py", line 145, in boundaries
+    for i in range(2): tick(f'{mode} observation {i+1}'); surface(); ack()
+                                                          ~~~~~~~^^
+  File "/Users/christianalexanderdiaz/.no-mistakes/evidence/01M46TBYYHZ4CMX5TQE795VRYJ/live-ready-pr.py", line 65, in surface
+    assert '\t'+kind+'\t' in q, f'Expected {kind}, got {q}'
+           ^^^^^^^^^^^^^^^^^^^
+AssertionError: Expected stale, got 1791232787	12	check	pr-poll-retirement	check: rejected unauthenticated PR poll retirement receipts: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.pr-poll-retirement
+
+WATCHER OUTPUT
+check: rejected unauthenticated PR poll retirement receipts: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.pr-poll-retirement
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s kill-server
+CLEANUP: private tmux server stopped and disposable home removed.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-lab-home.sh create /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s -f /dev/null new-session -d -s fm-lab-ready -n fm-ready -x 100 -y 30 -c /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ env HOME=/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l HISTFILE=/dev/null bash --noprofile --norc -i
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s set-window-option -t fm-lab-ready:fm-ready automatic-rename off
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s display-message -p -t fm-lab-ready:fm-ready #{socket_path},#{pid},0
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s,94296,0
+$ bash -c . bin/fm-pr-lib.sh; fm_pr_poll_prepare "$FM_HOME/state" ready github https://github.com/fm-lab/ready/pull/1 github.com fm-lab/ready 1 "$PWD/bin/fm-pr-poll.sh" && fm_pr_poll_publish_prepared
+Armed a complete disposable monitor through production poll publication; forge network polling is outside this watcher-classification scenario.
+RESUME: prior successful scenarios preserved; retirement setup corrected using the supported receipt publisher.
+DELIVERED WAKE
+1791232834	1	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+1791232835	2	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+
+WATCHER OUTPUT
+signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232835	2	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+wake annotation: latest wake-EVENT observed at drain, not current state: ready.status: done: PR https://github.com/fm-lab/ready/pull/1
+STATUS OUTCOME BACKSTOP (newest captain-facing task event has no covering branch outcome):
+ready done: PR https://github.com/fm-lab/ready/pull/1
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 99847.1791232834.T1XNGS
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher process holds this home lock (last beat: 4s ago).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  After draining queued wakes, repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 99847.1791232834.T1XNGS
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: fresh disposable home first observation\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232844	3	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232844	3	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 3 --recovery-generation 26325.1791232844.un7EBj
+WARNING: watcher still down (same stale episode; last beat: 6s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 3 --recovery-generation 26325.1791232844.un7EBj
+
+SCENARIO: Missing, incomplete, and retiring merge monitors keep alarming
+$ bash -c . bin/fm-pr-lib.sh; fm_pr_poll_prepare "$FM_HOME/state" ready github https://github.com/fm-lab/ready/pull/1 github.com fm-lab/ready 1 "$PWD/bin/fm-pr-poll.sh" && fm_pr_poll_publish_prepared
+Armed a complete disposable monitor through production poll publication; forge network polling is outside this watcher-classification scenario.
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: missing executable observation 1\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232857	4	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232857	4	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 4 --recovery-generation 73790.1791232857.ueRR0e
+WARNING: watcher still down (same stale episode; last beat: 4s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 4 --recovery-generation 73790.1791232857.ueRR0e
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: missing executable observation 2\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232868	5	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232868	5	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 5 --recovery-generation 9399.1791232869.4eyvUp
+WARNING: watcher still down (same stale episode; last beat: 2s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 5 --recovery-generation 9399.1791232869.4eyvUp
+$ bash -c . bin/fm-pr-lib.sh; fm_pr_poll_prepare "$FM_HOME/state" ready github https://github.com/fm-lab/ready/pull/1 github.com fm-lab/ready 1 "$PWD/bin/fm-pr-poll.sh" && fm_pr_poll_publish_prepared
+Armed a complete disposable monitor through production poll publication; forge network polling is outside this watcher-classification scenario.
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: unregistered observation 1\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232876	6	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232876	6	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 6 --recovery-generation 51279.1791232876.kbshd0
+WARNING: watcher still down (same stale episode; last beat: 3s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 6 --recovery-generation 51279.1791232876.kbshd0
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: unregistered observation 2\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232892	7	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232892	7	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 7 --recovery-generation 75209.1791232892.uvM0o0
+WARNING: watcher still down (same stale episode; last beat: 8s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 7 --recovery-generation 75209.1791232892.uvM0o0
+$ bash -c . bin/fm-pr-lib.sh; fm_pr_poll_prepare "$FM_HOME/state" ready github https://github.com/fm-lab/ready/pull/1 github.com fm-lab/ready 1 "$PWD/bin/fm-pr-poll.sh" && fm_pr_poll_publish_prepared
+Armed a complete disposable monitor through production poll publication; forge network polling is outside this watcher-classification scenario.
+$ bash -c . bin/fm-pr-lib.sh; fm_pr_poll_snapshot_capture "$FM_HOME/state" ready "$PWD/bin/fm-pr-poll.sh" && fm_pr_poll_retirement_publish "$FM_HOME/state" ready "$PWD/bin/fm-pr-poll.sh" merged
+Published a valid retirement receipt through the product; startup will retire the monitor.
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: retirement receipt observation 1\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232906	8	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232906	8	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 8 --recovery-generation 56567.1791232906.DgBHQl
+WARNING: watcher still down (same stale episode; last beat: 3s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 8 --recovery-generation 56567.1791232906.DgBHQl
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: retirement receipt observation 2\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232917	9	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232917	9	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 9 --recovery-generation 2392.1791232917.OK4V31
+WARNING: watcher still down (same stale episode; last beat: 3s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 9 --recovery-generation 2392.1791232917.OK4V31
+PASS: Missing, incomplete, and retiring merge monitors keep alarming
+
+SCENARIO: Working, local-only, and pre-validation reports keep alarming
+$ bash -c . bin/fm-pr-lib.sh; fm_pr_poll_prepare "$FM_HOME/state" ready github https://github.com/fm-lab/ready/pull/1 github.com fm-lab/ready 1 "$PWD/bin/fm-pr-poll.sh" && fm_pr_poll_publish_prepared
+Armed a complete disposable monitor through production poll publication; forge network polling is outside this watcher-classification scenario.
+DELIVERED WAKE
+1791232923	10	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+1791232923	11	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+
+WATCHER OUTPUT
+signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232923	11	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+wake annotation: latest wake-EVENT observed at drain, not current state: ready.status: working: resumed branch work
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 11 --recovery-generation 42632.1791232923.PogPmO
+WARNING: watcher still down (same stale episode; last beat: 6s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 11 --recovery-generation 42632.1791232923.PogPmO
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: non-ready status observation 1\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232932	12	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232932	12	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 12 --recovery-generation 69712.1791232933.TBLN9i
+WARNING: watcher still down (same stale episode; last beat: 9s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 12 --recovery-generation 69712.1791232933.TBLN9i
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: non-ready status observation 2\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$
+
+
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232948	13	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232948	13	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 13 --recovery-generation 30367.1791232948.lHg5M3
+WARNING: watcher still down (same stale episode; last beat: 4s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 13 --recovery-generation 30367.1791232948.lHg5M3
+DELIVERED WAKE
+1791232953	14	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+1791232953	15	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+
+WATCHER OUTPUT
+signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232953	15	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+wake annotation: latest wake-EVENT observed at drain, not current state: ready.status: done: ready in branch fm/lab
+STATUS OUTCOME BACKSTOP (newest captain-facing task event has no covering branch outcome):
+ready done: ready in branch fm/lab
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 15 --recovery-generation 66194.1791232953.cFm44w
+WARNING: watcher still down (same stale episode; last beat: 5s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 15 --recovery-generation 66194.1791232953.cFm44w
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: non-ready status observation 1\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$
+
+
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232963	16	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232963	16	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 16 --recovery-generation 97072.1791232963.5y87PL
+WARNING: watcher still down (same stale episode; last beat: 2s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 16 --recovery-generation 97072.1791232963.5y87PL
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: non-ready status observation 2\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$
+
+
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$
+
+
+
+
+
+
+
+DELIVERED WAKE
+1791232972	17	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232972	17	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 17 --recovery-generation 28326.1791232972.3Utcmy
+WARNING: watcher still down (same stale episode; last beat: 5s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 17 --recovery-generation 28326.1791232972.3Utcmy
+DELIVERED WAKE
+1791232979	18	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+1791232979	19	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+
+WATCHER OUTPUT
+signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232979	19	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+wake annotation: latest wake-EVENT observed at drain, not current state: ready.status: done: completed implementation summary
+STATUS OUTCOME BACKSTOP (newest captain-facing task event has no covering branch outcome):
+ready done: completed implementation summary
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 19 --recovery-generation 72823.1791232979.rYt1RO
+WARNING: watcher still down (same stale episode; last beat: 4s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 19 --recovery-generation 72823.1791232979.rYt1RO
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: non-ready status observation 1\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$
+
+
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$
+
+
+
+
+
+DELIVERED WAKE
+1791232989	20	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232989	20	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 20 --recovery-generation 99297.1791232989.ptgDw3
+WARNING: watcher still down (same stale episode; last beat: 4s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 20 --recovery-generation 99297.1791232989.ptgDw3
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: non-ready status observation 2\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$
+
+
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$
+
+
+
+DELIVERED WAKE
+1791232998	21	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791232998	21	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 21 --recovery-generation 41092.1791232998.wNxsNP
+WARNING: watcher still down (same stale episode; last beat: 2s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 21 --recovery-generation 41092.1791232998.wNxsNP
+PASS: Working, local-only, and pre-validation reports keep alarming
+
+SCENARIO: New status declarations start a fresh notification window
+DELIVERED WAKE
+1791233002	22	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+1791233002	23	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+
+WATCHER OUTPUT
+signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791233002	23	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+wake annotation: latest wake-EVENT observed at drain, not current state: ready.status: done: PR https://github.com/fm-lab/ready/pull/1 checks green
+STATUS OUTCOME BACKSTOP (newest captain-facing task event has no covering branch outcome):
+ready done: PR https://github.com/fm-lab/ready/pull/1 checks green
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 23 --recovery-generation 67706.1791233002.JjlniE
+WARNING: watcher still down (same stale episode; last beat: 2s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 23 --recovery-generation 67706.1791233002.JjlniE
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: new ready declaration\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$
+
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$
+
+DELIVERED WAKE
+1791233008	24	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791233008	24	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 24 --recovery-generation 74719.1791233008.5V00uF
+WARNING: watcher still down (same stale episode; last beat: 2s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 24 --recovery-generation 74719.1791233008.5V00uF
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: same ready declaration\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$
+WATCHER TRIAGE
+[2026-10-05T16:43:33-0400] absorbed stale (ready PR awaiting merge, poll still armed): fm-lab-ready:fm-ready
+
+Watcher continued for two more polls; durable queue stayed empty.
+WATCHER OUTPUT
+DELIVERED WAKE
+1791233018	25	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+1791233018	26	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+
+WATCHER OUTPUT
+signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791233018	26	signal	ready.status	signal: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/ready.status
+wake annotation: latest wake-EVENT observed at drain, not current state: ready.status: done: PR https://github.com/fm-lab/ready/pull/1 checks green refreshed
+STATUS OUTCOME BACKSTOP (newest captain-facing task event has no covering branch outcome):
+ready done: PR https://github.com/fm-lab/ready/pull/1 checks green refreshed
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 26 --recovery-generation 83403.1791233018.8FswMn
+WARNING: watcher still down (same stale episode; last beat: 4s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 26 --recovery-generation 83403.1791233018.8FswMn
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: fresh ready append\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$
+DELIVERED WAKE
+1791233024	27	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791233024	27	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 27 --recovery-generation 89250.1791233024.sBxej9
+WARNING: watcher still down (same stale episode; last beat: 2s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 27 --recovery-generation 89250.1791233024.sBxej9
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: fresh declaration already delivered\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$
+REAL PANE
+bash-5.3$ printf 'idle display: fresh disposable home first observation\n'
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$
+WATCHER TRIAGE
+[2026-10-05T16:43:49-0400] absorbed stale (ready PR awaiting merge, poll still armed): fm-lab-ready:fm-ready
+
+Watcher continued for two more polls; durable queue stayed empty.
+WATCHER OUTPUT
+PASS: New status declarations start a fresh notification window
+
+SCENARIO: Ready PR retains the finite recheck cadence under an away record
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-afk-contract.sh enter --words Disposable away-record test
+Away posture recorded at 2026-10-05T20:43:52Z: hold-for-return only. No phone channel is configured; anything that needs you waits for your return. Your away instructions are recorded verbatim; the away session will carry them out where it can, and anything it is unsure of, or that needs you, waits for your return. Destructive, irreversible, and security-sensitive actions are never pre-authorizable, whatever the words say. Expected return: not given. Spend cap: 4 concurrent workers.
+Away posture (recorded):
+  entered: 2026-10-05T20:43:52Z
+  expected return: not given
+  spend cap: 4 concurrent workers
+  reach: hold-for-return only. No phone channel is configured; anything that needs you waits for your return.
+  your words (verbatim):
+    Disposable away-record test
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: ready PR under an away record\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$ printf 'idle display: ready PR under an away record\n'
+idle display: ready PR under an away record
+bash-5.3$
+REAL PANE
+idle display: fresh disposable home first observation
+bash-5.3$ printf 'idle display: missing executable observation 1\n'
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$ printf 'idle display: ready PR under an away record\n'
+idle display: ready PR under an away record
+bash-5.3$
+WATCHER TRIAGE
+[2026-10-05T16:43:57-0400] absorbed stale (ready PR awaiting merge, poll still armed): fm-lab-ready:fm-ready
+
+Watcher continued for two more polls; durable queue stayed empty.
+WATCHER OUTPUT
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: ready PR away-record long recheck\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$ printf 'idle display: ready PR under an away record\n'
+idle display: ready PR under an away record
+bash-5.3$ printf 'idle display: ready PR away-record long recheck\n'
+idle display: ready PR away-record long recheck
+bash-5.3$
+REAL PANE
+idle display: missing executable observation 1
+bash-5.3$ printf 'idle display: missing executable observation 2\n'
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$ printf 'idle display: ready PR under an away record\n'
+idle display: ready PR under an away record
+bash-5.3$ printf 'idle display: ready PR away-record long recheck\n'
+idle display: ready PR away-record long recheck
+bash-5.3$
+DELIVERED WAKE
+1791233049	28	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791233049	28	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 28 --recovery-generation 24220.1791233049.frUgMV
+WARNING: watcher still down (same stale episode; last beat: 1s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 28 --recovery-generation 24220.1791233049.frUgMV
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-afk-contract.sh archive
+/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/state/afk-contracts/1791233032.afk-contract
+PASS: Ready PR retains the finite recheck cadence under an away record
+
+SCENARIO: Reopened captain call alarms with unchanged status and armed monitor
+ok: added ready -> Queued
+task:
+  id: ready
+  title: disposable ready PR
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: task
+  repo: "-"
+  priority: "-"
+  created: 2026-10-05
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+help[2]:
+  - Run `tasks-axi start ready --file=data/backlog.md` to move it to in flight
+  - Run `tasks-axi block ready --by <other> --file=data/backlog.md` to record a dependency
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-captain-hold.sh hold ready --reason disposable merge decision
+ready
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: first captain call\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$ printf 'idle display: ready PR under an away record\n'
+idle display: ready PR under an away record
+bash-5.3$ printf 'idle display: ready PR away-record long recheck\n'
+idle display: ready PR away-record long recheck
+bash-5.3$ printf 'idle display: first captain call\n'
+idle display: first captain call
+bash-5.3$
+REAL PANE
+idle display: missing executable observation 2
+bash-5.3$ printf 'idle display: unregistered observation 1\n'
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$ printf 'idle display: ready PR under an away record\n'
+idle display: ready PR under an away record
+bash-5.3$ printf 'idle display: ready PR away-record long recheck\n'
+idle display: ready PR away-record long recheck
+bash-5.3$ printf 'idle display: first captain call\n'
+idle display: first captain call
+bash-5.3$
+DELIVERED WAKE
+1791233056	29	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791233056	29	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 29 --recovery-generation 34939.1791233056.SSwIyk
+WARNING: watcher still down (same stale episode; last beat: 2s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 29 --recovery-generation 34939.1791233056.SSwIyk
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: captain call already surfaced\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$ printf 'idle display: ready PR under an away record\n'
+idle display: ready PR under an away record
+bash-5.3$ printf 'idle display: ready PR away-record long recheck\n'
+idle display: ready PR away-record long recheck
+bash-5.3$ printf 'idle display: first captain call\n'
+idle display: first captain call
+bash-5.3$ printf 'idle display: captain call already surfaced\n'
+idle display: captain call already surfaced
+bash-5.3$
+REAL PANE
+idle display: unregistered observation 1
+bash-5.3$ printf 'idle display: unregistered observation 2\n'
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$ printf 'idle display: ready PR under an away record\n'
+idle display: ready PR under an away record
+bash-5.3$ printf 'idle display: ready PR away-record long recheck\n'
+idle display: ready PR away-record long recheck
+bash-5.3$ printf 'idle display: first captain call\n'
+idle display: first captain call
+bash-5.3$ printf 'idle display: captain call already surfaced\n'
+idle display: captain call already surfaced
+bash-5.3$
+WATCHER TRIAGE
+[2026-10-05T16:44:27-0400] absorbed stale (open captain call already surfaced for this status): fm-lab-ready:fm-ready
+
+Watcher continued for two more polls; durable queue stayed empty.
+WATCHER OUTPUT
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-captain-hold.sh answer ready --decision-file /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/decision.txt --release
+released: ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-captain-hold.sh hold ready --reason second disposable merge decision
+ready
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: second captain call with unchanged status\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$ printf 'idle display: ready PR under an away record\n'
+idle display: ready PR under an away record
+bash-5.3$ printf 'idle display: ready PR away-record long recheck\n'
+idle display: ready PR away-record long recheck
+bash-5.3$ printf 'idle display: first captain call\n'
+idle display: first captain call
+bash-5.3$ printf 'idle display: captain call already surfaced\n'
+idle display: captain call already surfaced
+bash-5.3$ printf 'idle display: second captain call with unchanged status\n'
+idle display: second captain call with unchanged status
+bash-5.3$
+REAL PANE
+idle display: unregistered observation 2
+bash-5.3$ printf 'idle display: retirement receipt observation 1\n'
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$ printf 'idle display: ready PR under an away record\n'
+idle display: ready PR under an away record
+bash-5.3$ printf 'idle display: ready PR away-record long recheck\n'
+idle display: ready PR away-record long recheck
+bash-5.3$ printf 'idle display: first captain call\n'
+idle display: first captain call
+bash-5.3$ printf 'idle display: captain call already surfaced\n'
+idle display: captain call already surfaced
+bash-5.3$ printf 'idle display: second captain call with unchanged status\n'
+idle display: second captain call with unchanged status
+bash-5.3$
+DELIVERED WAKE
+1791233077	30	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+
+WATCHER OUTPUT
+stale: fm-lab-ready:fm-ready
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh
+1791233077	30	stale	fm-lab-ready:fm-ready	stale: fm-lab-ready:fm-ready
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 30 --recovery-generation 60028.1791233077.3u46zv
+WARNING: watcher still down (same stale episode; last beat: 2s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+$ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/bin/fm-wake-drain.sh --ack-through 30 --recovery-generation 60028.1791233077.3u46zv
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s send-keys -t fm-lab-ready:fm-ready printf 'idle display: second captain call already surfaced\n' Enter
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s capture-pane -p -t fm-lab-ready:fm-ready -S -6
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$ printf 'idle display: ready PR under an away record\n'
+idle display: ready PR under an away record
+bash-5.3$ printf 'idle display: ready PR away-record long recheck\n'
+idle display: ready PR away-record long recheck
+bash-5.3$ printf 'idle display: first captain call\n'
+idle display: first captain call
+bash-5.3$ printf 'idle display: captain call already surfaced\n'
+idle display: captain call already surfaced
+bash-5.3$ printf 'idle display: second captain call with unchanged status\n'
+idle display: second captain call with unchanged status
+bash-5.3$ printf 'idle display: second captain call already surfaced\n'
+idle display: second captain call already surfaced
+bash-5.3$
+REAL PANE
+idle display: retirement receipt observation 1
+bash-5.3$ printf 'idle display: retirement receipt observation 2\n'
+idle display: retirement receipt observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: non-ready status observation 1\n'
+idle display: non-ready status observation 1
+bash-5.3$ printf 'idle display: non-ready status observation 2\n'
+idle display: non-ready status observation 2
+bash-5.3$ printf 'idle display: new ready declaration\n'
+idle display: new ready declaration
+bash-5.3$ printf 'idle display: same ready declaration\n'
+idle display: same ready declaration
+bash-5.3$ printf 'idle display: fresh ready append\n'
+idle display: fresh ready append
+bash-5.3$ printf 'idle display: fresh declaration already delivered\n'
+idle display: fresh declaration already delivered
+bash-5.3$ printf 'idle display: ready PR under an away record\n'
+idle display: ready PR under an away record
+bash-5.3$ printf 'idle display: ready PR away-record long recheck\n'
+idle display: ready PR away-record long recheck
+bash-5.3$ printf 'idle display: first captain call\n'
+idle display: first captain call
+bash-5.3$ printf 'idle display: captain call already surfaced\n'
+idle display: captain call already surfaced
+bash-5.3$ printf 'idle display: second captain call with unchanged status\n'
+idle display: second captain call with unchanged status
+bash-5.3$ printf 'idle display: second captain call already surfaced\n'
+idle display: second captain call already surfaced
+bash-5.3$
+WATCHER TRIAGE
+[2026-10-05T16:44:43-0400] absorbed stale (open captain call already surfaced for this status): fm-lab-ready:fm-ready
+
+Watcher continued for two more polls; durable queue stayed empty.
+WATCHER OUTPUT
+PASS: Reopened captain call alarms with unchanged status and armed monitor
+$ tmux -S /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46TBYYHZ4CMX5TQE795VRYJ/.l/s kill-server
+CLEANUP: private tmux server stopped and disposable home removed.

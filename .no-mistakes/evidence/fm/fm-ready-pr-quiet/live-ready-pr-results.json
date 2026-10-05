@@ -1,0 +1,42 @@
+[
+  {
+    "name": "Green ready PR surfaces once and absorbs repeated real pane changes",
+    "result": "pass",
+    "live": true
+  },
+  {
+    "name": "Ready PR resurfaces once after the existing four-hour recheck interval",
+    "result": "pass",
+    "live": true
+  },
+  {
+    "name": "Direct PR delivery receives the same bounded quiet period",
+    "result": "pass",
+    "live": true
+  },
+  {
+    "name": "Missing, incomplete, and retiring merge monitors keep alarming",
+    "result": "pass",
+    "live": true
+  },
+  {
+    "name": "Working, local-only, and pre-validation reports keep alarming",
+    "result": "pass",
+    "live": true
+  },
+  {
+    "name": "New status declarations start a fresh notification window",
+    "result": "pass",
+    "live": true
+  },
+  {
+    "name": "Ready PR retains the finite recheck cadence under an away record",
+    "result": "pass",
+    "live": true
+  },
+  {
+    "name": "Reopened captain call alarms with unchanged status and armed monitor",
+    "result": "pass",
+    "live": true
+  }
+]

@@ -1,0 +1,15 @@
+Targeted behavioral checks on target commit 84f4034b1a7f7d982ef219466de4f46e320ddb73:
+
+TMPDIR="$PWD/.test-tmp" FM_TEST_SKIP_ORPHAN_REAP=1 FM_TEST_ONLY=test_ready_pr_poll_bounds_stale_churn bash tests/fm-watch-triage.test.sh
+Observed: ready PR surfaces once, absorbs pane churn, and resurfaces after cadence expiry. PASS.
+
+TMPDIR="$PWD/.test-tmp" FM_TEST_SKIP_ORPHAN_REAP=1 FM_TEST_ONLY=test_ready_pr_without_poll_still_alarms bash tests/fm-watch-triage.test.sh
+Observed: never-registered and incomplete monitors continue alarming. PASS.
+
+TMPDIR="$PWD/.test-tmp" FM_TEST_SKIP_ORPHAN_REAP=1 FM_TEST_ONLY=test_reheld_captain_call_starts_its_own_resurface_window bash tests/fm-watch-triage.test.sh
+Observed: each reopened captain call surfaces afresh, including ready PRs with complete monitors. PASS.
+
+Same ready-PR behavioral test copied into an isolated archive of base commit b70652f32d2880a8da9f1ab9e96854a81ed44f80:
+Observed expected regression: "[ready-pr-nm] watcher exited during pane churn instead of supervising through it".
+
+These checks use hermetic pane fixtures and are supplementary, not marked live. Separate live-ready-pr.log contains real tmux and watcher evidence.

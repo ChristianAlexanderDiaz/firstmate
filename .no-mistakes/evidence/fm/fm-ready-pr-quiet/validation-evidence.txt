@@ -1,0 +1,23 @@
+Live watcher validation used a disposable marked FM_HOME and a private tmux socket entirely inside the worktree.
+The tmux session fm-lab-ready had a 100 x 30 terminal; all panes, wake queues, PR-monitor records and captain calls were disposable.
+The unchanged four-hour cadence was tested by aging only the disposable notification marker.
+Three focused behavioral checks passed. The ready-PR churn regression failed as expected against the base commit.
+The initial retirement receipt fixture was invalid and correctly raised a safety wake; a valid production-generated receipt was then tested successfully.
+No forge writes or credential changes were used. Both lab runs stopped their private tmux server and removed their home.
+
+Scenario results:
+PASS: Green ready PR surfaces once and absorbs repeated real pane changes
+PASS: Ready PR resurfaces once after the existing four-hour recheck interval
+PASS: Direct PR delivery receives the same bounded quiet period
+PASS: Missing, incomplete, and retiring merge monitors keep alarming
+PASS: Working, local-only, and pre-validation reports keep alarming
+PASS: New status declarations start a fresh notification window
+PASS: Ready PR retains the finite recheck cadence under an away record
+PASS: Reopened captain call alarms with unchanged status and armed monitor
+
+Direct product output examples:
+stale: fm-lab-ready:fm-ready
+absorbed stale (ready PR awaiting merge, poll still armed): fm-lab-ready:fm-ready
+absorbed stale (open captain call already surfaced for this status): fm-lab-ready:fm-ready
+
+The complete command, pane, durable-wake, drain, acknowledgement and triage transcript is in live-ready-pr.log.
