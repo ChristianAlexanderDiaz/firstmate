@@ -288,26 +288,23 @@ fm_worker_account_claude_shed() {
 #
 # Opt-in; an absent file is no failover. The file names the Claude accounts a
 # worker may be moved between, each by the account name `quota-axi
-# --all-accounts` reports for it, and optionally the quota floor:
+# --all-accounts` reports for it:
 #   account <name> <ordinary | absolute CLAUDE_CONFIG_DIR>
-#   floor <whole percent 0-99>
 # Blank lines and lines starting with # are ignored. `ordinary` means
 # CLAUDE_CONFIG_DIR unset, for the same Keychain reason the pin above gives.
-# Names are [A-Za-z0-9][A-Za-z0-9._-]* and unique; at most one floor line; a
-# path is the rest of its line, absolute, with no control characters.
+# Names are [A-Za-z0-9][A-Za-z0-9._-]* and unique; a path is the rest of its
+# line, absolute, with no control characters.
 
 FM_WORKER_ACCOUNT_FAILOVER_FILE=claude-failover
-FM_WORKER_ACCOUNT_FAILOVER_DEFAULT_FLOOR=5
 
 # fm_worker_account_failover_read <file>
-# Prints "floor<TAB><n>" once (the default when the file names none), then one
-# "account<TAB><name><TAB><declared>" line per account in file order. Returns 0
-# on success, 3 when the file does not exist, 4 when it cannot be inspected
+# Prints one "account<TAB><name><TAB><declared>" line per account in file
+# order. Returns 0 on success, 3 when the file does not exist, 4 when it cannot be inspected
 # (one error already printed), 5 when it is not a readable regular file, and 6
 # when it is malformed (one error naming the line already printed).
 fm_worker_account_failover_read() {
   perl -MErrno=ENOENT -e '
-    my ($f, $default_floor) = @ARGV;
+    my ($f) = @ARGV;
     unless (lstat $f) {
       exit 3 if $! == ENOENT;
       print STDERR "error: cannot inspect configuration source at $f: $!\n";
@@ -315,7 +312,7 @@ fm_worker_account_failover_read() {
     }
     (-f $f && -r _) or exit 5;
     open(my $fh, "<", $f) or exit 5;
-    my ($floor, %seen, @accounts);
+    my (%seen, @accounts);
     my $n = 0;
     while (my $line = <$fh>) {
       $n++;
@@ -326,15 +323,12 @@ fm_worker_account_failover_read() {
       if ($line =~ /\Aaccount +([A-Za-z0-9][A-Za-z0-9._-]*) +(ordinary|\/.*?) *\z/) {
         $bad->("account $1 is named twice") if $seen{$1}++;
         push @accounts, "account\t$1\t$2\n";
-      } elsif ($line =~ /\Afloor +([0-9]{1,2}) *\z/) {
-        $bad->("floor is set twice") if defined $floor;
-        $floor = $1 + 0;
       } else {
-        $bad->("expected \"account <name> <ordinary|/absolute/path>\" or \"floor <0-99>\"");
+        $bad->("expected \"account <name> <ordinary|/absolute/path>\"");
       }
     }
-    print "floor\t", (defined $floor ? $floor : $default_floor), "\n", @accounts;
-  ' -- "$1" "$FM_WORKER_ACCOUNT_FAILOVER_DEFAULT_FLOOR"
+    print @accounts;
+  ' -- "$1"
 }
 
 # fm_worker_account_failover_load <config-dir>
@@ -395,8 +389,8 @@ fm_worker_account_failover_resolve() {
 #                                   [snapshot-json] [parsed-map]
 # The launch-time decision for a worker recorded on a failover account: the
 # resolve above, the same sign-in check a pin gets, and a fresh quota reading
-# proving paid usage disabled. Without a supplied snapshot, reads quota-axi
-# --all-accounts --json at launch. Prints
+# proving paid usage disabled; reused readings refuse. Without a supplied
+# snapshot, reads quota-axi --all-accounts --json --max-age 0 at launch. Prints
 # "declared<TAB>root" on success; on refusal prints one error and returns 1.
 fm_worker_account_failover_select() {
   local config=$1 name=$2 executable=$3 snapshot=${4:-} map=${5:-} selection declared root
@@ -408,14 +402,14 @@ fm_worker_account_failover_select() {
     return 1
   fi
   if [ -z "$snapshot" ]; then
-    snapshot=$(fm_run_timed "${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}" quota-axi --all-accounts --json 2>/dev/null </dev/null) || {
+    snapshot=$(fm_run_timed "${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}" quota-axi --all-accounts --json --max-age 0 2>/dev/null </dev/null) || {
       echo "error: Claude account '$name' paid usage could not be checked" >&2
       return 1
     }
   fi
   if ! printf '%s' "$snapshot" | jq -e --arg name "$name" '
     [.providers[] | select(.provider == "claude" and .account == $name)] |
-    length == 1 and (.[0] | .state.status == "fresh" and .state.stale != true
+    length == 1 and (.[0] | .state.status == "fresh" and .state.stale != true and .state.reused != true
       and .quotaSemantics.status == "known" and (.windows | type) == "array"
       and any(.windows[]; .kind == "session" or .kind == "weekly")
       and all(.windows[]; .kind != "credits" and .id != "extra_usage"))' >/dev/null 2>&1; then

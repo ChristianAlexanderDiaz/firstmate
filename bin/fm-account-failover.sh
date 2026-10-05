@@ -34,7 +34,7 @@
 #      prompt's "Stop and wait for limit to reset" option does. That key cannot
 #      select any option, so no paid choice (usage credits, extra usage, an
 #      upgrade) can ever be picked, whatever order the prompt lists them in.
-#   3. Takes one `quota-axi --all-accounts --json` snapshot and picks an
+#   3. Takes one `quota-axi --all-accounts --json --max-age 0` snapshot and picks an
 #      account of the map through `choose`.
 #   4. With no qualifying account, leaves the worker stopped at its prompt and
 #      appends one `blocked:` line to the task's status naming each account's
@@ -55,13 +55,14 @@
 # account every worker it spawns inherits.
 #
 # Choice. `choose` reads the map's account names in order and one snapshot,
-# and qualifies an account only when exactly one fresh claude row carries its
+# and qualifies an account only when exactly one fresh, unreused claude row carries its
 # name, every quota scope that applies to the worker's model (all_models plus
-# each model:<family> scope its alias or full id can use, including both
-# opusplan phases and both best choices; every model scope when its family
-# cannot be resolved) is known, none of those scopes is exhausted now or bounded
+# each legacy or model-identity scope its alias or full id can use, including
+# both opusplan phases and best choices; unresolved scope identities always
+# apply, and every model scope applies when the worker's family is unresolved)
+# is known, none of those scopes is exhausted now or bounded
 # by a credits window, paid extra usage is disabled, its root is usable and
-# signed in, and the lowest scope is above the map's floor (default 5 percent).
+# signed in, and the lowest scope is above the fixed 5 percent safety margin.
 # The worker's current account never qualifies. Qualifying accounts rank by
 # spendPriority
 # (quota-axi's own spend-first ranker, known before unknown), then remaining
@@ -141,19 +142,21 @@ cmd_record() {
 # choose_json <map-text> <snapshot-file> <current> <model>
 # Prints one JSON array of per-account verdicts in map order.
 choose_json() {
-  local map=$1 snapshot=$2 current=$3 model=$4 floor names
-  floor=$(printf '%s\n' "$map" | awk -F'\t' '$1 == "floor" { print $2; exit }')
+  local map=$1 snapshot=$2 current=$3 model=$4 names
   names=$(printf '%s\n' "$map" | awk -F'\t' '$1 == "account" { print $2 }' | jq -R . | jq -sc .)
-  jq -c --argjson names "$names" --argjson floor "${floor:-$FM_WORKER_ACCOUNT_FAILOVER_DEFAULT_FLOOR}" \
+  jq -c --argjson names "$names" \
     --arg current "$current" --arg model "$model" '
     def short_time: if type == "string" then sub("\\.[0-9]+"; "") | sub(":[0-9]{2}(\\+00:00|Z)$"; "Z") else null end;
+    def model_family:
+      if type != "string" then null
+      else ascii_downcase | gsub("\\."; "-") |
+        [capture("^(?:claude-(?:[0-9]+-)*)?(?<family>opus|sonnet|fable|haiku)(?:-[0-9]+)*(?:-latest)?$").family] | first // null
+      end;
     ($model | ascii_downcase | sub("\\[1m\\]$"; "")) as $model_name |
     (if $model_name == "opusplan" then ["opus", "sonnet"]
      elif $model_name == "best" then ["fable", "opus"]
      else
-       (if (["opus", "sonnet", "fable", "haiku"] | index($model_name)) != null
-        then [$model_name]
-        else [$model_name | capture("^claude-(?:[0-9]+-)*(?<family>opus|sonnet|fable|haiku)(?:-[0-9]+)*(?:-latest)?$").family] end) |
+       [$model_name | model_family | select(. != null)] |
        if length == 0 then null
        elif . == ["haiku"] then ["haiku", "sonnet"]
        else . end
@@ -169,9 +172,8 @@ choose_json() {
         $rows[0] as $row |
         ([ ($row.windows // [])[] | select(type == "object") ]) as $windows |
         ([ ($row.quotaSemantics.effectiveAvailability // [])[] | select(type == "object") |
-           select(.scope == "all_models" or
-             ((.scope | type) == "string" and (.scope | startswith("model:")) and
-              ($families == null or ((.scope[6:] | ascii_downcase) as $m | $families | index($m)) != null))) ]) as $scopes |
+           (.scope | if type == "string" then ascii_downcase | sub("^model:"; "") | sub("^seven_day_opus$"; "opus") else . end | model_family) as $family |
+           select(.scope == "all_models" or $families == null or $family == null or ($families | index($family)) != null) ]) as $scopes |
         if ($row.state.stale // false) == true then { ok: false, why: "its quota reading is stale" }
         elif ([ $scopes[] | select(.scope == "all_models") ] | length) != 1 then { ok: false, why: "its all-models quota is unknown" }
         elif any($scopes[]; .status != "known" or ((.effectivePercentRemaining | type) != "number")) then { ok: false, why: "its quota is unknown" }
@@ -186,7 +188,7 @@ choose_json() {
           if any($scopes[]; (.boundedBy // []) as $b | any($credit_ids[]; . as $c | ($b | index($c)) != null))
           then { ok: false, why: "its availability counts paid usage credits" }
           elif any($scopes[]; (.runway.status // "") == "exhausted_now") then { ok: false, why: "it is exhausted now" }
-          elif $limiting.effectivePercentRemaining <= $floor then { ok: false, why: "at or below the \($floor)% floor" }
+          elif $limiting.effectivePercentRemaining <= 5 then { ok: false, why: "at or below the 5% safety margin" }
           else { ok: true } end
         end
       end) |
@@ -427,7 +429,7 @@ fm_account_failover_recover() {
   command -v quota-axi >/dev/null 2>&1 \
     || status_blocked "Claude usage limit reached ($limit_text); quota-axi is not installed, so no other account could be checked and the worker was left stopped"
   snapshot="$STATE/.$ID.account-failover-quota.$$.json"
-  if ! fm_run_timed "$quota_seconds" quota-axi --all-accounts --json > "$snapshot" 2>/dev/null </dev/null; then
+  if ! fm_run_timed "$quota_seconds" quota-axi --all-accounts --json --max-age 0 > "$snapshot" 2>/dev/null </dev/null; then
     rm -f "$snapshot"
     status_blocked "Claude usage limit reached ($limit_text); the quota-axi --all-accounts snapshot failed, so the worker was left stopped"
   fi

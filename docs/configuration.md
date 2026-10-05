@@ -964,16 +964,15 @@ The file is local and gitignored, because it names this machine's accounts and c
 
 ### File format
 
-Each line is one of:
+Each account line is:
 
 ```text
 account <name> <ordinary | absolute CLAUDE_CONFIG_DIR>
-floor <whole percent 0-99>
 ```
 
 `<name>` is the account's name in `quota-axi --all-accounts`, which reads its own account list from `~/.config/quota-axi/accounts.json`; list every account a worker may run on, including the one firstmate itself launches workers on.
 `ordinary` means `CLAUDE_CONFIG_DIR` unset, for the Keychain reason the [worker account pin](#worker-account-pin-configclaude-account-configpi-account) gives.
-`floor` is the remaining quota at or below which an account is never chosen; it defaults to 5.
+An account is never chosen with 5% or less quota remaining; this safety margin is fixed.
 Blank lines and lines starting with `#` are ignored, names are unique, and a control character or any other line refuses.
 
 ### What happens at a usage limit
@@ -982,7 +981,7 @@ Every Claude ship and scout records its turn end through Claude's `StopFailure` 
 Firstmate's monitoring then, within one cycle:
 
 1. Answers the limit prompt with Escape, its cancel key, which leaves the worker stopped just as "Stop and wait for limit to reset" does and can never pick usage credits, extra usage, or an upgrade.
-2. Reads one `quota-axi --all-accounts --json` snapshot and picks another listed account whose quota is known, fresh, above the floor in every window that applies to the worker's model, with a usable signed-in root and paid extra usage disabled.
+2. Reads one `quota-axi --all-accounts --json --max-age 0` snapshot and picks another listed account whose quota is known, fresh, above the fixed 5% safety margin in every window that applies to the worker's model, with a usable signed-in root and paid extra usage disabled.
 3. Stops the task's own active no-mistakes run through `no-mistakes axi abort --run <id>` and confirms it ended, and moves nothing while a run it cannot read or stop may still be active.
 4. Relaunches the worker on the chosen account through `bin/fm-control.sh <id> relaunch --claude-account <name>` with a handoff note, so the replacement resumes from the task's instructions and durable records.
 
@@ -998,7 +997,7 @@ When no account qualifies, the worker stays stopped and its status gets one `blo
 Secondmates are never moved: they carry no `StopFailure` hook, and a supervisor's account is also the one every worker it spawns inherits.
 `config/claude-account` pins every Claude worker to one account, so a home with both files leaves limited workers stopped and says so.
 Accounts with a paid credits window or unknown paid usage status never qualify, even when their plan has room.
-Control and spawn recheck a fresh quota snapshot before launching a worker on a mapped account; disable paid extra usage in the account itself before using it for failover.
+Selection, control, and spawn require an unreused vendor reading and force `--max-age 0` for their quota queries before launching a worker on a mapped account; disable paid extra usage in the account itself before using it for failover.
 The recorded generation is checked inside the control plane's gate, supervision lease, and lifecycle lock before the event is consumed or the worker and validation run are changed.
 `bin/fm-account-failover.sh` owns detection, the choice, and the move, and its header lists the remaining tuning variables.
 

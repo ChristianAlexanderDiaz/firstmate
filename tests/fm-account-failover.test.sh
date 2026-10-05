@@ -253,7 +253,7 @@ choose() {  # <snapshot-json> [choose args...]
   case_env "$FAILOVER" choose --map "$CASE/home/config/claude-failover" --snapshot "$snap" "$@"
 }
 
-test_choose_picks_by_quota_and_respects_the_floor() {
+test_choose_picks_by_quota_and_respects_the_fixed_margin() {
   local out rc
   new_case choose c1
   out=$(choose "$(quota_snapshot 0 81)" --current limited --model claude-fable-5-1); rc=$?
@@ -262,16 +262,17 @@ test_choose_picks_by_quota_and_respects_the_floor() {
   out=$(choose "$(quota_snapshot 90 81)" --current limited); rc=$?
   assert_equals "pick	spare	81" "$out" "the current account never qualifies, even when its reading shows room"
   out=$(choose "$(quota_snapshot 0 5)" --current limited); rc=$?
-  expect_code 1 "$rc" "an account at the default 5% floor must not be picked"
-  assert_contains "$out" "spare: 5% left, at or below the 5% floor, resets 2026-10-06T22:59Z" "the refusal names the floor and the reset time"
+  expect_code 1 "$rc" "an account at the fixed 5% safety margin must not be picked"
+  assert_contains "$out" "spare: 5% left, at or below the 5% safety margin, resets 2026-10-06T22:59Z" "the refusal names the safety margin and the reset time"
   assert_contains "$out" "limited: 0% left, the account the worker just ran out on, resets 2026-10-03T19:59Z" "the refusal names the current account's reset"
   out=$(choose "$(quota_snapshot 0 6)" --current limited); rc=$?
-  assert_equals "pick	spare	6" "$out" "an account just above the floor qualifies"
+  assert_equals "pick	spare	6" "$out" "an account just above the safety margin qualifies"
+  out=$(choose "$(quota_snapshot 0 15)" --current limited); rc=$?
+  expect_code 0 "$rc" "15% quota is above the fixed margin: $out"
   printf 'floor 20\n' >> "$CASE/home/config/claude-failover"
   out=$(choose "$(quota_snapshot 0 15)" --current limited); rc=$?
-  expect_code 1 "$rc" "a configured floor must be respected"
-  assert_contains "$out" "at or below the 20% floor" "the configured floor is the one named"
-  pass "choose: picks the account with room, never the current one, and never at or below the floor"
+  expect_code 2 "$rc" "the removed floor setting must refuse as malformed: $out"
+  pass "choose: uses only the fixed 5% safety margin and refuses removed configuration"
 }
 
 test_choose_refuses_unknown_quota_and_paid_usage() {
@@ -324,8 +325,8 @@ test_model_choices_check_every_family_they_can_use() {
     expect_code 0 "$rc" "$model must qualify when every family has room: $out"
     for family in opus sonnet fable haiku future; do
       out=$(choose "$(model_scope_snapshot "$family")" --current limited --model "$model"); rc=$?
-      case " $families " in
-        *" $family "*) expect_code 1 "$rc" "$model must refuse exhausted $family quota: $out" ;;
+      case "$family: $families " in
+        future:* | *" $family "*) expect_code 1 "$rc" "$model must refuse exhausted $family quota: $out" ;;
         *) expect_code 0 "$rc" "$model must ignore unrelated $family quota: $out" ;;
       esac
     done
@@ -420,7 +421,7 @@ test_no_qualifying_account_leaves_the_worker_stopped_with_one_blocked_line() {
   out=$(case_env "$FAILOVER" run t4 2>&1)
   assert_contains "$out" "skipped t4" "the consumed record must not be handled twice: $out"
   [ "$(status_of t4 | grep -c '^blocked: ')" = 1 ] || fail "a second pass must not add a second blocked line"
-  pass "run: with no account above the floor the worker stays stopped and one blocked line names the resets"
+  pass "run: with no account above the fixed margin the worker stays stopped and one blocked line names the resets"
 }
 
 test_an_active_no_mistakes_run_is_aborted_before_the_move() {
@@ -673,9 +674,133 @@ SH
   pass "launch: control and spawn both refuse paid-enabled accounts"
 }
 
+make_quota_cache_fake() {
+  quota_snapshot 0 81 '.providers[].state.reused = true' > "$CASE/fake/quota-cached.json"
+  cat > "$CASE/fakebin/quota-axi" <<SH
+#!/usr/bin/env bash
+D='$CASE/fake'
+max_age=\${QUOTA_AXI_MAX_AGE:-0}
+while [ \$# -gt 0 ]; do
+  case \$1 in
+    --max-age) max_age=\$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ "\$max_age" != 0 ]; then
+  cat "\$D/quota-cached.json"
+else
+  printf 'vendor read\n' >> "\$D/vendor-reads"
+  if [ -f "\$D/quota-after.json" ] && [ "\$(wc -l < "\$D/vendor-reads")" -ge 2 ]; then
+    cat "\$D/quota-after.json"
+  else
+    cat "\$D/quota.json"
+  fi
+fi
+SH
+}
+
+test_reused_quota_cannot_authorize_selection_or_launch() {
+  local out rc mode
+  new_case supplied-cache c4
+  out=$(choose "$(quota_snapshot 0 81 '.providers[1].state.reused = true')" --current limited); rc=$?
+  expect_code 1 "$rc" "a reused supplied snapshot cannot authorize a move: $out"
+
+  for mode in recovery control spawn; do
+    new_case "cache-$mode" t22
+    make_quota_cache_fake
+    if [ "$mode" = spawn ]; then
+      quota_snapshot 0 81 '.providers[1].windows += [{id: "extra_usage", kind: "credits"}]' > "$CASE/fake/quota-after.json"
+    else
+      quota_snapshot 0 81 '.providers[1].windows += [{id: "extra_usage", kind: "credits"}]' > "$CASE/fake/quota.json"
+    fi
+    if [ "$mode" = recovery ]; then
+      record_limit t22
+      out=$(case_env QUOTA_AXI_MAX_AGE=1h "$FAILOVER" run t22 2>&1)
+      assert_contains "$out" "blocked t22" "recovery must read the changed paid setting: $out"
+    else
+      rm -f "$CASE/fake/screen"
+      out=$(case_env QUOTA_AXI_MAX_AGE=1h "$CONTROL" t22 relaunch --claude-account spare --note "move" 2>&1); rc=$?
+      expect_code 1 "$rc" "$mode must refresh the changed paid setting: $out"
+    fi
+    [ -s "$CASE/fake/vendor-reads" ] || fail "$mode must ask the vendor despite ambient reuse"
+    assert_no_grep 'claude_account=' "$CASE/home/state/t22.meta" "$mode cannot publish a paid account"
+    assert_no_grep 'encode launch-brief' "$CASE/fake/literal" "$mode cannot launch the paid replacement"
+    if [ "$mode" != spawn ]; then
+      assert_no_grep '/exit' "$CASE/fake/literal" "$mode refusal precedes stopping"
+    fi
+  done
+
+  new_case cache-safe t23
+  make_quota_cache_fake
+  quota_snapshot 0 15 > "$CASE/fake/quota.json"
+  record_limit t23
+  out=$(case_env QUOTA_AXI_MAX_AGE=1h "$FAILOVER" run t23 2>&1)
+  assert_contains "$out" "moved t23 limited spare" "an uncached safe account above the fixed margin still moves: $out"
+  assert_equals 3 "$(wc -l < "$CASE/fake/vendor-reads" | tr -d ' ')" "selection, control, and spawn each refresh"
+  pass "quota: supplied cache refuses; selection and both launch boundaries force vendor reads"
+}
+
+represented_scope_snapshot() {
+  quota_snapshot 0 80 | jq --arg scope "$1" '
+    .providers[1].windows[2] |= (.id = $scope | .percentRemaining = 0) |
+    .providers[1].quotaSemantics.effectiveAvailability[1] |= (
+      .scope = $scope | .effectivePercentRemaining = 0 |
+      .boundedBy = ["five_hour", "seven_day", $scope] | .limitingWindowIds = [$scope] |
+      .runway = {status: "exhausted_now", limitingWindowId: $scope})'
+}
+
+test_model_scope_representations_constrain_the_same_families() {
+  local scope family model out rc
+  new_case scope-representations c5
+  while read -r scope family; do
+    for model in opus sonnet opusplan best custom-v2; do
+      out=$(choose "$(represented_scope_snapshot "$scope")" --current limited --model "$model"); rc=$?
+      case "$family:$model" in
+        opus:sonnet | sonnet:opus | sonnet:best | fable:opus | fable:sonnet | fable:opusplan)
+          expect_code 0 "$rc" "$model can ignore unrelated $scope quota: $out" ;;
+        *) expect_code 1 "$rc" "$model must respect exhausted $scope quota: $out" ;;
+      esac
+    done
+  done <<'SCOPES'
+model:opus opus
+seven_day_opus opus
+model:seven_day_opus opus
+model:claude-opus-4-6 opus
+model:opus-4-6 opus
+model:claude-opus-4.6 opus
+model:claude-3-opus-20240229 opus
+model:claude-sonnet-4-6 sonnet
+model:sonnet-4-6 sonnet
+model:claude-fable-5-1 fable
+model:unreleased-v2 unknown
+future_scope unknown
+SCOPES
+  pass "choose: legacy, versioned, and unresolved model allowances cannot be skipped"
+}
+
+test_recovery_respects_legacy_versioned_and_unresolved_scopes() {
+  local scope out
+  for scope in seven_day_opus model:claude-opus-4-6 model:unreleased-v2; do
+    new_case "represented-${scope//:/-}" t24
+    printf 'model=opus\n' >> "$CASE/home/state/t24.meta"
+    represented_scope_snapshot "$scope" > "$CASE/fake/quota.json"
+    record_limit t24
+    out=$(case_env "$FAILOVER" run t24 2>&1)
+    assert_contains "$out" "blocked t24" "recovery must respect exhausted $scope: $out"
+    assert_no_grep '/exit' "$CASE/fake/literal" "an exhausted relevant scope prevents replacement"
+  done
+  new_case represented-unrelated t25
+  printf 'model=sonnet\n' >> "$CASE/home/state/t25.meta"
+  represented_scope_snapshot seven_day_opus > "$CASE/fake/quota.json"
+  record_limit t25
+  out=$(case_env "$FAILOVER" run t25 2>&1)
+  assert_contains "$out" "moved t25 limited spare" "Sonnet can move despite unrelated legacy Opus exhaustion: $out"
+  pass "run: scope representations preserve relevant refusals and ordinary successful moves"
+}
+
 test_record_writes_a_usage_limit_record_only_for_a_rate_limit_with_the_map
 test_absent_map_is_a_no_op
-test_choose_picks_by_quota_and_respects_the_floor
+test_choose_picks_by_quota_and_respects_the_fixed_margin
 test_choose_refuses_unknown_quota_and_paid_usage
 test_limit_prompt_is_answered_with_stop_and_the_worker_moves_to_an_account_with_room
 test_no_qualifying_account_leaves_the_worker_stopped_with_one_blocked_line
@@ -691,3 +816,6 @@ test_manual_relaunch_cannot_race_the_quota_query
 test_paid_usage_is_rejected_at_control_and_spawn_launch_boundaries
 test_model_choices_check_every_family_they_can_use
 test_automatic_recovery_respects_alias_and_unresolved_model_scopes
+test_reused_quota_cannot_authorize_selection_or_launch
+test_model_scope_representations_constrain_the_same_families
+test_recovery_respects_legacy_versioned_and_unresolved_scopes
