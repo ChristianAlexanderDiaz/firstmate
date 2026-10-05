@@ -2930,6 +2930,17 @@ test_herdr_teardown_orders_using_the_recorded_sessions_release() {
   pass "herdr teardown: recorded-session eligibility sorts despite an older ambient session"
 }
 
+test_herdr_teardown_orders_from_effective_record_directories() {
+  local case_dir
+  case_dir=$(make_case herdr-order-record-overrides)
+  configure_herdr_order_teardown_case "$case_dir" ship
+  rm "$case_dir/home/state" "$case_dir/home/data"
+  run_herdr_order_teardown "$case_dir"
+  assert_present "$case_dir/state/shared-worker.meta" "teardown retired a surviving worker's overridden record"
+  assert_present "$case_dir/data/secondmates.md" "teardown lost the effective registry"
+  pass "herdr teardown: effective record directories supply surviving workers and project coverage"
+}
+
 test_herdr_projection_teardown_retires_journal_only_after_confirmed_close() {
   local case_dir log closed restored
   case_dir=$(make_case herdr-projection-confirmed-close)
@@ -4458,6 +4469,7 @@ test_forced_secondmate_herdr_child_retains_records_when_close_unconfirmed
 test_forced_teardown_retains_nested_secondmate_home_when_grandchild_close_unconfirmed
 test_herdr_secondmate_teardown_sorts_after_registry_removal
 test_herdr_teardown_orders_using_the_recorded_sessions_release
+test_herdr_teardown_orders_from_effective_record_directories
 test_herdr_projection_teardown_retires_journal_only_after_confirmed_close
 test_herdr_projection_teardown_retains_journal_when_close_unconfirmed
 test_herdr_projection_teardown_surfaces_restore_failure_without_blocking_cleanup

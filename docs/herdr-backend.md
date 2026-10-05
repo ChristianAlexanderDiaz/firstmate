@@ -283,6 +283,7 @@ Firstmate keeps the whole Herdr sidebar in one presentation order, top to bottom
 Presentation coverage uses the `projects:` list in `data/secondmates.md`.
 Workers inside one group keep their current relative order, so a new worker joins the end of its group.
 A worker's owner comes from each home's validated task metadata, read from the primary home, every local second mate home in its registry, and the running home, whose parent binding names the primary.
+The running home uses its [effective record directories](configuration.md#root-and-directory-overrides); other homes use their own `state/` and `data/`.
 An old owner-prefixed label names its owner directly.
 The current spawn supplies its workspace, home, and project independently of whether its restart binding was saved.
 An unowned workspace stays with the other spaces.

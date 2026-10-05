@@ -3348,6 +3348,98 @@ EOF
   pass "herdr presentation order: every home keeps published worker ownership without a restart binding or spawn hint"
 }
 
+test_presentation_order_uses_the_running_homes_effective_record_directories() {
+  local mode dir primary alpha bravo home state data state_override data_override registry sorted phase hint out expected
+  override_owner_task() {
+    fm_write_meta "$1/$2.meta" "window=fmtest:$3:p1" "endpoint_task_id=$2" \
+      "worktree=/w/$2" "project=$4" "kind=ship" "backend=herdr" \
+      'herdr_session=fmtest' "herdr_workspace_id=$3" "herdr_tab_id=$3:t1" "herdr_pane_id=$3:p1"
+  }
+  for mode in primary-state primary-data primary-both registered-state unregistered-state unbound-state; do
+    dir="$TMP_ROOT/presentation-record-overrides-$mode"
+    primary="$dir/primary"; alpha="$dir/alpha-home"; bravo="$dir/bravo-home"
+    mkdir -p "$primary/state" "$primary/data" "$alpha/state" "$bravo/state" "$dir/alternate-state" "$dir/alternate-data"
+    ln -s alpha-home "$dir/alpha-alias"
+    printf 'alpha\n' > "$alpha/.fm-secondmate-home"
+    printf 'bravo\n' > "$bravo/.fm-secondmate-home"
+    printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$primary" > "$alpha/.fm-secondmate-parent"
+    home=$primary; state_override=; data_override=
+    case "$mode" in
+      primary-state) state_override="$dir/alternate-state" ;;
+      primary-data) data_override="$dir/alternate-data" ;;
+      primary-both) state_override="$dir/alternate-state"; data_override="$dir/alternate-data" ;;
+      *) home=$alpha; state_override="$dir/alternate-state"; data_override="$dir/alternate-data" ;;
+    esac
+    state="${state_override:-$home/state}"
+    data="$primary/data"
+    case "$mode" in primary-*) data="${data_override:-$data}" ;; esac
+    registry="$data/secondmates.md"
+    {
+      case "$mode" in
+        unregistered-state|unbound-state) ;;
+        *) printf -- '- alpha - Alpha. (home: %s; scope: alpha; projects: alpha-app; added 2026-10-05)\n' "$dir/alpha-alias" ;;
+      esac
+      printf -- '- bravo - Bravo. (home: %s; scope: bravo; projects: bravo-app; added 2026-10-05)\n' "$bravo"
+    } > "$registry"
+    if [ -n "$data_override" ]; then
+      if [ "$home" = "$primary" ]; then data="$primary/data"; else data=$data_override; fi
+      printf -- '- bravo - Stale or foreign registry. (home: %s; scope: bravo; projects: alpha-app; added 2026-10-05)\n' "$bravo" \
+        > "$data/secondmates.md"
+    fi
+    if [ -n "$state_override" ]; then
+      override_owner_task "$home/state" stale wStale /p/alpha-app
+      case "$mode" in primary-both|unregistered-state|unbound-state) rm -rf "$home/state" ;; esac
+    fi
+    override_owner_task "$state" old wOld /p/alpha-app
+    if [ "$home" = "$primary" ]; then
+      override_owner_task "$state" primary-worker wPrimary /p/bravo-app
+    else
+      override_owner_task "$primary/state" primary-worker wPrimary /p/bravo-app
+    fi
+    override_owner_task "$bravo/state" mate-worker wMate /p/alpha-app
+    [ "$mode" != unbound-state ] || rm "$alpha/.fm-secondmate-parent"
+    out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$state_override" FM_DATA_OVERRIDE="$data_override" \
+      bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source herdr; fm_backend_herdr_presentation_owners fmtest wNew /p/alpha-app' "$ROOT")
+    [ "$(printf '%s' "$out" | jq -r '.wOld')" = 2ndmate-alpha ] \
+      || fail "$mode: the effective state directory lost the existing worker: $out"
+    [ "$(printf '%s' "$out" | jq -r '.wNew')" = 2ndmate-alpha ] \
+      || fail "$mode: current-spawn coverage ignored the effective registry: $out"
+    [ "$(printf '%s' "$out" | jq -r 'has("wStale")')" = false ] \
+      || fail "$mode: a default state directory leaked into overridden ownership: $out"
+    case "$mode" in
+      unbound-state) expected='wF wA wOld wNew wB notes wPrimary wMate' ;;
+      *)
+        expected='wF wA wOld wNew wB wPrimary wMate notes'
+        [ "$(printf '%s' "$out" | jq -r '.wPrimary')" = 2ndmate-bravo ] \
+          || fail "$mode: another home's state or registry was overridden: $out"
+        [ "$(printf '%s' "$out" | jq -r '.wMate')" = 2ndmate-bravo ] \
+          || fail "$mode: another home's worker read the running home's state: $out"
+        ;;
+    esac
+    sorted="$dir/sort"
+    order_fixture_env "$sorted"
+    for phase in initial later; do
+      hint=wNew
+      if [ "$phase" = later ]; then
+        override_owner_task "$state" new wNew /p/alpha-app
+        hint=
+      fi
+      order_fixture_list notes wF wOld wPrimary wA wNew wB wMate > "$sorted/order.json"
+      out=$(PATH="$sorted/fakebin:$PATH" FM_ORDER_FIXTURE_DIR="$sorted" \
+        FM_BACKEND_HERDR_WORKSPACE_MOVER="$sorted/mover" FM_HOME="$home" \
+        FM_STATE_OVERRIDE="$state_override" FM_DATA_OVERRIDE="$data_override" \
+        bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source herdr
+          fm_backend_herdr_projection_focus_snapshot() { printf "wF\twF:t1"; }
+          fm_backend_herdr_projection_focus_restore() { :; }
+          fm_backend_herdr_presentation_arrange fmtest "$1" /p/alpha-app' "$ROOT" "$hint" 2>&1)
+      [ -z "$out" ] || fail "$mode: $phase ordering warned: $out"
+      [ "$(order_fixture_ids "$sorted/order.json")" = "$expected" ] \
+        || fail "$mode: $phase ordering lost the effective directory context: $(order_fixture_ids "$sorted/order.json")"
+    done
+  done
+  pass "herdr presentation order: effective state and data directories survive later passes and stay scoped to the running home"
+}
+
 test_presentation_session_lock_path_is_shared_across_homes() {
   local dir log resp fb path_a path_b path_other path_tmp path_private
   dir="$TMP_ROOT/presentation-session-lock"; mkdir -p "$dir/responses" "$dir/sockdir"
@@ -5853,6 +5945,7 @@ test_presentation_arrange_sorts_the_whole_session_and_is_idempotent
 test_presentation_arrange_primary_workers_without_their_second_mate_stay_with_firstmate_work
 test_presentation_arrange_refuses_ambiguous_layouts_and_failures
 test_presentation_owners_follow_metadata_and_the_registry_from_every_home
+test_presentation_order_uses_the_running_homes_effective_record_directories
 test_workspace_mover_connects_to_an_overlong_socket_path
 test_presentation_session_lock_path_is_shared_across_homes
 test_presentation_session_lock_path_rejects_malformed_socket
