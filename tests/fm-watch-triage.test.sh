@@ -4123,12 +4123,10 @@ test_stale_churn_without_a_captain_call_still_alarms() {
 # waiting on the captain's merge word (no-mistakes `done: PR <url> checks
 # green`, or direct-PR `done: PR <url>`) kept raising a fresh "stale:" wake
 # every couple of minutes as its idle pane's display ticked and produced a new
-# pane hash, because no line predicate could see that the task's own complete
-# merge poll (bin/fm-pr-lib.sh) was still watching for
-# the merge. ready_pr_call_stale_bound (bin/fm-watch.sh) validates those artifacts
-# directly, with no backlog hold and no tasks-axi involved, so this is the
-# same bound as test_open_captain_call_bounds_stale_churn above but keyed on
-# the armed poll instead of a captain-held backlog item.
+# pane hash, because no line predicate could see the complete merge poll.
+# These fixtures have no backlog hold: ready_pr_call_stale_bound (bin/fm-watch.sh)
+# requires validated poll artifacts and binds the cadence to the status-log
+# signature instead of a captain-call lifecycle identity.
 ready_pr_fixture_key() {  # <name>
   printf 'test:fm-%s' "$1" | tr ':/.' '___'
 }
@@ -4246,9 +4244,8 @@ test_ready_pr_poll_bounds_stale_churn() {
   pass "a ready PR with an armed merge poll surfaces once, absorbs pane churn, then re-surfaces when the window elapses"
 }
 
-# The other half of the same bound: the identical fixtures with NO complete poll
-# (never registered, incomplete, or already retired) must keep alarming on every new
-# hash, exactly as before this task - a ready-PR report alone is never enough.
+# An absent poll or one missing its check must keep alarming on every new hash:
+# a ready-PR report alone is never enough.
 test_ready_pr_without_poll_still_alarms() {
   local spec name line poll armed dir state out capture round wakes
   for spec in \
