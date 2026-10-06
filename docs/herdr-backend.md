@@ -285,11 +285,11 @@ Workers inside one group keep their current relative order, so a new worker join
 A worker's owner comes from each home's validated task metadata, read from the primary home, every local second mate home in its registry, and the running home.
 A local second mate's parent binding identifies the primary home when available.
 The running home uses its [effective record directories](configuration.md#root-and-directory-overrides); other homes use their own `state/` and `data/`.
-An old owner-prefixed label names its owner directly.
+An old owner-prefixed label supplies the owner only when validated task metadata does not.
 A projected spawn supplies its workspace, home, and project independently of whether its restart binding was saved.
 An unowned workspace stays with the other spaces.
 
-One idempotent pass, `fm_backend_herdr_presentation_arrange`, runs under the session lock at the shared endpoint handoff for every fresh Herdr spawn and relaunch, and after cleanup and any secondmate registry removal in a home whose projection is enabled, including a second mate's own flat workspace.
+One idempotent pass, `fm_backend_herdr_presentation_arrange`, runs under the session lock at the shared endpoint handoff for every fresh Herdr spawn and relaunch, and during task teardown after endpoint cleanup and any secondmate registry removal in a home whose projection is enabled, including a second mate's own flat workspace.
 It does nothing when the order is already right, and otherwise lifts each out-of-place workspace to its index in turn.
 Protocol 16 exposes `workspace.move` over the named session socket but no CLI subcommand.
 `bin/backends/herdr-workspace-move.py` sends only that whitelisted method, and the pass verifies the complete returned order after every move.
@@ -303,8 +303,8 @@ Ordering failure never fails the spawn or cleanup it follows.
 Firstmate does not retry a failed or unverifiable move, or adopt, reuse, close, delete, or rename anything in response to an ordering failure.
 The workspaces stay in their current order until the next pass.
 
-A projected spawn holds the session lock through launch handoff, which also keeps concurrent spawns from racing for an isolated copy.
-A spawn waits up to two minutes for a busy lock, so a concurrent spawn or cleanup does not push a worker into its home's shared workspace.
+A projected spawn holds the session lock through launch handoff to serialize presentation mutations across homes.
+The spawn lock wait and timeout outcomes are owned by the header of [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
 
 ### Cleanup and focus safety
 

@@ -1448,7 +1448,7 @@ ok - real Herdr lab validation completed on Herdr 0.8.0 with the default-session
 ```
 
 The projected spawn in that run used the historical empty opt-in file, so a home that had already enabled the projection keeps it without any migration step.
-One concurrent cross-home recovery case refused under contention on a loaded machine and passed on an immediate rerun; recovery-path presentation lock contention is a deliberate hard refusal rather than a flat fallback, which default-on now makes reachable from any Herdr home.
+One concurrent cross-home recovery case refused under contention on a loaded machine and passed on an immediate rerun; current lock-wait and timeout behavior is owned by the header of [`bin/fm-spawn.sh`](../../bin/fm-spawn.sh).
 That run measured the default-on projection on Herdr 0.8.0 only, while the focus-flash regression below was last run on 0.7.5 before the flip, so neither run covered a defective release under default-on projection; the version floor and the focus-flash suite's Part C close that gap.
 
 The whole-sidebar presentation order ran on 2026-09-30 against Herdr 0.9.0 protocol 22 on macOS 27.0 arm64, whose `~/.config/herdr` is a symlink into another directory:

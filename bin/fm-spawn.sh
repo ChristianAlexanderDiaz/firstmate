@@ -1454,8 +1454,8 @@ spawn_herdr_presentation_order_lock_release() {
 
 # Sort the whole Herdr session into the presentation order once this spawn's
 # endpoint exists. A projected or resumed spawn already holds the session lock,
-# and keeps it through launch handoff so concurrent spawns never race for an
-# isolated copy; any other Herdr spawn takes the lock just for this pass.
+# and keeps it through launch handoff to serialize presentation mutations;
+# any other Herdr spawn takes the lock just for this pass.
 # Presentation-only; never fails the spawn.
 spawn_herdr_presentation_arrange() {  # <session>
   local session=$1 acquired=0

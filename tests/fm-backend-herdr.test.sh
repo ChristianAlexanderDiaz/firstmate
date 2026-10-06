@@ -3101,8 +3101,8 @@ order_fixture_ids() {  # <list-json-file>
 }
 
 # order_fixture_env: fake herdr + a mover that really reorders <dir>/order.json.
-# Every `workspace list` answers from that file; status, schema, and session
-# list report protocol 22 by default with a whitelisted workspace.move.
+# Every `workspace list` answers from that file; status reports protocol 22 by
+# default, schema exposes workspace.move, and session list names the socket.
 order_fixture_env() {  # <dir>
   local dir=$1 fb
   mkdir -p "$dir/fakebin"
