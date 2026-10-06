@@ -1,0 +1,10 @@
+workspace-create	ambiguous/ambiguous	w1/w1:t1	firstmate
+tab-create	w1/w1:t1	w1/w1:t1	fm-anchor
+pane-close	w1/w1:t1	w1/w1:t2	w1:p1
+tab-create	w3/w3:t1	w3/w3:t1	fm-alpha
+workspace-create	w3/w3:t1	w3/w3:t1	└ covered · p:oeZGrtQhfXLZ3-IYOicsbQ
+tab-create	w3/w3:t1	w3/w3:t1	fm-covered
+pane-close	w3/w3:t1	w3/w3:t1	w4:p1
+workspace-move	w3/w3:t1	w3/w3:t1	w4
+pane-close	w3/w3:t1	w3/w3:t1	w2:p2
+workspace-move	w3/w3:t1	w3/w3:t1	w3

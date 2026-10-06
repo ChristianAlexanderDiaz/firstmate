@@ -1,0 +1,73 @@
+workspace-create	ambiguous/ambiguous	w1/w1:t1	firstmate
+tab-create	w1/w1:t1	w1/w1:t1	fm-anchor
+pane-close	w1/w1:t1	w1/w1:t2	w1:p1
+tab-create	w3/w3:t1	w3/w3:t1	fm-alpha
+workspace-create	w3/w3:t1	w3/w3:t1	└ p1 · p:Y-JskefdJrq9qmRuF25zYg
+tab-create	w3/w3:t1	w3/w3:t1	fm-p1
+pane-close	w3/w3:t1	w3/w3:t1	w4:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ p2 · p:VLFu9C43S23c8uWO7Wuhag
+tab-create	w3/w3:t1	w3/w3:t1	fm-p2
+pane-close	w3/w3:t1	w3/w3:t1	w5:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ a1 · p:viTcskR2i3XVdodPcGfjaQ
+tab-create	w3/w3:t1	w3/w3:t1	fm-a1
+pane-close	w3/w3:t1	w3/w3:t1	w6:p1
+workspace-move	w3/w3:t1	w3/w3:t1	w6
+workspace-create	w3/w3:t1	w3/w3:t1	└ a2 · p:9a-3tbLpqsMmCBrhwApZfg
+tab-create	w3/w3:t1	w3/w3:t1	fm-a2
+pane-close	w3/w3:t1	w3/w3:t1	w7:p1
+workspace-move	w3/w3:t1	w3/w3:t1	w7
+workspace-create	w3/w3:t1	w3/w3:t1	└ b1 · p:SKwMixWr3W4_rcbV2aY6Pg
+tab-create	w3/w3:t1	w3/w3:t1	fm-b1
+pane-close	w3/w3:t1	w3/w3:t1	w8:p1
+workspace-move	w3/w3:t1	w3/w3:t1	w8
+workspace-create	w3/w3:t1	w3/w3:t1	└ b2 · p:GfiLMD7SwV83fnSZELlVMQ
+tab-create	w3/w3:t1	w3/w3:t1	fm-b2
+pane-close	w3/w3:t1	w3/w3:t1	w9:p1
+workspace-move	w3/w3:t1	w3/w3:t1	w9
+workspace-create	w3/w3:t1	w3/w3:t1	└ pcw · p:pQAyOyTs0JQApxRNMCiuRg
+tab-create	w3/w3:t1	w3/w3:t1	fm-pcw
+pane-close	w3/w3:t1	w3/w3:t1	wA:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ acw · p:ANFdWlCA1-BonlhC0BarCg
+tab-create	w3/w3:t1	w3/w3:t1	fm-acw
+pane-close	w3/w3:t1	w3/w3:t1	wB:p1
+workspace-move	w3/w3:t1	w3/w3:t1	wB
+workspace-create	w3/w3:t1	w3/w3:t1	└ bcw · p:cVWaH4qRoL-Z2VMAWlXsRQ
+tab-create	w3/w3:t1	w3/w3:t1	fm-bcw
+pane-close	w3/w3:t1	w3/w3:t1	wC:p1
+workspace-move	w3/w3:t1	w3/w3:t1	wC
+workspace-create	w3/w3:t1	w3/w3:t1	└ hibit-resume-r1 · p:tweu8SVo7ePIS4JwFXvxOA
+tab-create	w3/w3:t1	w3/w3:t1	fm-fm-hibit-resume-r1
+pane-close	w3/w3:t1	w3/w3:t1	wD:p1
+tab-create	w3/w3:t1	w3/w3:t1	fm-fm-hibit-resume-r1
+pane-close	w3/w3:t1	w3/w3:t1	wD:p2
+tab-create	w3/w3:t1	w3/w3:t1	fm-fm-hibit-resume-r1
+pane-close	w3/w3:t1	w3/w3:t1	wD:p3
+workspace-create	w3/w3:t1	w3/w3:t1	└ wheelhouse-healing-r1 · p:HmYboUPVeUlny3CmuTxHmA
+tab-create	w3/w3:t1	w3/w3:t1	fm-wheelhouse-healing-r1
+pane-close	w3/w3:t1	w3/w3:t1	wE:p1
+tab-create	w3/w3:t1	w3/w3:t1	fm-wheelhouse-healing-r1
+pane-close	w3/w3:t1	w3/w3:t1	wE:p2
+workspace-create	w3/w3:t1	w3/w3:t1	└ wheel-child-resume · p:quROziS5B5CY7borE8VRUw
+tab-create	w3/w3:t1	w3/w3:t1	fm-wheel-child-resume
+pane-close	w3/w3:t1	w3/w3:t1	wF:p1
+workspace-move	w3/w3:t1	w3/w3:t1	wF
+tab-create	w3/w3:t1	w3/w3:t1	fm-wheel-child-resume
+pane-close	w3/w3:t1	w3/w3:t1	wF:p2
+workspace-move	w3/w3:t1	w3/w3:t1	wF
+workspace-create	w3/w3:t1	w3/w3:t1	└ resume-wave-primary · p:Rv6APbBWyqPK8pcZWqdyDQ
+tab-create	w3/w3:t1	w3/w3:t1	fm-resume-wave-primary
+pane-close	w3/w3:t1	w3/w3:t1	wG:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ resume-wave-bravo · p:mqlU73b4GnwuvlMcvjndvg
+tab-create	w3/w3:t1	w3/w3:t1	fm-resume-wave-bravo
+pane-close	w3/w3:t1	w3/w3:t1	wH:p1
+workspace-move	w3/w3:t1	w3/w3:t1	wH
+tab-create	w3/w3:t1	w3/w3:t1	fm-resume-wave-primary
+pane-close	w3/w3:t1	w3/w3:t1	wG:p2
+tab-create	w3/w3:t1	w3/w3:t1	fm-resume-wave-bravo
+pane-close	w3/w3:t1	w3/w3:t1	wH:p2
+workspace-create	w3/w3:t1	w3/w3:t1	└ post-legacy · p:zJRdYk0m3C9MB8F2UiRj7Q
+tab-create	w3/w3:t1	w3/w3:t1	fm-post-legacy
+pane-close	w3/w3:t1	w3/w3:t1	wK:p1
+workspace-move	w3/w3:t1	w3/w3:t1	w6
+workspace-move	w3/w3:t1	w3/w3:t1	w7
+workspace-move	w3/w3:t1	w3/w3:t1	wB

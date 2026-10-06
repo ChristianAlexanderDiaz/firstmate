@@ -1,0 +1,56 @@
+workspace-create	ambiguous/ambiguous	w1/w1:t1	firstmate
+tab-create	w1/w1:t1	w1/w1:t1	fm-anchor
+pane-close	w1/w1:t1	w1/w1:t2	w1:p1
+tab-create	w1/w1:t2	w1/w1:t2	fm-shape
+pane-close	w1/w1:t2	w1/w1:t2	w1:p3
+tab-create	w1/w1:t2	w1/w1:t2	fm-default-on
+pane-close	w1/w1:t2	w1/w1:t2	w1:p4
+workspace-create	w3/w3:t1	w3/w3:t1	└ shape · p:ualJdEyI9rDnglZlGJ3pkw
+tab-create	w3/w3:t1	w3/w3:t1	fm-shape
+pane-close	w3/w3:t1	w3/w3:t1	w4:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ active-seeded · p:oaA8OIFVko_gBdtCOzmxjg
+tab-create	w3/w3:t1	w3/w3:t1	fm-active-seeded
+active-seeded-inject	w3/w3:t1	w5/w5:t1	w5:t1
+seeded-prune-refusal	w5/w5:t1	w5/w5:t1	w5:p1
+pane-close	w5/w5:t1	w5/w5:t2	w5:p1
+seeded-prune-refusal	w5/w5:t2	w5/w5:t2	w5:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ lock-contended · p:0-4cRsRKVTKOBlG0AFvcNA
+tab-create	w3/w3:t1	w3/w3:t1	fm-lock-contended
+pane-close	w3/w3:t1	w3/w3:t1	w6:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ order-a · p:6oJ-Vrh9o0MljzCM7RAy4w
+tab-create	w3/w3:t1	w3/w3:t1	fm-order-a
+pane-close	w3/w3:t1	w3/w3:t1	w7:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ order-b · p:AU1SyIMuDnym9YcXvnf4og
+tab-create	w3/w3:t1	w3/w3:t1	fm-order-b
+pane-close	w3/w3:t1	w3/w3:t1	w8:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ order-fail · p:gQYqojFflX_iEa1ZGXm-8A
+tab-create	w3/w3:t1	w3/w3:t1	fm-order-fail
+pane-close	w3/w3:t1	w3/w3:t1	wA:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ abort-a · p:2UUGO_DgPlr3mMkzrh4ESg
+tab-create	w3/w3:t1	w3/w3:t1	fm-abort-a
+pane-close	w3/w3:t1	w3/w3:t1	wB:p1
+pane-close	w3/w3:t1	wA/wA:t2	wB:p2
+tab-focus	wA/wA:t2	w3/w3:t1	w3:t1
+workspace-create	w3/w3:t1	w3/w3:t1	└ abort-b · p:0HekWsQjzjhJ1CErjIcnvw
+tab-create	w3/w3:t1	w3/w3:t1	fm-abort-b
+pane-close	w3/w3:t1	w3/w3:t1	wC:p1
+pane-close	w3/w3:t1	wA/wA:t2	wC:p2
+tab-focus	wA/wA:t2	w3/w3:t1	w3:t1
+workspace-create	w3/w3:t1	w3/w3:t1	└ focus-1-a · p:KsWViMVe5zfNvr9wP7BXdQ
+tab-create	w3/w3:t1	w3/w3:t1	fm-focus-1-a
+pane-close	w3/w3:t1	w3/w3:t1	wD:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ focus-1-b · p:Z3upCwsF79T33u6YVsSDEg
+tab-create	w3/w3:t1	w3/w3:t1	fm-focus-1-b
+pane-close	w3/w3:t1	w3/w3:t1	wE:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ focus-2-a · p:eaH3zPD2G4W2uFdkE864hQ
+tab-create	w3/w3:t1	w3/w3:t1	fm-focus-2-a
+pane-close	w3/w3:t1	w3/w3:t1	wF:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ focus-2-b · p:J0eZNLmM7vK1z80FloBhaQ
+tab-create	w3/w3:t1	w3/w3:t1	fm-focus-2-b
+pane-close	w3/w3:t1	w3/w3:t1	wG:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ focus-3-b · p:GLFaUVzVCkecnw6UryKcPw
+tab-create	w3/w3:t1	w3/w3:t1	fm-focus-3-b
+pane-close	w3/w3:t1	w3/w3:t1	wH:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ focus-3-a · p:PMbsAQmqYKhg985I157SXw
+tab-create	w3/w3:t1	w3/w3:t1	fm-focus-3-a
+pane-close	w3/w3:t1	w3/w3:t1	wJ:p1

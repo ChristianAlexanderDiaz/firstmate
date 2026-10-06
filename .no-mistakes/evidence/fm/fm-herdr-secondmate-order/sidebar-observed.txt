@@ -1,0 +1,46 @@
+Sorted fleet on Herdr 0.7.4
+Session: fm-lab-fm-herdr-orde-57615-24822
+        w2 firstmate active-tab=w2:t1
+        w3 2ndmate-alpha active-tab=w3:t1
+        w9 └ a1 · p:Ep0UzNDUD-IwdJOrFzJEgQ active-tab=w9:t2
+        w4 2ndmate-bravo active-tab=w4:t1
+        w8 └ pb · p:5ALYjcb4NXYwnvC9KnkT0Q active-tab=w8:t2
+        wB └ b2 · p:Ko96l4tQjKhysy6VzMtlfQ active-tab=wB:t2
+        w7 └ po · p:JbYzE0b7jL4Z1L94NQKMXQ active-tab=w7:t2
+FOCUSED w1 life active-tab=w1:t1
+        w5 dotfiles active-tab=w5:t1
+
+Ambiguous or missing secondmate destination retains primary group
+Session: fm-lab-fm-herdr-order-48297-1533
+        w2 firstmate active-tab=w2:t1
+        w3 2ndmate-alpha active-tab=w3:t1
+        w4 2ndmate-bravo active-tab=w4:t1
+        w6 └ shared · p:N01wnOm-AS6QV7kBx1rJrw active-tab=w6:t2
+        w7 └ orphan · p:wDgOSHKDjbYThn1UKHYVOA active-tab=w7:t2
+FOCUSED w1 life active-tab=w1:t1
+        w5 dotfiles active-tab=w5:t1
+
+Duplicate home label preserves original layout and new worker
+Session: fm-lab-fm-herdr-order-48297-1533
+        w2 firstmate active-tab=w2:t1
+        w3 2ndmate-alpha active-tab=w3:t1
+        w4 2ndmate-bravo active-tab=w4:t1
+        w6 └ shared · p:N01wnOm-AS6QV7kBx1rJrw active-tab=w6:t2
+        w7 └ orphan · p:wDgOSHKDjbYThn1UKHYVOA active-tab=w7:t2
+FOCUSED w1 life active-tab=w1:t1
+        w5 dotfiles active-tab=w5:t1
+        w8 2ndmate-alpha active-tab=w8:t1
+        w9 └ duplicate · p:Ml53ECK1x3OyM3QAGA7PWg active-tab=w9:t2
+
+Sorted fleet on Herdr 0.9.0
+Session: fm-lab-fm-herdr-order-71054-3671
+        w2 firstmate active-tab=w2:t1
+        w3 2ndmate-alpha active-tab=w3:t1
+        w9 └ a1 · p:vdOxEps6MZIkT3p6cXZ9Jg active-tab=w9:t2
+        w4 2ndmate-bravo active-tab=w4:t1
+        w8 └ pb · p:GMkpiOG9tsl0TNVP6qx0hw active-tab=w8:t2
+        wB └ b2 · p:Fqbl0tAmkJoOqHUG9hqagA active-tab=wB:t2
+        w7 └ po · p:OoLtiqUbG54BMtYZN1v4VA active-tab=w7:t2
+FOCUSED w1 life active-tab=w1:t1
+        w5 dotfiles active-tab=w5:t1
+

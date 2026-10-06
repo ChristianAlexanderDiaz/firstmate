@@ -1,0 +1,14 @@
+Target
+workspace-create	w3/w3:t1	w3/w3:t1	└ abort-a · p:2UUGO_DgPlr3mMkzrh4ESg
+tab-create	w3/w3:t1	w3/w3:t1	fm-abort-a
+workspace-create	w3/w3:t1	w3/w3:t1	└ abort-b · p:0HekWsQjzjhJ1CErjIcnvw
+tab-create	w3/w3:t1	w3/w3:t1	fm-abort-b
+
+Before fixture correction
+workspace-create	wA/wA:t2	wA/wA:t2	└ abort-b · p:qqKU75YQkbOeH-SaTeAf3w
+tab-create	wA/wA:t2	wA/wA:t2	fm-abort-b
+workspace-create	wA/wA:t2	wA/wA:t2	└ abort-a · p:d3FvXi0jEMgTzYLs51AviA
+tab-create	wA/wA:t2	wA/wA:t2	fm-abort-a
+
+Pre-fix assertion: concurrent post-create abort cleanup changed active workspace/tab from w3/w3:t1 to wA/wA:t2
+Target assertion: concurrent post-create abort cleanup stays serialized with exact focus restoration

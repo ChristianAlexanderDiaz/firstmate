@@ -1,0 +1,36 @@
+workspace-create	ambiguous/ambiguous	w1/w1:t1	firstmate
+tab-create	w1/w1:t1	w1/w1:t1	fm-anchor
+pane-close	w1/w1:t1	w1/w1:t2	w1:p1
+tab-create	w1/w1:t2	w1/w1:t2	fm-shape
+pane-close	w1/w1:t2	w1/w1:t2	w1:p3
+tab-create	w1/w1:t2	w1/w1:t2	fm-default-on
+pane-close	w1/w1:t2	w1/w1:t2	w1:p4
+workspace-create	w3/w3:t1	w3/w3:t1	└ shape · p:aM8JXMs5zUQUBgvcOSvV9g
+tab-create	w3/w3:t1	w3/w3:t1	fm-shape
+pane-close	w3/w3:t1	w3/w3:t1	w4:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ active-seeded · p:9i3QBU-qVZM-ttvGvJXTsg
+tab-create	w3/w3:t1	w3/w3:t1	fm-active-seeded
+active-seeded-inject	w3/w3:t1	w5/w5:t1	w5:t1
+seeded-prune-refusal	w5/w5:t1	w5/w5:t1	w5:p1
+pane-close	w5/w5:t1	w5/w5:t2	w5:p1
+seeded-prune-refusal	w5/w5:t2	w5/w5:t2	w5:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ lock-contended · p:xHuXYzsfPnMTHGbypLsPWw
+tab-create	w3/w3:t1	w3/w3:t1	fm-lock-contended
+pane-close	w3/w3:t1	w3/w3:t1	w6:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ order-b · p:ODjnyIloIQeCePNat7hzeA
+tab-create	w3/w3:t1	w3/w3:t1	fm-order-b
+pane-close	w3/w3:t1	w3/w3:t1	w7:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ order-a · p:61nsinKydUv9W6OJDjs9Bw
+tab-create	w3/w3:t1	w3/w3:t1	fm-order-a
+pane-close	w3/w3:t1	w3/w3:t1	w8:p1
+workspace-create	w3/w3:t1	w3/w3:t1	└ order-fail · p:uelajzFduJh2OeQhuv0rmQ
+tab-create	w3/w3:t1	w3/w3:t1	fm-order-fail
+pane-close	w3/w3:t1	w3/w3:t1	wA:p1
+workspace-create	wA/wA:t2	wA/wA:t2	└ abort-b · p:qqKU75YQkbOeH-SaTeAf3w
+tab-create	wA/wA:t2	wA/wA:t2	fm-abort-b
+pane-close	wA/wA:t2	wA/wA:t2	wB:p1
+pane-close	wA/wA:t2	wA/wA:t2	wB:p2
+workspace-create	wA/wA:t2	wA/wA:t2	└ abort-a · p:d3FvXi0jEMgTzYLs51AviA
+tab-create	wA/wA:t2	wA/wA:t2	fm-abort-a
+pane-close	wA/wA:t2	wA/wA:t2	wC:p1
+pane-close	wA/wA:t2	wA/wA:t2	wC:p2

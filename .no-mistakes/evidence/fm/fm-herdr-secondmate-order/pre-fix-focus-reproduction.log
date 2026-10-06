@@ -1,0 +1,174 @@
+ok - real Herdr lab: an opted-out spawn retains the Stage 1 Herdr command sequence with zero ordering calls
+ok - real Herdr lab: a home that configured nothing falls back flat on below-floor herdr 0.7.4 with one naming warning
+ok - real Herdr lab: every projected create, task-tab create, seeded prune, and move preserves active workspace and tab
+ok - real Herdr lab: persisted-focused seeded prune proceeds when no live client is attached
+ok - real Herdr lab: a busy presentation lock is waited out and the worker still gets its own workspace
+ok - real Herdr lab: concurrent primary workers sort below the second mates in create order with no needless moves or focus drift
+ok - real Herdr lab: forced workspace.move failure leaves a successful worker in default order with a warning and no cleanup
+not ok - concurrent post-create abort cleanup changed active workspace/tab from w3/w3:t1 to wA/wA:t2
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-a.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-fail.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/shape.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/order-b.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/pre-rebase: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/pre-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/pre-auto-gc: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/pre-merge-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/post-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/sendemail-validate: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/applypatch-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/prepare-commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/post-checkout: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/post-applypatch: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/post-rewrite: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/commit-msg: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/pre-push: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/post-merge: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks/pre-commit: Permission denied
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state/anchor.git-hooks: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home/state: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3/home: Directory not empty
+rm: /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.5WrdX3: Directory not empty

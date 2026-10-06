@@ -1,0 +1,9 @@
+ok - real Herdr lab: the primary presentation setting inherits into real secondmate homes
+ok - real Herdr lab: each second mate's workers sit under it, and primary workers for no second mate's project follow them
+ok - real Herdr lab: concurrent primary/A/B spawns preserve parent order and exact focus
+ok - real Herdr lab: Hi Bit and Wheelhouse-style same-identity restarts reclaim one nested space with exact focus and idempotence
+ok - real Herdr lab: secondmate restart binding and reclaim stay isolated to the exact child home and parent
+ok - real Herdr lab: concurrent cross-home recoveries replace exact husks under one session lock with no focus drift
+ok - real Herdr lab: legacy projection labels and flat secondmate tabs are left unmigrated
+not ok - multi-home teardown of alpha failed: WARNING: watcher still down (same stale episode; last beat: 321s ago, grace 300s) - full banner already printed this episode.
+REFUSED: unsafe secondmate home removal target /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M46QDNV1250V3J2NJPF2GK3V/.test-lab/tmp/fm-herdr-presentation.RwpX7b/home-2ndmate-alpha is inside the firstmate repo
