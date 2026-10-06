@@ -827,6 +827,16 @@ fm_pr_poll_snapshot_matches() {
   [ "$reg_identity" = "$FM_PR_POLL_SNAPSHOT_REG_IDENTITY" ]
 }
 
+# 0 when <id> has a complete, validated PR-merge poll and no retirement receipt
+# has been published for it yet. Used by bin/fm-watch.sh's ready-PR
+# declared-wait absorption.
+fm_pr_poll_armed() {  # <state> <id> <template>
+  local state=$1 id=$2 template=$3
+  fm_pr_task_id_valid "$id" || return 1
+  [ ! -e "$state/$id.pr-poll-retirement" ] && [ ! -L "$state/$id.pr-poll-retirement" ] || return 1
+  fm_pr_poll_artifacts_valid "$state" "$id" "$template"
+}
+
 fm_pr_poll_retirement_parse() {
   local file=$1 version id provider url host path number data_hash template_hash
   local data_identity check_identity reg_hash reg_identity result _extra

@@ -32,7 +32,9 @@
 #                          human the wait is on. Only when neither absorb class
 #                          applies does the log's latest recognized status event decide:
 #                          terminal (captain-relevant) or non-terminal (no verb),
-#                          both surfaced at once. A provably-working stale past the
+#                          both surfaced at once, subject to the terminal reminder
+#                          bounds in captain_call_stale_bound and
+#                          ready_pr_call_stale_bound below. A provably-working stale past the
 #                          wedge threshold also surfaces, with an "escalation N"
 #                          count in the reason; at FM_WEDGE_DEMAND_INSPECT_COUNT
 #                          consecutive escalations on the SAME pane, the reason
@@ -187,6 +189,11 @@ WATCH_HOME_EXISTED=0
 . "$SCRIPT_DIR/fm-push-transition-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# Single owner of the `done: PR <url>...` ready-report shape, which the
+# declared-wait classification below (ready_pr_call_stale_bound) reads through
+# fm_dod_done_reports_ready_pr rather than re-deriving the note grammar here.
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 # Only for the arm-time check on FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS below;
 # the per-cycle reconcile itself runs as a separate process.
 # shellcheck source=bin/fm-procevent-lib.sh
@@ -1849,14 +1856,6 @@ stale_wait_throttled() {  # <window-key> <declaration>
     && [ "$(age_of "$throttle")" -lt "$PAUSE_RESURFACE_SECS" ]
 }
 
-# The same bound, for a stale window whose last line IS captain-relevant. That
-# line is real and its first sight must still reach the captain, but a delivery
-# they are already holding has nothing new to say on the next pane tick.
-# Sets STALE_WAIT_DECLARATION to the scope this sighting is bound to, and leaves
-# it EMPTY when no open captain call bounds it, so an unheld delivery, a blocker,
-# and a failure alarm exactly as they do today.
-# Returns 0 to absorb this sighting; 1 to alarm, after which the caller records
-# the throttle through stale_wait_record once its own wake append has succeeded.
 # Record a fired wake against the bounded cadence, and ONLY after that wake was
 # durably appended. A marker written ahead of the append outlives a failed one:
 # the watcher exits with no wake queued, and the next sighting reads the fresh
@@ -1870,6 +1869,10 @@ stale_wait_record() {  # <window-key>
 # Bound a due stale alarm for an ordinary crew task held for the captain.
 # Backlog-only secondmate holds are outside this guard because the earlier gate
 # preserves their no-backlog-read hot path.
+# Sets STALE_WAIT_DECLARATION to the captain-call identity even when returning
+# 1 for a due alarm; leaves it empty only when no open call was established.
+# The terminal caller must preserve that identity rather than try the ready-PR
+# fallback, so a released-and-reopened call cannot inherit a delivery's silence.
 # While the away-posture record exists the bound is absolute: an open captain
 # call is never rechecked, whatever the throttle says, because nobody is there
 # to answer it and the return brief lists it.
@@ -1879,6 +1882,33 @@ captain_call_stale_bound() {  # <window-key> <task>
   task_captain_call_open "$task" || return 1
   STALE_WAIT_DECLARATION=$(captain_call_declaration "$task" "$CAPTAIN_CALL_IDENTITY")
   away_record_present && return 0
+  stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
+}
+
+# Bound a due stale alarm for a task whose latest status line reports a ready
+# PR - no-mistakes `done: PR <url> checks green` or direct-PR `done: PR
+# <url>` (fm_dod_done_reports_ready_pr) - while its PR-merge poll stays armed
+# (fm_pr_poll_armed). Both conditions are re-read on each eligible new stale
+# hash. A new status event starts a fresh throttle window even if it reports
+# another ready PR; a non-ready report or a missing, invalid, or retiring poll
+# removes this bound. Automatic poll retirement follows a confirmed merge,
+# not a closed-unmerged result. An unchanged terminal hash stays inert.
+# A ready-PR report with no armed poll (one never registered, incomplete, or already
+# retired before this sighting) is NOT a declared wait and keeps today's
+# unbounded stale path, so a genuinely wedged worker with no poll watching its
+# PR is never silenced by this case.
+# Deliberately the same declaration and throttle shape as
+# captain_call_stale_bound just above, keyed by stale_wait_declaration's plain
+# status-log signature rather than captain_call_declaration's backlog-hold
+# identity. This fallback runs only when no open captain call supplied an
+# identity, and uses the long recheck in either attended or away posture when
+# the watcher owns triage; it has no absolute away-posture suppression.
+ready_pr_call_stale_bound() {  # <window-key> <task>
+  local key=$1 task=$2 last
+  last=$(last_status_line "$STATE/$task.status")
+  fm_dod_done_reports_ready_pr "$last" || return 1
+  fm_pr_poll_armed "$STATE" "$task" "$SCRIPT_DIR/fm-pr-poll.sh" || return 1
+  STALE_WAIT_DECLARATION=$(stale_wait_declaration "$task")
   stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
 }
 
@@ -3090,6 +3120,15 @@ EOF
               rm -f "$ssf"
               clear_write_tracking "$key"
               triage_log "absorbed stale (open captain call already surfaced for this status): $w"
+            elif [ -z "$STALE_WAIT_DECLARATION" ] && ready_pr_call_stale_bound "$key" "$task"; then
+              # The line reports a ready PR with its merge poll still armed:
+              # further NEW pane hashes with the same status-log state have
+              # nothing to add inside the long recheck window. An open captain
+              # call, including one due to alarm, keeps precedence above.
+              printf '%s' "$h" > "$sf"
+              rm -f "$ssf"
+              clear_write_tracking "$key"
+              triage_log "absorbed stale (ready PR awaiting merge, poll still armed): $w"
             else
               fm_wake_append stale "$w" "stale: $w" || exit 1
               stale_wait_record "$key"
