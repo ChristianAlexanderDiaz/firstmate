@@ -2052,7 +2052,19 @@ case "${1:-} ${2:-}" in
     esac
     exit 0 ;;
   'workspace list')
-    printf '{"result":{"workspaces":[]}}\n'
+    if [ -f "$D/herdr-order.json" ]; then
+      cat "$D/herdr-order.json"
+    else
+      printf '{"result":{"workspaces":[]}}\n'
+    fi
+    exit 0 ;;
+  'session list')
+    printf '{"sessions":[{"name":"fmlab","running":true,"socket_path":"%s/fmlab.sock"}]}\n' "$D"
+    exit 0 ;;
+  'api schema')
+    cat <<'JSON'
+{"schemas":{"request":{"oneOf":[{"properties":{"method":{"const":"workspace.move"}}}],"$defs":{"WorkspaceMoveParams":{"required":["workspace_id","insert_index"],"properties":{"insert_index":{"type":"integer"}}}}}}}
+JSON
     exit 0 ;;
   'workspace create')
     if [ -f "$D/herdr-workspace-create-fails" ]; then
@@ -2062,7 +2074,11 @@ case "${1:-} ${2:-}" in
     printf '{"result":{"workspace":{"workspace_id":"wsnew"},"tab":{"tab_id":"seedtab"}}}\n'
     exit 0 ;;
   'tab list')
-    printf '{"result":{"tabs":[]}}\n'
+    if [ -f "$D/herdr-order.json" ] && [ "${4:-}" = ws1 ]; then
+      printf '{"result":{"tabs":[{"tab_id":"tab1","focused":true}]}}\n'
+    else
+      printf '{"result":{"tabs":[]}}\n'
+    fi
     exit 0 ;;
   'tab create')
     # The re-created endpoint. Recording it lets a case prove the pane the
@@ -2268,6 +2284,52 @@ test_herdr_rebind_stays_in_the_recorded_session() {
   [ "$(meta_field "$dir" rl73 herdr_pane_id)" = '%9' ] \
     || fail "the rebound record should name the pane the reclaim minted, got $(meta_field "$dir" rl73 herdr_pane_id)"
   pass "reclaim: a herdr rebind is created in the session the record names, never the ambient one"
+}
+
+test_herdr_relaunch_sorts_after_adoption_and_recreation() {
+  local dir mode survivor out status id
+  for mode in adopt recreate; do
+    survivor='%7'
+    [ "$mode" != recreate ] || survivor='%none'
+    id="sort-$mode"
+    herdr_case_or_skip "$id" "$id" fmlab "$survivor" || {
+      echo "skip - herdr ordering needs jq"
+      return 0
+    }
+    dir=$HERDR_CASE_DIR
+    mkdir -p "$dir/home/config"
+    printf 'on\n' > "$dir/home/config/herdr-presentation-spaces"
+    cat > "$dir/fake/herdr-order.json" <<'JSON'
+{"result":{"workspaces":[{"workspace_id":"life","label":"life"},{"workspace_id":"worker","label":"firstmate/other · p:AbCdEfGhIjKlMnOpQrStUv"},{"workspace_id":"ws1","label":"firstmate","focused":true,"active_tab_id":"tab1"},{"workspace_id":"mate","label":"2ndmate-alpha"},{"workspace_id":"notes","label":"notes"}]}}
+JSON
+    cat > "$dir/fake/mover" <<'SH'
+#!/usr/bin/env bash
+set -eu
+D=$FM_FAKE_DIR
+printf '%s\n' "$2 $3" >> "$D/moves"
+jq -c --arg id "$2" --argjson index "$3" '
+  .result.workspaces as $s
+  | ([$s[] | select(.workspace_id == $id)][0]) as $moved
+  | ([$s[] | select(.workspace_id != $id)]) as $rest
+  | .result.workspaces = ($rest[0:$index] + [$moved] + $rest[$index:])
+' "$D/herdr-order.json" > "$D/order.next"
+mv "$D/order.next" "$D/herdr-order.json"
+cat "$D/herdr-order.json"
+SH
+    chmod +x "$dir/fake/mover"
+    status=0
+    out=$(FM_BACKEND_HERDR_WORKSPACE_MOVER="$dir/fake/mover" run_spawn "$dir" "$id" --relaunch --harness claude) || status=$?
+    expect_code 0 "$status" "$mode relaunch with sidebar drift failed: $out"
+    [ "$(jq -r '[.result.workspaces[].workspace_id] | join(" ")' "$dir/fake/herdr-order.json")" = 'ws1 mate worker life notes' ] \
+      || fail "$mode relaunch left the sidebar drift in place: $out"
+    assert_present "$dir/fake/moves" "$mode relaunch did not sort"
+    if [ "$mode" = adopt ]; then
+      [ "$(meta_field "$dir" "$id" herdr_pane_id)" = '%7' ] || fail "sorting broke endpoint adoption"
+    else
+      [ "$(meta_field "$dir" "$id" herdr_pane_id)" = '%9' ] || fail "sorting broke endpoint recreation"
+    fi
+  done
+  pass "herdr relaunch: adoption and endpoint recreation both sort the sidebar"
 }
 
 test_herdr_reclaim_refuses_an_agent_that_came_back() {
@@ -2576,6 +2638,7 @@ test_herdr_relaunch_resumes_only_the_registered_pi_session
 test_herdr_reclaim_adopts_a_pane_that_outlived_its_server
 test_herdr_exit_reports_already_stopped_when_the_pane_outlived_its_server
 test_herdr_rebind_stays_in_the_recorded_session
+test_herdr_relaunch_sorts_after_adoption_and_recreation
 test_herdr_reclaim_refuses_an_agent_that_came_back
 test_herdr_reclaim_keeps_the_task_whole
 test_herdr_reclaim_of_a_secondmate_names_its_own_owner

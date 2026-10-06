@@ -93,6 +93,13 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # shellcheck source=bin/fm-agent-process-lib.sh
 . "$FM_BACKEND_HERDR_ROOT/bin/fm-agent-process-lib.sh"
 
+# The presentation order reads the primary home's second mate registry and a
+# second mate home's parent binding through their single-owner parsers.
+# shellcheck source=bin/fm-secondmate-registry-lib.sh
+. "$FM_BACKEND_HERDR_ROOT/bin/fm-secondmate-registry-lib.sh"
+# shellcheck source=bin/fm-secondmate-parent-lib.sh
+. "$FM_BACKEND_HERDR_ROOT/bin/fm-secondmate-parent-lib.sh"
+
 FM_BACKEND_HERDR_MIN_PROTOCOL=14
 # events.subscribe (the native pane.agent_status_changed push stream) and its
 # subscription_event schema first shipped at protocol 16 (verified: herdr
@@ -1453,121 +1460,207 @@ fm_backend_herdr_pane_idle_shell_sample() {  # <session> <pane-id>
   printf '%s\n' "$shell_pid"
 }
 
-# fm_backend_herdr_projection_order_best_effort: place the exact workspace id
-# returned by THIS projected create immediately after its owning parent's
-# contiguous child block and before the next parent.
-#
-# <parent-label> is the owning FM_HOME label (firstmate or 2ndmate-<id>).
-# Optional <parent-workspace-id> is that parent's EXACT id, which the caller
-# already resolved from the launching agent's own herdr identity. When given it
-# anchors the owning parent by id, so two workspaces sharing the home label no
-# longer make the whole layout ambiguous; when omitted the parent is located by
-# label exactly as before. With a unique label the two select the same
-# workspace, so ordering behavior is unchanged in the ordinary case.
-# New-format └ ... · p:<token> children and, for compatibility only, already
-# adjacent old-format firstmate/... or 2ndmate-<id>/... projections may extend
-# the block read-only; they are never renamed or moved.
-#
-# This is presentation-only and always returns success.
-# Every unavailable, ambiguous, failed, or unverifiable ordering step prints a
-# warning and leaves the safely-created worker running in Herdr's current
-# order.
-# It never looks up a task endpoint, adopts or reuses a workspace, retries an
-# ambiguous move, or calls any close/delete/rename primitive.
-# The sole move target is <created-workspace-id>, captured directly from the
-# current workspace-create response.
-# After a successful move, every pre-existing workspace id sequence excluding
-# the new id must be byte-identical to the pre-move sequence.
-fm_backend_herdr_projection_order_best_effort() {  # <session> <created-workspace-id> <parent-label> [<parent-workspace-id>]
-  local session=$1 created=$2 parent=$3 parent_ws=${4:-} list analysis current desired socket mover response move_status focus_before move_capable
-  local before_existing after_existing
-  [ -n "$parent" ] || {
-    echo "warning: herdr presentation ordering missing owning parent label; leaving worker in Herdr's current order" >&2
+# fm_backend_herdr_presentation_primary_home: print the primary firstmate home
+# whose view the presentation order is computed from. A primary home is its
+# own view; a local secondmate home follows its durable parent binding.
+# Fails when a secondmate home has no readable local parent binding.
+fm_backend_herdr_presentation_primary_home() {
+  if [ ! -f "$FM_HOME/$FM_BACKEND_HERDR_SECONDMATE_MARKER" ]; then
+    printf '%s' "$FM_HOME"
     return 0
-  }
-  list=$(fm_backend_herdr_cli "$session" workspace list 2>/dev/null) || {
-    echo "warning: herdr presentation ordering could not list workspaces; leaving worker in Herdr's current order" >&2
-    return 0
-  }
-  analysis=$(printf '%s' "$list" | jq -c --arg created "$created" --arg parent "$parent" --arg parent_ws "$parent_ws" '
-    def is_parent:
-      if ($parent_ws | length) > 0
-      then .workspace_id == $parent_ws
-      else (.label | type) == "string" and .label == $parent
-      end;
-    def is_top_level_parent:
+  fi
+  fm_secondmate_parent_record_parse "$FM_HOME/.fm-secondmate-parent" || return 1
+  [ "$FM_SECONDMATE_PARENT_ROUTE" = local ] && [ -d "$FM_SECONDMATE_PARENT_HOME" ] || return 1
+  printf '%s' "$FM_SECONDMATE_PARENT_HOME"
+}
+
+fm_backend_herdr_presentation_worker_owner() {  # <owner-label> <project> [<registry>]
+  local owner=$1 project=$2 registry=${3:-} line covering='' count=0
+  if [ "$owner" = firstmate ] && [ -n "$registry" ] && [ -f "$registry" ]; then
+    project=${project%/}
+    project=${project##*/}
+    if [ -n "$project" ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        secondmate_registry_parse_line "$line" || continue
+        if printf '%s\n' "$SECONDMATE_REGISTRY_PROJECTS" | tr ',' '\n' \
+          | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -Fqx -- "$project"; then
+          covering=$SECONDMATE_REGISTRY_ID
+          count=$((count + 1))
+        fi
+      done < "$registry"
+    fi
+    [ "$count" -eq 1 ] && owner="2ndmate-$covering"
+  fi
+  printf '%s' "$owner"
+}
+
+# fm_backend_herdr_presentation_task_owners: print one
+# "<workspace-id><TAB><owner-label>" line for every validated Herdr task
+# record in the home's effective state directory bound to <session>. The owner is the
+# home's label (firstmate or 2ndmate-<id>). With a readable primary <registry>,
+# a primary worker whose task project appears in exactly one second mate's
+# projects list is owned by that second mate instead. Invalid records and
+# other sessions or backends are skipped.
+fm_backend_herdr_presentation_task_owners() {  # <session> <home> [<registry>]
+  local session=$1 home=$2 registry=${3:-} meta id owner project workspace parent state home_identity running_home
+  state="$home/state"
+  home_identity=$(fm_backend_herdr_projection_home_identity "$home" 2>/dev/null || printf '%s' "$home")
+  running_home=$(fm_backend_herdr_projection_home_identity "$FM_HOME" 2>/dev/null || printf '%s' "$FM_HOME")
+  [ "$home_identity" != "$running_home" ] || state="${FM_STATE_OVERRIDE:-$state}"
+  [ -d "$state" ] || return 0
+  parent=$(FM_HOME="$home" fm_backend_herdr_workspace_label)
+  for meta in "$state"/*.meta; do
+    [ -f "$meta" ] || continue
+    id=$(basename "$meta" .meta)
+    fm_backend_validate_task_endpoint "$meta" "$id" 2>/dev/null || continue
+    [ "$FM_BACKEND_VALIDATED_BACKEND" = herdr ] || continue
+    [ "$(fm_meta_get "$meta" herdr_session)" = "$session" ] || continue
+    workspace=$(fm_meta_get "$meta" herdr_workspace_id)
+    project=$(fm_meta_get "$meta" project)
+    owner=$(fm_backend_herdr_presentation_worker_owner "$parent" "$project" "$registry")
+    printf '%s\t%s\n' "$workspace" "$owner"
+  done
+}
+
+# fm_backend_herdr_presentation_owners: print the JSON object mapping every
+# known task workspace id in <session> to its owner label, gathered from
+# the primary home, every local second mate home in its registry, and this
+# home itself. The optional pair names a worker this home just created, whose
+# task record is not published yet, independently of its journal version.
+fm_backend_herdr_presentation_owners() {  # <session> [<new-workspace-id> <new-project>]
+  local session=$1 new_workspace=${2:-} new_project=${3:-} primary registry='' line home seen records owner running_home
+  seen=
+  records=
+  running_home=$(fm_backend_herdr_projection_home_identity "$FM_HOME" 2>/dev/null || printf '%s' "$FM_HOME")
+  primary=$(fm_backend_herdr_presentation_primary_home 2>/dev/null) || primary=
+  if [ -n "$primary" ]; then
+    registry="$primary/data/secondmates.md"
+    seen=$(fm_backend_herdr_projection_home_identity "$primary" 2>/dev/null || printf '%s' "$primary")
+    [ "$seen" != "$running_home" ] || registry="${FM_DATA_OVERRIDE:-$primary/data}/secondmates.md"
+    records=$(fm_backend_herdr_presentation_task_owners "$session" "$primary" "$registry")
+    if [ -f "$registry" ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        secondmate_registry_parse_line "$line" || continue
+        [ "$SECONDMATE_REGISTRY_REMOTE" -eq 0 ] || continue
+        home=$SECONDMATE_REGISTRY_HOME
+        records="$records
+$(fm_backend_herdr_presentation_task_owners "$session" "$home")"
+        seen="$seen
+$(fm_backend_herdr_projection_home_identity "$home" 2>/dev/null || printf '%s' "$home")"
+      done < "$registry"
+    fi
+  fi
+  if ! printf '%s\n' "$seen" | grep -Fqx -- "$running_home"; then
+    records="$records
+$(fm_backend_herdr_presentation_task_owners "$session" "$FM_HOME")"
+  fi
+  if [ -n "$new_workspace" ]; then
+    owner=$(fm_backend_herdr_workspace_label)
+    owner=$(fm_backend_herdr_presentation_worker_owner "$owner" "$new_project" "$registry")
+    records="$records
+$(printf '%s\t%s' "$new_workspace" "$owner")"
+  fi
+  printf '%s\n' "$records" | jq -Rn '
+    [inputs | select(length > 0) | split("\t") | select(length == 2) | {(.[0]): .[1]}]
+    | add // {}
+  '
+}
+
+# fm_backend_herdr_presentation_arrange_plan: read a workspace-list response
+# on stdin and print the move plan that sorts the session into the presentation
+# order, as JSON {"moves":[{"id":W,"index":N,"after":[ids...]},...]}.
+# Prints nothing when the layout is ambiguous (duplicate parent labels or
+# workspace ids). The order is owned by docs/herdr-backend.md "Ordering".
+# A worker's owner comes from <owners-json>, or from a legacy
+# owner-prefixed label; an unowned workspace stays with the other spaces.
+# Every move lifts one workspace to a smaller index, so insert_index means the
+# same thing before and after the moved workspace is removed.
+fm_backend_herdr_presentation_arrange_plan() {  # <owners-json>
+  jq -c --argjson owners "$1" '
+    def is_top_level:
       (.label | type) == "string"
       and ((.label == "firstmate") or (.label | test("^2ndmate-[^/]+$")));
-    def is_new_child:
-      (.label | type) == "string"
-      and (.label | test("^└ .+ · p:[A-Za-z0-9_-]{22}$"));
-    def is_legacy_child:
-      (.label | type) == "string"
-      and (.label | test("^(firstmate|2ndmate-[^/]+)/.+ · p:[A-Za-z0-9_-]{22}$"));
-    def is_legacy_child_for($owner):
-      is_legacy_child and (.label | startswith($owner + "/"));
-    def is_child_for($owner):
-      is_new_child or is_legacy_child_for($owner);
-    (.result.workspaces // null) as $spaces
-    | select(($spaces | type) == "array" and ($spaces | length) > 0)
-    | ([range(0; $spaces | length) | select($spaces[.].workspace_id == $created)]) as $matches
-    | select(($matches | length) == 1)
-    | ($matches[0]) as $current
-    | select($current == (($spaces | length) - 1))
-    | ([range(0; $spaces | length) | select($spaces[.] | is_parent)]) as $parents
-    | select(($parents | length) == 1)
-    | ($parents[0]) as $pidx
-    | select($pidx < $current)
-    | (
-        reduce range($pidx + 1; $current) as $i (
-          0;
-          if ($spaces[$i] | is_child_for($parent)) and (. == ($i - $pidx - 1))
-          then . + 1
-          else .
-          end
-        )
-      ) as $block
-    | (reduce range($pidx + 1 + $block; $current) as $i (
-        {valid: true, active_parent: null};
-        if .valid == false then .
-        elif ($spaces[$i] | is_top_level_parent) then
-          .active_parent = $spaces[$i].label
-        elif ($spaces[$i] | is_new_child) then
-          if .active_parent == null then .valid = false else . end
-        elif ($spaces[$i] | is_legacy_child) then
-          .active_parent as $owner
-          | if $owner == null then
-              .valid = false
-            elif (($spaces[$i] | is_legacy_child_for($owner)) | not) then
-              .valid = false
-            else
-              .
-            end
+    def legacy_owner:
+      if (.label | type) == "string"
+      then ([.label | capture("^(?<o>firstmate|2ndmate-[^/]+)/.+ · p:[A-Za-z0-9_-]{22}$")] | .[0].o)
+      else null
+      end;
+    (.result.workspaces // null) as $s
+    | select(($s | type) == "array")
+    | select(all($s[]; (.workspace_id | type) == "string" and (.workspace_id | length) > 0))
+    | select(([$s[].workspace_id] | unique | length) == ($s | length))
+    | ([$s[] | select(is_top_level) | .label]) as $parents
+    | select(($parents | unique | length) == ($parents | length))
+    | ([$parents[] | select(startswith("2ndmate-"))]) as $mates
+    | def group_for($owner):
+        if $owner != "firstmate" and ($mates | index($owner)) != null
+        then $owner
+        else "firstmate-workers"
+        end;
+    ([$s[] as $w |
+      (if ($w | is_top_level) then
+         (if $w.label == "firstmate" then "firstmate" else $w.label end)
+       elif ($owners[$w.workspace_id] | type) == "string" then
+         group_for($owners[$w.workspace_id])
+       elif ($w | legacy_owner) != null then
+         group_for($w | legacy_owner)
+       else
+         "other"
+       end) as $group
+      | {id: $w.workspace_id, group: $group, parent: ($w | is_top_level)}
+    ]) as $classified
+    | def members($group):
+        [$classified[] | select(.group == $group and .parent) | .id]
+        + [$classified[] | select(.group == $group and (.parent | not)) | .id];
+    (members("firstmate")
+      + ([$mates[] | members(.)] | add // [])
+      + members("firstmate-workers")
+      + members("other")) as $desired
+    | (reduce range(0; $desired | length) as $i (
+        {order: [$s[].workspace_id], moves: []};
+        if .order[$i] == $desired[$i] then .
         else
-          .active_parent = null
+          $desired[$i] as $id
+          | ([.order[] | select(. != $id)]) as $rest
+          | .order = ($rest[0:$i] + [$id] + $rest[$i:])
+          | .moves += [{id: $id, index: $i, after: .order}]
         end
-      )) as $remainder
-    | select($remainder.valid == true)
-    | {
-        current: $current,
-        desired: ($pidx + 1 + $block),
-        parent_index: $pidx,
-        existing: [$spaces[] | select(.workspace_id != $created) | .workspace_id]
-      }
-  ' 2>/dev/null) || analysis=
-  [ -n "$analysis" ] || {
-    echo "warning: herdr presentation ordering found an ambiguous workspace layout; leaving worker in Herdr's current order" >&2
+      )) as $plan
+    | {moves: $plan.moves}
+  '
+}
+
+# fm_backend_herdr_presentation_arrange: sort the whole named session into
+# the presentation order (docs/herdr-backend.md "Ordering"). Callers hold the
+# session presentation lock. Presentation-only and always returns success:
+# it only issues verified workspace.move requests, never closes, renames,
+# relabels, or focuses a workspace for any other purpose than restoring the
+# exact pre-move focus, and does nothing when the order is already right.
+# Any unavailable, ambiguous, or unverifiable step warns and stops, leaving
+# the session in its current order. A projected spawn passes the workspace it just
+# created and that worker's project, because its task record is published
+# only after this step.
+fm_backend_herdr_presentation_arrange() {  # <session> [<new-workspace-id> <new-project>]
+  local session=$1 owners list plan count i id index expected socket mover response move_status focus_before move_capable actual
+  owners=$(fm_backend_herdr_presentation_owners "$session" "${2:-}" "${3:-}" 2>/dev/null) || owners='{}'
+  [ -n "$owners" ] || owners='{}'
+  list=$(fm_backend_herdr_cli "$session" workspace list 2>/dev/null) || {
+    echo "warning: herdr presentation ordering could not list workspaces; leaving the current order" >&2
     return 0
   }
-  current=$(printf '%s' "$analysis" | jq -r '.current // empty' 2>/dev/null)
-  desired=$(printf '%s' "$analysis" | jq -r '.desired // empty' 2>/dev/null)
-  case "$current:$desired" in
-    *[!0-9:]*)
-      echo "warning: herdr presentation ordering could not parse the target position; leaving worker in Herdr's current order" >&2
+  plan=$(printf '%s' "$list" | fm_backend_herdr_presentation_arrange_plan "$owners" 2>/dev/null) || plan=
+  [ -n "$plan" ] || {
+    echo "warning: herdr presentation ordering found an ambiguous workspace layout; leaving the current order" >&2
+    return 0
+  }
+  count=$(printf '%s' "$plan" | jq -r '.moves | length' 2>/dev/null) || count=
+  case "$count" in
+    ''|*[!0-9]*)
+      echo "warning: herdr presentation ordering could not parse its move plan; leaving the current order" >&2
       return 0
       ;;
   esac
-  [ "$current" != "$desired" ] || return 0
+  [ "$count" -gt 0 ] || return 0
 
   if fm_backend_herdr_workspace_move_capable "$session"; then
     move_capable=0
@@ -1577,71 +1670,49 @@ fm_backend_herdr_projection_order_best_effort() {  # <session> <created-workspac
   case "$move_capable" in
     0) ;;
     1)
-      echo "warning: herdr presentation ordering requires python3; leaving worker in Herdr's current order" >&2
-      return 0
-      ;;
-    2)
-      echo "warning: herdr presentation ordering could not verify the client protocol; leaving worker in Herdr's current order" >&2
+      echo "warning: herdr presentation ordering requires python3; leaving the current order" >&2
       return 0
       ;;
     3)
-      echo "warning: herdr presentation ordering needs protocol $FM_BACKEND_HERDR_MIN_WORKSPACE_MOVE_PROTOCOL or newer; leaving worker in Herdr's current order" >&2
-      return 0
-      ;;
-    4)
-      echo "warning: herdr presentation ordering could not read the API schema; leaving worker in Herdr's current order" >&2
+      echo "warning: herdr presentation ordering needs protocol $FM_BACKEND_HERDR_MIN_WORKSPACE_MOVE_PROTOCOL or newer; leaving the current order" >&2
       return 0
       ;;
     *)
-      echo "warning: herdr presentation ordering API support is unavailable or ambiguous; leaving worker in Herdr's current order" >&2
+      echo "warning: herdr presentation ordering API support is unavailable or ambiguous; leaving the current order" >&2
       return 0
       ;;
   esac
   socket=$(fm_backend_herdr_presentation_session_socket_path "$session") || {
-    echo "warning: herdr presentation ordering found an ambiguous named session socket; leaving worker in Herdr's current order" >&2
+    echo "warning: herdr presentation ordering found an ambiguous named session socket; leaving the current order" >&2
     return 0
   }
-
   mover=${FM_BACKEND_HERDR_WORKSPACE_MOVER:-$FM_BACKEND_HERDR_ROOT/bin/backends/herdr-workspace-move.py}
-  focus_before=$(fm_backend_herdr_projection_focus_snapshot "$session") || {
-    echo "warning: herdr presentation ordering could not capture exact active workspace and tab; leaving worker in Herdr's current order" >&2
-    return 0
-  }
-  if response=$("$mover" "$socket" "$created" "$desired" 2>/dev/null); then
-    move_status=0
-  else
-    move_status=$?
-  fi
-  fm_backend_herdr_projection_focus_restore "$session" "$focus_before" "workspace move" || true
-  if [ "$move_status" -ne 0 ]; then
-    echo "warning: herdr presentation workspace move failed or had an ambiguous response; leaving worker running without cleanup" >&2
-    return 0
-  fi
-  if ! printf '%s' "$response" | jq -e --arg created "$created" --arg parent "$parent" --arg parent_ws "$parent_ws" --argjson desired "$desired" '
-    def is_parent:
-      if ($parent_ws | length) > 0
-      then .workspace_id == $parent_ws
-      else (.label | type) == "string" and .label == $parent
-      end;
-    .result.type == "workspace_list"
-    and (.result.workspaces | type) == "array"
-    and .result.workspaces[$desired].workspace_id == $created
-    and ([.result.workspaces[] | select(is_parent)] | length) == 1
-    and (
-      [range(0; .result.workspaces | length) as $i
-        | select(.result.workspaces[$i] | is_parent)
-        | $i][0] < $desired
-    )
-  ' >/dev/null 2>&1; then
-    echo "warning: herdr presentation workspace move returned an unverifiable order; leaving worker running without cleanup" >&2
-    return 0
-  fi
-
-  before_existing=$(printf '%s' "$analysis" | jq -c '.existing' 2>/dev/null)
-  after_existing=$(printf '%s' "$response" | jq -c --arg created "$created" '[.result.workspaces[] | select(.workspace_id != $created) | .workspace_id]' 2>/dev/null)
-  if [ "$after_existing" != "$before_existing" ]; then
-    echo "warning: herdr presentation workspace move did not preserve relative order; leaving worker running without cleanup" >&2
-  fi
+  i=0
+  while [ "$i" -lt "$count" ]; do
+    id=$(printf '%s' "$plan" | jq -r --argjson i "$i" '.moves[$i].id')
+    index=$(printf '%s' "$plan" | jq -r --argjson i "$i" '.moves[$i].index')
+    expected=$(printf '%s' "$plan" | jq -c --argjson i "$i" '.moves[$i].after')
+    focus_before=$(fm_backend_herdr_projection_focus_snapshot "$session") || {
+      echo "warning: herdr presentation ordering could not capture exact active workspace and tab; leaving the current order" >&2
+      return 0
+    }
+    if response=$("$mover" "$socket" "$id" "$index" 2>/dev/null); then
+      move_status=0
+    else
+      move_status=$?
+    fi
+    fm_backend_herdr_projection_focus_restore "$session" "$focus_before" "workspace move" || true
+    if [ "$move_status" -ne 0 ]; then
+      echo "warning: herdr presentation workspace move failed or had an ambiguous response; stopping ordering" >&2
+      return 0
+    fi
+    actual=$(printf '%s' "$response" | jq -c '[.result.workspaces[]?.workspace_id]' 2>/dev/null) || actual=
+    if [ "$actual" != "$expected" ]; then
+      echo "warning: herdr presentation workspace move returned an unexpected order; stopping ordering" >&2
+      return 0
+    fi
+    i=$((i + 1))
+  done
   return 0
 }
 
@@ -2706,8 +2777,9 @@ fm_backend_herdr_projection_parent_workspace_exact() {  # <session> <parent-labe
 }
 
 # fm_backend_herdr_projection_live_binding_matches: verify one exact projected
-# workspace, its single task tab/pane, its unique token label, and its current
-# position inside the exact parent workspace's contiguous child block.
+# workspace, its single task tab/pane, its unique token label, and the exact
+# parent workspace it was bound under. Sidebar position is presentation, not
+# identity: the presentation order may place a worker under a second mate.
 # This read-only predicate grants no mutation authority by itself.
 fm_backend_herdr_projection_live_binding_matches() {  # <session> <token> <workspace> <tab> <pane> <parent-workspace> <parent-label> <workspace-label> <task-label>
   local session=$1 token=$2 workspace=$3 tab=$4 pane=$5 parent_workspace=$6
@@ -2719,13 +2791,6 @@ fm_backend_herdr_projection_live_binding_matches() {  # <session> <token> <works
     --arg parent_workspace "$parent_workspace" \
     --arg parent_label "$parent_label" \
     --arg workspace_label "$workspace_label" '
-      def is_new_child:
-        (.label | type) == "string"
-        and (.label | test("^└ .+ · p:[A-Za-z0-9_-]{22}$"));
-      def is_legacy_child_for($owner):
-        (.label | type) == "string"
-        and (.label | test("^(firstmate|2ndmate-[^/]+)/.+ · p:[A-Za-z0-9_-]{22}$"))
-        and (.label | startswith($owner + "/"));
       (.result.workspaces // null) as $spaces
       | select(($spaces | type) == "array")
       | select(([$spaces[]? | select(.workspace_id == $workspace)] | length) == 1)
@@ -2733,15 +2798,6 @@ fm_backend_herdr_projection_live_binding_matches() {  # <session> <token> <works
       | select(([$spaces[]? | select((.label | type) == "string" and (.label | endswith(" · p:" + $token)))] | length) == 1)
       | select(([$spaces[]? | select((.label | type) == "string" and (.label | endswith(" · p:" + $token)) and .workspace_id == $workspace)] | length) == 1)
       | select(([$spaces[]? | select(.workspace_id == $parent_workspace and .label == $parent_label)] | length) == 1)
-      | ([range(0; $spaces | length) | select($spaces[.].workspace_id == $parent_workspace)]) as $parents
-      | ([range(0; $spaces | length) | select($spaces[.].workspace_id == $workspace)]) as $children
-      | select(($parents | length) == 1 and ($children | length) == 1)
-      | ($parents[0]) as $parent_index
-      | ($children[0]) as $child_index
-      | select($child_index > $parent_index)
-      | reduce range($parent_index + 1; $child_index) as $i
-          (true; . and (($spaces[$i] | is_new_child) or ($spaces[$i] | is_legacy_child_for($parent_label))))
-      | select(. == true)
     ' >/dev/null 2>&1 || return 1
   tabs=$(fm_backend_herdr_cli "$session" tab list --workspace "$workspace" 2>/dev/null) || return 1
   printf '%s' "$tabs" | jq -e --arg tab "$tab" --arg task_label "$task_label" '

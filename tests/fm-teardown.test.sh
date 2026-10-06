@@ -2789,6 +2789,158 @@ SH
   chmod +x "$case_dir/fakebin/herdr"
 }
 
+configure_herdr_order_teardown_case() {  # <case-dir> <kind>
+  local case_dir=$1 kind=$2 worktree="$1/wt" project="$1/project" home="$1/mate-home"
+  mkdir -p "$case_dir/home"
+  ln -s ../state "$case_dir/home/state"
+  ln -s ../data "$case_dir/home/data"
+  ln -s ../config "$case_dir/home/config"
+  if [ "$kind" = secondmate ]; then
+    mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects"
+    printf 'task-x1\n' > "$home/.fm-secondmate-home"
+    worktree=$home
+    project=$home
+  fi
+  fm_write_meta "$case_dir/state/task-x1.meta" \
+    'window=fmtest:wT:p1' 'endpoint_task_id=task-x1' "worktree=$worktree" \
+    "project=$project" "kind=$kind" 'mode=local-only' 'spawn_gen=teardown-test-task-x1' \
+    'backend=herdr' 'herdr_session=fmtest' 'herdr_workspace_id=wT' \
+    'herdr_tab_id=wT:t1' 'herdr_pane_id=wT:p1'
+  [ "$kind" != secondmate ] || printf 'home=%s\n' "$home" >> "$case_dir/state/task-x1.meta"
+  mkdir -p "$case_dir/bravo/state"
+  printf 'bravo\n' > "$case_dir/bravo/.fm-secondmate-home"
+  {
+    [ "$kind" != secondmate ] || printf -- '- task-x1 - Alpha. (home: %s; scope: alpha; projects: shared; added 2026-10-05)\n' "$home"
+    printf -- '- bravo - Bravo. (home: %s; scope: bravo; projects: shared; added 2026-10-05)\n' "$case_dir/bravo"
+  } > "$case_dir/data/secondmates.md"
+  fm_write_meta "$case_dir/state/other-worker.meta" \
+    'window=fmtest:wOther:p1' 'endpoint_task_id=other-worker' \
+    "worktree=$case_dir/other-wt" 'project=/p/fleet-tools' 'kind=ship' \
+    'backend=herdr' 'herdr_session=fmtest' 'herdr_workspace_id=wOther' \
+    'herdr_tab_id=wOther:t1' 'herdr_pane_id=wOther:p1'
+  fm_write_meta "$case_dir/state/shared-worker.meta" \
+    'window=fmtest:wShared:p1' 'endpoint_task_id=shared-worker' \
+    "worktree=$case_dir/shared-wt" 'project=/p/shared' 'kind=ship' \
+    'backend=herdr' 'herdr_session=fmtest' 'herdr_workspace_id=wShared' \
+    'herdr_tab_id=wShared:t1' 'herdr_pane_id=wShared:p1'
+  cat > "$case_dir/order.json" <<'JSON'
+{"result":{"workspaces":[{"workspace_id":"life","label":"life","focused":true,"active_tab_id":"life:t1"},{"workspace_id":"wT","label":"2ndmate-task-x1","focused":false,"active_tab_id":"wT:t1"},{"workspace_id":"wF","label":"firstmate"},{"workspace_id":"wB","label":"2ndmate-bravo"},{"workspace_id":"wOther","label":"└ other-worker · p:AbCdEfGhIjKlMnOpQrStUv"},{"workspace_id":"wShared","label":"└ shared-worker · p:AbCdEfGhIjKlMnOpQrStUv"},{"workspace_id":"notes","label":"notes"}]}}
+JSON
+  if [ "$kind" != secondmate ]; then
+    jq '(.result.workspaces[] | select(.workspace_id == "wT")).label = "└ task-x1 · p:AbCdEfGhIjKlMnOpQrStUv"' "$case_dir/order.json" > "$case_dir/order.next"
+    mv "$case_dir/order.next" "$case_dir/order.json"
+  fi
+  cat > "$case_dir/fakebin/herdr" <<'SH'
+#!/usr/bin/env bash
+set -eu
+D=${FM_ORDER_CASE:?}
+printf '%s\n' "$*" >> "$D/herdr.log"
+case "${1:-} ${2:-}" in
+  'workspace list') cat "$D/order.json" ;;
+  'session list')
+    printf '{"sessions":[{"name":"fmtest","running":true,"socket_path":"%s/herdr.sock"}]}\n' "$D" ;;
+  'status --json')
+    protocol=17; version=0.7.5
+    case "$*" in *'--session fmtest') protocol=22; version=0.9.0 ;; esac
+    printf '{"client":{"protocol":%s,"version":"%s"},"server":{"running":true,"protocol":%s,"version":"%s"}}\n' "$protocol" "$version" "$protocol" "$version" ;;
+  'api schema')
+    cat <<'JSON'
+{"schemas":{"request":{"oneOf":[{"properties":{"method":{"const":"workspace.move"}}}],"$defs":{"WorkspaceMoveParams":{"required":["workspace_id","insert_index"],"properties":{"insert_index":{"type":"integer"}}}}}}}
+JSON
+    ;;
+  'pane get')
+    if [ -e "$D/closed" ]; then
+      printf '{"error":{"code":"pane_not_found"}}\n'; exit 1
+    fi
+    printf '{"result":{"pane":{"pane_id":"wT:p1","tab_id":"wT:t1","workspace_id":"wT"}}}\n' ;;
+  'pane close')
+    : > "$D/closed"
+    jq '.result.workspaces |= map(select(.workspace_id != "wT"))' "$D/order.json" > "$D/order.next"
+    mv "$D/order.next" "$D/order.json" ;;
+  'tab list')
+    case "${4:-}" in
+      life) printf '{"result":{"tabs":[{"tab_id":"life:t1","focused":true}]}}\n' ;;
+      wT) printf '{"result":{"tabs":[{"tab_id":"wT:t1","focused":true}]}}\n' ;;
+      *) printf '{"result":{"tabs":[]}}\n' ;;
+    esac ;;
+  'pane list') printf '{"result":{"panes":[{"pane_id":"wT:p1","tab_id":"wT:t1"}]}}\n' ;;
+  'terminal title') printf '{"result":{"reason":"no_foreground_client"}}\n' ;;
+  'agent get') printf '{"error":{"code":"agent_not_found"}}\n'; exit 1 ;;
+  *) exit 1 ;;
+esac
+SH
+  cat > "$case_dir/mover" <<'SH'
+#!/usr/bin/env bash
+set -eu
+D=${FM_ORDER_CASE:?}
+holder=$(cat "$FM_ORDER_LOCK/pid")
+kill -0 "$holder"
+if [ -e "$D/require-registry-removal" ]; then
+  ! grep -q '^- task-x1 ' "$D/data/secondmates.md"
+fi
+printf '%s\n' "$2 $3 locked" >> "$D/moves"
+jq -c --arg id "$2" --argjson index "$3" '
+  .result.workspaces as $s
+  | ([$s[] | select(.workspace_id == $id)][0]) as $moved
+  | ([$s[] | select(.workspace_id != $id)]) as $rest
+  | .result.workspaces = ($rest[0:$index] + [$moved] + $rest[$index:])
+' "$D/order.json" > "$D/order.next"
+mv "$D/order.next" "$D/order.json"
+cat "$D/order.json"
+SH
+  chmod +x "$case_dir/fakebin/herdr" "$case_dir/mover"
+}
+
+run_herdr_order_teardown() {  # <case-dir>
+  local case_dir=$1 lock
+  lock=$(FM_HOME="$case_dir/home" FM_ORDER_CASE="$case_dir" PATH="$case_dir/fakebin:$PATH" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source herdr; fm_backend_herdr_presentation_session_lock_path fmtest' "$ROOT") \
+    || fail "could not resolve the ordering regression's session lock"
+  FM_HOME="$case_dir/home" HERDR_SESSION=default FM_ORDER_CASE="$case_dir" FM_ORDER_LOCK="$lock" \
+    FM_BACKEND_HERDR_WORKSPACE_MOVER="$case_dir/mover" \
+    run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "ordering teardown failed: $(cat "$case_dir/stderr")"
+  [ "$(jq -r '[.result.workspaces[].workspace_id] | join(" ")' "$case_dir/order.json")" = 'wF wB wShared wOther life notes' ] \
+    || fail "teardown did not sort against its final coverage: $(cat "$case_dir/order.json"); $(cat "$case_dir/stderr")"
+  assert_present "$case_dir/moves" "teardown did not run ordering"
+  assert_absent "$lock" "teardown retained the session lock after completion"
+  assert_absent "$case_dir/state/task-x1.meta" "teardown did not retire the endpoint record"
+}
+
+test_herdr_secondmate_teardown_sorts_after_registry_removal() {
+  local case_dir
+  case_dir=$(make_case herdr-order-secondmate-removal)
+  configure_herdr_order_teardown_case "$case_dir" secondmate
+  printf 'on\n' > "$case_dir/config/herdr-presentation-spaces"
+  : > "$case_dir/require-registry-removal"
+  run_herdr_order_teardown "$case_dir"
+  assert_absent "$case_dir/mate-home" "secondmate teardown did not retire its home"
+  assert_not_contains "$(cat "$case_dir/data/secondmates.md")" '- task-x1 ' "retired coverage remains in the registry"
+  assert_contains "$(cat "$case_dir/data/secondmates.md")" '- bravo ' "teardown removed surviving coverage"
+  pass "herdr teardown: final sorting follows successful registry removal under the session lock"
+}
+
+test_herdr_teardown_orders_using_the_recorded_sessions_release() {
+  local case_dir
+  case_dir=$(make_case herdr-order-recorded-release)
+  configure_herdr_order_teardown_case "$case_dir" ship
+  run_herdr_order_teardown "$case_dir"
+  assert_contains "$(cat "$case_dir/herdr.log")" 'status --json --session fmtest' "teardown did not check its recorded session release"
+  assert_not_contains "$(cat "$case_dir/herdr.log")" 'status --json --session default' "teardown checked the unrelated older session"
+  pass "herdr teardown: recorded-session eligibility sorts despite an older ambient session"
+}
+
+test_herdr_teardown_orders_from_effective_record_directories() {
+  local case_dir
+  case_dir=$(make_case herdr-order-record-overrides)
+  configure_herdr_order_teardown_case "$case_dir" ship
+  rm "$case_dir/home/state" "$case_dir/home/data"
+  run_herdr_order_teardown "$case_dir"
+  assert_present "$case_dir/state/shared-worker.meta" "teardown retired a surviving worker's overridden record"
+  assert_present "$case_dir/data/secondmates.md" "teardown lost the effective registry"
+  pass "herdr teardown: effective record directories supply surviving workers and project coverage"
+}
+
 test_herdr_projection_teardown_retires_journal_only_after_confirmed_close() {
   local case_dir log closed restored
   case_dir=$(make_case herdr-projection-confirmed-close)
@@ -4315,6 +4467,9 @@ test_forced_secondmate_herdr_child_preflight_refuses_before_changes
 test_forced_secondmate_teardown_holds_descendant_lifecycle_locks
 test_forced_secondmate_herdr_child_retains_records_when_close_unconfirmed
 test_forced_teardown_retains_nested_secondmate_home_when_grandchild_close_unconfirmed
+test_herdr_secondmate_teardown_sorts_after_registry_removal
+test_herdr_teardown_orders_using_the_recorded_sessions_release
+test_herdr_teardown_orders_from_effective_record_directories
 test_herdr_projection_teardown_retires_journal_only_after_confirmed_close
 test_herdr_projection_teardown_retains_journal_when_close_unconfirmed
 test_herdr_projection_teardown_surfaces_restore_failure_without_blocking_cleanup

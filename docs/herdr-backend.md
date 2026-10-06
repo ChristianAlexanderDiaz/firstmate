@@ -251,7 +251,7 @@ Only a fresh task with neither metadata nor an existing presentation journal is 
 Creation proceeds in this order:
 
 1. Firstmate atomically publishes a three-field version 1 journal containing a random 128-bit base64url token, before asking Herdr to create anything.
-2. After the new workspace converges to one exact task endpoint beneath one exact parent workspace id, the journal advances to a version 2 binding.
+2. After the new workspace converges to one exact task endpoint bound to one exact parent workspace id, the journal advances to a version 2 binding.
    That binding records the physical home, named session, endpoint, parent, and immutable expected labels.
 
 Another parent with the same presentation label does not prevent publication or participate in restart reclaim.
@@ -264,7 +264,7 @@ Neither token, title, nor journal authorizes send, capture, task ownership, Tree
 The owning parent is the launcher's own exact workspace, resolved from the same identity the flat path uses.
 It falls back to a unique home-label lookup only for a Firstmate outside Herdr.
 Projected children are never collapsed back into that parent.
-The parent is the placement and ordering reference the projection is bound under.
+The parent is the workspace the projection is bound under; its sidebar position follows [Ordering](#ordering).
 
 The normal `fm-<id>` task tab is created in the exact new workspace returned by Herdr.
 Only the exact seeded default tab returned by the same workspace-create response can be pruned.
@@ -273,23 +273,38 @@ An ambiguous response grants no mutation or cleanup authority.
 
 ### Ordering
 
+Firstmate keeps the whole Herdr sidebar in one presentation order, top to bottom:
+
+1. The `firstmate` home.
+2. Each `2ndmate-<id>` home, in its current relative order, directly followed by its own workers and by every primary worker whose project appears in the `projects:` list of exactly that one second mate in the primary home's `data/secondmates.md`.
+3. The primary home's other workers, including one whose project no second mate or more than one second mate lists, or whose second mate has no workspace in the session.
+4. Every other space, such as the captain's personal spaces, in its existing relative order.
+
+Presentation coverage uses the `projects:` list in `data/secondmates.md`.
+Workers inside one group keep their current relative order, so a new worker joins the end of its group.
+A worker's owner comes from each home's validated task metadata, read from the primary home, every local second mate home in its registry, and the running home.
+A local second mate's parent binding identifies the primary home when available.
+The running home uses its [effective record directories](configuration.md#root-and-directory-overrides); other homes use their own `state/` and `data/`.
+An old owner-prefixed label supplies the owner only when validated task metadata does not.
+A projected spawn supplies its workspace, home, and project independently of whether its restart binding was saved.
+An unowned workspace stays with the other spaces.
+
+One idempotent pass, `fm_backend_herdr_presentation_arrange`, runs under the session lock at the shared endpoint handoff for every fresh Herdr spawn and relaunch, and during task teardown after endpoint cleanup and any secondmate registry removal in a home whose projection is enabled, including a second mate's own flat workspace.
+It does nothing when the order is already right, and otherwise lifts each out-of-place workspace to its index in turn.
 Protocol 16 exposes `workspace.move` over the named session socket but no CLI subcommand.
-`bin/backends/herdr-workspace-move.py` sends only that whitelisted method and verifies the complete returned workspace order.
+`bin/backends/herdr-workspace-move.py` sends only that whitelisted method, and the pass verifies the complete returned order after every move.
+The mover connects through the socket's own directory when the canonical path exceeds the Unix socket path limit, as it can under a symlinked Herdr config directory.
 
-Projected children are placed in one contiguous block immediately after their owning home when all of these are verifiable:
+Ordering needs a verifiable layout, protocol, socket, and `python3`.
+Duplicate home labels or workspace ids make the pass skip with a warning rather than guess.
+Ordering only moves workspaces; it never closes, renames, relabels, or focuses one except to restore the exact pre-move focus.
 
-- The session layout.
-- The protocol.
-- The socket.
-- `python3`.
-- The machine-private per-session lock.
+Ordering failure never fails the spawn or cleanup it follows.
+Firstmate does not retry a failed or unverifiable move, or adopt, reuse, close, delete, or rename anything in response to an ordering failure.
+The workspaces stay in their current order until the next pass.
 
-Existing legacy child labels may extend an already adjacent block read-only but are never renamed or migrated.
-A foreign, ambiguous, detached, or manually interleaved child makes ordering skip with a warning rather than rewriting the layout.
-
-Ordering failure never fails the task spawn.
-Firstmate does not retry, adopt, reuse, close, delete, or rename anything in response to an unavailable method, lock contention, ambiguous socket, lost response, failed move, or verification mismatch.
-The worker remains on the ordinary flat or Herdr-current-order path.
+A projected spawn holds the session lock through launch handoff to serialize presentation mutations across homes.
+The spawn lock wait and timeout outcomes are owned by the header of [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
 
 ### Cleanup and focus safety
 
@@ -373,7 +388,7 @@ The replacement is allowed only when all of these agree:
 - The metadata endpoint.
 - The unique token match.
 - The workspace shape and labels.
-- The parent identity and placement.
+- The exact parent identity and label, independently of sidebar position.
 - The non-target focus snapshot.
 
 The replacement tab and pane are created and verified before the old pane is rechecked and closed.
@@ -386,7 +401,7 @@ These cases fall back flat without mutating the old projection when duplicate-ag
 - Version 1 journals.
 - Dead or missing panes.
 - Duplicate or absent tokens.
-- Renamed or detached spaces.
+- Renamed spaces or an absent or mismatched parent.
 - Cross-home mismatches.
 - Inconsistent endpoint bindings.
 - Active target tabs.
@@ -453,13 +468,13 @@ Any of these preserves the candidate and lets session startup continue with at m
 
 ### Operational compromises
 
-- Grouping is best-effort; only an exact same-identity version 2 binding survives a Herdr restart in place.
+- Ordering is best-effort; only an exact same-identity version 2 binding survives a Herdr restart in place.
 - A failed journal publication or projected workspace create stops that spawn instead of falling back flat.
   So a Herdr create failure surfaces as a spawn failure in every Herdr home, rather than only in homes that opted in.
-  Every earlier degradation on the fresh projected-create path (no session server, contended presentation lock, absent or ambiguous parent) still warns and continues flat.
-- Recovery of an existing presentation journal deliberately refuses the spawn when the shared presentation lock is contended, rather than falling back flat.
+  Every earlier degradation on the fresh projected-create path (no session server, a presentation lock still busy after the two-minute wait, absent or ambiguous parent) still warns and continues flat.
+- Recovery of an existing presentation journal deliberately refuses the spawn when the shared presentation lock stays busy through that wait, rather than falling back flat.
   Default-on makes that refusal reachable in any Herdr home.
-- Existing layouts are not force-renamed or rearranged.
+- Existing spaces are never renamed; the presentation order rearranges them only by verified moves.
 - Missing or ambiguous restart bindings fall back to the ordinary home workspace while the old projection remains untouched.
 - Crashes, lost responses, failed exact-pane cleanup, or human renames can leave quarantined spaces.
   Session start removes only the exact home-local, uniquely journal-correlated, childless idle-shell shape above.
@@ -473,6 +488,7 @@ Any of these preserves the candidate and lets session startup continue with at m
 | Test | What it covers |
 | --- | --- |
 | `tests/fm-backend-herdr-presentation-e2e.test.sh` | Multi-home ordering, concurrency, lock contention, legacy coexistence, focus preservation, exact same-identity restart replacement, ambiguous bindings and tokens, and exact-pane cleanup through the guarded lab path. |
+| `tests/fm-backend-herdr-presentation-order-e2e.test.sh` | The whole-sidebar presentation order across a primary home and two second mates, including primary workers for a covered project, teardowns, a busy lock, and the captain's personal spaces. |
 | `tests/fm-herdr-session-cleanup.test.sh` | Every discovery, ownership, topology, process, locking, revalidation, focus, retirement, and continue-on-error boundary. |
 | `tests/fm-herdr-session-cleanup-e2e.test.sh` | The restored-shell cleanup in a guarded non-default named lab. |
 | `tests/fm-backend-herdr-focus-flash-e2e.test.sh` | Reproduces the raw explicit-close focus steal on the installed release, and proves the focus-safe emptying-close plan removes a doomed workspace with no wrong-focus interval. |
@@ -826,7 +842,7 @@ Tests use thin compatibility wrappers in `tests/herdr-test-safety.sh` and never 
 
 ## Active limits
 
-- Presentation ordering needs protocol 16 and Python and is best-effort only.
+- Presentation ordering is best-effort; [Ordering](#ordering) owns its prerequisites and grouping rules, and remote second mates' task records are not read.
 - Mutable labels can collide; they are never placement or destructive authority.
 - A Firstmate outside Herdr cannot resolve a launcher workspace, so a colliding home label refuses new spawns until the collision is cleared.
 - Ghost and placeholder recognition uses ANSI de-emphasis when available; an unstyled glyph row carrying trailing non-idle text fails safely to `unknown`.

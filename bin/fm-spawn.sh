@@ -130,14 +130,18 @@
 #   authority, and every ambiguous recovery stays on the flat fallback after
 #   duplicate-agent risk is independently absent. Treehouse allocation and task
 #   metadata are unchanged.
-#   A clean projected create or exact resume makes one bounded attempt to hold
-#   the one session-scoped presentation-order lock (keyed by named session plus
-#   canonical socket, outside any home's state/) through launch handoff. Lock
-#   contention warns and falls back to the ordinary flat layout before any
-#   projection mutation. The exact response-derived new workspace is inserted
-#   immediately after its owning parent (firstmate or 2ndmate-<id>) contiguous
-#   child block. Ordering never authorizes lifecycle cleanup, and any
-#   unavailable, ambiguous, or failed move warns while the spawn continues.
+#   A clean projected create or exact resume waits up to two minutes for the
+#   one session-scoped presentation-order lock (keyed by named session plus
+#   canonical socket, outside any home's state/) and holds it through launch
+#   handoff. A lock still busy after that wait makes a fresh projected create
+#   fall back flat before mutation, but refuses recovery of an existing journal.
+#   At endpoint handoff (fresh create, resume, relaunch adoption or recreation,
+#   or a second mate's own workspace) in a home with presentation enabled,
+#   one idempotent
+#   fm_backend_herdr_presentation_arrange pass sorts the whole session into
+#   the presentation order under that lock. Ordering never authorizes
+#   lifecycle cleanup, and any unavailable, ambiguous, or failed move warns
+#   while the spawn continues.
 #   Every projected create, prune, and move captures and verifies the named
 #   session's exact active workspace and tab. A detected focus change restores
 #   only that exact tab id; an ambiguous pre-operation snapshot refuses the
@@ -1191,6 +1195,7 @@ HERDR_PROJECTION_ABORT_TASK_PANE=
 HERDR_PROJECTION_ABORT_SEEDED_PANE=
 HERDR_PRESENTATION_ORDER_LOCK=
 HERDR_PRESENTATION_ORDER_LOCK_HELD=0
+HERDR_PRESENTATION_LOCK_WEDGED=0
 SPAWN_TASK_LOCK=
 SPAWN_TASK_LOCK_HELD=0
 SPAWN_CONTROL_LOCK=
@@ -1394,13 +1399,16 @@ trap spawn_abort_cleanup EXIT
 # One bounded lock per live Herdr session/socket, shared across all homes.
 # <session> is required so secondmate and primary spawns serialize against the
 # same session without writing any other home's state directory.
+# A projected spawn holds it through launch handoff and a cleanup through its
+# whole destructive sequence, so a busy lock is waited out for up to two
+# minutes rather than giving up on a worker's own workspace.
 spawn_herdr_presentation_order_lock_acquire() {
   local session=${1:-} attempt lock_path
   [ -n "$session" ] || session=$(fm_backend_herdr_session)
   lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session") || return 1
   HERDR_PRESENTATION_ORDER_LOCK="$lock_path"
   attempt=0
-  while [ "$attempt" -lt 50 ]; do
+  while [ "$attempt" -lt 1200 ]; do
     if fm_lock_try_acquire "$HERDR_PRESENTATION_ORDER_LOCK"; then
       HERDR_PRESENTATION_ORDER_LOCK_HELD=1
       return 0
@@ -1442,6 +1450,31 @@ spawn_herdr_presentation_order_lock_release() {
   [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" = 1 ] || return 0
   HERDR_PRESENTATION_ORDER_LOCK_HELD=0
   fm_lock_release "$HERDR_PRESENTATION_ORDER_LOCK" || true
+}
+
+# Sort the whole Herdr session into the presentation order once this spawn's
+# endpoint exists. A projected or resumed spawn already holds the session lock,
+# and keeps it through launch handoff to serialize presentation mutations;
+# any other Herdr spawn takes the lock just for this pass.
+# Presentation-only; never fails the spawn.
+spawn_herdr_presentation_arrange() {  # <session>
+  local session=$1 acquired=0
+  HERDR_SESSION="$session" fm_backend_herdr_presentation_enabled "$CONFIG" "$STATE" || return 0
+  # A lock this spawn already waited out in vain is not waited on twice.
+  [ "${HERDR_PRESENTATION_LOCK_WEDGED:-0}" = 0 ] || return 0
+  if [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" != 1 ]; then
+    if ! spawn_herdr_presentation_order_lock_acquire "$session"; then
+      echo "warning: herdr presentation lock stayed busy; leaving the workspace order for the next spawn or cleanup to sort" >&2
+      return 0
+    fi
+    acquired=1
+  fi
+  if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
+    fm_backend_herdr_presentation_arrange "$session" "$HERDR_WORKSPACE_ID" "$PROJ_ABS"
+  else
+    fm_backend_herdr_presentation_arrange "$session"
+  fi
+  [ "$acquired" = 0 ] || spawn_herdr_presentation_order_lock_release
 }
 
 # Batch dispatch (see header): when the first positional is an `id=repo` pair, treat every
@@ -3708,8 +3741,9 @@ else
           ! fm_backend_herdr_presentation_default_supported "$STATE" "$HERDR_SES"; then
           :
         elif spawn_herdr_presentation_order_lock_acquire "$HERDR_SES"; then
-          # The projected child is placed and bound UNDER this launcher's exact
-          # parent workspace. Its own herdr pane identity names that workspace
+          # The projected child is bound to this launcher's exact parent
+          # workspace; sidebar position follows docs/herdr-backend.md "Ordering".
+          # Its own herdr pane identity names that workspace
           # directly; the label lookup is only the fallback for a launcher with
           # no herdr ancestry at all. A claimed-but-broken identity refuses here
           # rather than projecting under a guessed parent.
@@ -3752,8 +3786,6 @@ else
             HERDR_PROJECTION_ABORT_SESSION=$HERDR_SES
             HERDR_PROJECTION_ABORT_TASK_PANE=$HERDR_PANE_ID
             HERDR_PROJECTION_ABORT_SEEDED_PANE=$FM_BACKEND_HERDR_PROJECTION_SEEDED_PANE_ID
-            fm_backend_herdr_projection_order_best_effort \
-              "$HERDR_SES" "$HERDR_WORKSPACE_ID" "$HERDR_PARENT_LABEL" "$HERDR_PARENT_WORKSPACE_ID"
             HERDR_HOME_ID=$(fm_backend_herdr_projection_home_identity "$HERDR_LABEL_HOME" 2>/dev/null || true)
             if [ -n "$HERDR_HOME_ID" ] &&
               fm_backend_herdr_projection_live_binding_matches \
@@ -3770,6 +3802,7 @@ else
             fi
           fi
         else
+          HERDR_PRESENTATION_LOCK_WEDGED=1
           echo "warning: herdr presentation focus lock unavailable; using the ordinary flat layout without projection" >&2
         fi
       fi
@@ -3847,6 +3880,9 @@ EOF
     T="$ORCA_TERMINAL"
     ;;
   esac
+fi
+if [ "$BACKEND" = herdr ]; then
+  spawn_herdr_presentation_arrange "${T%%:*}" || true
 fi
 if [ "$KIND" = secondmate ]; then
   FM_INHERITABLE_CONFIG=trace-context \
