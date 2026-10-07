@@ -5306,6 +5306,8 @@ spawn_record_traceparent() {
     acquired=1
   fi
   SPAWN_META_TMP="$STATE/.$ID.meta.trace.${BASHPID:-$$}"
+  # Insert traceparent before the pr= block rather than appending, so the
+  # registered PR block stays last (see the note at the record's preserved lines).
   if [ ! -f "$meta" ] || [ ! -w "$meta" ] ||
     ! awk -F= -v tp="traceparent=$SPAWN_TRACEPARENT" '
       $1 == "traceparent" { next }
