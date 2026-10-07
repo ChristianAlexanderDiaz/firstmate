@@ -7,8 +7,10 @@
 # top to bottom, the firstmate home; each second mate followed by its own
 # workers and by any primary worker whose project that second mate alone
 # covers in data/secondmates.md; the primary's other workers; then every other
-# space in its existing relative order. A worker also keeps its own workspace
-# when the shared presentation lock is busy for longer than a moment.
+# space in its existing relative order. The firstmate home is the pane the
+# primary runs in, so it keeps the top after the captain renames it. A worker
+# also keeps its own workspace when the shared presentation lock is busy for
+# longer than a moment.
 #
 # This drives the REAL bin/fm-spawn.sh and bin/fm-teardown.sh against a named
 # lab session. Lab provisioning, inspection, and retirement use bin/fm-herdr-lab.sh,
@@ -107,6 +109,21 @@ spawn_task() {  # <home> <id> <project>
   LAST_ERR="$TMP_ROOT/$id.err"
 }
 
+# spawn_task_from_pane <pane> <home> <id> <project>: the same spawn, run the way
+# Herdr runs a firstmate agent, with the injected identity of the pane it is in.
+spawn_task_from_pane() {
+  local pane=$1 home=$2 id=$3 project=$4
+  mkdir -p "$home/data/$id"
+  printf '# Task\n## Captain'"'"'s intent\nOrder fixture %s.\n\n## Firstmate spec\nVerify workspace order.\n' "$id" > "$home/data/$id/brief.md"
+  env HERDR_ENV=1 HERDR_PANE_ID="$pane" HERDR_SESSION="$HERDR_LAB_SESSION" HERDR_SOCKET_PATH="$LAB_SOCKET" \
+    FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$project" "sh -c 'while :; do sleep 60; done'" \
+    --mode no-mistakes --yolo off --backend herdr > "$TMP_ROOT/$id.out" 2> "$TMP_ROOT/$id.err" \
+    || fail "spawn $id from pane $pane failed: $(cat "$TMP_ROOT/$id.err")"
+  WORKTREES+=("$(grep '^worktree=' "$home/state/$id.meta" | cut -d= -f2-)")
+  LAST_ERR="$TMP_ROOT/$id.err"
+}
+
 teardown_task() {  # <home> <id>
   local home=$1 id=$2
   env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SOCKET_PATH HERDR_SESSION="$HERDR_LAB_SESSION" \
@@ -158,8 +175,15 @@ $(make_workspace life)
 EOF
 [ -n "$LIFE_WS" ] || fail "could not create the captain's personal space"
 for label in firstmate 2ndmate-alpha 2ndmate-bravo dotfiles; do
-  [ -n "$(make_workspace "$label")" ] || fail "could not create the $label space"
+  made=$(make_workspace "$label")
+  [ -n "$made" ] || fail "could not create the $label space"
+  [ "$label" != firstmate ] || MAIN_WS=${made%% *}
 done
+MAIN_PANE=$(lab pane list --workspace "$MAIN_WS" | jq -r '.result.panes[0].pane_id // empty')
+[ -n "$MAIN_PANE" ] || fail "could not read the pane in the firstmate space"
+LAB_SOCKET=$(lab session list --json 2>/dev/null \
+  | jq -r --arg s "$HERDR_LAB_SESSION" '.sessions[]? | select(.name == $s) | .socket_path' 2>/dev/null)
+[ -n "$LAB_SOCKET" ] || fail "could not read the isolated lab session's socket path"
 lab tab focus "$LIFE_TAB" >/dev/null 2>&1 || fail "could not focus the captain's personal space"
 
 # 1. The reported drift: a primary worker for a project a second mate covers
@@ -215,4 +239,27 @@ teardown_task "$ALPHA_HOME" a1
 teardown_task "$BRAVO_HOME" b2
 assert_sidebar "firstmate 2ndmate-alpha 2ndmate-bravo life dotfiles" "after all teardowns"
 [ "$(focused_workspace)" = "$LIFE_WS" ] || fail "cleanup moved focus off the captain's personal space"
+
+# 4. The captain renames the firstmate space and it drifts to the bottom. The
+#    primary's own pane, not its label, still puts it back on top, and a second
+#    mate's pass or a pass outside any pane finds it from the primary's record.
+lab workspace rename "$MAIN_WS" captain >/dev/null 2>&1 || fail "could not rename the firstmate space"
+sink_main() {
+  python3 "$ROOT/bin/backends/herdr-workspace-move.py" "$LAB_SOCKET" "$MAIN_WS" 5 >/dev/null 2>&1 \
+    || fail "could not move the renamed firstmate space to the bottom"
+}
+sink_main
+assert_sidebar "2ndmate-alpha 2ndmate-bravo life dotfiles captain" "the renamed space at the bottom"
+spawn_task_from_pane "$MAIN_PANE" "$PRIMARY_HOME" pm "$TMP_ROOT/projects/fleet-tools"
+assert_sidebar "captain 2ndmate-alpha 2ndmate-bravo pm life dotfiles" "a primary spawn from the renamed space"
+sink_main
+spawn_task "$BRAVO_HOME" b3 "$TMP_ROOT/projects/bravo-app"
+assert_sidebar "captain 2ndmate-alpha 2ndmate-bravo b3 pm life dotfiles" "a second mate spawn after the rename"
+sink_main
+teardown_task "$PRIMARY_HOME" pm
+assert_sidebar "captain 2ndmate-alpha 2ndmate-bravo b3 life dotfiles" "a primary teardown outside any pane after the rename"
+teardown_task "$BRAVO_HOME" b3
+assert_sidebar "captain 2ndmate-alpha 2ndmate-bravo life dotfiles" "after the rename teardowns"
+[ "$(focused_workspace)" = "$LIFE_WS" ] || fail "renamed-space ordering moved focus off the captain's personal space"
+pass "real Herdr lab: a renamed firstmate space keeps the top, primary workers stay below the second mates"
 pass "real Herdr lab: presentation order validation completed on $(herdr --version 2>/dev/null) with the default-session tripwire intact"
