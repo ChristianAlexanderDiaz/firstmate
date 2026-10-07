@@ -526,6 +526,14 @@ SH
     || fail "the registered PR must survive the relaunch"
   ( . "$ROOT/bin/fm-pr-lib.sh"; fm_pr_poll_armed "$state" rl29 "$ROOT/bin/fm-pr-poll.sh" ) \
     || fail "the PR watch must still be armed after the relaunch"$'\n'"$(cat "$state/rl29.meta")"
+  printf '%s\n' "$$" > "$state/.lock"
+  printf '%s on\n' "$$" > "$state/.trace-context-effective"
+  out=$(run_control "$dir" rl29 relaunch --note "continuing with tracing"); rc=$?
+  expect_code 0 "$rc" "relaunching with trace context enabled should succeed"$'\n'"$out"
+  fm_trace_context_valid "$(meta_field "$dir" rl29 traceparent)" \
+    || fail "the traced relaunch should record a valid traceparent"
+  ( . "$ROOT/bin/fm-pr-lib.sh"; fm_pr_poll_armed "$state" rl29 "$ROOT/bin/fm-pr-poll.sh" ) \
+    || fail "the PR watch must stay armed after a traced relaunch"$'\n'"$(cat "$state/rl29.meta")"
   pass "fm-control relaunch: a registered PR watch stays armed across the relaunch"
 }
 
