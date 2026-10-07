@@ -275,10 +275,14 @@ An ambiguous response grants no mutation or cleanup authority.
 
 Firstmate keeps the whole Herdr sidebar in one presentation order, top to bottom:
 
-1. The `firstmate` home.
+1. The `firstmate` home, which is the space holding the primary's own pane, whatever the captain renames it to.
 2. Each `2ndmate-<id>` home, in its current relative order, directly followed by its own workers and by every primary worker whose project appears in the `projects:` list of exactly that one second mate in the primary home's `data/secondmates.md`.
 3. The primary home's other workers, including one whose project no second mate or more than one second mate lists, or whose second mate has no workspace in the session.
 4. Every other space, such as the captain's personal spaces, in its existing relative order.
+
+The primary's own space is identified by the pane its agent runs in, not by its label.
+A primary home records that pane and workspace in its `state/.herdr-main-workspace` on every pass that runs inside the pane, and a second mate's pass or a pass outside any pane trusts the record only while Herdr still reports the recorded pane inside the recorded workspace of the same session.
+Without a proven pane the `firstmate` label stands in, so a renamed space is only kept on top once the primary has run a pass.
 
 Presentation coverage uses the `projects:` list in `data/secondmates.md`.
 Workers inside one group keep their current relative order, so a new worker joins the end of its group.

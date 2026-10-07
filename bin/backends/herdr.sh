@@ -71,6 +71,10 @@
 FM_BACKEND_HERDR_ROOT="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}/../.." && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_BACKEND_HERDR_ROOT}}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+# The pane Herdr injected into this process, kept from the first source:
+# bin/fm-spawn.sh later reuses HERDR_PANE_ID for the task's own pane, which is
+# never the pane the presentation order's main space is read from.
+FM_BACKEND_HERDR_AMBIENT_PANE_ID="${FM_BACKEND_HERDR_AMBIENT_PANE_ID-${HERDR_PANE_ID:-}}"
 
 # Shared composer-content classifier (empty|pending|unknown, and the fleet-wide
 # dead-shell-vs-agent-composer rule). Owned by bin/fm-composer-lib.sh, reused by
@@ -1566,20 +1570,67 @@ $(printf '%s\t%s' "$new_workspace" "$owner")"
   '
 }
 
+# fm_backend_herdr_presentation_main_workspace: print the workspace id of the
+# primary firstmate's own space in <session>, or nothing when it cannot be
+# proven. The space keeps its place at the top of the order whatever the captain
+# renames it to, so its identity is the pane the primary agent runs in, never
+# its label. A primary home resolves the pane it was started in
+# (fm_backend_herdr_launcher_identity) and records the pane and workspace in
+# <primary-home>/state/.herdr-main-workspace; a second mate's pass, and a pass
+# run outside any pane, read that record and trust it only while Herdr still
+# reports the recorded pane inside the recorded workspace of the same session.
+fm_backend_herdr_presentation_main_workspace() {  # <session>
+  local session=$1 primary state record running_home primary_home pane workspace recorded_session
+  primary=$(fm_backend_herdr_presentation_primary_home 2>/dev/null) || return 0
+  running_home=$(fm_backend_herdr_projection_home_identity "$FM_HOME" 2>/dev/null || printf '%s' "$FM_HOME")
+  primary_home=$(fm_backend_herdr_projection_home_identity "$primary" 2>/dev/null || printf '%s' "$primary")
+  state="$primary/state"
+  [ "$primary_home" != "$running_home" ] || state="${FM_STATE_OVERRIDE:-$state}"
+  record="$state/.herdr-main-workspace"
+  if [ ! -f "$FM_HOME/$FM_BACKEND_HERDR_SECONDMATE_MARKER" ] \
+    && HERDR_PANE_ID=$FM_BACKEND_HERDR_AMBIENT_PANE_ID fm_backend_herdr_launcher_identity "$session" 2>/dev/null; then
+    workspace=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID
+    pane=$FM_BACKEND_HERDR_LAUNCHER_PANE_ID
+    if [ -d "$state" ]; then
+      if printf 'herdr_session=%s\nherdr_pane_id=%s\nherdr_workspace_id=%s\n' "$session" "$pane" "$workspace" > "$record.$$" 2>/dev/null; then
+        mv -f "$record.$$" "$record" 2>/dev/null || rm -f "$record.$$" 2>/dev/null
+      else
+        rm -f "$record.$$" 2>/dev/null
+      fi
+    fi
+    printf '%s' "$workspace"
+    return 0
+  fi
+  [ -f "$record" ] && [ ! -L "$record" ] || return 0
+  recorded_session=$(fm_meta_get "$record" herdr_session)
+  pane=$(fm_meta_get "$record" herdr_pane_id)
+  workspace=$(fm_meta_get "$record" herdr_workspace_id)
+  [ "$recorded_session" = "$session" ] && [ -n "$pane" ] && [ -n "$workspace" ] || return 0
+  fm_backend_herdr_cli "$session" pane get "$pane" 2>/dev/null | jq -e --arg pane "$pane" --arg workspace "$workspace" '
+    .result.pane.pane_id == $pane and .result.pane.workspace_id == $workspace
+  ' >/dev/null 2>&1 || return 0
+  printf '%s' "$workspace"
+}
+
 # fm_backend_herdr_presentation_arrange_plan: read a workspace-list response
 # on stdin and print the move plan that sorts the session into the presentation
 # order, as JSON {"moves":[{"id":W,"index":N,"after":[ids...]},...]}.
 # Prints nothing when the layout is ambiguous (duplicate parent labels or
 # workspace ids). The order is owned by docs/herdr-backend.md "Ordering".
+# <main-workspace-id> is the primary firstmate's own space whatever its label
+# (fm_backend_herdr_presentation_main_workspace); empty falls back to the label.
 # A worker's owner comes from <owners-json>, or from a legacy
 # owner-prefixed label; an unowned workspace stays with the other spaces.
 # Every move lifts one workspace to a smaller index, so insert_index means the
 # same thing before and after the moved workspace is removed.
-fm_backend_herdr_presentation_arrange_plan() {  # <owners-json>
-  jq -c --argjson owners "$1" '
+fm_backend_herdr_presentation_arrange_plan() {  # <owners-json> [<main-workspace-id>]
+  jq -c --argjson owners "$1" --arg main "${2:-}" '
+    def is_main: $main != "" and .workspace_id == $main;
     def is_top_level:
-      (.label | type) == "string"
-      and ((.label == "firstmate") or (.label | test("^2ndmate-[^/]+$")));
+      is_main
+      or ((.label | type) == "string"
+        and ((.label == "firstmate") or (.label | test("^2ndmate-[^/]+$"))));
+    def top_name: if is_main then "firstmate" else .label end;
     def legacy_owner:
       if (.label | type) == "string"
       then ([.label | capture("^(?<o>firstmate|2ndmate-[^/]+)/.+ · p:[A-Za-z0-9_-]{22}$")] | .[0].o)
@@ -1589,7 +1640,7 @@ fm_backend_herdr_presentation_arrange_plan() {  # <owners-json>
     | select(($s | type) == "array")
     | select(all($s[]; (.workspace_id | type) == "string" and (.workspace_id | length) > 0))
     | select(([$s[].workspace_id] | unique | length) == ($s | length))
-    | ([$s[] | select(is_top_level) | .label]) as $parents
+    | ([$s[] | select(is_top_level) | top_name]) as $parents
     | select(($parents | unique | length) == ($parents | length))
     | ([$parents[] | select(startswith("2ndmate-"))]) as $mates
     | def group_for($owner):
@@ -1599,7 +1650,7 @@ fm_backend_herdr_presentation_arrange_plan() {  # <owners-json>
         end;
     ([$s[] as $w |
       (if ($w | is_top_level) then
-         (if $w.label == "firstmate" then "firstmate" else $w.label end)
+         ($w | top_name)
        elif ($owners[$w.workspace_id] | type) == "string" then
          group_for($owners[$w.workspace_id])
        elif ($w | legacy_owner) != null then
@@ -1641,14 +1692,15 @@ fm_backend_herdr_presentation_arrange_plan() {  # <owners-json>
 # created and that worker's project, because its task record is published
 # only after this step.
 fm_backend_herdr_presentation_arrange() {  # <session> [<new-workspace-id> <new-project>]
-  local session=$1 owners list plan count i id index expected socket mover response move_status focus_before move_capable actual
+  local session=$1 owners main list plan count i id index expected socket mover response move_status focus_before move_capable actual
   owners=$(fm_backend_herdr_presentation_owners "$session" "${2:-}" "${3:-}" 2>/dev/null) || owners='{}'
   [ -n "$owners" ] || owners='{}'
+  main=$(fm_backend_herdr_presentation_main_workspace "$session" 2>/dev/null) || main=
   list=$(fm_backend_herdr_cli "$session" workspace list 2>/dev/null) || {
     echo "warning: herdr presentation ordering could not list workspaces; leaving the current order" >&2
     return 0
   }
-  plan=$(printf '%s' "$list" | fm_backend_herdr_presentation_arrange_plan "$owners" 2>/dev/null) || plan=
+  plan=$(printf '%s' "$list" | fm_backend_herdr_presentation_arrange_plan "$owners" "$main" 2>/dev/null) || plan=
   [ -n "$plan" ] || {
     echo "warning: herdr presentation ordering found an ambiguous workspace layout; leaving the current order" >&2
     return 0
