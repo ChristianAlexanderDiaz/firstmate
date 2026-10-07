@@ -4987,11 +4987,14 @@ preserve_relaunch_meta() {
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
   fi
-  if [ "$RELAUNCH" -eq 1 ]; then
-    preserve_relaunch_meta
-  fi
   if [ "$SPAWN_CONTROL_PARENT" = 1 ] && [ -n "${FM_CONTROL_RELAUNCH_TX:-}" ]; then
     echo "control_relaunch_tx=$FM_CONTROL_RELAUNCH_TX"
+  fi
+  # Preserved lines go last: a registered pr= block (pr_head=, x_*) must stay at
+  # the end of the record, because fm_pr_metadata_identity_parse refuses any
+  # other key after pr= and the merge watch would silently stop.
+  if [ "$RELAUNCH" -eq 1 ]; then
+    preserve_relaunch_meta
   fi
 } >"$SPAWN_META_PATH" || {
   echo "error: task record for $ID could not be prepared at $SPAWN_META_PATH" >&2
@@ -5303,9 +5306,15 @@ spawn_record_traceparent() {
     acquired=1
   fi
   SPAWN_META_TMP="$STATE/.$ID.meta.trace.${BASHPID:-$$}"
+  # Insert traceparent before the pr= block rather than appending, so the
+  # registered PR block stays last (see the note at the record's preserved lines).
   if [ ! -f "$meta" ] || [ ! -w "$meta" ] ||
-    ! awk -F= '$1 != "traceparent"' "$meta" >"$SPAWN_META_TMP" ||
-    ! printf 'traceparent=%s\n' "$SPAWN_TRACEPARENT" >>"$SPAWN_META_TMP" ||
+    ! awk -F= -v tp="traceparent=$SPAWN_TRACEPARENT" '
+      $1 == "traceparent" { next }
+      $1 == "pr" && !done { print tp; done = 1 }
+      { print }
+      END { if (!done) print tp }
+    ' "$meta" >"$SPAWN_META_TMP" ||
     ! fm_backlog_atomic_transition publish "$SPAWN_META_TMP" "$meta" "task record" "$STATE"; then
     status=1
     rm -f "$SPAWN_META_TMP" 2>/dev/null || true
