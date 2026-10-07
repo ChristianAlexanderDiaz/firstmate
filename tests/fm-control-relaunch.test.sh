@@ -497,6 +497,38 @@ test_relaunch_preserves_durable_task_metadata() {
   pass "fm-control relaunch: durable task metadata survives replacement launch publication"
 }
 
+# A relaunch must leave the registered PR watch armed. The merge watch reads the
+# record through fm_pr_metadata_identity_parse, which accepts only the pr= block
+# (pr_head=, x_*) after the pr= line, so a relaunch that writes any other key
+# after it silently stops merge detection.
+test_relaunch_keeps_a_registered_pr_watch_armed() {
+  local dir out rc state
+  dir=$(new_case pr-watch rl29)
+  add_ship_task "$dir" rl29 claude
+  state="$dir/home/state"
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *isDraft*) printf '{"isDraft":false}\n' ;;
+  *headRefOid*) printf '0123456789abcdef0123456789abcdef01234567\n' ;;
+esac
+SH
+  chmod +x "$dir/fakebin/gh"
+  out=$(PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" "$ROOT/bin/fm-pr-check.sh" rl29 \
+    "https://github.com/example/repo/pull/29" 2>&1); rc=$?
+  expect_code 0 "$rc" "registering the PR should succeed"$'\n'"$out"
+  ( . "$ROOT/bin/fm-pr-lib.sh"; fm_pr_poll_armed "$state" rl29 "$ROOT/bin/fm-pr-poll.sh" ) \
+    || fail "the PR watch should be armed before the relaunch"
+
+  out=$(run_control "$dir" rl29 relaunch --note "continuing after review"); rc=$?
+  expect_code 0 "$rc" "relaunching a task with a registered PR should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" rl29 pr)" = "https://github.com/example/repo/pull/29" ] \
+    || fail "the registered PR must survive the relaunch"
+  ( . "$ROOT/bin/fm-pr-lib.sh"; fm_pr_poll_armed "$state" rl29 "$ROOT/bin/fm-pr-poll.sh" ) \
+    || fail "the PR watch must still be armed after the relaunch"$'\n'"$(cat "$state/rl29.meta")"
+  pass "fm-control relaunch: a registered PR watch stays armed across the relaunch"
+}
+
 test_relaunch_serializes_concurrent_durable_metadata_publication() {
   local dir control_pid link_pid rc i=0 traceparent prepare launch_release waiting ready release
   dir=$(new_case metadata-race rl28)
@@ -2577,6 +2609,7 @@ test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
 test_relaunch_from_linked_home_preserves_recorded_worktree
 test_relaunch_preserves_durable_task_metadata
+test_relaunch_keeps_a_registered_pr_watch_armed
 test_relaunch_serializes_concurrent_durable_metadata_publication
 test_disabled_relaunch_clears_prior_trace_context
 test_relaunch_appends_the_progress_note_to_the_instructions

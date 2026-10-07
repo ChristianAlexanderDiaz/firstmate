@@ -4987,11 +4987,14 @@ preserve_relaunch_meta() {
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
   fi
-  if [ "$RELAUNCH" -eq 1 ]; then
-    preserve_relaunch_meta
-  fi
   if [ "$SPAWN_CONTROL_PARENT" = 1 ] && [ -n "${FM_CONTROL_RELAUNCH_TX:-}" ]; then
     echo "control_relaunch_tx=$FM_CONTROL_RELAUNCH_TX"
+  fi
+  # Preserved lines go last: a registered pr= block (pr_head=, x_*) must stay at
+  # the end of the record, because fm_pr_metadata_identity_parse refuses any
+  # other key after pr= and the merge watch would silently stop.
+  if [ "$RELAUNCH" -eq 1 ]; then
+    preserve_relaunch_meta
   fi
 } >"$SPAWN_META_PATH" || {
   echo "error: task record for $ID could not be prepared at $SPAWN_META_PATH" >&2
