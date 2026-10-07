@@ -502,10 +502,10 @@ test_relaunch_preserves_durable_task_metadata() {
 # (pr_head=, x_*) after the pr= line, so a relaunch that writes any other key
 # after it silently stops merge detection.
 test_relaunch_keeps_a_registered_pr_watch_armed() {
-  local dir out rc state
+  local dir out rc pr_state
   dir=$(new_case pr-watch rl29)
   add_ship_task "$dir" rl29 claude
-  state="$dir/home/state"
+  pr_state="$dir/home/state"
   cat > "$dir/fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
@@ -517,23 +517,23 @@ SH
   out=$(PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" "$ROOT/bin/fm-pr-check.sh" rl29 \
     "https://github.com/example/repo/pull/29" 2>&1); rc=$?
   expect_code 0 "$rc" "registering the PR should succeed"$'\n'"$out"
-  ( . "$ROOT/bin/fm-pr-lib.sh"; fm_pr_poll_armed "$state" rl29 "$ROOT/bin/fm-pr-poll.sh" ) \
+  ( . "$ROOT/bin/fm-pr-lib.sh"; fm_pr_poll_armed "$pr_state" rl29 "$ROOT/bin/fm-pr-poll.sh" ) \
     || fail "the PR watch should be armed before the relaunch"
 
   out=$(run_control "$dir" rl29 relaunch --note "continuing after review"); rc=$?
   expect_code 0 "$rc" "relaunching a task with a registered PR should succeed"$'\n'"$out"
   [ "$(meta_field "$dir" rl29 pr)" = "https://github.com/example/repo/pull/29" ] \
     || fail "the registered PR must survive the relaunch"
-  ( . "$ROOT/bin/fm-pr-lib.sh"; fm_pr_poll_armed "$state" rl29 "$ROOT/bin/fm-pr-poll.sh" ) \
-    || fail "the PR watch must still be armed after the relaunch"$'\n'"$(cat "$state/rl29.meta")"
-  printf '%s\n' "$$" > "$state/.lock"
-  printf '%s on\n' "$$" > "$state/.trace-context-effective"
+  ( . "$ROOT/bin/fm-pr-lib.sh"; fm_pr_poll_armed "$pr_state" rl29 "$ROOT/bin/fm-pr-poll.sh" ) \
+    || fail "the PR watch must still be armed after the relaunch"$'\n'"$(cat "$pr_state/rl29.meta")"
+  printf '%s\n' "$$" > "$pr_state/.lock"
+  printf '%s on\n' "$$" > "$pr_state/.trace-context-effective"
   out=$(run_control "$dir" rl29 relaunch --note "continuing with tracing"); rc=$?
   expect_code 0 "$rc" "relaunching with trace context enabled should succeed"$'\n'"$out"
   fm_trace_context_valid "$(meta_field "$dir" rl29 traceparent)" \
     || fail "the traced relaunch should record a valid traceparent"
-  ( . "$ROOT/bin/fm-pr-lib.sh"; fm_pr_poll_armed "$state" rl29 "$ROOT/bin/fm-pr-poll.sh" ) \
-    || fail "the PR watch must stay armed after a traced relaunch"$'\n'"$(cat "$state/rl29.meta")"
+  ( . "$ROOT/bin/fm-pr-lib.sh"; fm_pr_poll_armed "$pr_state" rl29 "$ROOT/bin/fm-pr-poll.sh" ) \
+    || fail "the PR watch must stay armed after a traced relaunch"$'\n'"$(cat "$pr_state/rl29.meta")"
   pass "fm-control relaunch: a registered PR watch stays armed across the relaunch"
 }
 
