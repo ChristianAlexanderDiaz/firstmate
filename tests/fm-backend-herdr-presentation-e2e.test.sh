@@ -1399,6 +1399,8 @@ LOCK_REFUSE_HOLDER_PID=
   || fail "default resumed identity returned success under contention"
 grep -F "refusing a concurrent resume" "$TMP_ROOT/lock-refuse-resume.err" >/dev/null 2>&1 \
   || fail "default resume under contention did not refuse with the concurrent-resume message: $(cat "$TMP_ROOT/lock-refuse-resume.err")"
+[ "$LOCK_REFUSE_ELAPSED" -ge 120 ] \
+  || fail "default resume refused after ${LOCK_REFUSE_ELAPSED}s instead of preserving the two-minute wait"
 # Fixture metadata and husk must be unchanged after the refused resume.
 [ "$(grep '^herdr_pane_id=' "$LOCK_REFUSE_META" | cut -d= -f2-)" = "$LOCK_REFUSE_OLD_PANE" ] \
   || fail "refused resume mutated the recorded pane id"
