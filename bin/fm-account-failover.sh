@@ -34,7 +34,7 @@
 #      prompt's "Stop and wait for limit to reset" option does. That key cannot
 #      select any option, so no paid choice (usage credits, extra usage, an
 #      upgrade) can ever be picked, whatever order the prompt lists them in.
-#   3. Takes one `quota-axi --all-accounts --json --max-age 0` snapshot and picks an
+#   3. Takes one fresh `quota-axi --all-accounts --json` snapshot and picks an
 #      account of the map through `choose`.
 #   4. With no qualifying account, leaves the worker stopped at its prompt and
 #      appends one `blocked:` line to the task's status naming each account's
@@ -373,7 +373,7 @@ fm_account_failover_recover() {
   command -v quota-axi >/dev/null 2>&1 \
     || status_blocked "Claude usage limit reached ($limit_text); quota-axi is not installed, so no other account could be checked and the worker was left stopped"
   snapshot="$STATE/.$ID.account-failover-quota.$$.json"
-  if ! fm_run_timed "$quota_seconds" quota-axi --all-accounts --json --max-age 0 > "$snapshot" 2>/dev/null </dev/null; then
+  if ! fm_run_timed "$quota_seconds" env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json > "$snapshot" 2>/dev/null </dev/null; then
     rm -f "$snapshot"
     status_blocked "Claude usage limit reached ($limit_text); the quota-axi --all-accounts snapshot failed, so the worker was left stopped"
   fi

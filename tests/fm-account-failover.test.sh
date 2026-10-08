@@ -105,9 +105,16 @@ if [ "${1:-}" = auth ] && [ "${2:-}" = status ]; then
 fi
 exit 0
 SH
+  # Like quota-axi 0.1.55, --all-accounts refuses --max-age.
   cat > "$fb/quota-axi" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> '$dir/fake/quota-calls'
+case " \$* " in
+  *" --all-accounts "*" --max-age "* | *" --max-age "*" --all-accounts "*)
+    echo 'error: "--all-accounts cannot be combined with --max-age"'
+    exit 1
+    ;;
+esac
 cat '$dir/fake/quota.json'
 SH
   # no-mistakes: one run on the task branch whose state lives in fake/nm-state
@@ -163,6 +170,9 @@ new_case() {
     model=claude-fable-5-1 effort=default busy_gen=g1
   TASK_TMPS+=("/tmp/fm-$id")
   printf 'account limited ordinary\naccount spare %s\n' "$dir/accounts/spare" > "$dir/home/config/claude-failover"
+  # Keep the home off the supervision host, which a Claude caller would
+  # otherwise turn on, so its lease lock never depends on who runs the suite.
+  : > "$dir/home/config/supervision-host-off"
   printf '%s' "$LIMIT_SCREEN" > "$dir/fake/screen"
   quota_snapshot 0 81 > "$dir/fake/quota.json"
 }
@@ -680,12 +690,7 @@ make_quota_cache_fake() {
 #!/usr/bin/env bash
 D='$CASE/fake'
 max_age=\${QUOTA_AXI_MAX_AGE:-0}
-while [ \$# -gt 0 ]; do
-  case \$1 in
-    --max-age) max_age=\$2; shift 2 ;;
-    *) shift ;;
-  esac
-done
+case " \$* " in *" --max-age "*) echo 'error: "--all-accounts cannot be combined with --max-age"'; exit 1 ;; esac
 if [ "\$max_age" != 0 ]; then
   cat "\$D/quota-cached.json"
 else

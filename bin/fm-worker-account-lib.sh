@@ -447,7 +447,8 @@ fm_worker_account_failover_quota() {
 # resolve above, the same sign-in check a pin gets, and a fresh quota reading
 # proving paid usage disabled and model quota above the fixed safety margin;
 # reused readings refuse. Without a supplied snapshot, reads
-# quota-axi --all-accounts --json --max-age 0 at launch. Prints
+# quota-axi --all-accounts --json at launch with QUOTA_AXI_MAX_AGE unset, so
+# the vendor is asked (--all-accounts refuses --max-age). Prints
 # "declared<TAB>root" on success; on refusal prints one error and returns 1.
 fm_worker_account_failover_select() {
   local config=$1 name=$2 executable=$3 model=$4 snapshot=${5:-} map=${6:-} selection declared root verdict reason
@@ -459,7 +460,7 @@ fm_worker_account_failover_select() {
     return 1
   fi
   if [ -z "$snapshot" ]; then
-    snapshot=$(fm_run_timed "${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}" quota-axi --all-accounts --json --max-age 0 2>/dev/null </dev/null) || {
+    snapshot=$(fm_run_timed "${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}" env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json 2>/dev/null </dev/null) || {
       echo "error: Claude account '$name' paid usage could not be checked" >&2
       return 1
     }

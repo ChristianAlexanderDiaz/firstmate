@@ -981,7 +981,7 @@ Every Claude ship and scout records its turn end through Claude's `StopFailure` 
 Firstmate's monitoring then, within one cycle:
 
 1. Answers the limit prompt with Escape, its cancel key, which leaves the worker stopped just as "Stop and wait for limit to reset" does and can never pick usage credits, extra usage, or an upgrade.
-2. Reads one `quota-axi --all-accounts --json --max-age 0` snapshot and picks another listed account whose quota is known, fresh, above the fixed 5% safety margin in every window that applies to the worker's model, with a usable signed-in root and paid extra usage disabled.
+2. Reads one fresh `quota-axi --all-accounts --json` snapshot and picks another listed account whose quota is known, fresh, above the fixed 5% safety margin in every window that applies to the worker's model, with a usable signed-in root and paid extra usage disabled.
 3. Stops the task's own active no-mistakes run through `no-mistakes axi abort --run <id>` and confirms it ended, and moves nothing while a run it cannot read or stop may still be active.
 4. Relaunches the worker on the chosen account through `bin/fm-control.sh <id> relaunch --claude-account <name>` with a handoff note, so the replacement resumes from the task's instructions and durable records.
 
@@ -997,7 +997,7 @@ When no account qualifies, the worker stays stopped and its status gets one `blo
 Secondmates are never moved: they carry no `StopFailure` hook, and a supervisor's account is also the one every worker it spawns inherits.
 `config/claude-account` pins every Claude worker to one account, so a home with both files leaves limited workers stopped and says so.
 Accounts with a paid credits window or unknown paid usage status never qualify, even when their plan has room.
-Selection, control, and spawn require an unreused vendor reading and force `--max-age 0` for their quota queries before launching a worker on a mapped account; disable paid extra usage in the account itself before using it for failover.
+Selection, control, and spawn require an unreused vendor reading and run their quota queries with `QUOTA_AXI_MAX_AGE` unset before launching a worker on a mapped account; disable paid extra usage in the account itself before using it for failover.
 Control and spawn recheck every quota scope that applies to the replacement's model and refuse a launch when an applicable allowance is unknown, exhausted, or has 5% or less remaining.
 The recorded generation is checked inside the control plane's gate, supervision lease, and lifecycle lock before the event is consumed or the worker and validation run are changed.
 `bin/fm-account-failover.sh` owns detection, the choice, and the move, and its header lists the remaining tuning variables.
