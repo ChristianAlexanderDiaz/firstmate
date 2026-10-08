@@ -26,10 +26,9 @@
 # task to `run`, which enters the control plane's gate, lease, and lifecycle
 # boundary before consuming the generation-bound record exactly once, then:
 #   1. Drops the record silently when it is stale (another incarnation, a task
-#      no longer a canonical claude ship or scout) or names no usage limit: the
-#      hook's limit text and the rendered limit prompt are two independent
-#      signals, and either one confirms it.
-#   2. Answers Claude's usage-limit prompt, when it is on screen, with its
+#      no longer a canonical claude ship or scout) or the rendered usage-limit
+#      prompt is absent.
+#   2. Answers Claude's usage-limit prompt with its
 #      cancel key (Escape), which leaves the session stopped exactly as the
 #      prompt's "Stop and wait for limit to reset" option does. That key cannot
 #      select any option, so no paid choice (usage credits, extra usage, an
@@ -97,9 +96,6 @@ usage() {
 # lands on a screen that is not this prompt.
 FM_ACCOUNT_FAILOVER_MENU_STOP_RE='Stop and wait for limit to reset'
 FM_ACCOUNT_FAILOVER_MENU_CANCEL_RE='Esc to cancel'
-# Claude's own limit text, as the hook's last_assistant_message and the
-# transcript render it ("You've hit your weekly limit · resets ...").
-FM_ACCOUNT_FAILOVER_LIMIT_RE='[Ll]imit'
 
 # --- record -----------------------------------------------------------------
 
@@ -324,7 +320,7 @@ cmd_run() {
 fm_account_failover_recover() {
   CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
   NM_SECONDS=${FM_ACCOUNT_FAILOVER_NM_SECONDS:-20}
-  local marker_file="$STATE/$ID.usage-limit" marker message gen menu=0
+  local marker_file="$STATE/$ID.usage-limit" marker message gen
   local snapshot current pick choice to run_id
   local menu_wait=${FM_ACCOUNT_FAILOVER_MENU_WAIT:-5} quota_seconds=${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}
 
@@ -346,23 +342,15 @@ fm_account_failover_recover() {
   case "$KIND" in ship | scout) ;; *) skipped "a $KIND is not moved between accounts" ;; esac
   message=$(marker_field "$marker" message)
 
-  # Two independent signals confirm a usage limit rather than a transient 429.
-  if wait_menu shown "$menu_wait"; then
-    menu=1
-  fi
-  if [ "$menu" = 0 ] && ! printf '%s' "$message" | grep -Eq -- "$FM_ACCOUNT_FAILOVER_LIMIT_RE"; then
-    skipped "the rate-limit turn end shows no usage limit"
-  fi
+  wait_menu shown "$menu_wait" || skipped "the rate-limit turn end shows no usage-limit prompt"
   local limit_text=${message:-Claude usage limit reached}
 
   # Answer the prompt with its stop outcome before anything else. Escape is the
   # one key that can never select a paid option.
-  if [ "$menu" = 1 ]; then
-    fm_backend_send_key "$BACKEND" "$T" Escape "fm-$ID" >/dev/null 2>&1 \
-      || status_blocked "Claude usage limit reached ($limit_text); its limit prompt could not be answered, so the worker was not moved"
-    wait_menu gone "$menu_wait" \
-      || status_blocked "Claude usage limit reached ($limit_text); its limit prompt stayed open after Escape, so the worker was not moved"
-  fi
+  fm_backend_send_key "$BACKEND" "$T" Escape "fm-$ID" >/dev/null 2>&1 \
+    || status_blocked "Claude usage limit reached ($limit_text); its limit prompt could not be answered, so the worker was not moved"
+  wait_menu gone "$menu_wait" \
+    || status_blocked "Claude usage limit reached ($limit_text); its limit prompt stayed open after Escape, so the worker was not moved"
 
   [ "$MAP" != invalid ] \
     || status_blocked "Claude usage limit reached ($limit_text); config/$FM_WORKER_ACCOUNT_FAILOVER_FILE is malformed, so the worker was left stopped"

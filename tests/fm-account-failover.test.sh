@@ -212,7 +212,7 @@ case_env() {
 # record_limit <id> [error] [message]: what the worker's StopFailure hook does,
 # from inside a worker running under the ordinary account.
 record_limit() {
-  local id=$1 error=${2:-rate_limit} message=${3:-$LIMIT_TEXT}
+  local id=$1 error=${2:-rate_limit} message=${3-$LIMIT_TEXT}
   jq -nc --arg e "$error" --arg m "$message" '{hook_event_name: "StopFailure", error: $e, last_assistant_message: $m}' |
     case_env "$FAILOVER" record "$CASE/home/config" "$CASE/home/state" "$id" g1
 }
@@ -396,7 +396,7 @@ MODELS
 test_limit_prompt_is_answered_with_stop_and_the_worker_moves_to_an_account_with_room() {
   local out
   new_case move t3
-  record_limit t3
+  record_limit t3 rate_limit ""
   out=$(case_env "$FAILOVER" tick 2>&1)
   assert_contains "$out" "moved t3 limited spare" "the failover should report the move: $out"
   # The prompt gets exactly one key, its cancel, and nothing reaches the
@@ -455,7 +455,7 @@ test_an_active_no_mistakes_run_is_aborted_before_the_move() {
   pass "run: an active no-mistakes run is aborted and proven stopped before the worker moves"
 }
 
-test_stale_or_unconfirmed_records_never_move_a_worker() {
+test_stale_records_never_move_a_worker() {
   local out
   new_case stale t7
   record_limit t7
@@ -464,13 +464,42 @@ test_stale_or_unconfirmed_records_never_move_a_worker() {
   assert_contains "$out" "skipped t7" "a record from another incarnation is skipped: $out"
   [ ! -s "$CASE/fake/keys" ] || fail "a stale record must not touch the terminal"
 
-  new_case transient t8
-  rm -f "$CASE/fake/screen"
-  record_limit t8 rate_limit "API Error: Request rejected (429)"
-  out=$(case_env "$FAILOVER" run t8 2>&1)
-  assert_contains "$out" "skipped t8" "a 429 with no limit text and no prompt is not a usage limit: $out"
-  [ ! -e "$CASE/fake/quota-calls" ] || fail "an unconfirmed limit must not read quota"
-  pass "run: stale records and rate-limit turn ends without a usage limit are skipped"
+  pass "run: stale records are skipped"
+}
+
+test_unconfirmed_rate_limits_leave_validation_and_worker_untouched() {
+  local scenario id message out meta brief
+  for scenario in run tick control text-only stop-only cancel-only; do
+    id="t8-$scenario"
+    new_case "transient-$scenario" "$id"
+    rm -f "$CASE/fake/screen"
+    message="API Error: Rate limit reached"
+    case "$scenario" in
+      text-only) message=$LIMIT_TEXT ;;
+      stop-only) printf 'Stop and wait for limit to reset\n' > "$CASE/fake/screen" ;;
+      cancel-only) printf 'Esc to cancel\n' > "$CASE/fake/screen" ;;
+    esac
+    printf 'running' > "$CASE/fake/nm-state"
+    meta=$(cat "$CASE/home/state/$id.meta")
+    brief=$(cat "$CASE/home/data/$id/brief.md")
+    record_limit "$id" rate_limit "$message"
+    case "$scenario" in
+      tick) out=$(case_env "$FAILOVER" tick 2>&1) ;;
+      control) out=$(case_env "$CONTROL" "$id" relaunch --usage-limit 2>&1) ;;
+      *) out=$(case_env "$FAILOVER" run "$id" 2>&1) ;;
+    esac
+    assert_contains "$out" "skipped $id" "$scenario without the complete prompt must be skipped: $out"
+    [ ! -e "$CASE/fake/quota-calls" ] || fail "$scenario must not read quota"
+    [ ! -e "$CASE/fake/nm-calls" ] || fail "$scenario must not touch validation"
+    assert_equals running "$(cat "$CASE/fake/nm-state")" "$scenario must leave validation running"
+    [ ! -s "$CASE/fake/keys" ] || fail "$scenario must not send terminal keys"
+    [ ! -s "$CASE/fake/literal" ] || fail "$scenario must not stop or relaunch the worker"
+    assert_equals claude "$(cat "$CASE/fake/command")" "$scenario must leave the worker running"
+    assert_equals "$meta" "$(cat "$CASE/home/state/$id.meta")" "$scenario must retain the worker's account and generation"
+    assert_equals "$brief" "$(cat "$CASE/home/data/$id/brief.md")" "$scenario must not create a handoff"
+    [ -z "$(status_of "$id")" ] || fail "$scenario must not report account exhaustion"
+  done
+  pass "recovery: throttling, hook text, and partial prompts leave validation and the worker untouched"
 }
 
 test_a_second_usage_limit_moves_to_a_third_account() {
@@ -666,7 +695,6 @@ SH
   assert_no_grep 'claude_account=' "$CASE/home/state/t17.meta" "failed spawn retains the prior record"
   assert_no_grep 'encode launch-brief' "$CASE/fake/literal" "no paid replacement is started"
   new_case paid-auto t19
-  rm -f "$CASE/fake/screen"
   cat > "$CASE/fakebin/quota-axi" <<SH
 #!/usr/bin/env bash
 printf 'read\n' >> '$CASE/fake/quota-calls'
@@ -910,7 +938,8 @@ test_choose_refuses_unknown_quota_and_paid_usage
 test_limit_prompt_is_answered_with_stop_and_the_worker_moves_to_an_account_with_room
 test_no_qualifying_account_leaves_the_worker_stopped_with_one_blocked_line
 test_an_active_no_mistakes_run_is_aborted_before_the_move
-test_stale_or_unconfirmed_records_never_move_a_worker
+test_stale_records_never_move_a_worker
+test_unconfirmed_rate_limits_leave_validation_and_worker_untouched
 test_a_second_usage_limit_moves_to_a_third_account
 test_the_watcher_moves_a_limited_worker_and_wakes_once
 test_relaunch_refuses_an_unusable_account_before_stopping_the_worker

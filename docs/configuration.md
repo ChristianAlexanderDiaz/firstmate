@@ -977,7 +977,8 @@ Blank lines and lines starting with `#` are ignored, names are unique, and a con
 
 ### What happens at a usage limit
 
-Every Claude ship and scout records its turn end through Claude's `StopFailure` hook, and a `rate_limit` turn end with Claude's limit text or its limit prompt on screen counts as a usage limit.
+Every Claude ship and scout records its turn end through Claude's `StopFailure` hook, and a `rate_limit` turn end counts as a usage limit only when the rendered prompt shows both "Stop and wait for limit to reset" and "Esc to cancel".
+Hook text alone, including "API Error: Rate limit reached", never triggers an account move or validation cancellation.
 Firstmate's monitoring then, within one cycle:
 
 1. Answers the limit prompt with Escape, its cancel key, which leaves the worker stopped just as "Stop and wait for limit to reset" does and can never pick usage credits, extra usage, or an upgrade.
