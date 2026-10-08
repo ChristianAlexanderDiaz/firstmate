@@ -429,7 +429,15 @@ FM_ACCOUNT_FAILOVER_LIVE=1 FM_ACCOUNT_FAILOVER_LIVE_ROOT=ordinary tests/fm-accou
 ok - account failover live: 2.1.287 (Claude Code) records the usage limit and its prompt closes on Escape alone
 ```
 
-A full move was also run once in an isolated Herdr lab home: a real scout spawned on the limited account was moved by `fm-account-failover.sh tick` to a second signed-in account with room (`moved <id> <limited> <other>`, task record `claude_account=<other>`), and the replacement started under that account and completed its brief.
+Full moves were verified 2026-10-08 on Claude Code 2.1.293, herdr 0.9.0, and quota-axi 0.1.55, in an isolated Herdr lab home whose `config/claude-failover` mapped two real signed-in accounts, with the limit recorded through the production `record` subcommand because the first account still had 4% left.
+Each worker was a real Claude ship or scout spawned on the first account by `bin/fm-spawn.sh`, and `fm-account-failover.sh tick` ran against the real `quota-axi --all-accounts` unless noted:
+
+- A scout that had finished its first step was moved (`moved <id> <first> <second>`, task record `claude_account=<second>`), and the replacement, whose status line named the second account, found the first step done in the preserved local copy and finished the second.
+- With the second account rewritten to 3% in the quota reading, the worker stayed alive and stopped, and one `blocked:` line named both accounts' remaining quota and resets.
+- With the second account rewritten to exhausted at the control launch check, the relaunch was refused before the worker was stopped; rewritten to exhausted at the spawn launch check, the worker was stopped, no replacement started, and the task record kept no account.
+- A ship whose own no-mistakes run was `running` had that run `cancelled` before it moved, and its handoff note named the aborted run.
+
+The vendor's quota endpoint rate-limits a burst of reads, and a reading taken during that window reports the account stale, so a move attempted then blocks rather than moves.
 
 ## Claude workspace trust
 
