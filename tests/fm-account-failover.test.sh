@@ -648,6 +648,70 @@ test_recovery_guards_precede_every_mutation() {
   pass "run: gate, lease, and lifecycle boundaries protect all recovery mutations"
 }
 
+test_recovery_requires_a_restart_capable_backend_before_any_mutation() {
+  local backend kind entry tool window out rc marker meta brief screen
+  for backend in zellij orca cmux; do
+    for kind in ship scout; do
+      for entry in run tick control; do
+        new_case "capability-$backend-$kind-$entry" t29 "$kind"
+        printf 'running' > "$CASE/fake/nm-state"
+        case "$backend" in
+          zellij)
+            window=fmses:7
+            printf 'zellij_session=fmses\nzellij_tab_id=1\nzellij_pane_id=7\n' >> "$CASE/home/state/t29.meta"
+            ;;
+          orca)
+            window=fm-t29
+            printf 'terminal=term-1\norca_worktree_id=wt-1::%s\n' "$CASE/wt" >> "$CASE/home/state/t29.meta"
+            ;;
+          cmux)
+            window=ws1:surface1
+            printf 'cmux_workspace_id=ws1\ncmux_surface_id=surface1\n' >> "$CASE/home/state/t29.meta"
+            ;;
+        esac
+        printf 'backend=%s\n' "$backend" >> "$CASE/home/state/t29.meta"
+        sed "s/^window=.*/window=$window/" "$CASE/home/state/t29.meta" > "$CASE/home/state/t29.meta.new"
+        mv "$CASE/home/state/t29.meta.new" "$CASE/home/state/t29.meta"
+        for tool in zellij orca cmux; do
+          cat > "$CASE/fakebin/$tool" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_FAKE_DIR/backend-calls"
+exit 1
+SH
+          chmod +x "$CASE/fakebin/$tool"
+        done
+        record_limit t29
+        marker=$(cat "$CASE/home/state/t29.usage-limit")
+        meta=$(cat "$CASE/home/state/t29.meta")
+        brief=$(cat "$CASE/home/data/t29/brief.md")
+        screen=$(cat "$CASE/fake/screen")
+        case "$entry" in
+          run) out=$(case_env "$FAILOVER" run t29 2>&1); rc=$? ;;
+          tick) out=$(case_env "$FAILOVER" tick 2>&1); rc=$? ;;
+          control) out=$(case_env "$CONTROL" t29 relaunch --usage-limit 2>&1); rc=$? ;;
+        esac
+        if [ "$entry" = tick ]; then
+          expect_code 0 "$rc" "tick reports the refused $backend recovery without failing its cycle: $out"
+          assert_contains "$out" "skipped t29" "tick must report the refused recovery"
+        else
+          expect_code 1 "$rc" "$backend recovery must refuse: $out"
+          assert_contains "$out" "no recovery-grade agent-state classifier" "the refusal must name the missing restart capability"
+        fi
+        assert_equals "$marker" "$(cat "$CASE/home/state/t29.usage-limit")" "$backend $entry must preserve the event"
+        assert_equals "$meta" "$(cat "$CASE/home/state/t29.meta")" "$backend $entry must preserve the worker record"
+        assert_equals "$brief" "$(cat "$CASE/home/data/t29/brief.md")" "$backend $entry must not create a handoff"
+        assert_equals "$screen" "$(cat "$CASE/fake/screen")" "$backend $entry must leave the prompt open"
+        assert_equals running "$(cat "$CASE/fake/nm-state")" "$backend $entry must preserve active validation"
+        [ ! -e "$CASE/fake/nm-calls" ] || fail "$backend $entry must not touch validation"
+        [ ! -e "$CASE/fake/quota-calls" ] || fail "$backend $entry must not select another account"
+        [ ! -e "$CASE/fake/backend-calls" ] || fail "$backend $entry must not access the terminal"
+        [ ! -s "$CASE/fake/keys" ] && [ ! -s "$CASE/fake/literal" ] || fail "$backend $entry must not send keys or commands"
+      done
+    done
+  done
+  pass "recovery: unsupported restart backends preserve the event, prompt, worker, and validation"
+}
+
 test_manual_relaunch_cannot_race_the_quota_query() {
   local out
   new_case quota-race t15
@@ -946,6 +1010,7 @@ test_relaunch_refuses_an_unusable_account_before_stopping_the_worker
 test_a_moved_task_keeps_its_literal_account
 test_unusable_preferred_accounts_are_filtered_before_validation
 test_recovery_guards_precede_every_mutation
+test_recovery_requires_a_restart_capable_backend_before_any_mutation
 test_manual_relaunch_cannot_race_the_quota_query
 test_paid_usage_is_rejected_at_control_and_spawn_launch_boundaries
 test_model_choices_check_every_family_they_can_use

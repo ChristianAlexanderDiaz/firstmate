@@ -1001,6 +1001,7 @@ Accounts with a paid credits window or unknown paid usage status never qualify, 
 Selection, control, and spawn require an unreused vendor reading and run their quota queries with `QUOTA_AXI_MAX_AGE` unset before launching a worker on a mapped account; disable paid extra usage in the account itself before using it for failover.
 Control and spawn recheck every quota scope that applies to the replacement's model and refuse a launch when an applicable allowance is unknown, exhausted, or has 5% or less remaining.
 The recorded generation is checked inside the control plane's gate, supervision lease, and lifecycle lock before the event is consumed or the worker and validation run are changed.
+Automatic recovery refuses backends without the control plane's recovery-grade agent-state classifier before consuming the event or changing the worker or validation.
 `bin/fm-account-failover.sh` owns detection, the choice, and the move, and its header lists the remaining tuning variables.
 
 ## Lavish server address (config/lavish-axi-host)

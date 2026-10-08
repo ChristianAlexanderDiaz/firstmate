@@ -23,8 +23,9 @@
 # Claude printed. It never fails the hook.
 #
 # The move. `tick` (run by bin/fm-watch.sh once per cycle) hands each recorded
-# task to `run`, which enters the control plane's gate, lease, and lifecycle
-# boundary before consuming the generation-bound record exactly once, then:
+# task to `run`, which enters the control plane's gate, lease, lifecycle, and
+# backend capability boundary before consuming the generation-bound record
+# exactly once, then:
 #   1. Drops the record silently when it is stale (another incarnation, a task
 #      no longer a canonical claude ship or scout) or the rendered usage-limit
 #      prompt is absent.
@@ -318,6 +319,7 @@ cmd_run() {
 }
 
 fm_account_failover_recover() {
+  require_state_verified_backend relaunch
   CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
   NM_SECONDS=${FM_ACCOUNT_FAILOVER_NM_SECONDS:-20}
   local marker_file="$STATE/$ID.usage-limit" marker message gen
