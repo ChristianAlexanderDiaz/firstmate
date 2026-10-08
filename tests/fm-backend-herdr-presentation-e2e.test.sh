@@ -1361,14 +1361,14 @@ PATH="$HERDR_ORIGINAL_PATH" "$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION" \
   || fail "could not reprovision the isolated session for resume lock-refuse"
 
 LOCK_REFUSE_READY="$TMP_ROOT/lock-refuse-ready"
-LOCK_REFUSE_HOLD_SECONDS=15
+LOCK_REFUSE_RELEASE="$TMP_ROOT/lock-refuse-release"
 LOCK_REFUSE_PATH=$(session_presentation_lock_path) \
   || fail "could not resolve session lock for resume lock-refuse"
-ROOT="$ROOT" READY="$LOCK_REFUSE_READY" HOLD="$LOCK_REFUSE_HOLD_SECONDS" LOCK="$LOCK_REFUSE_PATH" bash -c '
+ROOT="$ROOT" READY="$LOCK_REFUSE_READY" RELEASE="$LOCK_REFUSE_RELEASE" LOCK="$LOCK_REFUSE_PATH" bash -c '
   . "$ROOT/bin/fm-wake-lib.sh"
   fm_lock_try_acquire "$LOCK" || exit 1
   : > "$READY"
-  sleep "$HOLD"
+  while [ ! -e "$RELEASE" ]; do sleep 0.1; done
   fm_lock_release "$LOCK"
 ' &
 LOCK_REFUSE_HOLDER_PID=$!
@@ -1376,12 +1376,18 @@ while [ ! -e "$LOCK_REFUSE_READY" ] && kill -0 "$LOCK_REFUSE_HOLDER_PID" 2>/dev/
 [ -e "$LOCK_REFUSE_READY" ] || fail "could not hold the session presentation lock for resume lock-refuse"
 
 LOCK_REFUSE_FOCUS=$(focus_snapshot)
-if spawn_task "$LOCK_REFUSE_ID" "$HOME_DIR" "$RECOVERY_PROJECT_DIR" \
+# Keep ownership until the default attempt returns, rather than releasing it
+# after upstream's former five-second window. The fork deliberately permits a
+# two-minute bounded wait, and process/scheduling overhead can extend that.
+LOCK_REFUSE_START=$(date +%s)
+if SPAWN_DEADLINE_SECONDS=300 spawn_task "$LOCK_REFUSE_ID" "$HOME_DIR" "$RECOVERY_PROJECT_DIR" \
     > "$TMP_ROOT/lock-refuse-resume.out" 2> "$TMP_ROOT/lock-refuse-resume.err"; then
   LOCK_REFUSE_STATUS=0
 else
   LOCK_REFUSE_STATUS=$?
 fi
+LOCK_REFUSE_ELAPSED=$(( $(date +%s) - LOCK_REFUSE_START ))
+: > "$LOCK_REFUSE_RELEASE"
 if [ "$LOCK_REFUSE_STATUS" -eq 0 ]; then
   kill "$LOCK_REFUSE_HOLDER_PID" 2>/dev/null || true
   wait "$LOCK_REFUSE_HOLDER_PID" 2>/dev/null || true
@@ -1402,10 +1408,9 @@ assert_focus_is "$LOCK_REFUSE_FOCUS" "resume lock-refuse"
 pass "real Herdr lab: default resumed identity refuses session lock contention"
 
 # With --herdr-resume-lock-wait, the same exact resume WAITS for session lock
-# contention rather than treating a short bounded window as fatal. Hold the
-# shared session lock from an unrelated process for a duration well past any
-# plausible bounded-retry window so the assertion below is deterministic
-# rather than a race that could pass by luck on a fast machine.
+# contention rather than treating the bounded window as fatal. Hold the lock
+# past the default refusal just measured, with scheduling headroom, so this
+# case proves the explicit option extends the fork's two-minute default too.
 LOCK_WAIT_ID=$LOCK_REFUSE_ID
 LOCK_WAIT_META=$LOCK_REFUSE_META
 LOCK_WAIT_OLD_WT=$LOCK_REFUSE_OLD_WT
@@ -1417,7 +1422,7 @@ PATH="$HERDR_ORIGINAL_PATH" "$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION" \
   || fail "could not reprovision the isolated session for resume lock-wait"
 
 LOCK_WAIT_READY="$TMP_ROOT/lock-wait-ready"
-LOCK_WAIT_HOLD_SECONDS=30
+LOCK_WAIT_HOLD_SECONDS=$((LOCK_REFUSE_ELAPSED + 30))
 LOCK_WAIT_PATH=$(session_presentation_lock_path) \
   || fail "could not resolve session lock for resume lock-wait"
 ROOT="$ROOT" READY="$LOCK_WAIT_READY" HOLD="$LOCK_WAIT_HOLD_SECONDS" LOCK="$LOCK_WAIT_PATH" bash -c '
