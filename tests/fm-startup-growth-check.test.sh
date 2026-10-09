@@ -321,11 +321,14 @@ test_over_long_finding_set_is_capped_with_the_shared_marker() {
     seg="${seg}memory"
   done
   deep="$home/data"
-  while [ "${#deep}" -lt 1200 ]; do
+  # The finding adds enough context to exceed 1000 characters while the
+  # actual filename remains below macOS's 1024-byte path limit.
+  while [ "${#deep}" -lt 900 ]; do
     deep="$deep/$seg"
   done
-  mkdir -p "$deep"
-  ln -s "$home/data/captain.md" "$deep/learnings.md"
+  mkdir -p "$deep" || fail "could not create the capped-report fixture directory"
+  ln -s "$home/data/captain.md" "$deep/learnings.md" \
+    || fail "could not create the capped-report fixture symlink"
   out=$(FM_ROOT_OVERRIDE="$root" FM_HOME="$home" FM_DATA_OVERRIDE="$deep" FM_STARTUP_GROWTH_NOW=1000 \
     "$CHECK" check 2>/dev/null) || fail "capped check failed"
   assert_contains "$out" 'unsafe memory data/learnings.md' "the leading finding was lost"
