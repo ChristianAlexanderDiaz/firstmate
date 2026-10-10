@@ -382,6 +382,8 @@ Once the exact pane is confirmed gone, teardown retires the task's own journal w
 Recovery is deliberately conservative and presentation-only.
 An existing journal suppresses another projected create.
 Before any recovery mutation, Firstmate holds both the task spawn lock and the named-session presentation lock.
+That presentation lock lives in a namespace private to the OS account, so another account on the same host running its own Firstmate on Herdr cannot block this account's spawn, recovery, or teardown.
+A namespace at this account's name that another account owns, or that is not mode 700, is still refused and is never adopted, chowned, or removed.
 
 A same-identity version 2 binding may replace one exact agent-free restart husk in place.
 A husk is a restored same-labeled tab with a missing pane or no registered agent, as [Restart and liveness behavior](#restart-and-liveness-behavior) describes.
@@ -475,9 +477,9 @@ Any of these preserves the candidate and lets session startup continue with at m
 - Ordering is best-effort; only an exact same-identity version 2 binding survives a Herdr restart in place.
 - A failed journal publication or projected workspace create stops that spawn instead of falling back flat.
   So a Herdr create failure surfaces as a spawn failure in every Herdr home, rather than only in homes that opted in.
-  Every earlier degradation on the fresh projected-create path (no session server, a presentation lock still busy after the two-minute wait, absent or ambiguous parent) still warns and continues flat.
-- Recovery of an existing presentation journal deliberately refuses the spawn when the shared presentation lock stays busy through that wait, rather than falling back flat.
-  Default-on makes that refusal reachable in any Herdr home.
+  Every earlier degradation on the fresh projected-create path (no session server, presentation lock still busy after the retry budget, absent or ambiguous parent) still warns and continues flat.
+- Recovery of an existing presentation journal refuses by default when the shared presentation lock stays busy through the bounded wait, rather than falling back flat.
+  [`bin/fm-spawn.sh`'s header](../bin/fm-spawn.sh) owns the `--herdr-resume-lock-wait` opt-in, its applicability, and the default retry budget, which includes lock-probe and scheduling time rather than a wall-clock deadline.
 - Existing spaces are never renamed; the presentation order rearranges them only by verified moves.
 - Missing or ambiguous restart bindings fall back to the ordinary home workspace while the old projection remains untouched.
 - Crashes, lost responses, failed exact-pane cleanup, or human renames can leave quarantined spaces.
