@@ -143,9 +143,10 @@
 #   A clean projected create and an exact resume both hold the one
 #   session-scoped presentation-order lock (keyed by named session plus
 #   canonical socket, outside any home's state/) through launch handoff.
-#   On contention a create waits up to two minutes and falls back to the
-#   ordinary flat layout before any projection mutation. A resume refuses by
-#   default after the same bounded wait (it does not degrade flat; a concurrent
+#   On contention a create tries the lock up to 1200 times with 0.1-second
+#   sleeps, plus lock-probe and scheduling time, then falls back to the ordinary
+#   flat layout before any projection mutation. A resume refuses by
+#   default after the same retry budget (it does not degrade flat; a concurrent
 #   resume is a hard failure). Pass --herdr-resume-lock-wait to opt that
 #   resume into waiting for the lock instead, so two concurrent recoveries
 #   can serialize and each still replace its own exact husk. The flag acts
@@ -194,8 +195,8 @@
 #   render, endpoint, worktree, record, or backlog move exists, so the task stays
 #   exactly as queued as it was; an unreadable declaration refuses with exit 1.
 #   A batch reports such a pair as `batch: DEFERRED` and exits 75 when nothing
-#   else failed. A relaunch and a --secondmate spawn are never counted against
-#   capacity.
+#   else failed. A relaunch and a --secondmate spawn are exempt from capacity
+#   admission; an existing worker's occupancy follows the library's contract.
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
 #   spawns require an explicit harness so firstmate cannot silently skip dispatch
@@ -1463,7 +1464,8 @@ trap spawn_abort_cleanup EXIT
 # is required so secondmate and primary spawns serialize against the same
 # session without writing any other home's state directory.
 #
-# Default mode is a BOUNDED wait of up to two minutes. A clean create uses it and
+# Default mode uses the retry budget documented in this script's header, not a
+# two-minute wall-clock deadline. A clean create uses it and
 # falls back to the ordinary flat layout on contention. An exact resume also
 # defaults to that bounded wait and hard-refuses on contention (it does not
 # degrade flat). Passing mode `wait` makes this call WAIT for the lock instead

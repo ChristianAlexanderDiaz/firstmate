@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# tests/fm-tmux-submit-busy.test.sh - regression: busy pane + pending composer
-# after Enter retries must return "empty" (message queued), not "pending".
+# tests/fm-tmux-submit-busy.test.sh - verified busy-queue submit conversions,
+# preserved ambiguous verdicts, and blocking-dialog refusal before Enter retries.
 set -u
 
 # shellcheck source=tests/lib.sh

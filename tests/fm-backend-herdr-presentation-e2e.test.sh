@@ -1379,8 +1379,10 @@ LOCK_REFUSE_FOCUS=$(focus_snapshot)
 # Keep ownership until the default attempt returns, rather than releasing it
 # after upstream's former five-second window. The fork deliberately permits a
 # two-minute bounded wait, and process/scheduling overhead can extend that.
+# The real macOS lock probe can take over five minutes for its bounded retries,
+# so leave watchdog headroom while still requiring the two-minute minimum.
 LOCK_REFUSE_START=$(date +%s)
-if SPAWN_DEADLINE_SECONDS=300 spawn_task "$LOCK_REFUSE_ID" "$HOME_DIR" "$RECOVERY_PROJECT_DIR" \
+if SPAWN_DEADLINE_SECONDS=480 spawn_task "$LOCK_REFUSE_ID" "$HOME_DIR" "$RECOVERY_PROJECT_DIR" \
     > "$TMP_ROOT/lock-refuse-resume.out" 2> "$TMP_ROOT/lock-refuse-resume.err"; then
   LOCK_REFUSE_STATUS=0
 else

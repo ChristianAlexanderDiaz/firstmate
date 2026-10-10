@@ -477,14 +477,9 @@ Any of these preserves the candidate and lets session startup continue with at m
 - Ordering is best-effort; only an exact same-identity version 2 binding survives a Herdr restart in place.
 - A failed journal publication or projected workspace create stops that spawn instead of falling back flat.
   So a Herdr create failure surfaces as a spawn failure in every Herdr home, rather than only in homes that opted in.
-  Every earlier degradation on the fresh projected-create path (no session server, presentation lock still busy after the two-minute wait, absent or ambiguous parent) still warns and continues flat.
+  Every earlier degradation on the fresh projected-create path (no session server, presentation lock still busy after the retry budget, absent or ambiguous parent) still warns and continues flat.
 - Recovery of an existing presentation journal refuses by default when the shared presentation lock stays busy through the bounded wait, rather than falling back flat.
-  Pass `fm-spawn.sh --herdr-resume-lock-wait` to opt that recovery into waiting for the lock instead, so concurrent recoveries can serialize.
-  The flag applies to a fresh ship or scout spawn that recovers a journal.
-  The multi-task path forwards the flag to each per-pair spawn.
-  `fm-spawn.sh --relaunch` and `--secondmate` take no exact-resume presentation-order lock, so the flag has no effect there.
-  Dead-owner reclaim still stops the wait when a holder crashed.
-  Unbounded blocking on the session lock is never the default.
+  [`bin/fm-spawn.sh`'s header](../bin/fm-spawn.sh) owns the `--herdr-resume-lock-wait` opt-in, its applicability, and the default retry budget, which includes lock-probe and scheduling time rather than a wall-clock deadline.
 - Existing spaces are never renamed; the presentation order rearranges them only by verified moves.
 - Missing or ambiguous restart bindings fall back to the ordinary home workspace while the old projection remains untouched.
 - Crashes, lost responses, failed exact-pane cleanup, or human renames can leave quarantined spaces.

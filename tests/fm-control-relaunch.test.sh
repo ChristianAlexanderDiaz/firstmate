@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # fm-control.sh relaunch: the transactional replace-the-agent verb.
 #
-# Relaunch is the only control verb that changes durable records, so these
-# tests pin the transaction itself, hermetically (stubbed session provider, no
+# Relaunch replaces the durable launch records, so these tests pin that
+# transaction itself, hermetically (stubbed session provider, no
 # real agent):
 #   1. A same-harness relaunch keeps every identity axis and reuses the SAME
 #      endpoint and worktree - it replaces an agent, it never forks a task.

@@ -9,7 +9,7 @@
 # data/pipeline-spend.jsonl, at most once per task incarnation (task id plus
 # the record's spawn_gen): repeating it for an incarnation already in the
 # ledger appends nothing, so a retried cleanup never counts a task twice.
-# Recording is disabled unless config/pipeline-spend is present; in that case
+# Recording is disabled unless config/pipeline-spend is present. When disabled,
 # this command exits before reading task metadata, no-mistakes state, or ledger.
 # When enabled, bin/fm-teardown.sh calls record for every ship task whose
 # local copy it cleans up, before it deletes the task branch this script

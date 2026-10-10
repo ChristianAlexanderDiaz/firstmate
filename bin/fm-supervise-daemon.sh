@@ -4,8 +4,8 @@
 # Wraps bin/fm-watch.sh: runs it as a child, presents and classifies every
 # durable wake after an actionable close, acknowledges only after routing, and
 # either SELF-HANDLES the routine majority in bash (no firstmate turn) or
-# ESCALATES a batched, distilled digest to the supervisor pane on
-# captain-relevant events plus bounded declared-wait rechecks. This is the
+# ESCALATES a batched, distilled digest to the supervisor pane according to the
+# routing policy referenced below. This is the
 # token-efficient replacement for the prior always-inject daemon: routine
 # signal/stale/heartbeat wakes cost zero firstmate context; routing is owned by
 # .agents/skills/afk/SKILL.md (Classification policy).

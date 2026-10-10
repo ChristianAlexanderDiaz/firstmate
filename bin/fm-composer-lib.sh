@@ -1696,8 +1696,8 @@ fm_composer_blocking_dialog() {  # <screen> -> dialog name
   return 1
 }
 
-# A command substitution drops a shell variable, and every composer read runs
-# inside one. The name is therefore written to FM_COMPOSER_DIALOG_SINK when
+# Composer reads commonly run in command substitutions, which discard shell
+# variable changes. The name is therefore written to FM_COMPOSER_DIALOG_SINK when
 # that path is set. The classifier verdict is unchanged. When the sink is
 # unset the name would be discarded, so the match is skipped.
 fm_composer_note_blocking_dialog() {  # <screen>
@@ -1855,7 +1855,8 @@ EOF
 # typed the text ONCE (send_literal) and settled; this loop submits with
 # Enter, re-reading the composer verdict, and retries Enter ONLY - never
 # retypes, because a swallowed Enter leaves the text in the composer and
-# retyping would duplicate it. Proven pending (and pending-unproven) retries
+# retyping would duplicate it. A recognised blocking dialog ends retries before
+# another Enter can answer it. Otherwise pending (and pending-unproven) retries
 # consume the budget; any other verdict returns immediately, so `unknown`
 # stays a loud refusal rather than a blind retry into an unreadable pane.
 # tmux and herdr keep richer cores that consume this same shared verdict plus

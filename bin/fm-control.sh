@@ -76,9 +76,9 @@
 #              worker account pin (bin/fm-worker-account-lib.sh) here, so a pin
 #              that no longer resolves or is signed out refuses before the old
 #              agent stops.
-#              The same pre-stop refusal applies to this home's worker tool
-#              exclusions (bin/fm-exclude-tools-lib.sh): a malformed list, or a
-#              replacement runtime that cannot hide the listed tools.
+#              For ships and scouts, the same pre-stop refusal applies to this
+#              home's worker tool exclusions (bin/fm-exclude-tools-lib.sh): a
+#              malformed list, or a replacement runtime that cannot hide the tools.
 #              --note is required for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its

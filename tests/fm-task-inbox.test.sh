@@ -4,8 +4,8 @@
 #
 # The inbox+doorbell design replaces typed steer payloads with durable
 # sequenced records acknowledged by an atomic mv into handled/; the terminal
-# carries only a constant doorbell line, and the watcher re-rings an
-# unacknowledged message before escalating once as an ordinary stale wake.
+# carries only a constant doorbell line. The watcher bounds delivery attempts
+# and busy deferrals before escalating an unacknowledged ordinary message.
 # These tests pin the semantics with real processes:
 #   1. A message is written durably and appears in the inbox, byte-exact
 #      including newlines, with a doorbell naming the inbox glob, numeric order,
@@ -19,10 +19,10 @@
 #      spacing holds, a spent budget escalates exactly once, and an
 #      acknowledgement resets the ladder for the next message.
 #   5. A real fm-watch.sh subprocess re-rings the doorbell for an unhandled
-#      aged message on an idle pane WITHOUT waking firstmate, waits on a busy
-#      pane, stays silent on a healthy/empty inbox, surfaces unwritable ladder
-#      bookkeeping only while its record remains unhandled, and emits exactly
-#      one stale wake once the ring budget is spent.
+#      aged message on an idle pane WITHOUT waking firstmate, bounds consecutive
+#      busy deferrals across restarts, stays silent on a healthy/empty inbox,
+#      surfaces unwritable delivery or busy bookkeeping while the record remains
+#      unhandled, and deduplicates the resulting stale wake.
 #   6. Dead panes: the doorbell line is a shell no-op when executed by a bare
 #      shell, the ring skips an agent the backend classifies dead, and the
 #      watcher surfaces such a record exactly once instead of re-ringing.

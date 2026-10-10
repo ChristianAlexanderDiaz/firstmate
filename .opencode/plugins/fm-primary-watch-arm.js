@@ -119,7 +119,7 @@ async function isPrimaryRoot(root, home) {
 
 // bin/fm-supervision-lib.sh's fm_supervision_needed is the single owner of the
 // arm condition set (the turn-end guard decides with the same shared
-// predicate), so this plugin can never disagree with the guard again. Away
+// predicate), keeping ordinary arm decisions aligned with the guard. Away
 // mode stays a local decline: its daemon owns supervision. X-mode homes arm
 // before their relay poll is registered in the state directory.
 function shouldArm(paths) {

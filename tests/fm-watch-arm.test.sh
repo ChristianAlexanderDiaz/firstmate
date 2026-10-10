@@ -1587,7 +1587,7 @@ test_handling_delivered_rejects_a_superseded_generation() {
 # The OpenCode arm plugin must decide whether to arm with the shared supervision
 # predicate (bin/fm-supervision-lib.sh's fm_supervision_needed), the same
 # condition owner bin/fm-turnend-guard.sh decides with, so the plugin and the
-# guard can never disagree about whether a watcher is needed. The fixture is a
+# guard agree outside the local overrides exercised below. The fixture is a
 # minimal primary root carrying the real shared predicate, a home whose state
 # directory receives each case's records, and a fake arm that records its own
 # run; the plugin is exercised through its public coordinator interface.
