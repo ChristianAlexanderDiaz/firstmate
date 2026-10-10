@@ -27,16 +27,18 @@
 # backend capability boundary before consuming the generation-bound record
 # exactly once, then:
 #   1. Drops the record silently when it is stale (another incarnation, a task
-#      no longer a canonical claude ship or scout) or the rendered usage-limit
-#      prompt is absent.
-#   2. Answers Claude's usage-limit prompt with its
+#      no longer a canonical claude ship or scout) or neither the rendered
+#      usage-limit prompt nor the verified account-exhaustion wording appears.
+#   2. Answers Claude's usage-limit prompt, when shown, with its
 #      cancel key (Escape), which leaves the session stopped exactly as the
 #      prompt's "Stop and wait for limit to reset" option does. That key cannot
 #      select any option, so no paid choice (usage credits, extra usage, an
 #      upgrade) can ever be picked, whatever order the prompt lists them in.
+#      A repeat limit may report only "You've hit your ... limit" without a
+#      menu; that verified hook text confirms exhaustion without sending a key.
 #   3. Takes one fresh `quota-axi --all-accounts --json` snapshot and picks an
 #      account of the map through `choose`.
-#   4. With no qualifying account, leaves the worker stopped at its prompt and
+#   4. With no qualifying account, leaves the worker stopped and
 #      appends one `blocked:` line to the task's status naming each account's
 #      quota and reset time.
 #   5. For a ship whose own no-mistakes run is still active, aborts that run
@@ -97,6 +99,10 @@ usage() {
 # lands on a screen that is not this prompt.
 FM_ACCOUNT_FAILOVER_MENU_STOP_RE='Stop and wait for limit to reset'
 FM_ACCOUNT_FAILOVER_MENU_CANCEL_RE='Esc to cancel'
+# Claude Code 2.1.295 can report a repeat account limit without reopening the
+# menu. Match only its verified exhaustion wording at the start of the hook
+# message, never generic throttling text (docs/verification/runtime-backends.md).
+FM_ACCOUNT_FAILOVER_EXHAUSTED_RE="^You['’]ve hit your [^·]*limit([[:space:]·]|$)"
 
 # --- record -----------------------------------------------------------------
 
@@ -322,7 +328,7 @@ fm_account_failover_recover() {
   require_state_verified_backend relaunch
   CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
   NM_SECONDS=${FM_ACCOUNT_FAILOVER_NM_SECONDS:-20}
-  local marker_file="$STATE/$ID.usage-limit" marker message gen
+  local marker_file="$STATE/$ID.usage-limit" marker message gen menu=0
   local snapshot current pick choice to run_id
   local menu_wait=${FM_ACCOUNT_FAILOVER_MENU_WAIT:-5} quota_seconds=${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}
 
@@ -344,15 +350,21 @@ fm_account_failover_recover() {
   case "$KIND" in ship | scout) ;; *) skipped "a $KIND is not moved between accounts" ;; esac
   message=$(marker_field "$marker" message)
 
-  wait_menu shown "$menu_wait" || skipped "the rate-limit turn end shows no usage-limit prompt"
+  if wait_menu shown "$menu_wait"; then
+    menu=1
+  elif ! printf '%s' "$message" | grep -Eq -- "$FM_ACCOUNT_FAILOVER_EXHAUSTED_RE"; then
+    skipped "the rate-limit turn end shows no verified account exhaustion"
+  fi
   local limit_text=${message:-Claude usage limit reached}
 
-  # Answer the prompt with its stop outcome before anything else. Escape is the
-  # one key that can never select a paid option.
-  fm_backend_send_key "$BACKEND" "$T" Escape "fm-$ID" >/dev/null 2>&1 \
-    || status_blocked "Claude usage limit reached ($limit_text); its limit prompt could not be answered, so the worker was not moved"
-  wait_menu gone "$menu_wait" \
-    || status_blocked "Claude usage limit reached ($limit_text); its limit prompt stayed open after Escape, so the worker was not moved"
+  # Answer a shown prompt with its stop outcome before anything else. Escape is
+  # the one key that can never select a paid option; an absent menu gets no key.
+  if [ "$menu" = 1 ]; then
+    fm_backend_send_key "$BACKEND" "$T" Escape "fm-$ID" >/dev/null 2>&1 \
+      || status_blocked "Claude usage limit reached ($limit_text); its limit prompt could not be answered, so the worker was not moved"
+    wait_menu gone "$menu_wait" \
+      || status_blocked "Claude usage limit reached ($limit_text); its limit prompt stayed open after Escape, so the worker was not moved"
+  fi
 
   [ "$MAP" != invalid ] \
     || status_blocked "Claude usage limit reached ($limit_text); config/$FM_WORKER_ACCOUNT_FAILOVER_FILE is malformed, so the worker was left stopped"
@@ -394,7 +406,12 @@ fm_account_failover_recover() {
 
   NOTE=$({
     echo "Your previous agent stopped at its Claude account's usage limit (\"$limit_text\")."
-    echo "Firstmate chose that limit's stop option and moved this task to another signed-in Claude account with room; nothing was paid for."
+    if [ "$menu" = 1 ]; then
+      echo "Firstmate closed the usage-limit menu with Escape."
+    else
+      echo "Claude reported account exhaustion; no usage-limit menu was shown, so Firstmate sent no prompt key."
+    fi
+    echo "Firstmate moved this task to another signed-in Claude account with room; nothing was paid for."
     if [ -n "$run_id" ]; then
       echo "This task's no-mistakes run $run_id was aborted cleanly before the move; when you reach validation again, start a fresh run as your Definition of done describes."
     fi

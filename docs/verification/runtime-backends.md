@@ -417,6 +417,15 @@ Claude then opens this menu on its own:
 ```
 
 Escape closes it to an empty idle composer without choosing an option; Herdr reports the pane's agent status as `unknown` while the menu is open and for a moment after it closes, then `idle`.
+Observed 2026-10-10 on Claude Code 2.1.295 against an account genuinely at its weekly limit: after Escape closed the first limit menu and the move was refused, a later prompt ended through the real `StopFailure` hook with the payload below, but only the inline limit line and an idle composer appeared, with no reopened menu:
+
+```json
+{"error": "rate_limit",
+ "last_assistant_message": "You've hit your weekly limit · resets Oct 10 at 4pm (America/New_York)"}
+```
+
+The [failover contract](../configuration.md#what-happens-at-a-usage-limit) accepts that verified exhaustion wording without sending a prompt key.
+The focused `bash tests/fm-account-failover.test.sh` regression exercises both apostrophes, successful recovery and blocked recovery without a menu, and refusal of the throttle message "API Error: Rate limit reached"; its lifecycle and quota fixtures do not prove a live account move.
 The opt-in live guard reproduces the hook record and the Escape outcome through the production recorder and recognizer:
 
 ```sh

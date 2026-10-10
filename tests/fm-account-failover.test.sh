@@ -3,7 +3,8 @@
 # config/claude-failover, fm-control.sh/fm-spawn.sh --claude-account).
 #
 # Hermetic: a lifecycle-modelling tmux stub stands in for the terminal (its
-# viewport shows Claude's real usage-limit prompt until Escape closes it, its
+# viewport shows Claude's captured usage-limit prompt until Escape closes it,
+# or an inline repeat limit above an idle composer; its
 # exit command stops the agent, and a launch starts a fresh one), and fakes
 # stand in for `claude auth status`, `quota-axi --all-accounts --json`, and
 # `no-mistakes`. tests/fm-account-failover-live-e2e.test.sh proves the prompt,
@@ -75,7 +76,7 @@ case "${1:-}" in
   display-message)
     for a in "$@"; do
       case "$a" in
-        *cursor_y*) printf '1\n'; exit 0 ;;
+        *cursor_y*) cat "$D/cursor-y" 2>/dev/null || printf '1\n'; exit 0 ;;
         *pane_current_command*) cat "$D/command"; printf '\n'; exit 0 ;;
         *pane_current_path*) cat "$D/cwd"; printf '\n'; exit 0 ;;
       esac
@@ -467,15 +468,70 @@ test_stale_records_never_move_a_worker() {
   pass "run: stale records are skipped"
 }
 
+test_verified_usage_limit_without_a_menu_moves_without_escape() {
+  local scenario message id out
+  for scenario in straight typographic; do
+    id="t29-$scenario"
+    new_case "inline-$scenario" "$id"
+    message=$LIMIT_TEXT
+    [ "$scenario" != typographic ] || message='You’ve hit your weekly limit · resets Oct 10 at 4pm (America/New_York)'
+    printf '%s\n╭────╮\n│    │\n╰────╯\n' "$message" > "$CASE/fake/screen"
+    printf '2\n' > "$CASE/fake/cursor-y"
+    printf 'running' > "$CASE/fake/nm-state"
+    record_limit "$id" rate_limit "$message"
+    out=$(case_env "$FAILOVER" run "$id" 2>&1)
+    assert_contains "$out" "moved $id limited spare" "a verified inline usage limit must move: $out"
+    assert_no_grep 'key:Escape' "$CASE/fake/events" "an absent limit menu must receive no Escape"
+    assert_equals 'text:/exit' "$(head -1 "$CASE/fake/events")" "no key is sent before normal relaunch"
+    assert_grep 'claude_account=spare' "$CASE/home/state/$id.meta" "the replacement account is recorded"
+    assert_grep 'axi abort --run RUN1' "$CASE/fake/nm-calls" "inline exhaustion still cancels active validation"
+    assert_grep 'no-mistakes run RUN1 was aborted' "$CASE/home/data/$id/brief.md" "the handoff gives fresh-run instructions"
+    assert_grep 'no usage-limit menu was shown' "$CASE/home/data/$id/brief.md" "the emitted handoff describes inline exhaustion"
+    assert_no_grep 'chose that limit' "$CASE/home/data/$id/brief.md" "the emitted handoff must not claim a menu choice"
+    [ ! -e "$CASE/home/state/$id.usage-limit" ] || fail "the inline limit event must be consumed"
+    [ -z "$(status_of "$id")" ] || fail "successful inline recovery raises no blocked line"
+  done
+  pass "run: verified inline exhaustion with either apostrophe moves without Escape"
+}
+
+test_verified_usage_limit_without_room_and_menu_blocks_once() {
+  local out meta brief
+  new_case inline-none t30
+  printf '%s\n╭────╮\n│    │\n╰────╯\n' "$LIMIT_TEXT" > "$CASE/fake/screen"
+  printf '2\n' > "$CASE/fake/cursor-y"
+  printf 'running' > "$CASE/fake/nm-state"
+  meta=$(cat "$CASE/home/state/t30.meta")
+  brief=$(cat "$CASE/home/data/t30/brief.md")
+  quota_snapshot 0 3 > "$CASE/fake/quota.json"
+  record_limit t30
+  out=$(case_env "$FAILOVER" run t30 2>&1)
+  assert_contains "$out" 'blocked t30' "verified inline exhaustion without room must block: $out"
+  [ "$(status_of t30 | grep -c '^blocked: ')" = 1 ] || fail "inline exhaustion reports exactly one blocked line"
+  assert_contains "$(status_of t30)" 'resets 2026-10-06T22:59Z' "the alternative reset is reported"
+  assert_contains "$(status_of t30)" 'resets 2026-10-03T19:59Z' "the exhausted account reset is reported"
+  assert_contains "$(status_of t30)" "$LIMIT_TEXT" "the verified limit text is reported"
+  [ ! -s "$CASE/fake/keys" ] || fail "inline exhaustion without room sends no key"
+  [ ! -s "$CASE/fake/literal" ] || fail "inline exhaustion without room leaves the worker stopped"
+  [ ! -e "$CASE/fake/nm-calls" ] || fail "no qualifying account must preserve validation"
+  assert_equals "$meta" "$(cat "$CASE/home/state/t30.meta")" "the stopped worker's record stays intact"
+  assert_equals "$brief" "$(cat "$CASE/home/data/t30/brief.md")" "no move creates no handoff"
+  out=$(case_env "$FAILOVER" run t30 2>&1)
+  assert_contains "$out" 'skipped t30' "the inline event is not consumed twice: $out"
+  [ "$(status_of t30 | grep -c '^blocked: ')" = 1 ] || fail "rechecking adds no blocked line"
+  pass "run: verified inline exhaustion without room blocks once with reset times"
+}
+
 test_unconfirmed_rate_limits_leave_validation_and_worker_untouched() {
   local scenario id message out meta brief
-  for scenario in run tick control text-only stop-only cancel-only; do
+  for scenario in run tick control text-only leading-text limitless stop-only cancel-only; do
     id="t8-$scenario"
     new_case "transient-$scenario" "$id"
     rm -f "$CASE/fake/screen"
     message="API Error: Rate limit reached"
     case "$scenario" in
-      text-only) message=$LIMIT_TEXT ;;
+      text-only) message="You've hit a rate limit" ;;
+      leading-text) message="API Error: $LIMIT_TEXT" ;;
+      limitless) message="You've hit your weekly limitless quota" ;;
       stop-only) printf 'Stop and wait for limit to reset\n' > "$CASE/fake/screen" ;;
       cancel-only) printf 'Esc to cancel\n' > "$CASE/fake/screen" ;;
     esac
@@ -488,7 +544,7 @@ test_unconfirmed_rate_limits_leave_validation_and_worker_untouched() {
       control) out=$(case_env "$CONTROL" "$id" relaunch --usage-limit 2>&1) ;;
       *) out=$(case_env "$FAILOVER" run "$id" 2>&1) ;;
     esac
-    assert_contains "$out" "skipped $id" "$scenario without the complete prompt must be skipped: $out"
+    assert_contains "$out" "skipped $id" "$scenario without verified exhaustion must be skipped: $out"
     [ ! -e "$CASE/fake/quota-calls" ] || fail "$scenario must not read quota"
     [ ! -e "$CASE/fake/nm-calls" ] || fail "$scenario must not touch validation"
     assert_equals running "$(cat "$CASE/fake/nm-state")" "$scenario must leave validation running"
@@ -499,7 +555,7 @@ test_unconfirmed_rate_limits_leave_validation_and_worker_untouched() {
     assert_equals "$brief" "$(cat "$CASE/home/data/$id/brief.md")" "$scenario must not create a handoff"
     [ -z "$(status_of "$id")" ] || fail "$scenario must not report account exhaustion"
   done
-  pass "recovery: throttling, hook text, and partial prompts leave validation and the worker untouched"
+  pass "recovery: throttling, unverified exhaustion text, and partial prompts leave validation and the worker untouched"
 }
 
 test_a_second_usage_limit_moves_to_a_third_account() {
@@ -1003,6 +1059,8 @@ test_limit_prompt_is_answered_with_stop_and_the_worker_moves_to_an_account_with_
 test_no_qualifying_account_leaves_the_worker_stopped_with_one_blocked_line
 test_an_active_no_mistakes_run_is_aborted_before_the_move
 test_stale_records_never_move_a_worker
+test_verified_usage_limit_without_a_menu_moves_without_escape
+test_verified_usage_limit_without_room_and_menu_blocks_once
 test_unconfirmed_rate_limits_leave_validation_and_worker_untouched
 test_a_second_usage_limit_moves_to_a_third_account
 test_the_watcher_moves_a_limited_worker_and_wakes_once

@@ -977,11 +977,12 @@ Blank lines and lines starting with `#` are ignored, names are unique, and a con
 
 ### What happens at a usage limit
 
-Every Claude ship and scout records its turn end through Claude's `StopFailure` hook, and a `rate_limit` turn end counts as a usage limit only when the rendered prompt shows both "Stop and wait for limit to reset" and "Esc to cancel".
-Hook text alone, including "API Error: Rate limit reached", never triggers an account move or validation cancellation.
+Every Claude ship and scout records its turn end through Claude's `StopFailure` hook, and a `rate_limit` turn end counts as a usage limit when either the rendered prompt shows both "Stop and wait for limit to reset" and "Esc to cancel", or the recorded message starts with "You've hit your <window> limit" (with a straight or typographic apostrophe).
+Claude can report a repeat account limit with that verified wording without reopening the menu.
+Other hook text, including "API Error: Rate limit reached", never triggers an account move or validation cancellation.
 Firstmate's monitoring then, within one cycle:
 
-1. Answers the limit prompt with Escape, its cancel key, which leaves the worker stopped just as "Stop and wait for limit to reset" does and can never pick usage credits, extra usage, or an upgrade.
+1. When the limit menu is shown, answers it with Escape, its cancel key, which leaves the worker stopped just as "Stop and wait for limit to reset" does and can never pick usage credits, extra usage, or an upgrade; when only the verified exhaustion wording is recorded, sends no prompt key.
 2. Reads one fresh `quota-axi --all-accounts --json` snapshot and picks another listed account whose quota is known, fresh, above the fixed 5% safety margin in every window that applies to the worker's model, with a usable signed-in root and paid extra usage disabled.
 3. Stops the task's own active no-mistakes run through `no-mistakes axi abort --run <id>` and confirms it ended, and moves nothing while a run it cannot read or stop may still be active.
 4. Relaunches the worker on the chosen account through `bin/fm-control.sh <id> relaunch --claude-account <name>` with a handoff note, so the replacement resumes from the task's instructions and durable records.
