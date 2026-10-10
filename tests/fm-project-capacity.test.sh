@@ -466,6 +466,146 @@ test_unreadable_holders_refuse_admission() {
   pass "an unreadable state directory or task record refuses admission rather than undercounting"
 }
 
+test_unreadable_registries_refuse_admission() {
+  local mode case_dir home a b c reg out rc before worktrees env_file
+  if [ "$(id -u)" = 0 ]; then
+    printf 'ok - skipped unreadable registries (root reads files regardless of mode)\n'
+    return 0
+  fi
+  for mode in file directory open; do
+    case_dir=$(make_case "registry-$mode" task-c)
+    home="$case_dir/home"
+    a="$case_dir/a"
+    b="$case_dir/b"
+    c="$case_dir/c"
+    make_home "$a"
+    make_home "$b"
+    make_home "$c"
+    printf -- '- a - fixture (home: %s; scope: test; projects: project; added 2026-10-10)\n- b - fixture (home: %s; scope: test; projects: project; added 2026-10-10)\n' \
+      "$a" "$b" > "$home/data/secondmates.md"
+    reg="$a/data/secondmates.md"
+    printf -- '- c - fixture (home: %s; scope: test; projects: project; added 2026-10-10)\n' \
+      "$c" > "$reg"
+    printf '# healthy sibling\n' > "$b/data/secondmates.md"
+    declare_capacity "$home" 'project 1'
+    write_live "$c" live-c "$case_dir/project"
+    env_file=
+    if [ "$mode" = directory ]; then
+      chmod 600 "$a/data"
+    else
+      chmod 000 "$reg"
+    fi
+    if [ "$mode" = open ]; then
+      env_file="$case_dir/readable-env.sh"
+      cat > "$env_file" <<'SH'
+function [() {
+  case "$*" in
+    "-r ${FM_TEST_UNOPENABLE_FILE:-} ]") return 0 ;;
+    "! -r ${FM_TEST_UNOPENABLE_FILE:-} ]") return 1 ;;
+  esac
+  builtin [ "$@"
+}
+SH
+    fi
+    before=$(call_count "$case_dir")
+    worktrees=$(worktree_list "$case_dir")
+    rc=0
+    out=$(BASH_ENV="$env_file" FM_TEST_UNOPENABLE_FILE="$reg" \
+      spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
+    chmod 755 "$a/data"
+    chmod 600 "$reg"
+    expect_code 1 "$rc" "$mode: an unreadable registry admitted a worker: $out"
+    assert_contains "$out" "$reg" "$mode: refusal omitted the unreadable registry"
+    if [ "$mode" = open ]; then
+      assert_contains "$out" 'Permission denied' 'the registry open failure was not exercised'
+    fi
+    assert_nothing_created "$case_dir" "$home" task-c "$before" "$worktrees"
+    rc=0
+    out=$(spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
+    expect_code "$DEFER_EXIT" "$rc" "$mode: the restored registry hid its nested worker: $out"
+    assert_contains "$out" "live-c in $c" "$mode: the nested worker was not counted"
+    assert_nothing_created "$case_dir" "$home" task-c "$before" "$worktrees"
+    printf 'pr=https://github.com/o/r/pull/7\n' >> "$c/state/live-c.meta"
+    rc=0
+    out=$(spawn_ship "$case_dir" task-c) || rc=$?
+    expect_code 0 "$rc" "$mode: a readable registry with a free place refused admission: $out"
+  done
+  pass "unreadable or unopenable nested registries refuse admission despite a healthy later sibling"
+}
+
+test_inaccessible_declarations_refuse_admission() {
+  local mode case_dir root home file env_file out rc before worktrees kind id project
+  local -a flags
+  if [ "$(id -u)" = 0 ]; then
+    printf 'ok - skipped inaccessible declarations (root reads files regardless of mode)\n'
+    return 0
+  fi
+  for mode in file directory open; do
+    case_dir=$(make_case "declaration-$mode" task-ship task-scout)
+    root="$case_dir/home"
+    home="$case_dir/mate"
+    make_home "$home" task-ship task-scout
+    printf '%s\n' schema=fm-secondmate-parent.v1 route=local "parent_home=$root" > "$home/.fm-secondmate-parent"
+    printf -- '- mate - fixture (home: %s; scope: test; projects: project; added 2026-10-10)\n' \
+      "$home" > "$root/data/secondmates.md"
+    declare_capacity "$root" 'project 1'
+    file="$root/config/project-capacity"
+    env_file=
+    if [ "$mode" = directory ]; then
+      chmod 600 "$root/config"
+    else
+      chmod 000 "$file"
+    fi
+    if [ "$mode" = open ]; then
+      env_file="$case_dir/readable-env.sh"
+      cat > "$env_file" <<'SH'
+function [() {
+  case "$*" in
+    "-r ${FM_TEST_UNOPENABLE_FILE:-} ]") return 0 ;;
+    "! -r ${FM_TEST_UNOPENABLE_FILE:-} ]") return 1 ;;
+  esac
+  builtin [ "$@"
+}
+SH
+    fi
+    before=$(call_count "$case_dir")
+    worktrees=$(worktree_list "$case_dir")
+    for kind in ship scout; do
+      id="task-$kind"
+      project="$case_dir/project"
+      flags=(--mode no-mistakes --yolo off)
+      if [ "$kind" = scout ]; then
+        project="$case_dir/other-project"
+        flags=(--scout)
+      fi
+      rc=0
+      out=$(BASH_ENV="$env_file" FM_TEST_UNOPENABLE_FILE="$file" \
+        run_spawn "$case_dir" "$home" "$case_dir/unused" "$id" "$project" "${flags[@]}") || rc=$?
+      chmod 755 "$root/config"
+      chmod 600 "$file"
+      expect_code 1 "$rc" "$mode/$kind: an inaccessible declaration admitted a worker: $out"
+      assert_contains "$out" 'the project capacity declaration is unreadable' \
+        "$mode/$kind: spawn refused for a different reason"
+      if [ "$mode" = open ]; then
+        assert_contains "$out" 'Permission denied' 'the declaration open failure was not exercised'
+      fi
+      assert_nothing_created "$case_dir" "$home" "$id" "$before" "$worktrees"
+      if [ "$mode" = directory ]; then
+        chmod 600 "$root/config"
+      else
+        chmod 000 "$file"
+      fi
+    done
+    chmod 755 "$root/config"
+    chmod 600 "$file"
+    rc=0
+    out=$(run_spawn "$case_dir" "$home" "$(new_worktree "$case_dir" task-ship)" \
+      task-ship "$case_dir/project" --mode no-mistakes --yolo off) || rc=$?
+    expect_code 0 "$rc" "$mode: a restored declaration refused a free place: $out"
+  done
+  pass "inaccessible and unopenable declarations refuse ships and scouts, including undeclared projects"
+}
+
 # Two spawns racing for the last place: the one holding the project lock
 # publishes, the other cannot publish while it waits and is deferred afterwards.
 test_concurrent_spawns_cannot_both_take_the_last_place() {
@@ -635,6 +775,8 @@ test_restart_does_not_count_its_own_record
 test_occupancy_counts_only_this_projects_workers
 test_capacity_is_shared_by_every_local_home
 test_unreadable_holders_refuse_admission
+test_unreadable_registries_refuse_admission
+test_inaccessible_declarations_refuse_admission
 test_concurrent_spawns_cannot_both_take_the_last_place
 test_failed_spawn_after_admission_holds_no_place
 test_unreadable_declaration_refuses_every_spawn

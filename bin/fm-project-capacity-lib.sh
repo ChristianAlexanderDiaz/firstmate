@@ -97,11 +97,22 @@ fm_project_capacity_config_dir() {  # <spawning-home> <spawning-config-dir>
 # FM_PROJECT_CAPACITY_ANY to 1 when the declaration caps any project at all.
 # Returns 1 with FM_PROJECT_CAPACITY_ERROR when the declaration is unreadable.
 fm_project_capacity_lookup() {  # <config-dir> <project-name>
-  local name=$2 line lineno=0 pname pcap seen='|'
+  local name=$2 dir line lineno=0 pname pcap seen='|'
   FM_PROJECT_CAPACITY_FILE="$1/project-capacity"
   FM_PROJECT_CAPACITY=
   FM_PROJECT_CAPACITY_ANY=
   FM_PROJECT_CAPACITY_ERROR=
+  fm_dirname_to dir "$FM_PROJECT_CAPACITY_FILE"
+  while :; do
+    if [ -e "$dir" ] || [ -L "$dir" ]; then
+      [ -d "$dir" ] && [ -x "$dir" ] || {
+        FM_PROJECT_CAPACITY_ERROR="$FM_PROJECT_CAPACITY_FILE cannot be inspected"
+        return 1
+      }
+    fi
+    case "$dir" in / | .) break ;; esac
+    fm_dirname_to dir "$dir"
+  done
   if [ ! -e "$FM_PROJECT_CAPACITY_FILE" ] && [ ! -L "$FM_PROJECT_CAPACITY_FILE" ]; then
     return 0
   fi
@@ -156,7 +167,11 @@ fm_project_capacity_lookup() {  # <config-dir> <project-name>
     esac
     seen="$seen$pname|"
     [ "$pname" != "$name" ] || FM_PROJECT_CAPACITY=$pcap
-  done < "$FM_PROJECT_CAPACITY_FILE"
+  done < "$FM_PROJECT_CAPACITY_FILE" || {
+    FM_PROJECT_CAPACITY_ERROR="$FM_PROJECT_CAPACITY_FILE cannot be read"
+    FM_PROJECT_CAPACITY=
+    return 1
+  }
   [ "$seen" = '|' ] || FM_PROJECT_CAPACITY_ANY=1
   return 0
 }

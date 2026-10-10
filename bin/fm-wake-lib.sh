@@ -1478,7 +1478,7 @@ fm_firstmate_root_home() {
 # with no tasks. Requires bin/fm-secondmate-registry-lib.sh to be sourced first.
 # shellcheck disable=SC2034 # FM_LOCAL_FIRSTMATE_ERROR is read by callers.
 fm_local_firstmate_state_dirs() {  # <first-state>
-  local first=$1 root home reg line child known existing i=0
+  local first=$1 root home reg dir line child known existing i=0
   local -a homes
   FM_LOCAL_FIRSTMATE_STATES=("$first")
   FM_LOCAL_FIRSTMATE_ERROR=
@@ -1498,9 +1498,24 @@ fm_local_firstmate_state_dirs() {  # <first-state>
     done
     [ "$known" = 1 ] || FM_LOCAL_FIRSTMATE_STATES+=("$home/state")
     reg="$home/data/secondmates.md"
+    fm_dirname_to dir "$reg"
+    while :; do
+      if [ -e "$dir" ] || [ -L "$dir" ]; then
+        [ -d "$dir" ] && [ -x "$dir" ] || {
+          FM_LOCAL_FIRSTMATE_ERROR="local Firstmate registry cannot be inspected at $reg"
+          return 1
+        }
+      fi
+      case "$dir" in / | .) break ;; esac
+      fm_dirname_to dir "$dir"
+    done
     [ ! -e "$reg" ] && [ ! -L "$reg" ] && continue
     [ -f "$reg" ] && [ ! -L "$reg" ] || {
       FM_LOCAL_FIRSTMATE_ERROR="local Firstmate registry is unsafe at $reg"
+      return 1
+    }
+    [ -r "$reg" ] || {
+      FM_LOCAL_FIRSTMATE_ERROR="local Firstmate registry cannot be read at $reg"
       return 1
     }
     while IFS= read -r line || [ -n "$line" ]; do
@@ -1523,7 +1538,10 @@ fm_local_firstmate_state_dirs() {  # <first-state>
           [ "$known" = 1 ] || homes+=("$child")
           ;;
       esac
-    done < "$reg"
+    done < "$reg" || {
+      FM_LOCAL_FIRSTMATE_ERROR="local Firstmate registry cannot be read at $reg"
+      return 1
+    }
   done
 }
 

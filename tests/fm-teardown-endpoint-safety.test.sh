@@ -585,6 +585,74 @@ test_cross_home_pool_slot_collision_refuses() {
   pass "fm-teardown: a pool slot held by another firstmate home is never returned"
 }
 
+test_unreadable_nested_registry_refuses_slot_return() {
+  local mode dir a b c reg env_file rc id=stale-task other=nested-task
+  if [ "$(id -u)" = 0 ]; then
+    printf 'ok - skipped unreadable slot registries (root reads files regardless of mode)\n'
+    return 0
+  fi
+  for mode in file directory open; do
+    dir=$(make_case "slot-registry-$mode")
+    mark_case_as_treehouse_pool "$dir"
+    a="$dir/a"
+    b="$dir/b"
+    c="$dir/c"
+    mkdir -p "$a/data" "$a/state" "$b/data" "$b/state" "$c/data" "$c/state"
+    printf -- '- a - fixture (home: %s; scope: test; projects: project; added 2026-10-10)\n- b - fixture (home: %s; scope: test; projects: project; added 2026-10-10)\n' \
+      "$a" "$b" > "$dir/home/data/secondmates.md"
+    reg="$a/data/secondmates.md"
+    printf -- '- c - fixture (home: %s; scope: test; projects: project; added 2026-10-10)\n' \
+      "$c" > "$reg"
+    printf '# healthy sibling\n' > "$b/data/secondmates.md"
+    fm_write_meta "$dir/home/state/$id.meta" \
+      "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+      "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+    fm_write_meta "$c/state/$other.meta" \
+      "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+      "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+    env_file=
+    if [ "$mode" = directory ]; then
+      chmod 600 "$a/data"
+    else
+      chmod 000 "$reg"
+    fi
+    if [ "$mode" = open ]; then
+      env_file="$dir/readable-env.sh"
+      cat > "$env_file" <<'SH'
+function [() {
+  case "$*" in
+    "-r ${FM_TEST_UNOPENABLE_FILE:-} ]") return 0 ;;
+    "! -r ${FM_TEST_UNOPENABLE_FILE:-} ]") return 1 ;;
+  esac
+  builtin [ "$@"
+}
+SH
+    fi
+    rc=0
+    BASH_ENV="$env_file" FM_TEST_UNOPENABLE_FILE="$reg" run_case "$dir" "$id" \
+      > "$dir/stdout" 2> "$dir/stderr" || rc=$?
+    chmod 755 "$a/data"
+    chmod 600 "$reg"
+    expect_code 1 "$rc" "$mode: teardown returned a slot despite an unreadable registry"
+    assert_contains "$(cat "$dir/stderr")" "$reg" "$mode: refusal omitted the unreadable registry"
+    if [ "$mode" = open ]; then
+      assert_contains "$(cat "$dir/stderr")" 'Permission denied' 'the slot registry open failure was not exercised'
+    fi
+    assert_present "$dir/home/state/$id.meta" "$mode: refusal removed the stale record"
+    assert_present "$c/state/$other.meta" "$mode: refusal removed the nested record"
+    assert_present "$dir/worktree/sentinel" "$mode: refusal reset the slot"
+    [ ! -s "$dir/runtime.log" ] || fail "$mode: unreadable registry reached the runtime"
+    assert_refused_without_mutation "$dir" "$id" "$mode: restored registry's nested collision"
+    assert_contains "$(cat "$dir/stderr")" "$other" "$mode: restored registry omitted the nested holder"
+    rm "$c/state/$other.meta"
+    run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr" \
+      || fail "$mode: uncontested slot did not return after restoring the registry"
+    assert_absent "$dir/home/state/$id.meta" "$mode: successful teardown left the stale record"
+    assert_contains "$(cat "$dir/runtime.log")" 'treehouse <return>' "$mode: successful teardown did not return the slot"
+  done
+  pass "fm-teardown: unreadable nested registries refuse slot return despite a healthy later sibling"
+}
+
 test_sole_slot_record_still_tears_down() {
   local dir id=sole-task worker
 
@@ -1438,6 +1506,7 @@ test_already_gone_endpoint_still_completes_without_a_refusal
 test_bare_relative_origin_shares_project_lock_with_clone
 test_reused_pool_slot_refuses_before_touching_the_other_task
 test_cross_home_pool_slot_collision_refuses
+test_unreadable_nested_registry_refuses_slot_return
 test_sole_slot_record_still_tears_down
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
 test_stale_record_on_claimed_slot_retires_then_claimant_tears_down
