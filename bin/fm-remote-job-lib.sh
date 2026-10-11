@@ -17,7 +17,8 @@
 # Linux uses /proc/<pid>/stat field 22 (clock ticks since boot), so wall-clock
 # corrections cannot invalidate a live owner; Darwin keeps ps -o lstart=.
 # Linux proc read/parse failures fail closed, without a wall-clock fallback.
-# Legacy Linux date records require valid proc data and an exact ps lstart match.
+# Legacy Linux date records remain clock-sensitive and require valid proc data
+# plus an exact ps lstart match.
 # Worker locks also compare the recorded command against the live command.
 # Stage writes state=queued last. seq is a queue-wide monotonic staging
 # sequence reserved atomically by its persistent .seq-claims directory; the
@@ -859,8 +860,8 @@ fm_remote_job_reap_stale() { # <account-home>
       [ -z "$tmp" ] || rm -f -- "$tmp"
     fi
   fi
-  # Staging litter a killed caller left behind is reaped after its owner is no
-  # longer the process that created it and the stage has exceeded the age bound.
+  # Reap aged staging litter when its recorded owner can no longer be verified;
+  # a failed identity check is not proof that the original caller died.
   for stage in "$FM_REMOTE_JOB_JOBS"/.stage.*; do
     [ -d "$stage" ] && [ ! -L "$stage" ] || continue
     fm_remote_job_stage_owner_alive "$stage" && continue
