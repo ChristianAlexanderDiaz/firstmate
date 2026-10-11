@@ -218,6 +218,70 @@ export FM_REMOTE_JOB_TIMEOUT=5
 # shellcheck source=bin/fm-remote-job-lib.sh
 . "$ROOT/bin/fm-remote-job-lib.sh"
 
+process_start_identity_case() (
+  local platform=$1 recorded wall_start shifted_start ticks=329802 stat_available=1
+  local lock command_identity='bash fm-remote-job-worker.sh --serve' stat_record
+  FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/identity-$platform"
+  # Stub kernel/ps inputs in this subshell only; all ownership checks and
+  # record reads still use the production library.
+  uname() { printf '%s\n' "$platform"; }
+  cat() {
+    if [ "$#" -eq 1 ] && [ "$1" = "/proc/$$/stat" ]; then
+      [ "$stat_available" -eq 1 ] || return 1
+      printf '%s\n' "$stat_record"
+    else
+      command cat "$@"
+    fi
+  }
+  identity_ps() {
+    [ "$1" = -p ] && [ "$2" = "$$" ] && [ "$3" = -o ] || return 1
+    case "$4" in
+      lstart=) printf '%s\n' "$wall_start" ;;
+      command=) printf '%s\n' "$command_identity" ;;
+      *) return 1 ;;
+    esac
+  }
+  function /bin/ps() { identity_ps "$@"; }
+  function /usr/bin/ps() { identity_ps "$@"; }
+  # Fields 4-21 are deliberately different from field 22. The command has
+  # whitespace, a newline, and embedded closing parentheses.
+  stat_record="$$ (worker ) name"$'\n'"with ) spaces) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 $ticks 20"
+  wall_start='Sun Oct 11 18:27:15 2026'
+  fm_remote_job_prepare_state "$ACCOUNT_HOME" || fail "$platform identity state preparation failed"
+  lock=$(fm_remote_job_worker_lock_path)
+  mkdir "$lock" || fail "$platform identity lock creation failed"
+  recorded=$(fm_remote_job_process_start "$$") || fail "$platform process identity unavailable"
+  printf '%s\n' "$$" > "$lock/pid"
+  printf '%s\n' "$recorded" > "$lock/start"
+  fm_remote_job_process_command "$$" > "$lock/command"
+  fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME" || fail "$platform initial owner did not match"
+  wall_start='Sun Oct 11 18:27:19 2026'
+  shifted_start=$(/bin/ps -p "$$" -o lstart=)
+  [ "$shifted_start" != 'Sun Oct 11 18:27:15 2026' ] || fail "wall-clock fixture did not step"
+  if [ "$platform" = Linux ]; then
+    fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME" || fail "Linux clock step invalidated a live owner"
+    [ "$recorded" = "$ticks" ] || fail "Linux identity did not use proc start ticks"
+    command_identity='unrelated command'
+    if fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME"; then fail "Linux owner ignored a changed command"; fi
+    command_identity='bash fm-remote-job-worker.sh --serve'
+    stat_record="${stat_record% "$ticks" 20} 329803 20"
+    if fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME"; then fail "Linux owner ignored changed start ticks"; fi
+    for stat_record in "$$ (worker) S 1 2" "$$ (worker) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 invalid 20"; do
+      if fm_remote_job_process_start "$$" >/dev/null; then fail "Linux accepted malformed proc start ticks"; fi
+    done
+    stat_available=0
+    if fm_remote_job_process_start "$$" >/dev/null; then fail "Linux fell back to wall time for an unreadable process"; fi
+    pass "Linux owner survives stepped wall time; proc parsing and command/start mismatches fail closed"
+  else
+    [ "$recorded" = 'Sun Oct 11 18:27:15 2026' ] || fail "Darwin did not preserve ps lstart"
+    [ "$(fm_remote_job_process_start "$$")" = "$shifted_start" ] || fail "Darwin stopped using ps lstart"
+    if fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME"; then fail "Darwin ignored changed ps lstart"; fi
+    pass "Darwin retains ps lstart identity and exact comparison"
+  fi
+)
+process_start_identity_case Linux || exit 1
+process_start_identity_case Darwin || exit 1
+
 LOCAL_BIN_PARENT="$ACCOUNT_HOME/.local"
 LOCAL_BIN_TARGET="$TMP_ROOT/local-bin-target"
 mkdir -p "$LOCAL_BIN_PARENT" "$LOCAL_BIN_TARGET"

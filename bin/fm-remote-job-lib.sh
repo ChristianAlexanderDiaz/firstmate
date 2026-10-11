@@ -13,6 +13,11 @@
 # optional caller-cancellation marker, and .claim may hold owner, owner_start,
 # supervisor, supervisor_start, group, group_start, and armed records while
 # work executes.
+# Process start identities are opaque strings from fm_remote_job_process_start:
+# Linux uses /proc/<pid>/stat field 22 (clock ticks since boot), so wall-clock
+# corrections cannot invalidate a live owner; Darwin keeps ps -o lstart=.
+# Linux proc read/parse failures fail closed, without a wall-clock fallback.
+# Worker locks also compare the recorded command against the live command.
 # Stage writes state=queued last. seq is a queue-wide monotonic staging
 # sequence reserved atomically by its persistent .seq-claims directory; the
 # counter is only a forward-moving allocation hint. If the bounded hint walk
@@ -948,6 +953,20 @@ fm_remote_job_worker_lock_path() { printf '%s\n' "$FM_REMOTE_JOB_STATE/worker.lo
 
 fm_remote_job_process_start() {
   local pid=$1 ps_bin value
+  local -a fields
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  # Like path_mtime, use the host kernel, not the worker-shape test override.
+  if [ "$(uname -s 2>/dev/null)" = Linux ]; then
+    value=$(cat "/proc/$pid/stat" 2>/dev/null) || return 1
+    case "$value" in "$pid ("*") "*) ;; *) return 1 ;; esac
+    # comm (field 2) may contain whitespace and ')', so remove through its
+    # final closing delimiter before indexing fields 3 onward.
+    IFS=' ' read -r -a fields <<< "${value##*) }"
+    value=${fields[19]:-}
+    case "$value" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$value"
+    return 0
+  fi
   if [ -x /bin/ps ]; then ps_bin=/bin/ps; elif [ -x /usr/bin/ps ]; then ps_bin=/usr/bin/ps; else return 1; fi
   value=$("$ps_bin" -p "$pid" -o lstart= 2>/dev/null) || return 1
   [ -n "$value" ] || return 1
