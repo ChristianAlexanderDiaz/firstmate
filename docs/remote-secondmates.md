@@ -112,7 +112,7 @@ A caller cancels its job instead of abandoning it when, before the job completes
 
 As a result, retries never convoy behind abandoned work.
 
-Worker ownership survives Linux wall-clock corrections; the [remote job library header](../bin/fm-remote-job-lib.sh) owns the process start identity and command comparison contract, including Darwin behavior.
+Worker ownership survives Linux wall-clock corrections; the [remote job library header](../bin/fm-remote-job-lib.sh) owns the process start identity and command comparison contract, including legacy Linux records and Darwin behavior.
 
 A worker stops itself once its configured code root stops being a Firstmate checkout, so a worker started from a worktree cannot outlive that worktree.
 `bin/fm-remote-job-reap-orphans.sh` clears any worker already left behind that way.

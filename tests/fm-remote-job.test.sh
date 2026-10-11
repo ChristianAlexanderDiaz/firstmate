@@ -220,7 +220,7 @@ export FM_REMOTE_JOB_TIMEOUT=5
 
 process_start_identity_case() (
   local platform=$1 recorded wall_start shifted_start ticks=329802 stat_available=1
-  local lock command_identity='bash fm-remote-job-worker.sh --serve' stat_record
+  local lock stage legacy_start command_identity='bash fm-remote-job-worker.sh --serve' stat_record
   FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/identity-$platform"
   # Stub kernel/ps inputs in this subshell only; all ownership checks and
   # record reads still use the production library.
@@ -255,12 +255,37 @@ process_start_identity_case() (
   printf '%s\n' "$recorded" > "$lock/start"
   fm_remote_job_process_command "$$" > "$lock/command"
   fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME" || fail "$platform initial owner did not match"
+  legacy_start=$wall_start
+  stage="$FM_REMOTE_JOB_JOBS/.stage.identity"
+  mkdir "$stage" || fail "$platform staging fixture creation failed"
+  printf '%s\n' "$$" > "$stage/.owner-pid"
+  printf '%s\n' "$recorded" > "$stage/.owner-start"
+  fm_remote_job_stage_owner_alive "$stage" || fail "$platform staging owner did not match"
+  if [ "$platform" = Linux ]; then
+    printf '%s\n' "$legacy_start" > "$lock/start"
+    printf '%s\n' "$legacy_start" > "$stage/.owner-start"
+    fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME" || fail "Linux did not recognize a legacy worker owner"
+    fm_remote_job_stage_owner_alive "$stage" || fail "Linux did not recognize a legacy staging owner"
+    command_identity='unrelated command'
+    if fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME"; then fail "Linux legacy owner ignored a changed command"; fi
+    command_identity='bash fm-remote-job-worker.sh --serve'
+    printf '%s\n' "$recorded" > "$lock/start"
+  fi
   wall_start='Sun Oct 11 18:27:19 2026'
   shifted_start=$(/bin/ps -p "$$" -o lstart=)
   [ "$shifted_start" != 'Sun Oct 11 18:27:15 2026' ] || fail "wall-clock fixture did not step"
   if [ "$platform" = Linux ]; then
     fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME" || fail "Linux clock step invalidated a live owner"
     [ "$recorded" = "$ticks" ] || fail "Linux identity did not use proc start ticks"
+    if fm_remote_job_stage_owner_alive "$stage"; then fail "Linux legacy staging owner ignored a changed start date"; fi
+    printf '%s\n' "$legacy_start" > "$lock/start"
+    if fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME"; then fail "Linux legacy worker owner ignored a changed start date"; fi
+    printf '%s\n' "$recorded" > "$lock/start"
+    wall_start=$recorded
+    stat_record="${stat_record% "$ticks" 20} 329803 20"
+    if fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME"; then fail "Linux tick owner fell back to ps lstart"; fi
+    stat_record="${stat_record% 329803 20} $ticks 20"
+    wall_start=$shifted_start
     command_identity='unrelated command'
     if fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME"; then fail "Linux owner ignored a changed command"; fi
     command_identity='bash fm-remote-job-worker.sh --serve'
@@ -268,10 +293,12 @@ process_start_identity_case() (
     if fm_remote_job_lock_owner_matches_process "$ACCOUNT_HOME"; then fail "Linux owner ignored changed start ticks"; fi
     for stat_record in "$$ (worker) S 1 2" "$$ (worker) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 invalid 20"; do
       if fm_remote_job_process_start "$$" >/dev/null; then fail "Linux accepted malformed proc start ticks"; fi
+      if fm_remote_job_process_start_for_record "$$" "$legacy_start" >/dev/null; then fail "Linux legacy identity accepted malformed proc data"; fi
     done
     stat_available=0
     if fm_remote_job_process_start "$$" >/dev/null; then fail "Linux fell back to wall time for an unreadable process"; fi
-    pass "Linux owner survives stepped wall time; proc parsing and command/start mismatches fail closed"
+    if fm_remote_job_process_start_for_record "$$" "$legacy_start" >/dev/null; then fail "Linux legacy identity accepted unreadable proc data"; fi
+    pass "Linux tick and legacy owners preserve exact identity and fail closed"
   else
     [ "$recorded" = 'Sun Oct 11 18:27:15 2026' ] || fail "Darwin did not preserve ps lstart"
     [ "$(fm_remote_job_process_start "$$")" = "$shifted_start" ] || fail "Darwin stopped using ps lstart"
@@ -347,6 +374,9 @@ MISE_EXPECTED=$(printf '%s\n' "$MISE_INSTALLS"/*/*/bin)
 rm -rf -- "$ACCOUNT_HOME/.local/share/mise"
 pass "operator PATH orders discovered tool installs deterministically"
 
+cat >> "$REMOTE_ROOT/bin/fm-remote-job-lib.sh" <<'SH'
+fm_remote_job_process_start() { fm_remote_job_process_wall_start "$1"; }
+SH
 HOME="$ACCOUNT_HOME" PATH="$RUNTIME_BIN:/usr/bin:/bin:/usr/sbin:/sbin" FM_FAKE_PERL_LOG="$FAKE_PERL_LOG" \
   FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT" \
   FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux FM_REMOTE_JOB_TIMEOUT=5 \
@@ -427,14 +457,54 @@ fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the active readiness job c
 pass "active jobs keep the worker ready for concurrent requests"
 
 OLD_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
-printf '\n' >> "$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
+OLD_WORKER_START=$(/bin/ps -p "$OLD_WORKER_PID" -o lstart=) || fail "legacy worker start date unavailable"
+[ "$(cat "$STATE_ROOT/worker.lock/start")" = "$OLD_WORKER_START" ] || fail "upgrade fixture did not persist a legacy date"
+cp "$ROOT/bin/fm-remote-job-lib.sh" "$REMOTE_ROOT/bin/fm-remote-job-lib.sh"
 fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" \
   || fail "$FM_REMOTE_JOB_ERROR"
 NEW_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
 [ "$NEW_WORKER_PID" != "$OLD_WORKER_PID" ] || fail "ensure retained a worker running stale code"
 fm_remote_job_worker_identity_matches "$REMOTE_ROOT" "$ACCOUNT_HOME" \
   || fail "the replacement worker did not publish the current code identity"
-pass "ensure replaces a live worker after its code changes"
+if [ "$(uname -s)" = Linux ]; then
+  NEW_WORKER_START=$(cat "$STATE_ROOT/worker.lock/start")
+  case "$NEW_WORKER_START" in ''|*[!0-9]*) fail "upgraded Linux worker did not persist ticks" ;; esac
+fi
+fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" fm-probe-job.sh < /dev/null > /dev/null
+JOB_ID=$FM_REMOTE_JOB_ID
+fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
+[ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "upgraded worker did not execute the next remote command"
+fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "upgraded worker result could not be reaped"
+pass "ensure replaces a legacy worker after upgrade and runs the next command"
+
+fm_remote_job_stop_worker_tree "$NEW_WORKER_PID" || fail "worker did not stop before legacy claim fixture"
+FM_REMOTE_JOB_QUEUE_TIMEOUT=20
+LEGACY_CLAIM_EFFECT="$TMP_ROOT/legacy-claim-effect"
+fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" fm-touch-job.sh "$LEGACY_CLAIM_EFFECT" < /dev/null > /dev/null
+LEGACY_CLAIM_ID=$FM_REMOTE_JOB_ID
+LEGACY_CLAIM_JOB="$STATE_ROOT/jobs/$LEGACY_CLAIM_ID"
+mkdir "$LEGACY_CLAIM_JOB/.claim"
+printf '%s\n' "$$" > "$LEGACY_CLAIM_JOB/.claim/owner"
+/bin/ps -p "$$" -o lstart= > "$LEGACY_CLAIM_JOB/.claim/owner_start"
+LEGACY_OTHER_HOME="$TMP_ROOT/legacy-other-home"
+mkdir "$LEGACY_OTHER_HOME"
+fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" || fail "$FM_REMOTE_JOB_ERROR"
+fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$LEGACY_OTHER_HOME" fm-probe-job.sh < /dev/null > /dev/null
+JOB_ID=$FM_REMOTE_JOB_ID
+fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
+[ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "legacy claim blocked another home's command"
+fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "other-home result could not be reaped"
+[ "$(fm_remote_job_read_state "$LEGACY_CLAIM_JOB")" = queued ] || fail "worker stole a live legacy claim"
+assert_absent "$LEGACY_CLAIM_EFFECT" "worker executed a command owned by a legacy claimant"
+rm "$LEGACY_CLAIM_JOB/.claim/owner" "$LEGACY_CLAIM_JOB/.claim/owner_start"
+rmdir "$LEGACY_CLAIM_JOB/.claim"
+fm_remote_job_wait "$ACCOUNT_HOME" "$LEGACY_CLAIM_ID" || fail "$FM_REMOTE_JOB_ERROR"
+[ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "released legacy claim did not execute"
+assert_present "$LEGACY_CLAIM_EFFECT" "released legacy claim lost its command"
+fm_remote_job_reap "$ACCOUNT_HOME" "$LEGACY_CLAIM_ID" || fail "legacy claim result could not be reaped"
+FM_REMOTE_JOB_QUEUE_TIMEOUT=5
+NEW_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
+pass "legacy claim ownership survives upgrade until its owner releases it"
 
 RELOCATED_ROOT="$TMP_ROOT/relocated-root"
 cp -R "$REMOTE_ROOT" "$RELOCATED_ROOT"
@@ -653,6 +723,12 @@ for _ in $(seq 1 100); do
   sleep 0.05
 done
 assert_present "$CRASH_STARTED" "the crash fixture did not begin executing"
+JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
+for IDENTITY_KIND in owner supervisor group; do
+  IDENTITY_PID=$(cat "$JOB_DIR/.claim/$IDENTITY_KIND")
+  IDENTITY_START=$(/bin/ps -p "$IDENTITY_PID" -o lstart=) || fail "legacy $IDENTITY_KIND date unavailable"
+  printf '%s\n' "$IDENTITY_START" > "$JOB_DIR/.claim/${IDENTITY_KIND}_start"
+done
 CRASHED_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
 kill -KILL "$CRASHED_WORKER_PID"
 for _ in $(seq 1 200); do
@@ -668,7 +744,7 @@ sleep 3
 assert_absent "$CRASH_SIDE_EFFECT" "an orphaned command mutated after worker crash recovery"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the crash-recovered job could not be reaped"
 fm_remote_job_probe "$ACCOUNT_HOME" || fail "the restarted worker did not remain ready"
-pass "Linux supervision recovers crashes and stops orphaned commands"
+pass "Linux supervision recovers legacy execution records and stops orphaned commands"
 
 mkdir -p "$ACCOUNT_HOME/.local/bin"
 PREEXEC_STARTED="$TMP_ROOT/preexecution-started"
