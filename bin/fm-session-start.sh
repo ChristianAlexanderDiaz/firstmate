@@ -42,6 +42,8 @@
 #                       First, on every harness and away posture, it seeds the
 #                       outcome store's display tail copy when that is absent
 #                       (bin/fm-branch-outcome.sh seed-tail).
+#                       It then lists any pending stow a Claude /clear left
+#                       behind (bin/fm-stow-on-clear.sh pending).
 #   4. supervision-instructions - the one emitted operating block for the
 #                       detected primary harness.
 #   5. read-once contract - the do-not-re-read contract covering every source
@@ -796,6 +798,15 @@ else
     printf '%s\n' "$DRAIN_OUT"
   else
     printf '(no queued wakes)\n'
+  fi
+  # A Claude /clear of this home's lock-owning session leaves a pending-stow
+  # record; bin/fm-stow-on-clear.sh owns it. Printed only when one exists, and
+  # only on the locked path because the stow pass writes this home's memory.
+  PENDING_STOW_OUT=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/fm-stow-on-clear.sh" pending 2>/dev/null) || PENDING_STOW_OUT=
+  if [ -n "$PENDING_STOW_OUT" ]; then
+    subsection "PENDING STOW"
+    printf '%s\n' "$PENDING_STOW_OUT"
   fi
 fi
 

@@ -238,6 +238,7 @@ Claude is a run-tier harness.
 `.claude/settings.json` registers one unmatched `SessionStart` hook, invoked through `CLAUDE_PROJECT_DIR` with a 180s timeout.
 The wrapper reads `source` from the hook payload.
 Native stdout context injection is supported.
+A separate `SessionEnd` hook matched to `clear` leaves a pending-stow record that the next digest lists; `bin/fm-stow-on-clear.sh` owns that record.
 
 ### Codex exec
 
