@@ -13,6 +13,13 @@
 # optional caller-cancellation marker, and .claim may hold owner, owner_start,
 # supervisor, supervisor_start, group, group_start, and armed records while
 # work executes.
+# New process start identities are opaque strings from fm_remote_job_process_start:
+# Linux uses /proc/<pid>/stat field 22 (clock ticks since boot), so wall-clock
+# corrections cannot invalidate a live owner; Darwin keeps ps -o lstart=.
+# Linux proc read/parse failures fail closed, without a wall-clock fallback.
+# Legacy Linux date records remain clock-sensitive and require valid proc data
+# plus an exact ps lstart match.
+# Worker locks also compare the recorded command against the live command.
 # Stage writes state=queued last. seq is a queue-wide monotonic staging
 # sequence reserved atomically by its persistent .seq-claims directory; the
 # counter is only a forward-moving allocation hint. If the bounded hint walk
@@ -811,7 +818,7 @@ fm_remote_job_stage_owner_alive() { # <stage-dir>
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   [ "$pid" -gt 1 ] || return 1
   recorded_start=$(fm_remote_job_read_single_line "$stage/.owner-start" 256 2>/dev/null) || return 1
-  actual_start=$(fm_remote_job_process_start "$pid" 2>/dev/null) || return 1
+  actual_start=$(fm_remote_job_process_start_for_record "$pid" "$recorded_start" 2>/dev/null) || return 1
   [ "$recorded_start" = "$actual_start" ]
 }
 
@@ -853,8 +860,8 @@ fm_remote_job_reap_stale() { # <account-home>
       [ -z "$tmp" ] || rm -f -- "$tmp"
     fi
   fi
-  # Staging litter a killed caller left behind is reaped after its owner is no
-  # longer the process that created it and the stage has exceeded the age bound.
+  # Reap aged staging litter when its recorded owner can no longer be verified;
+  # a failed identity check is not proof that the original caller died.
   for stage in "$FM_REMOTE_JOB_JOBS"/.stage.*; do
     [ -d "$stage" ] && [ ! -L "$stage" ] || continue
     fm_remote_job_stage_owner_alive "$stage" && continue
@@ -947,12 +954,46 @@ fm_remote_job_worker_identity_path() { printf '%s\n' "$FM_REMOTE_JOB_STATE/worke
 fm_remote_job_worker_lock_path() { printf '%s\n' "$FM_REMOTE_JOB_STATE/worker.lock"; }
 
 fm_remote_job_process_start() {
+  local pid=$1 value
+  local -a fields
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  # Like path_mtime, use the host kernel, not the worker-shape test override.
+  if [ "$(uname -s 2>/dev/null)" = Linux ]; then
+    value=$(cat "/proc/$pid/stat" 2>/dev/null) || return 1
+    case "$value" in "$pid ("*") "*) ;; *) return 1 ;; esac
+    # comm (field 2) may contain whitespace and ')', so remove through its
+    # final closing delimiter before indexing fields 3 onward.
+    IFS=' ' read -r -a fields <<< "${value##*) }"
+    value=${fields[19]:-}
+    case "$value" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$value"
+    return 0
+  fi
+  fm_remote_job_process_wall_start "$pid"
+}
+
+fm_remote_job_process_wall_start() {
   local pid=$1 ps_bin value
   if [ -x /bin/ps ]; then ps_bin=/bin/ps; elif [ -x /usr/bin/ps ]; then ps_bin=/usr/bin/ps; else return 1; fi
   value=$("$ps_bin" -p "$pid" -o lstart= 2>/dev/null) || return 1
   [ -n "$value" ] || return 1
   case "$value" in *$'\n'*|*$'\r'*) return 1 ;; esac
   printf '%s\n' "$value"
+}
+
+fm_remote_job_process_start_for_record() {
+  local pid=$1 recorded_start=$2 actual_start
+  actual_start=$(fm_remote_job_process_start "$pid") || return 1
+  case "$recorded_start" in
+    '') return 1 ;;
+    *[!0-9]*)
+      if [ "$(uname -s 2>/dev/null)" = Linux ]; then
+        fm_remote_job_process_wall_start "$pid"
+        return
+      fi
+      ;;
+  esac
+  printf '%s\n' "$actual_start"
 }
 
 fm_remote_job_process_command() {
@@ -1055,7 +1096,7 @@ fm_remote_job_lock_owner_matches_process() {
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   [ "$pid" -gt 1 ] || return 1
   recorded_start=$(fm_remote_job_read_single_line "$lock/start" 256) || return 1
-  actual_start=$(fm_remote_job_process_start "$pid") || return 1
+  actual_start=$(fm_remote_job_process_start_for_record "$pid" "$recorded_start") || return 1
   [ "$recorded_start" = "$actual_start" ] || return 1
   recorded_command=$(fm_remote_job_read_single_line "$lock/command" 8192) || return 1
   actual_command=$(fm_remote_job_process_command "$pid") || return 1
