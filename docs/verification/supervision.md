@@ -90,6 +90,15 @@ Pi disagrees with Claude and Codex on `resume`: a new Pi process continuing a se
 The current adapter classification and baseline mechanics are owned by [`../sessionstart-nudge.md`](../sessionstart-nudge.md#harness-transports) and the `bin/fm-session-start.sh` header.
 Their continuation classification is covered by portable tests, not claimed as live validation in this record.
 
+Claude's `/clear` session end, which `bin/fm-stow-on-clear.sh` records a pending stow from, was verified on 2026-10-11 against Claude Code 2.1.296 with `PATH` excluding codex and `FM_SESSIONSTART_HOOK_LIVE_E2E=1 tests/fm-sessionstart-hook-live-e2e.test.sh`.
+The tracked `SessionEnd` entry matched to `clear` received `hook_event_name=SessionEnd`, `reason=clear`, and a readable `transcript_path` for the ended session, and its recorder, which sleeps one second, finished before the cleared session's `SessionStart` ran:
+
+```text
+ok - claude 2.1.296 (Claude Code): /clear finishes a SessionEnd clear hook naming the ended transcript before the cleared session opens
+```
+
+That ordering is observed rather than documented by the vendor, so the same guard refreshes it.
+
 ### Pi `/new` provider prerequisite
 
 The real offline Pi regression ran on 2026-08-26 with Pi 0.84.0, an isolated home and session directory, a barrier-controlled native digest, and a deterministic local `streamSimple` provider.

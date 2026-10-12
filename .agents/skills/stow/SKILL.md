@@ -1,6 +1,6 @@
 ---
 name: stow
-description: Sweep the current session for uncaptured durable knowledge, file it to disk, persist the open work records this session knows are unfiled or now wrong, and curate the home's tiered, decaying startup memory before a context reset. Use when the captain invokes /stow (e.g. "/stow", "stow what you've learned"), before a session reset or context compaction, or periodically to keep operational memory current.
+description: Sweep the current session for uncaptured durable knowledge, file it to disk, persist the open work records this session knows are unfiled or now wrong, and curate the home's tiered, decaying startup memory before a context reset. Use when the captain invokes /stow (e.g. "/stow", "stow what you've learned"), before a session reset or context compaction, periodically to keep operational memory current, or when the session-start digest lists a PENDING STOW left by a /clear.
 user-invocable: true
 metadata:
   internal: true
@@ -13,6 +13,14 @@ metadata:
 Sweep this session for durable knowledge and open-work record state that exist only in conversation, then leave the next session with a compact current operating map rather than an accumulating journal.
 Memory entries are tiered and decay between passes, and stale material retires to a cold archive instead of being deleted.
 This skill writes only through the existing Firstmate ownership and write boundaries.
+
+## Pending stow from a cleared session
+
+When the session-start digest lists a PENDING STOW, a Claude `/clear` ended an earlier session of this home before `/stow` ran; `bin/fm-stow-on-clear.sh` owns that record.
+Run this skill once per listed session before taking new work, treating that earlier session's transcript as "this session" throughout: the knowledge sweep, open-record persistence, and reinforcement evidence all come from it, plus anything the current session has itself established.
+Read the raw transcript the digest names in targeted slices.
+The rest of the pass, including the cascade and the completion receipt, is unchanged.
+After the receipt, clear the record with the digest's `done` command; a pass that could not finish leaves the record for the next session start.
 
 ## Memory tiers and entry markers
 

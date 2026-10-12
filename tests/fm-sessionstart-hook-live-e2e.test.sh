@@ -15,6 +15,10 @@
 #       (bin/fm-startup-network.sh), so a harness that reaps the hook's process
 #       tree would silently stop running the sweeps entirely. Whether it does is
 #       a vendor behavior no portable test can see.
+#   (d) on Claude, `/clear` delivers a SessionEnd payload with reason `clear`
+#       and the ended session's transcript path, and that hook finishes before
+#       the cleared session's SessionStart, so the clear's own digest can carry
+#       the pending stow bin/fm-stow-on-clear.sh records.
 #
 # docs/sessionstart-nudge.md owns the routing facts (a) and (b) feed, and
 # tests/fm-sessionstart-nudge.test.sh pins that routing portably with real
@@ -134,6 +138,19 @@ exit 0
 SH
   chmod +x "$lab/bin/fm-bootstrap.sh"
 
+  # Recorder standing in for the real pending-stow hook: logs the payload the
+  # harness delivered and the moment it finished, relative to session opens.
+  cat > "$lab/bin/fm-stow-on-clear.sh" <<'SH'
+#!/usr/bin/env bash
+set -u
+payload=$(cat 2>/dev/null || true)
+sleep 1
+printf '%s\n' "$payload" > "${FM_LIVE_RECORD:?}.session-end"
+printf 'session-end\n' >> "${FM_LIVE_RECORD:?}.order"
+exit 0
+SH
+  chmod +x "$lab/bin/fm-stow-on-clear.sh"
+
   cat > "$lab/bin/fm-sessionstart-run.sh" <<'SH'
 #!/usr/bin/env bash
 # Recorder standing in for the real wrapper: logs the source the harness
@@ -158,6 +175,7 @@ if [ -z "$source" ]; then
 fi
 [ -n "$source" ] || source=none
 printf '%s\n' "$source" >> "$record"
+printf 'open:%s\n' "$source" >> "$record.order"
 # Exactly what bin/fm-session-start.sh does after taking the lock.
 if [ -n "${FM_LIVE_DETACH_MARKER:-}" ]; then
   "$(dirname "$0")/fm-startup-network.sh" start --locked 0 --harvest-pid $$ >/dev/null 2>&1 || true
@@ -240,6 +258,24 @@ probe_process_opens() {  # <harness> <version> <lab> <expect-resume> <cold-argv.
   pass "$harness $version: a context-preserving reopen reports source '$source', which the run tier routes without a re-emit"
 }
 
+# --- (d) Claude /clear session end ------------------------------------------
+probe_clear_session_end() {  # <harness> <version> <record>
+  local harness=$1 version=$2 record=$3 end transcript order
+  end=$(cat "$record.session-end" 2>/dev/null || true)
+  [ -n "$end" ] \
+    || fail "$harness $version: /clear fired no SessionEnd clear hook, so a cleared session leaves no pending stow"
+  [ "$(printf '%s' "$end" | jq -r '.hook_event_name // empty')" = SessionEnd ] \
+    && [ "$(printf '%s' "$end" | jq -r '.reason // empty')" = clear ] \
+    || fail "$harness $version: the /clear SessionEnd payload is not hook_event_name=SessionEnd reason=clear: $end"
+  transcript=$(printf '%s' "$end" | jq -r '.transcript_path // empty')
+  [ -s "$transcript" ] \
+    || fail "$harness $version: the /clear SessionEnd payload names no readable transcript: ${transcript:-none}"
+  order=$(grep -E '^(session-end|open:clear)$' "$record.order" | tr '\n' ' ')
+  [ "$order" = "session-end open:clear " ] \
+    || fail "$harness $version: the SessionEnd clear hook did not finish before the cleared session opened (order: $order); refresh bin/fm-stow-on-clear.sh's ordering note"
+  pass "$harness $version: /clear finishes a SessionEnd clear hook naming the ended transcript before the cleared session opens"
+}
+
 # --- (b) context-reset opens --------------------------------------------------
 #
 # Only reachable through the TUI, so this one drives a real pane.
@@ -248,6 +284,7 @@ probe_context_reset() {  # <harness> <version> <lab> <clear-command> <launch-arg
   shift 4
   local record="$lab/record" session="fmss-$harness" reset n compact_seed compact_reply
   : > "$record"
+  rm -f "$record.order" "$record.session-end"
   tmux -L "$SOCKET" new-session -d -s "$session" -c "$lab" -x 200 -y 50 \
     -e FM_LIVE_RECORD="$record" -e FM_ROOT_OVERRIDE="$lab" -e FM_HOME="$lab" \
     -e FM_LIVE_NONCE="$LIVE_NONCE" \
@@ -255,13 +292,18 @@ probe_context_reset() {  # <harness> <version> <lab> <clear-command> <launch-arg
     || fail "$harness $version: could not start an interactive lab session"
 
   # Every run-tier TUI asks whether it trusts a folder it has not seen, and the
-  # session-open hook only fires once that is answered. Each harness's default
-  # selection IS the trusting one, so a bare Enter clears it; the loop keeps
-  # waiting for the recorded open either way, so a harness that stops prompting
-  # costs nothing. harness-adapters owns trust handling outside tests.
+  # session-open hook only fires once that is answered. A bare Enter accepts a
+  # dialog whose default selection is the trusting one; Claude's renders with
+  # the cursor on "No, exit", so the trusting option is selected first. The
+  # loop keeps waiting for the recorded open either way, so a harness that stops
+  # prompting costs nothing. harness-adapters owns trust handling outside tests.
   n=0
   while [ "$n" -lt 60 ] && ! grep -q . "$record" 2>/dev/null; do
     if capture "$session" | grep -qiE 'trust (this|the|parent)?[[:space:]]*(folder|project)'; then
+      if capture "$session" | grep -qE '❯[[:space:]]*(1\.[[:space:]]*)?No, exit'; then
+        tmux -L "$SOCKET" send-keys -t "$session" Down
+        sleep 1
+      fi
       tmux -L "$SOCKET" send-keys -t "$session" Enter
       sleep 5
     fi
@@ -290,6 +332,9 @@ probe_context_reset() {  # <harness> <version> <lab> <clear-command> <launch-arg
   wait_for_text "$session" "FMHOOKTOKEN-$reset-2-$LIVE_NONCE" \
     || { capture "$session" >&2; fail "$harness $version: hook stdout did not reach model context after '$clear_cmd'"; }
   pass "$harness $version: '$clear_cmd' reports source '$reset' and re-injects hook stdout into model context"
+  if [ "$harness" = claude ]; then
+    probe_clear_session_end "$harness" "$version" "$record"
+  fi
 
   if [ "$harness" = pi ]; then
     compact_seed="seed-$session-$$"
