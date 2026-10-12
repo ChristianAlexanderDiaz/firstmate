@@ -14,9 +14,7 @@
 #                                          Claude JSON payload on stdin.
 #   fm-stow-on-clear.sh pending            Print the PENDING STOW digest block
 #                                          (nothing when no record is pending).
-#   fm-stow-on-clear.sh transcript <id>    Print a condensed text view of that
-#                                          record's transcript for the stow pass.
-#   fm-stow-on-clear.sh done <id>          Clear that record once stow has run.
+#   fm-stow-on-clear.sh done <id>         Clear that record once stow has run.
 #
 # Records live in state/.pending-stow/<session-id>, one key=value file each
 # (session=, transcript=, ended=<epoch>), written atomically. A record persists
@@ -151,7 +149,6 @@ cmd_pending() {
     esac
     listed="$listed- session $id, cleared $when
   transcript: $transcript
-  condensed view: bin/fm-stow-on-clear.sh transcript $id
   after its stow pass: bin/fm-stow-on-clear.sh done $id
 "
   done
@@ -168,45 +165,6 @@ EOF
   if [ -n "$dropped" ]; then
     printf 'Skipped stale pending-stow records:\n%s' "$dropped"
   fi
-}
-
-cmd_transcript() {
-  local id=${1:-} rec transcript out
-  if ! valid_session_id "$id"; then
-    diag "usage: fm-stow-on-clear.sh transcript <session-id>"
-    return 2
-  fi
-  rec="$PENDING_DIR/$id"
-  if [ ! -f "$rec" ]; then
-    printf 'No pending stow record for session %s.\n' "$id"
-    return 0
-  fi
-  transcript=$(record_field "$rec" transcript)
-  if [ -z "$transcript" ] || [ ! -r "$transcript" ]; then
-    printf 'The transcript for session %s (%s) is missing or unreadable.\n' "$id" "${transcript:-none recorded}"
-    return 0
-  fi
-  out=
-  if command -v jq >/dev/null 2>&1; then
-    # Conversation text plus a one-line trace of each tool call; tool results
-    # are omitted because they are bulky and their substance normally recurs in
-    # the assistant text that acted on them.
-    out=$(jq -r '
-      select(type == "object" and (.type == "user" or .type == "assistant") and (.isMeta | not))
-      | .type as $role
-      | (.message.content // empty)
-      | if type == "string" then [{type: "text", text: .}] elif type == "array" then . else [] end
-      | .[]
-      | if .type == "text" and ((.text // "") | length) > 0 then "[\($role)] \(.text)"
-        elif .type == "tool_use" then "[\($role) tool] \(.name // "?") \((.input // {}) | tostring | .[0:240])"
-        else empty end
-    ' "$transcript" 2>/dev/null) || out=
-  fi
-  if [ -z "$out" ]; then
-    printf 'No condensed view could be built; read the raw transcript in targeted slices: %s\n' "$transcript"
-    return 0
-  fi
-  printf '%s\n' "$out"
 }
 
 cmd_done() {
@@ -226,7 +184,6 @@ cmd_done() {
 case "${1:-}" in
   hook) cmd_hook ;;
   pending) cmd_pending ;;
-  transcript) shift; cmd_transcript "$@"; exit $? ;;
   done) shift; cmd_done "$@"; exit $? ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;

@@ -181,7 +181,7 @@ test_foreign_host_and_gate_are_silent() {
   pass "hook: Cursor payloads, gate agents, and malformed payloads are silent no-ops"
 }
 
-test_pending_done_and_transcript() {
+test_pending_and_done() {
   local root="$TMP_ROOT/pending" t="$TMP_ROOT/pending-t/s.jsonl" gone="$TMP_ROOT/pending-t/gone.jsonl" out status=0
   make_primary "$root"
   out=$(FM_HOME="$root" "$HOOK" pending 2>&1) || status=$?
@@ -202,12 +202,6 @@ test_pending_done_and_transcript() {
   assert_contains "$out" "session sess-gone: transcript $gone is missing or unreadable" "pending did not report the stale record"
   assert_absent "$root/state/.pending-stow/sess-gone" "pending kept a record whose transcript is gone"
   assert_present "$root/state/.pending-stow/sess-live" "pending consumed a record nobody stowed"
-
-  out=$(FM_HOME="$root" "$HOOK" transcript sess-live 2>&1)
-  assert_contains "$out" "[user] remember that the deploy key rotates monthly" "condensed view lost the user text"
-  assert_contains "$out" "[assistant] Noted the monthly deploy key rotation." "condensed view lost the assistant text"
-  assert_contains "$out" "[assistant tool] Bash" "condensed view lost the tool-call trace"
-  assert_not_contains "$out" "bulky tool output" "condensed view included a tool result"
 
   out=$(FM_HOME="$root" "$HOOK" 'done' sess-live 2>&1)
   assert_contains "$out" "Cleared the pending stow record for session sess-live" "done did not confirm the clear"
@@ -258,5 +252,5 @@ test_secondmate_home_is_silent
 test_worker_worktree_is_silent
 test_unowned_lock_is_silent
 test_foreign_host_and_gate_are_silent
-test_pending_done_and_transcript
+test_pending_and_done
 test_session_start_surfaces_pending_stow

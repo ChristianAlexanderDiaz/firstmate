@@ -18,7 +18,7 @@ This skill writes only through the existing Firstmate ownership and write bounda
 
 When the session-start digest lists a PENDING STOW, a Claude `/clear` ended an earlier session of this home before `/stow` ran; `bin/fm-stow-on-clear.sh` owns that record.
 Run this skill once per listed session before taking new work, treating that earlier session's transcript as "this session" throughout: the knowledge sweep, open-record persistence, and reinforcement evidence all come from it, plus anything the current session has itself established.
-Read it through the digest's condensed-view command, falling back to targeted slices of the raw transcript only when that view is empty.
+Read the raw transcript the digest names in targeted slices.
 The rest of the pass, including the cascade and the completion receipt, is unchanged.
 After the receipt, clear the record with the digest's `done` command; a pass that could not finish leaves the record for the next session start.
 
