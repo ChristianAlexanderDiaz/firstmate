@@ -690,7 +690,12 @@ systemd_in_use() {
 
 check_systemd_services() {
   local herdr_bin why="they need the account's own user manager at systemd 250 or newer with lingering on"
-  if [ "$PLATFORM" != linux ] || ! systemd_in_use; then
+  if [ "$PLATFORM" != linux ]; then
+    record remote-job-service "skip: systemd user services apply only on Linux"
+    record herdr-service "skip: systemd user services apply only on Linux"
+    return 0
+  fi
+  if ! systemd_in_use; then
     record remote-job-service "skip: systemd user services do not apply on this host ($why); the worker starts directly"
     record herdr-service "skip: systemd user services do not apply on this host ($why); the herdr server starts directly"
     return 0

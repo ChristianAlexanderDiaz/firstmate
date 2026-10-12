@@ -301,7 +301,7 @@ Moving an adopted server under its unit without closing its panes is only done t
 Units are used only when all of these hold:
 
 - `systemctl --user` answers with systemd 250 or newer, the first version that reads `ExitType=`.
-- The account's home is its passwd home, which is the tree its user manager reads.
+- The account's home, in its canonical form with no symlinked component, is its passwd home, which is the tree its user manager reads.
 - Lingering is enabled for the account.
   Without it the user manager stops when the last login session ends and takes its units with it, while a direct start survives.
   Doctor never enables lingering itself.

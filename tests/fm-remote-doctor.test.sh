@@ -488,6 +488,11 @@ assert_absent "$CASE_PLIST" "a read-only doctor run installed a launch agent"
 assert_absent "$CASE_JOB_PLIST" "a read-only doctor run installed a remote job worker"
 [ ! -s "$CASE_LAUNCHCTL_LOG" ] || assert_not_contains "$(cat "$CASE_LAUNCHCTL_LOG")" bootstrap \
   "a read-only doctor run loaded a launch agent"
+for systemd_check in remote-job-service herdr-service; do
+  assert_contains "$DOCTOR_OUT" "check $systemd_check=skip: systemd user services apply only on Linux
+" "darwin did not report $systemd_check as Linux-only"
+done
+assert_not_contains "$DOCTOR_OUT" 'starts directly' "darwin claimed a launchd-run worker starts directly"
 pass "an absent launch agent is a fixable gap and the read-only run changes nothing"
 
 doctor --fix
@@ -1088,6 +1093,24 @@ new_case Linux with-herdr no-gui
 doctor
 assert_contains "$DOCTOR_OUT" 'check herdr-service=skip:' "a fixture HOME was offered the real user manager"
 pass "a home that is not the account's own never reaches the real user manager"
+
+# The doctor and the worker start decide from the canonical home, so a home
+# reached through a symlink gets no units even where the manager is usable.
+new_case Linux with-herdr no-gui
+ln -s "$CASE_HOME" "$CASE_DIR/linked-home"
+USABLE_OUT=$(
+  PATH="$CASE_BIN:$BASE_PATH" FM_FAKE_STATE="$CASE_STATE" FM_REMOTE_SYSTEMCTL="$CASE_BIN/systemctl" \
+  FM_REMOTE_SYSTEMD_UNIT_DIR="$CASE_HOME/.config/systemd/user" \
+  FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux bash -c '
+    . "$1"
+    for home in "$2" "$2/" "$3"; do
+      if fm_remote_systemd_user_usable "$home"; then echo "$home=usable"; else echo "$home=unusable"; fi
+    done' _ "$ROOT/bin/fm-remote-job-lib.sh" "$CASE_HOME" "$CASE_DIR/linked-home" 2>&1
+)
+[ "$USABLE_OUT" = "$CASE_HOME=usable
+$CASE_HOME/=usable
+$CASE_DIR/linked-home=unusable" ] || fail "the systemd decision did not follow the canonical home: $USABLE_OUT"
+pass "the systemd decision is made from the canonical account home"
 
 # The worker is started or replaced through its unit, and a live worker that
 # matches the current code is adopted without touching systemd at all.

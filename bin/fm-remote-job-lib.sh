@@ -1258,12 +1258,15 @@ fm_remote_systemctl() { # <systemctl --user arguments...>
 # The account whose user manager reads the unit directory is the passwd account
 # at its passwd home, so units are only ever written for that real home: an
 # isolated or fake HOME has no user manager reading it and must keep the nohup
-# path. FM_REMOTE_SYSTEMCTL (a stub) lifts the home comparison. The manager
+# path. The home is compared in its canonical form, the one the worker start
+# and the unit renderers use, so a home they would refuse never gets units.
+# FM_REMOTE_SYSTEMCTL (a stub) lifts the home comparison. The manager
 # must also be systemd 250 or newer, the first to read the herdr unit's
 # ExitType=, and the account must linger (see fm_remote_systemd_linger_enabled).
 fm_remote_systemd_user_usable() { # <account-home>
-  local account_home=$1 passwd_home version
+  local account_home passwd_home version
   [ "$(fm_remote_job_platform)" = linux ] || return 1
+  account_home=$(fm_remote_job_canonical_existing_dir "$1") || return 1
   if [ -z "${FM_REMOTE_SYSTEMCTL:-}" ]; then
     command -v systemctl >/dev/null 2>&1 || return 1
     command -v getent >/dev/null 2>&1 || return 1
