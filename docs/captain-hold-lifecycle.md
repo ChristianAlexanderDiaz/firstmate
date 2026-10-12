@@ -67,7 +67,7 @@ Repeat and edge cases:
   A task that is neither captain-held nor carrying a recorded answer cannot certify anything until its hold lands, so the origin is written before the backend hold.
   A task that already certifies an origin is re-held through a `pending <origin>` value instead, which `complete` and `verify` refuse for every origin, and the new origin replaces it only after the backend hold lands.
   A crash or failed write in that window therefore leaves the call certified for neither origin until `hold --origin` is re-run.
-  A refused hold restores the previous association, and an origin that cannot be read stops the command before anything changes.
+  A refused hold restores the previous association, and an origin that cannot be read stops the command before the association or the backend hold changes.
 - `complete` and `verify` read each held task under that task's control lock, which `hold` keeps from before it changes the task until the association is recorded, so no checker observes a hold whose association is not yet committed.
 - The reason may contain parentheses, semicolons, quotes, and line breaks.
   [`bin/fm-hold-reason-lib.sh`](../bin/fm-hold-reason-lib.sh) owns the storage encoding and compatibility rules; [`bin/fm-tasks-axi.sh --help`](../bin/fm-tasks-axi.sh) owns the public read commands and output contract.

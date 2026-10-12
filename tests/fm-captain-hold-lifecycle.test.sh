@@ -4237,8 +4237,9 @@ test_complete_refuses_an_entry_held_for_another_origin() {
 # A task that cannot yet certify any origin records the new origin before its
 # backend hold; a task that already certifies one is re-held through a pending
 # association that no checker accepts until the backend hold has landed. A
-# refused hold restores the previous association, and a crash or failed write
-# after the hold lands leaves the call certified for neither origin.
+# refused hold restores the previous association. On a task that already
+# certified an origin, a crash or failed write after the hold lands leaves the
+# call certified for neither origin; a new task's crash there certifies B.
 test_hold_origin_is_atomic_with_backend_hold() {
   local home phase timing failure id shown origin until_args=() staged landed out
   for phase in new active released; do
