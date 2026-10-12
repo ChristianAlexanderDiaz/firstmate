@@ -312,7 +312,8 @@ No path here closes a captain call without either the captain's words through `a
 
 ## Card hygiene: a landed subject is not a live call
 
-`bin/fm-bearings-board.sh build` cross-checks every `decision` card before it publishes and drops stale subjects rather than trusting the composed inventory alone.
+`bin/fm-bearings-board.sh build` cross-checks every captain-hold `decision` card (`verb` of `captain-hold`, or no `verb`) before it publishes and drops stale subjects rather than trusting the composed inventory alone.
+A `needs-decision` card is an open ask on a task that is not held for the captain, already current from the snapshot, so it is always kept.
 
 Three checks run, all on exact identity and none on prose:
 

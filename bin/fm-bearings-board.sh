@@ -46,13 +46,17 @@
 # live owner also gets a replacement before build returns, because
 # `already-armed` is not the same fact as `listening`.
 #
-# CAPTAIN'S CALL HYGIENE. A decision card is dropped when its work item, PR, or
-# structured artifact/version subject appears among the payload's own landed
-# rows, or when `bin/fm-captain-hold.sh open` reports the task is no longer an
-# open captain call. A newer published version also supersedes a version card.
-# A task whose state cannot be established is kept, because a call wrongly
-# hidden is worse than a card wrongly shown. Cleanup is therefore a normal
-# rebuild effect rather than a committed migration or direct state mutation.
+# CAPTAIN'S CALL HYGIENE. A decision card MAY carry `verb`, the snapshot
+# decisions_open verb it was composed from: `captain-hold` (the default when
+# absent) or `needs-decision`. A captain-hold card is dropped when its work item,
+# PR, or structured artifact/version subject appears among the payload's own
+# landed rows, or when `bin/fm-captain-hold.sh open` reports the task is no
+# longer an open captain call. A newer published version also supersedes a
+# version card. A needs-decision card is an open ask on a task that is not
+# captain-held, already current from the snapshot, so it is always kept. A task
+# whose state cannot be established is kept, because a call wrongly hidden is
+# worse than a card wrongly shown. Cleanup is therefore a normal rebuild effect
+# rather than a committed migration or direct state mutation.
 #
 # THE RECONCILE CHOICE. Every decision card carries the standard `reconcile`
 # option, injected here so the guarantee does not depend on the composer's
@@ -162,6 +166,8 @@ validate_payload() {  # <data.json>
       and (if has("subject") then .type == "decision" else true end)
       and (optional_string("freeform_hint"))
       and ((has("close") | not) or (.close == "done" or .close == "release"))
+      and ((has("verb") | not)
+        or (.type == "decision" and (.verb == "captain-hold" or .verb == "needs-decision")))
       and ((has("allow_freeform") | not) or (.allow_freeform | type == "boolean"))
       and ((has("recommend_value") | not)
         or ((.recommend_value | slug(128))
@@ -270,7 +276,8 @@ establish_board_session() {  # <board>
 # --- Captain's Call hygiene ---------------------------------------------------
 # A held decision whose subject already shipped is not a live call, so it is
 # dropped here instead of being carded again. All checks use exact structured
-# identities; unknown subject state keeps the card.
+# identities; unknown subject state keeps the card. Only captain-hold cards are
+# checked; a needs-decision card is never held, so it is always kept.
 
 decision_card_is_stale() {  # <task-id> <landed-0-or-1>
   local task=$1 landed=$2 rc=0
@@ -289,7 +296,7 @@ decision_card_is_stale() {  # <task-id> <landed-0-or-1>
   return 1
 }
 
-# Drop every stale decision card, then give every surviving decision card the
+# Drop every stale captain-hold card, then give every surviving decision card the
 # standard reconcile choice. Injecting it here is what makes "every decision
 # card offers reconcile" a property of the board rather than of the composer's
 # memory; the validator prevents duplicate decision options.
@@ -320,7 +327,7 @@ effective_payload() {  # <data.json> <dest.json>
     reason=$(decision_card_is_stale "$key" "$landed") || continue
     printf 'dropped-landed-card: %s (%s)\n' "$key" "$reason" >&2
     drop=$drop$key$'\n'
-  done < <(jq -r '.captains_call[]? | select(.type == "decision") | .key' "$data")
+  done < <(jq -r '.captains_call[]? | select(.type == "decision" and (.verb // "captain-hold") == "captain-hold") | .key' "$data")
   tmp=$(printf '%s' "$drop" | jq -R -s 'split("\n") | map(select(length > 0))') || return 1
   jq --argjson dropped "$tmp" '
     .captains_call = [
