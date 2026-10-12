@@ -381,27 +381,6 @@ status_declared_wait_line() {  # <status-file>
     || _fm_status_declared_wait_scan "$resolve" "$legacy_re" < "$f" || :
 }
 
-# Who a declared wait is waiting on, read from the same declared-wait line the
-# supervisors use: `captain` when the wait is the captain's to clear, `external`
-# for any other pause, and nothing for a non-wait line. A verified captain-held
-# transfer always waits on the captain; a `paused:` line waits on the captain
-# only when its own reason names the captain as a whole word, so no new marker or
-# declaration is introduced and an ordinary external wait stays `external`.
-status_declared_wait_owner() {  # <declared-wait-line>
-  local line=$1 note
-  if status_is_captain_held "$line"; then
-    printf 'captain'
-    return 0
-  fi
-  status_is_paused "$line" || return 0
-  note=$(status_line_note "$line")
-  if printf '%s' "$note" | LC_ALL=C grep -qiE "(^|[^[:alnum:]_])captain([^[:alnum:]_]|$)"; then
-    printf 'captain'
-  else
-    printf 'external'
-  fi
-}
-
 # Walk the status lines on stdin back from the newest event past resolved lines
 # to the first other event, and print it when it is a pause none of those
 # resolved lines share a phase key with. Returns 1 when every event is a

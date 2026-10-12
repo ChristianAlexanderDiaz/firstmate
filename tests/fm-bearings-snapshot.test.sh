@@ -761,9 +761,10 @@ test_parent_decision_is_untrusted_contradiction_only() {
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
     (.secondmates | any(.[]; .id == "authority" and .state == "no_active_work" and .contradiction == true))
-      and (.decisions_open | any(.[]; .id == "authority") | not)
-  ' >/dev/null || fail "bearings promoted a stale parent decision: $json"
-  pass "parent decisions remain untrusted contradiction evidence"
+      and ([.decisions_open[] | select(.id == "authority") | {key,verb,owner}])
+        == [{key:"stale",verb:"needs-decision",owner:"authority"}]
+  ' >/dev/null || fail "bearings dropped the secondmate's own parent-channel ask: $json"
+  pass "parent decisions stay out of the structured home but reach Captain's Call as the secondmate's ask"
 }
 
 test_parent_evidence_reconciles_by_verb_and_key() {
@@ -2144,10 +2145,10 @@ test_captains_call_anti_leak() {
   pass "action-free items (working/done/queued/landed) do not leak into Captain's Call"
 }
 
-# Captain's Call also carries every open needs-decision ask and every task whose
-# declared wait is the captain, in the main home and in each secondmate home. A
-# task already held for the captain is never listed twice, and an ordinary
-# external wait stays out of Captain's Call.
+# Captain's Call also carries every open needs-decision ask, in the main home and
+# in each secondmate home, including a readable secondmate's own parent-channel
+# asks. A task already held for the captain is never listed twice, and a declared
+# paused: wait stays out of Captain's Call whatever its reason names.
 write_ask_task() {  # <home> <id> <kind> <status-line>...
   local home=$1 id=$2 kind=$3
   shift 3
@@ -2160,7 +2161,7 @@ write_ask_task() {  # <home> <id> <kind> <status-line>...
   while [ $# -gt 0 ]; do printf '%s\n' "$1" >> "$home/state/$id.status"; shift; done
 }
 
-test_main_status_asks_and_captain_waits_reach_captains_call() {
+test_main_status_asks_reach_captains_call() {
   local home fakebin json
   home=$(make_home main-asks)
   : > "$home/data/secondmates.md"
@@ -2169,7 +2170,6 @@ test_main_status_asks_and_captain_waits_reach_captains_call() {
 - [ ] design-call - Pick the design (repo: firstmate) (kind: ship) (since 2026-07-11)
 - [ ] flow-scout - Flow design scout (repo: firstmate) (kind: scout) (since 2026-07-11)
 - [ ] ci-wait - Waits on CI (repo: firstmate) (kind: ship) (since 2026-07-11)
-- [ ] held-wait - Held and waiting (repo: firstmate) (kind: scout) (since 2026-07-11)
 
 ## Queued
 - [ ] held-ask - Already held (repo: firstmate) (kind: captain) (hold: captain choice pending) (hold-kind: captain)
@@ -2180,25 +2180,21 @@ EOF
   write_ask_task "$home" flow-scout scout "paused [at=1788576000]: waiting on the captain's review of the flow design"
   write_ask_task "$home" held-ask ship 'needs-decision [key=pick-held]: already a captain hold'
   write_ask_task "$home" ci-wait ship 'paused: waiting for the upstream release to publish'
-  write_ask_task "$home" held-wait scout 'captain-held [key=ready]: tracked by held-wait'
   fakebin=$(make_fakebin "$home")
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
     (.decisions_open | any(.[]; .id == "design-call" and .key == "pick-design"
       and .verb == "needs-decision" and .owner == "(main)"))
-      and (.decisions_open | any(.[]; .id == "flow-scout" and .verb == "captain-wait" and .owner == "(main)"
-        and (.summary | contains("review of the flow design"))))
-      and (.decisions_open | any(.[]; .id == "held-wait" and .verb == "captain-wait"))
       and (.decisions_open | any(.[]; .id == "held-ask" and .verb == "captain-hold"))
       and ([.decisions_open[] | select(.id == "held-ask")] | length) == 1
-      and (.decisions_open | any(.[]; .id == "ci-wait") | not)
-  ' >/dev/null || fail "main asks or captain waits missing from Captain's Call: $json"
+      and (.decisions_open | any(.[]; .id == "flow-scout" or .id == "ci-wait") | not)
+  ' >/dev/null || fail "main asks missing from Captain's Call, or a paused wait leaked in: $json"
   printf '%s' "$json" | jq -e '.in_flight | any(.[]; .id == "flow-scout")' >/dev/null \
-    || fail "a captain wait must also stay visible as Underway: $json"
-  pass "main-home needs-decision asks and captain waits reach Captain's Call without duplicating holds"
+    || fail "a paused task naming the captain must stay visible as Underway: $json"
+  pass "main-home needs-decision asks reach Captain's Call without duplicating holds or paused waits"
 }
 
-test_secondmate_status_asks_and_captain_waits_reach_captains_call() {
+test_secondmate_status_asks_reach_captains_call() {
   local home mate fakebin json
   home=$(make_home mate-asks)
   mate="$TMP_ROOT/mate-asks-home"
@@ -2217,19 +2213,22 @@ EOF
     'needs-decision [key=design-108]: pick the design'
   write_ask_task "$mate" flow-review scout 'paused: waiting for the captain review of the flow'
   write_ask_task "$mate" ext-wait ship 'paused: waiting for the legal team'
+  printf '%s\n' 'needs-decision [key=merge-29]: merge words for PRs 25-29?' \
+    'needs-decision [key=captain-hold-legal-release-1]: mirrors a hold' \
+    'needs-decision [key=merge-25]: merge the stack, yes or no?' >> "$home/state/domain-alpha.status"
   fakebin=$(make_fakebin "$home")
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
     ([.decisions_open[] | select(.id == "domain-alpha/merge-ask") | .key] | sort) == ["design-108", "merge-25"]
-      and (.decisions_open | any(.[]; .id == "domain-alpha/flow-review" and .verb == "captain-wait"
-        and .owner == "domain-alpha"))
-      and (.decisions_open | any(.[]; .id == "domain-alpha/ext-wait") | not)
-  ' >/dev/null || fail "secondmate asks or captain waits missing from Captain's Call: $json"
+      and ([.decisions_open[] | select(.id == "domain-alpha") | {key,verb,owner}])
+        == [{key:"merge-29",verb:"needs-decision",owner:"domain-alpha"}]
+      and (.decisions_open | any(.[]; .id == "domain-alpha/flow-review" or .id == "domain-alpha/ext-wait") | not)
+  ' >/dev/null || fail "secondmate or parent-channel asks wrong in Captain's Call: $json"
   printf '%s' "$json" | jq -e '
     .secondmates | any(.[]; .id == "domain-alpha" and .state == "captain_decision"
       and (.doing | contains("merge the stack")))
   ' >/dev/null || fail "a secondmate home with an open ask must read as a captain decision: $json"
-  pass "secondmate needs-decision asks and captain waits reach Captain's Call"
+  pass "secondmate child and parent-channel needs-decision asks reach Captain's Call once"
 }
 
 test_unreadable_secondmate_parent_asks_reach_captains_call() {
@@ -3498,8 +3497,8 @@ test_all_landed_keeps_complete_global_order
 test_landed_bounded_and_disclosed
 test_live_blocker_is_not_charted_queue_work
 test_captains_call_anti_leak
-test_main_status_asks_and_captain_waits_reach_captains_call
-test_secondmate_status_asks_and_captain_waits_reach_captains_call
+test_main_status_asks_reach_captains_call
+test_secondmate_status_asks_reach_captains_call
 test_unreadable_secondmate_parent_asks_reach_captains_call
 test_main_orphan_in_flight_is_disclosed_not_invented
 test_main_unstructured_current_is_disclosed_with_structured_sibling
