@@ -796,13 +796,28 @@ SH
   out=$(lock_contend "$state" "$lockdir" "${envs[@]}" TZ=Asia/Tokyo)
   case "$out" in "rc=1 held=$live "*) ;; *) kill "$live" 2>/dev/null; fail "matching macOS holder read in another time zone was reclaimed: $out" ;; esac
 
-  # A clock step moves kern.boottime by seconds; the holder is still the holder.
-  printf '1759500007\n' > "$dir/boot.sec"
+  # A clock step moves kern.boottime by its full size but leaves the holder's
+  # start time alone; the holder is still the holder.
+  printf '1759500300\n' > "$dir/boot.sec"
   out=$(lock_contend "$state" "$lockdir" "${envs[@]}")
   case "$out" in "rc=1 held=$live "*) ;; *) kill "$live" 2>/dev/null; fail "a clock step evicted a live macOS holder: $out" ;; esac
 
-  # The Mac rebooted and the number went to another program.
+  # Without a start time to compare, the boot time alone decides: within the
+  # tolerance the holder stands, past it the lock is from before a reboot.
+  lockdir="$state/.boot-only.lock"
+  mkdir "$lockdir"
+  printf '%s\n' "$live" > "$lockdir/pid"
+  printf 'boot=boottime:1759500000\nidentity=\n' > "$lockdir/lock-identity"
+  printf '1759500007\n' > "$dir/boot.sec"
+  out=$(lock_contend "$state" "$lockdir" "${envs[@]}")
+  case "$out" in "rc=1 held=$live "*) ;; *) kill "$live" 2>/dev/null; fail "a small clock step evicted a boot-only macOS holder: $out" ;; esac
   printf '1759509999\n' > "$dir/boot.sec"
+  out=$(lock_contend "$state" "$lockdir" "${envs[@]}")
+  case "$out" in "rc=0 "*"recovered=$live") ;; *) kill "$live" 2>/dev/null; fail "boot-only macOS lock from before a reboot was honored: $out" ;; esac
+
+  # The Mac rebooted and the number went to another program.
+  lockdir="$state/.same.lock"
+  printf 'Fri Oct  3 12:47:00 2026 /usr/bin/other\n' > "$dir/ps.out"
   out=$(lock_contend "$state" "$lockdir" "${envs[@]}")
   case "$out" in "rc=0 "*"recovered=$live") ;; *) kill "$live" 2>/dev/null; fail "macOS lock from before a reboot was honored: $out" ;; esac
 

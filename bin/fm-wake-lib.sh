@@ -126,9 +126,9 @@ fm_boot_id() {
 }
 
 # True when two fm_boot_id readings name different boots. Unlike a Linux boot id,
-# macOS's kern.boottime can shift by a few seconds when the clock is stepped, so
-# those readings differ only past a generous tolerance; a reboot inside the
-# tolerance is still caught by the process identity comparison.
+# macOS's kern.boottime moves by the size of any clock step, so those readings
+# differ only past a generous tolerance, and fm_lock_holder_alive consults them
+# only when it cannot compare the holder's start time.
 fm_boot_id_differs() {  # <recorded> <current>
   local recorded=$1 current=$2 delta
   [ -n "$recorded" ] && [ -n "$current" ] || return 1
@@ -182,14 +182,15 @@ _fm_identity_start() {
 
 # fm_lock_holder_alive <record-file> <pid>
 # True unless the lock's recorded holder is provably gone: the pid is dead, the
-# machine has rebooted since the lock was taken, or a live process holding the
-# number no longer matches the identity recorded at acquire time (the number was
-# reused). Anything unverifiable keeps the holder alive, so a lock written
-# without an identity record, or compared when a reading is unavailable or of a
-# different kind, behaves exactly like the pid-only test and a genuine holder is
-# never reclaimed.
+# Linux boot id has changed since the lock was taken, or a live process holding
+# the number no longer matches the start time recorded at acquire time (the
+# number was reused). macOS's kern.boottime is compared only when the start
+# times cannot be, because a clock step moves it under a live holder whose start
+# time stays put. Anything unverifiable keeps the holder alive, so a lock
+# written without an identity record, or compared when readings are unavailable,
+# behaves exactly like the pid-only test and a genuine holder is never reclaimed.
 fm_lock_holder_alive() {
-  local record=$1 pid=$2 line rec_boot='' rec_identity='' cur_boot cur_identity
+  local record=$1 pid=$2 line rec_boot='' rec_identity='' cur_boot='' cur_identity comparable=0
   fm_pid_alive "$pid" || return 1
   [ -r "$record" ] || return 0
   while IFS= read -r line; do
@@ -198,21 +199,26 @@ fm_lock_holder_alive() {
       identity=*) rec_identity=${line#identity=} ;;
     esac
   done < "$record"
-  if [ -n "$rec_boot" ] && cur_boot=$(fm_boot_id 2>/dev/null) && fm_boot_id_differs "$rec_boot" "$cur_boot"; then
-    return 1
-  fi
+  [ -z "$rec_boot" ] || cur_boot=$(fm_boot_id 2>/dev/null) || cur_boot=
+  case "$rec_boot" in
+    boot-id:*) ! fm_boot_id_differs "$rec_boot" "$cur_boot" || return 1 ;;
+  esac
   if [ -n "$rec_identity" ] && cur_identity=$(TZ=UTC0 fm_pid_identity "$pid" 2>/dev/null) && [ -n "$cur_identity" ]; then
     # A /proc reading and a ps reading never compare equal for one process, so
     # a record of one kind cannot condemn a holder read the other way.
     case "$rec_identity:$cur_identity" in
-      linux-starttime=*:linux-starttime=*|proc-starttime=*:proc-starttime=*) ;;
-      linux-starttime=*:*|proc-starttime=*:*|*:linux-starttime=*|*:proc-starttime=*) return 0 ;;
+      linux-starttime=*:linux-starttime=*|proc-starttime=*:proc-starttime=*) comparable=1 ;;
+      linux-starttime=*:*|proc-starttime=*:*|*:linux-starttime=*|*:proc-starttime=*) ;;
+      *) comparable=1 ;;
     esac
+  fi
+  if [ "$comparable" -eq 1 ]; then
     # Only the start time is compared: the holder's command changes when it
     # execs while holding the lock, and that is still the genuine holder.
-    [ "$(_fm_identity_start "$rec_identity")" = "$(_fm_identity_start "$cur_identity")" ] || return 1
+    [ "$(_fm_identity_start "$rec_identity")" = "$(_fm_identity_start "$cur_identity")" ]
+    return
   fi
-  return 0
+  ! fm_boot_id_differs "$rec_boot" "$cur_boot"
 }
 
 fm_path_mtime() {

@@ -1100,16 +1100,27 @@ test_verified_reclaim_keeps_new_sidecar() {
   pass "session-lock: a verified reclaim keeps the new sidecar beside the new pid"
 }
 
-# Point the fixture at boot <before|after>: a Linux boot id in the fake /proc, or
-# a macOS kern.boottime read through the stubbed sysctl.
-set_session_reuse_boot() {  # <mode> <dir> <before|after>
+# Point the fixture at boot <before|stepped|after>: a Linux boot id in the fake
+# /proc, or a macOS kern.boottime read through the stubbed sysctl together with
+# the start time the stubbed ps reports for the recorded pid. A clock step
+# (stepped) moves kern.boottime but not a live process's start time; after a
+# reboot the pid belongs to a process that started later.
+set_session_reuse_boot() {  # <mode> <dir> <before|stepped|after>
   case "$1:$3" in
+    linux:stepped) set_session_reuse_boot linux "$2" before ;;
     linux:*)
       mkdir -p "$2/proc/sys/kernel/random"
       printf 'boot-%s\n' "$3" > "$2/proc/sys/kernel/random/boot_id"
       ;;
-    macos:before) printf '1759500000\n' > "$2/boot" ;;
-    macos:after) printf '1759509999\n' > "$2/boot" ;;
+    macos:before)
+      printf '1759500000\n' > "$2/boot"
+      printf 'Sat Oct  3 10:00:00 2026\n' > "$2/lstart"
+      ;;
+    macos:stepped) printf '1759500300\n' > "$2/boot" ;;
+    macos:after)
+      printf '1759509999\n' > "$2/boot"
+      printf 'Sat Oct  3 12:47:00 2026\n' > "$2/lstart"
+      ;;
   esac
 }
 
@@ -1118,10 +1129,11 @@ set_session_reuse_boot() {  # <mode> <dir> <before|after>
 # a lock whose live pid no longer matches, still refuses the genuine holder, and
 # keeps the harness test alone for a lock written without that record. Linux's
 # boot id with /proc readings and macOS's kern.boottime (a stubbed sysctl) with
-# ps readings are both driven.
+# ps start times (stubbed, every other ps query real) are both driven.
 test_session_lock_pid_reused_after_reboot_is_reclaimed() {
-  local mode dir fakebin holder i out want_boot
+  local mode dir fakebin holder i out want_boot real_ps
   local -a envs
+  real_ps=$(command -v ps)
   for mode in linux macos; do
     dir="$TMP_ROOT/reused-pid-$mode"
     fakebin=$(fm_fakebin "$dir")
@@ -1131,9 +1143,19 @@ test_session_lock_pid_reused_after_reboot_is_reclaimed() {
 printf '{ sec = %s, usec = 0 } Sat Oct  3 10:00:00 2026\n' "$(cat "$FM_FAKE_BOOT")"
 SH
     chmod +x "$fakebin/sysctl"
+    if [ "$mode" = macos ]; then
+      cat > "$fakebin/ps" <<SH
+#!/usr/bin/env bash
+case " \$* " in
+  *" lstart= "*) printf '%s /fake/claude\\n' "\$(cat "\$FM_FAKE_LSTART")"; exit 0 ;;
+esac
+exec "$real_ps" "\$@"
+SH
+      chmod +x "$fakebin/ps"
+    fi
     set_session_reuse_boot "$mode" "$dir" before
     envs=(PATH="$fakebin:$PATH" FM_HOME="$dir" FM_LOCK="$ROOT/bin/fm-lock.sh"
-      FM_PROC_ROOT_OVERRIDE="$dir/proc" FM_FAKE_BOOT="$dir/boot")
+      FM_PROC_ROOT_OVERRIDE="$dir/proc" FM_FAKE_BOOT="$dir/boot" FM_FAKE_LSTART="$dir/lstart")
 
     : > "$dir/state/hold"
     env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID "${envs[@]}" \
@@ -1166,6 +1188,11 @@ SH
       . "$0/bin/fm-wake-lib.sh"; . "$0/bin/fm-session-lock-lib.sh"
       fm_session_lock_foreign_owner_live "$FM_HOME/state" && printf "%s" "$FM_SESSION_LOCK_FOREIGN_OWNER_PID"' "$ROOT")
     [ "$out" = "$holder" ] || fail "$mode: the genuine holder was not a foreign owner: '$out'"
+
+    # A clock step leaves the genuine holder held.
+    set_session_reuse_boot "$mode" "$dir" stepped
+    out=$(env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID "${envs[@]}" "$ROOT/bin/fm-lock.sh" status)
+    [ "$out" = "lock: held by live harness pid $holder" ] || fail "$mode: a clock step changed the genuine holder's status: $out"
 
     # A lock written without the record keeps today's harness test, even after a reboot.
     mv "$dir/state/.lock-identity" "$dir/state/lock-identity.saved"
