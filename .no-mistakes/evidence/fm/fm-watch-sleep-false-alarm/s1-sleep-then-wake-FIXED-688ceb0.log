@@ -1,0 +1,27 @@
+== s1-fixed: lab=/tmp/fm-lab.XET6Sx commit=688ceb0 no-mistakes(review): Settle sleep-aged watcher beacon once before arming so wakes deliver
+[17:52:31] real watcher running: pid=2432637 (arm pgid=2432596), beacon age 1s
+[17:52:31] SIMULATED HOST SLEEP: SIGSTOP watcher process group; beacon aged to 486s (GRACE=300)
+        PID STAT COMMAND
+    2432596 Ts   bash /tmp/fm-lab.XET6Sx/bin/fm-watch-arm.sh
+    2432637 T    bash /tmp/fm-lab.XET6Sx/bin/fm-watch.sh
+    2434550 T    sleep 15
+[17:52:31] Stop hook fired (hook pid=2434839)
+[17:52:35] HOST WAKE: SIGCONT watcher process group after 4s; beacon age 490s
+[17:52:46] watcher refreshed its beacon (age 0s)
+[17:53:43] after 72s the Stop hook is still running (parked on the watcher, no FAILED notice); hook output so far:
+    epoch ledger: epoch=1 owner_pid=2434849 outcome=arming updated_at=1791841951
+[17:53:43] wrote state/labtask.status (done:) to make the recovered watcher wake
+[17:54:26] Stop hook finished after 115s. Full hook stdout+stderr:
+    | firstmate watcher wake - one supervision event needs a handling turn now.
+    | signal: /tmp/fm-lab.XET6Sx/state/labtask.status
+    | Run bin/fm-wake-drain.sh first, handle the wake, then run its exact WAKE_ACK_REQUIRED --ack-through command. Until that post-handling acknowledgement, interruption leaves the wake durable for idempotent re-handling. This Stop hook owns watcher continuity: when the handling turn ends, the next needed cycle arms automatically - do NOT run bin/fm-watch-arm.sh after an ordinary wake.
+    | HOOK_EXIT=2
+    epoch ledger: epoch=1 owner_pid=2434849 outcome=rewake updated_at=1791842065 session_pid=2434843 recovery_generation=2432637.1791842053.3rhE92
+    failure-notice marker: absent
+    watcher cycle log:
+      arm_pid=2432596	watcher_pid=2432637	origin=started	started_at=1791841950	ended_at=1791842054	exit_code=0	signal=none	reason=actionable-signal	beacon_age=30	lock_before=pid:2432637|identity:linux-starttime=8741218 cmdline-hex=62617368002f746d702f666d2d6c61622e5845543653782f62696e2f666d2d77617463682e736800	lock_after=pid:none|identity:none	successor=none
+      arm_pid=2450838	watcher_pid=2432637	origin=attached	started_at=1791841967	ended_at=1791842065	exit_code=unknown	signal=unknown	reason=attached-delivered-wake	beacon_age=41	lock_before=pid:2432637|identity:linux-starttime=8741218 cmdline-hex=62617368002f746d702f666d2d6c61622e5845543653782f62696e2f666d2d77617463682e736800	lock_after=pid:none|identity:none	successor=started:2559799
+    background arm output:
+      watcher: started pid=2432637 (beacon fresh)
+      signal: /tmp/fm-lab.XET6Sx/state/labtask.status
+[17:54:27] cleaned up lab processes

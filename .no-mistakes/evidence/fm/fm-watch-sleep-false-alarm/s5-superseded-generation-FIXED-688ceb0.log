@@ -1,0 +1,22 @@
+== two-generation: lab=/tmp/fm-lab.UBqFOn commit=688ceb0 no-mistakes(review): Settle sleep-aged watcher beacon once before arming so wakes deliver
+[17:57:07] real watcher running: pid=2678861
+[17:57:13] gen-N hook pid=2680346 parked: epoch=1 owner_pid=2680353 outcome=arming updated_at=1791842228
+./twogen_scenario.sh: line 13: kill: (2683673) - No such process
+[17:57:14] SIMULATED HOST SLEEP: froze watcher group + gen-N hook tree (2680346 2680349 2680353 2680593 2683673 ); beacon and epoch ledger aged to 486s
+[17:57:14] gen-N+1 Stop hook fired (pid=2684163)
+./twogen_scenario.sh: line 18: kill: (2683673) - No such process
+[17:57:18] HOST WAKE: resumed everything
+[17:57:56] gen-N running=yes, gen-N+1 running=yes; ledger: epoch=2 owner_pid=2684174 outcome=arming updated_at=1791842234
+    gen-N+1 output so far:
+[17:57:56] wrote labtask.status (done:) to make the recovered watcher wake
+[17:59:22] gen-N   (superseded) output:
+[17:59:22] gen-N+1 (owner)      output:
+    | firstmate watcher wake - one supervision event needs a handling turn now.
+    | signal: /tmp/fm-lab.UBqFOn/state/labtask.status
+    | Run bin/fm-wake-drain.sh first, handle the wake, then run its exact WAKE_ACK_REQUIRED --ack-through command. Until that post-handling acknowledgement, interruption leaves the wake durable for idempotent re-handling. This Stop hook owns watcher continuity: when the handling turn ends, the next needed cycle arms automatically - do NOT run bin/fm-watch-arm.sh after an ordinary wake.
+    | HOOK_EXIT=2
+    epoch ledger: epoch=2 owner_pid=2684174 outcome=rewake updated_at=1791842328 session_pid=2684166 recovery_generation=2678861.1791842316.5sS8vr
+    failure-notice marker: absent
+    wake queue: 1791842316	1	signal	labtask.status	signal: /tmp/fm-lab.UBqFOn/state/labtask.status
+1791842316	2	signal	labtask.status	signal: /tmp/fm-lab.UBqFOn/state/labtask.status
+[17:59:23] cleaned up

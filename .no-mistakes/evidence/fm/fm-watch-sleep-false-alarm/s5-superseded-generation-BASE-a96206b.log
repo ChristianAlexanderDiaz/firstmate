@@ -1,0 +1,27 @@
+== two-generation: lab=/tmp/fm-lab.zpcEF1 commit=a96206b feat(remote): run the Linux fm-remote herdr server and job worker as systemd user units (#13)
+[17:57:07] real watcher running: pid=2678860
+[17:57:13] gen-N hook pid=2680350 parked: epoch=1 owner_pid=2680354 outcome=arming updated_at=1791842228
+[17:57:14] SIMULATED HOST SLEEP: froze watcher group + gen-N hook tree (2680350 2680352 2680354 2680561 ); beacon and epoch ledger aged to 486s
+[17:57:14] gen-N+1 Stop hook fired (pid=2684159)
+[17:57:18] HOST WAKE: resumed everything
+[17:57:56] gen-N running=yes, gen-N+1 running=no; ledger: epoch=2 owner_pid=2684170 outcome=failed updated_at=1791842235
+    gen-N+1 output so far:
+    | firstmate watcher auto-arm FAILED - the Stop-owned automatic supervision mechanism is broken after 2 bounded attempts, and no live watcher with a fresh beacon was verified.
+    | watcher: lock held by live pid 2678860 but heartbeat is stale for 488s (>300s); inspect or stop that watcher before re-arming.
+    | watcher: FAILED - watcher cycle exited 1 without an actionable reason
+    | Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.
+    | HOOK_EXIT=2
+[17:57:56] wrote labtask.status (done:) to make the recovered watcher wake
+[17:58:49] gen-N   (superseded) output:
+    | HOOK_EXIT=0
+[17:58:49] gen-N+1 (owner)      output:
+    | firstmate watcher auto-arm FAILED - the Stop-owned automatic supervision mechanism is broken after 2 bounded attempts, and no live watcher with a fresh beacon was verified.
+    | watcher: lock held by live pid 2678860 but heartbeat is stale for 488s (>300s); inspect or stop that watcher before re-arming.
+    | watcher: FAILED - watcher cycle exited 1 without an actionable reason
+    | Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.
+    | HOOK_EXIT=2
+    epoch ledger: epoch=2 owner_pid=2684170 outcome=failed updated_at=1791842235
+    failure-notice marker: PRESENT
+    wake queue: 1791842316	1	signal	labtask.status	signal: /tmp/fm-lab.zpcEF1/state/labtask.status
+1791842316	2	signal	labtask.status	signal: /tmp/fm-lab.zpcEF1/state/labtask.status
+[17:58:50] cleaned up

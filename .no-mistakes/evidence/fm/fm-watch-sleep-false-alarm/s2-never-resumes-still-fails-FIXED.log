@@ -1,0 +1,28 @@
+== s2-hung: lab=/tmp/fm-lab.z0Z1ir commit=688ceb0 no-mistakes(review): Settle sleep-aged watcher beacon once before arming so wakes deliver
+[17:55:11] real watcher running: pid=2586337 (arm pgid=2586138), beacon age 0s
+[17:55:11] SIMULATED HOST SLEEP: SIGSTOP watcher process group; beacon aged to 486s (GRACE=300)
+        PID STAT COMMAND
+    2586138 Ts   bash /tmp/fm-lab.z0Z1ir/bin/fm-watch-arm.sh
+    2586337 T    bash /tmp/fm-lab.z0Z1ir/bin/fm-watch.sh
+    2588074 T    bash /tmp/fm-lab.z0Z1ir/bin/fm-home-summary-refresh.sh --best-effort
+    2588256 S    timeout -k 1 60 bash -c      status_file=$1     shift     "$@"     command_rc
+    2588282 S    bash -c      status_file=$1     shift     "$@"     command_rc=$?     printf "
+    2588323 S    bash /tmp/fm-lab.z0Z1ir/bin/fm-home-summary-refresh.sh --_worker
+    2588779 S    bash /tmp/fm-lab.z0Z1ir/bin/fm-fleet-snapshot.sh --secondmate-home-summary
+    2589082 T    bash /tmp/fm-lab.z0Z1ir/bin/fm-watch.sh
+    2589087 T    bash /tmp/fm-lab.z0Z1ir/bin/fm-inactive-reconcile.sh scan
+[17:55:11] Stop hook fired (hook pid=2589424)
+[17:55:43] Stop hook finished after 32s. Full hook stdout+stderr:
+    | firstmate watcher auto-arm FAILED - the Stop-owned automatic supervision mechanism is broken after 2 bounded attempts, and no live watcher with a fresh beacon was verified.
+    | watcher: lock held by live pid 2586337 but heartbeat is stale for 517s (>300s); inspect or stop that watcher before re-arming.
+    | watcher: FAILED - watcher cycle exited 1 without an actionable reason
+    | Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.
+    | HOOK_EXIT=2
+    epoch ledger: epoch=1 owner_pid=2589442 outcome=failed updated_at=1791842142
+    failure-notice marker: PRESENT
+    watcher cycle log:
+      arm_pid=2617524	watcher_pid=2617558	origin=started	started_at=1791842141	ended_at=1791842141	exit_code=1	signal=none	reason=nonzero-exit	beacon_age=516	lock_before=pid:2586337|identity:linux-starttime=8757871 cmdline-hex=62617368002f746d702f666d2d6c61622e7a305a3169722f62696e2f666d2d77617463682e736800	lock_after=pid:2586337|identity:linux-starttime=8757871 cmdline-hex=62617368002f746d702f666d2d6c61622e7a305a3169722f62696e2f666d2d77617463682e736800	successor=none
+      arm_pid=2618088	watcher_pid=2618152	origin=started	started_at=1791842141	ended_at=1791842142	exit_code=1	signal=none	reason=nonzero-exit	beacon_age=517	lock_before=pid:2586337|identity:linux-starttime=8757871 cmdline-hex=62617368002f746d702f666d2d6c61622e7a305a3169722f62696e2f666d2d77617463682e736800	lock_after=pid:2586337|identity:linux-starttime=8757871 cmdline-hex=62617368002f746d702f666d2d6c61622e7a305a3169722f62696e2f666d2d77617463682e736800	successor=none
+    background arm output:
+      watcher: started pid=2586337 (beacon fresh)
+[17:55:44] cleaned up lab processes
