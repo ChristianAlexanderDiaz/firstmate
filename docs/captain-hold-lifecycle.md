@@ -51,9 +51,9 @@ It works in this order:
 
 1. It uses an existing task, or creates one when nothing exists to hold.
 2. It records the task's UTC hold-set timestamp as the leading line of the task body.
-3. It invokes the underlying tasks-axi hold operation.
-4. It verifies the hold and timestamp.
-5. When `--origin` is supplied, it records the origin on the task, replacing any previous association.
+3. When `--origin` is supplied, it records the origin on the task, replacing any previous association; a task whose hold or answer could already certify an origin records it as pending.
+4. It invokes the underlying tasks-axi hold operation.
+5. It verifies the hold and timestamp, then confirms a pending origin.
 
 Publishing the stamp first ensures a snapshot cannot observe a newly captain-held task without the timestamp that defines its age.
 
@@ -63,9 +63,11 @@ Repeat and edge cases:
 - Re-holding released work starts a new timestamped lifecycle.
 - A closed task is refused rather than reopened.
 - `--until` stores the captain's own deferral date through tasks-axi's date gate.
-- After the backend hold lands, `--origin` records the origin the call is held for on its own `Captain hold origin:` body line, which `complete` and `verify` check using backend identities rather than alias spellings.
-  A refused hold therefore never changes the association, and a crash or failed write after the hold leaves the previous association, or none, rather than one for a hold that did not land.
-  An origin that cannot be read stops the command before anything changes.
+- `--origin` records the origin the call is held for on its own `Captain hold origin:` body line, which `complete` and `verify` check using backend identities rather than alias spellings.
+  A task that is neither captain-held nor carrying a recorded answer cannot certify anything until its hold lands, so the origin is written before the backend hold.
+  A task that already certifies an origin is re-held through a `pending <origin>` value instead, which `complete` and `verify` refuse for every origin, and the new origin replaces it only after the backend hold lands.
+  A crash or failed write in that window therefore leaves the call certified for neither origin until `hold --origin` is re-run.
+  A refused hold restores the previous association, and an origin that cannot be read stops the command before anything changes.
 - `complete` and `verify` read each held task under that task's control lock, which `hold` keeps from before it changes the task until the association is recorded, so no checker observes a hold whose association is not yet committed.
 - The reason may contain parentheses, semicolons, quotes, and line breaks.
   [`bin/fm-hold-reason-lib.sh`](../bin/fm-hold-reason-lib.sh) owns the storage encoding and compatibility rules; [`bin/fm-tasks-axi.sh --help`](../bin/fm-tasks-axi.sh) owns the public read commands and output contract.
