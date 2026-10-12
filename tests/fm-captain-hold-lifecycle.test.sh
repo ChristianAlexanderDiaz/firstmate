@@ -4234,8 +4234,14 @@ test_complete_refuses_an_entry_held_for_another_origin() {
   pass "complete refuses an entry held for another origin and flags one with none recorded"
 }
 
-test_hold_origins_precede_backend_holds() {
-  local home phase timing failure id shown origin until_args=()
+# A task that cannot yet certify any origin records the new origin before its
+# backend hold; a task that already certifies one is re-held through a pending
+# association that no checker accepts until the backend hold has landed. A
+# refused hold restores the previous association. On a task that already
+# certified an origin, a crash or failed write after the hold lands leaves the
+# call certified for neither origin; a new task's crash there certifies B.
+test_hold_origin_is_atomic_with_backend_hold() {
+  local home phase timing failure id shown origin until_args=() staged landed out
   for phase in new active released; do
     for timing in plain dated; do
       home=$(make_home "origin-failure-$phase-$timing")
@@ -4277,67 +4283,111 @@ if [ "${1:-}" = hold ] && [ "${2:-}" != --help ]; then
     : > "$FM_HOME/hold-refused"
     exit 9
   fi
+  if [ -f "$FM_HOME/fail-crash" ]; then
+    "$REAL_TASKS_AXI" "$@" >/dev/null || exit $?
+    : > "$FM_HOME/crash-refused"
+    holders=''
+    pid=$PPID
+    while [ "${pid:-0}" -gt 1 ]; do
+      case "$(ps -o args= -p "$pid")" in
+        *bin/fm-captain-hold.sh*) holders="$holders $pid" ;;
+      esac
+      pid=$(ps -o ppid= -p "$pid" | tr -d ' ')
+    done
+    [ -n "$holders" ] && kill -KILL $holders
+    exit 0
+  fi
 fi
 exec "$REAL_TASKS_AXI" "$@"
 SH
       chmod +x "$home/fakebin/tasks-axi"
       until_args=()
       [ "$timing" != dated ] || until_args=(--until 2099-01-01)
-      for failure in lookup write hold; do
+      staged='Captain hold origin: pending origin-b'
+      [ "$phase" != new ] || staged='Captain hold origin: origin-b'
+      for failure in lookup hold write crash; do
         : > "$home/fail-$failure"
         if run_captain "$home" hold "$id" --title "Separate call" --reason "Choose for B" \
           --origin origin-b ${until_args[@]+"${until_args[@]}"} > "$home/hold.out" 2> "$home/hold.err"; then
           fail "$phase $timing hold succeeded despite an origin $failure failure"
         fi
         assert_present "$home/$failure-refused" "the failure did not reach the origin $failure"
-        if [ "$failure" = hold ]; then
-          assert_present "$home/before-backend-hold" "$phase $timing failure never reached the backend hold"
-          assert_grep 'Captain hold origin: origin-b' "$home/before-backend-hold" \
-            "the failed backend hold did not see the new association"
-          rm "$home/before-backend-hold"
-        else
+        rm "$home/fail-$failure"
+        # The hold lands only when the crash follows it, or when a failed
+        # confirmation write follows it on a task that was already certifying.
+        landed=0
+        if [ "$failure" = crash ] || { [ "$failure" = write ] && [ "$phase" != new ]; }; then
+          landed=1
+        fi
+        if [ "$failure" = lookup ] || { [ "$failure" = write ] && [ "$phase" = new ]; }; then
           assert_absent "$home/before-backend-hold" "$phase $timing origin $failure failure reached the backend hold"
+        else
+          assert_present "$home/before-backend-hold" "$phase $timing $failure failure never reached the backend hold"
+          assert_contains "$(cat "$home/before-backend-hold")" "$staged" \
+            "$phase $timing backend hold did not see the staged association"
+          rm "$home/before-backend-hold"
         fi
         shown=$(tasks_in "$home" show "$id" --full)
-        assert_not_contains "$shown" 'Captain hold origin: origin-b' \
-          "$phase $timing origin $failure failure published the new association"
-        if [ "$phase" = active ]; then
-          assert_contains "$shown" 'held: yes' "an origin $failure failure lifted an existing hold"
+        if [ "$phase" = active ] || [ "$landed" = 1 ]; then
+          assert_contains "$shown" 'held: yes' "$phase $timing origin $failure failure lost the hold"
         else
           assert_contains "$shown" 'held: no' "$phase $timing origin $failure failure left the task held"
         fi
+        if [ "$landed" = 1 ]; then
+          assert_contains "$shown" "$staged" \
+            "$phase $timing origin $failure failure after the hold lost the staged association"
+        else
+          assert_not_contains "$shown" 'Captain hold origin: origin-b' \
+            "$phase $timing origin $failure failure published the new association"
+          assert_not_contains "$shown" 'Captain hold origin: pending' \
+            "$phase $timing origin $failure failure left a pending association"
+          if [ "$phase" != new ]; then
+            assert_contains "$shown" 'Captain hold origin: origin-a' \
+              "$phase $timing origin $failure failure lost the original association"
+          fi
+        fi
+        # A half-recorded hold never satisfies an unrelated origin.
+        if run_captain "$home" complete origin-a "$id" > "$home/complete.out" 2> "$home/complete.err"; then
+          if [ "$phase" = new ] || [ "$landed" = 1 ]; then
+            fail "$phase $timing origin $failure failure satisfied completion for A"
+          fi
+        elif [ "$phase" != new ] && [ "$landed" = 0 ]; then
+          fail "$phase $timing origin $failure failure invalidated completion for A"
+        fi
         if [ "$phase" != new ]; then
-          assert_contains "$shown" 'Captain hold origin: origin-a' \
-            "$phase $timing origin $failure failure lost the original association"
+          if run_captain "$home" verify origin-a > "$home/verify.out" 2> "$home/verify.err"; then
+            [ "$landed" = 0 ] || fail "$phase $timing origin $failure failure verified an inventory for A"
+          else
+            [ "$landed" = 1 ] || fail "$phase $timing origin $failure failure invalidated verification for A"
+          fi
         fi
-        rm "$home/fail-$failure"
-        if [ "$phase" = new ] && run_captain "$home" complete origin-a "$id" \
-          > "$home/unrelated.out" 2> "$home/unrelated.err"; then
-          fail "$timing origin $failure failure satisfied an unrelated inventory"
-        fi
-        if run_captain "$home" complete origin-b "$id" > "$home/complete.out" 2> "$home/complete.err"; then
-          fail "$phase $timing origin $failure failure satisfied completion for B"
-        fi
-        printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$id" >> "$home/state/origin-b.meta"
-        if run_captain "$home" verify origin-b > "$home/verify.out" 2> "$home/verify.err"; then
-          fail "$phase $timing origin $failure failure verified an inventory for B"
-        fi
-        if [ "$phase" != new ]; then
-          run_captain "$home" complete origin-a "$id" >/dev/null \
-            || fail "$phase $timing origin $failure failure invalidated completion for A"
-          run_captain "$home" verify origin-a >/dev/null \
-            || fail "$phase $timing origin $failure failure invalidated verification for A"
+        if [ "$phase" = new ] && [ "$failure" = crash ]; then
+          out=$(run_captain "$home" complete origin-b "$id") \
+            || fail "a new hold that crashed after landing did not certify B"
+          assert_not_contains "$out" "no recorded origin" "a new hold that crashed after landing had no origin"
+        else
+          if run_captain "$home" complete origin-b "$id" > "$home/complete.out" 2> "$home/complete.err"; then
+            fail "$phase $timing origin $failure failure satisfied completion for B"
+          fi
+          if [ "$landed" = 1 ]; then
+            assert_contains "$(cat "$home/complete.err")" "re-run hold $id --origin origin-b" \
+              "a pending association did not name its repair"
+          fi
+          printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$id" >> "$home/state/origin-b.meta"
+          if run_captain "$home" verify origin-b > "$home/verify.out" 2> "$home/verify.err"; then
+            fail "$phase $timing origin $failure failure verified an inventory for B"
+          fi
         fi
       done
       run_captain "$home" hold "$id" --reason "Choose for B" --origin origin-b \
         ${until_args[@]+"${until_args[@]}"} >/dev/null || fail "$phase $timing successful retry failed"
       assert_present "$home/before-backend-hold" "the successful retry did not reach the backend hold"
-      shown=$(cat "$home/before-backend-hold")
-      assert_contains "$shown" 'Captain hold origin: origin-b' "the backend hold ran before the new origin was recorded"
-      assert_not_contains "$shown" 'Captain hold origin: origin-a' "the backend hold ran with the old association"
+      assert_contains "$(cat "$home/before-backend-hold")" 'Captain hold origin: pending origin-b' \
+        "the backend re-hold ran without a pending association"
       shown=$(tasks_in "$home" show "$id" --full)
       assert_contains "$shown" 'held: yes' "the successful retry did not hold the task"
       assert_contains "$shown" 'Captain hold origin: origin-b' "a successful hold lost its association"
+      assert_not_contains "$shown" 'pending' "a successful hold left its association pending"
       assert_not_contains "$shown" 'Captain hold origin: origin-a' "a successful hold retained the old association"
       run_captain "$home" complete origin-b "$id" >/dev/null \
         || fail "a successful hold could not complete B"
@@ -4347,7 +4397,54 @@ SH
       fi
     done
   done
-  pass "new, active, and released holds require the origin first with and without deferral"
+  pass "hold origins are atomic with the backend hold, with and without deferral"
+}
+
+# A checker reads a hold under the hold's own control lock, so it never sees the
+# window between the backend hold landing and its origin association committing.
+test_inventory_check_waits_for_an_in_flight_hold() {
+  local home id=sample-call hold_pid complete_pid waited=0 origin
+  home=$(make_home origin-concurrent-reader)
+  for origin in origin-a origin-b; do
+    tasks_in "$home" add "$origin" "Review $origin" --kind scout --repo sample >/dev/null \
+      || fail "could not create $origin"
+    write_origin_meta "$home" "$origin"
+  done
+  run_captain "$home" hold "$id" --title "Separate call" --reason "Choose for A" \
+    --origin origin-a >/dev/null || fail "could not establish the original association"
+  cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = hold ] && [ "${2:-}" != --help ] && [ -f "$FM_HOME/pause-hold" ]; then
+  : > "$FM_HOME/hold-in-flight"
+  while [ ! -f "$FM_HOME/release-hold" ]; do sleep 0.05; done
+fi
+exec "$REAL_TASKS_AXI" "$@"
+SH
+  chmod +x "$home/fakebin/tasks-axi"
+  : > "$home/pause-hold"
+  run_captain "$home" hold "$id" --reason "Choose for B" --origin origin-b >/dev/null 2>&1 &
+  hold_pid=$!
+  while [ ! -f "$home/hold-in-flight" ]; do
+    waited=$((waited + 1))
+    [ "$waited" -lt 400 ] || { kill "$hold_pid" 2>/dev/null || true; fail "the hold never reached the backend"; }
+    sleep 0.05
+  done
+  run_captain "$home" complete origin-b "$id" > "$home/complete.out" 2> "$home/complete.err" &
+  complete_pid=$!
+  sleep 1
+  if ! kill -0 "$complete_pid" 2>/dev/null; then
+    : > "$home/release-hold"
+    wait "$hold_pid" || true
+    fail "a checker read the hold while its origin association was still in flight"
+  fi
+  : > "$home/release-hold"
+  wait "$hold_pid" || fail "the paused hold did not complete"
+  wait "$complete_pid" || fail "the checker did not see the committed association: $(cat "$home/complete.err")"
+  assert_not_contains "$(cat "$home/complete.out")" "no recorded origin" \
+    "the checker did not see the committed association"
+  assert_contains "$(tasks_in "$home" show "$id" --full)" 'Captain hold origin: origin-b' \
+    "the paused hold did not record its association"
+  pass "an inventory check waits for an in-flight hold and then sees its association"
 }
 
 test_historical_self_inventory_has_workable_repair() {
@@ -4630,7 +4727,8 @@ SH
 }
 
 test_hold_reason_round_trips_awkward_characters
-test_hold_origins_precede_backend_holds
+test_hold_origin_is_atomic_with_backend_hold
+test_inventory_check_waits_for_an_in_flight_hold
 test_historical_self_inventory_has_workable_repair
 test_inventory_compares_backend_identities
 test_origin_is_never_its_own_inventory_entry

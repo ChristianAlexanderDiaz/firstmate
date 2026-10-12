@@ -49,8 +49,11 @@
 # a UTC `Captain hold set:` timestamp in the task body: repeating an active
 # hold preserves the existing timestamp, while re-holding released work starts
 # a new lifecycle. A task already closed is refused rather than reopened.
-# `--origin` also records the origin on a `Captain hold origin:` body line, which
-# `complete` and `verify` check. The reason may hold parentheses and line breaks:
+# `--origin` also records the origin on a `Captain hold origin:` body line,
+# which `complete` and `verify` check under the task's control lock. A task
+# whose hold or answer could already certify an origin carries a pending line
+# naming the new origin, which every checker refuses, until the backend hold
+# has landed. The reason may hold parentheses and line breaks:
 # tasks-axi refuses them, so `hold` escapes them where it writes the reason and
 # readers decode them (bin/fm-hold-reason-lib.sh owns the encoding).
 # `--until` records the captain's own deferral date through `tasks-axi hold
@@ -254,6 +257,8 @@ CAPTAIN_META_LOCK=
 CAPTAIN_META_LOCK_HELD=0
 CAPTAIN_CONTROL_LOCK=
 CAPTAIN_CONTROL_LOCK_HELD=0
+CAPTAIN_READ_LOCK=
+CAPTAIN_READ_LOCK_HELD=0
 captain_hold_cleanup() {
   if [ "$CAPTAIN_META_LOCK_HELD" = 1 ]; then
     fm_lock_release "$CAPTAIN_META_LOCK" || true
@@ -262,6 +267,10 @@ captain_hold_cleanup() {
   if [ "$CAPTAIN_CONTROL_LOCK_HELD" = 1 ]; then
     fm_lock_release "$CAPTAIN_CONTROL_LOCK" || true
     CAPTAIN_CONTROL_LOCK_HELD=0
+  fi
+  if [ "$CAPTAIN_READ_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$CAPTAIN_READ_LOCK" || true
+    CAPTAIN_READ_LOCK_HELD=0
   fi
 }
 trap captain_hold_cleanup EXIT
@@ -305,6 +314,25 @@ release_task_control_lock() {
   fm_lock_release "$CAPTAIN_CONTROL_LOCK"
   CAPTAIN_CONTROL_LOCK_HELD=0
   CAPTAIN_CONTROL_LOCK=
+}
+
+# Read one task as a checker: wait for the task's own control lock, the one
+# `hold` keeps from before it changes the task until its origin association is
+# committed, so a checker waits for a live hold to finish recording it. The
+# lock is held for the read alone. A checker usually runs inside a command
+# substitution, whose subshell does not inherit the EXIT trap, so the trap is
+# re-armed here to release the lock if the read exits the command.
+task_show_under_control_lock() {  # <task-id>; sets TASK_SHOW_OUTPUT
+  local id=$1 status=0
+  CAPTAIN_READ_LOCK="$STATE/.control-$id.lock"
+  fm_lock_acquire_wait "$CAPTAIN_READ_LOCK"
+  CAPTAIN_READ_LOCK_HELD=1
+  trap captain_hold_cleanup EXIT
+  task_show "$id" || status=$?
+  fm_lock_release "$CAPTAIN_READ_LOCK"
+  CAPTAIN_READ_LOCK_HELD=0
+  CAPTAIN_READ_LOCK=
+  return "$status"
 }
 
 sha256_text() {  # <text>
@@ -523,19 +551,15 @@ resolution_block() {  # <mode>
 
 # Durable state of one captain call: an active captain hold (annotations
 # surviving even when a date gate has expired) or a recorded captain answer.
-verify_hold_durable() {  # <task-id>
-  local id=$1 show state hold_kind body
-  task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
-  show=$TASK_SHOW_OUTPUT
-  state=$(show_field "$show" state)
-  hold_kind=$(show_field_value "$show" hold_kind)
-  body=$(show_field "$show" body)
-  if body_has_resolution_record "$body"; then
-    return 0
-  fi
-  if [ "$state" != "done" ] && [ "$hold_kind" = captain ]; then
-    return 0
-  fi
+shown_hold_is_durable() {  # <show-output>
+  body_has_resolution_record "$(show_field "$1" body)" && return 0
+  [ "$(show_field "$1" state)" != "done" ] && [ "$(show_field_value "$1" hold_kind)" = captain ]
+}
+
+verify_hold_durable() {  # <task-id>; sets TASK_SHOW_OUTPUT from a locked read
+  local id=$1
+  task_show_under_control_lock "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
+  shown_hold_is_durable "$TASK_SHOW_OUTPUT" && return 0
   fail "captain-held task $id is neither held for the captain nor closed with a recorded captain answer"
 }
 
@@ -806,6 +830,8 @@ write_hold_set_stamp() {  # <task-id> <shown-body> <timestamp> <preserve-existin
 # The origin a hold was recorded for lives in the held task's own body, on a
 # line of its own, so `complete` can tell a call held for this origin from one
 # held for another. Omitting --origin leaves any existing association intact.
+# A `pending <origin>` value marks a re-hold whose backend hold has not been
+# confirmed, and no checker accepts it for any origin.
 body_hold_origin() {  # <decoded-task-body>
   printf '%s\n' "$1" | sed -n 's/^Captain hold origin: \(.*\)$/\1/p' | head -1
 }
@@ -883,6 +909,9 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   id=$(show_field_value "$TASK_SHOW_OUTPUT" id)
   validate_slug backend-task-id "$id"
   stored=$(body_hold_origin "$(decode_shown_value "$(show_field "$TASK_SHOW_OUTPUT" body)")")
+  case "$stored" in
+    "pending "*) fail "captain-held task $id never confirmed its hold for origin ${stored#pending }; re-run hold $id --origin ${stored#pending } to finish it" ;;
+  esac
   origin_id=$origin
   if [ -n "$origin" ] && [ "$origin" != "$BINDING_ANY" ]; then
     origin_id=$(task_identity "$origin") || exit $?
@@ -902,7 +931,8 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
 
 command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
-  local existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' hold_status=0
+  local existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason hold_status=0
+  local previous_origin='' staged_origin=''
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -980,10 +1010,20 @@ command_hold() {
   task_show_or_fail "$id" "task $id disappeared while recording its hold-set stamp"
   [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
     || fail "task $id did not retain its hold-set stamp"
+  # A task that cannot yet certify any origin records the new origin before
+  # the backend hold, since it certifies nothing until that hold lands. A task
+  # whose hold or answer already certifies one records a pending association
+  # naming the new origin instead, which every checker refuses, so a crash
+  # before the new origin is confirmed leaves neither origin certified. A
+  # refused hold restores the previous line verbatim.
   if [ -n "$origin" ]; then
     origin=$(task_identity "$origin") || exit $?
     previous_origin=$(body_hold_origin "$(show_field_value "$show" body)")
-    write_hold_origin "$id" "$(show_field "$show" body)" "$origin" || exit $?
+    staged_origin=$origin
+    if shown_hold_is_durable "$show"; then
+      staged_origin="pending $origin"
+    fi
+    write_hold_origin "$id" "$(show_field "$show" body)" "$staged_origin" || exit $?
   fi
   if [ -n "$until" ]; then
     tasks_axi hold "$id" --reason "$stored_reason" --kind captain --until "$until" >/dev/null \
@@ -993,8 +1033,6 @@ command_hold() {
       || hold_status=$?
   fi
   if [ "$hold_status" -ne 0 ]; then
-    # A refused re-hold must not associate the previous hold or answer with a
-    # new origin. Restore the old line verbatim, without resolving it again.
     if [ -n "$origin" ]; then
       write_hold_origin "$id" "$(show_field "$show" body)" "$previous_origin" || exit $?
     fi
@@ -1004,6 +1042,11 @@ command_hold() {
   show=$TASK_SHOW_OUTPUT
   hold_kind=$(show_field_value "$show" hold_kind)
   [ "$hold_kind" = captain ] || fail "task $id did not retain its captain hold"
+  if [ "$staged_origin" != "$origin" ]; then
+    write_hold_origin "$id" "$(show_field "$show" body)" "$origin" || exit $?
+    task_show "$id" || fail "task $id disappeared while recording its hold origin"
+    show=$TASK_SHOW_OUTPUT
+  fi
   occurrence=$(( $(resolution_record_count "$(show_field "$show" body)") + 1 ))
   [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
     || fail "task $id lost its hold-set stamp while being held"
