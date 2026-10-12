@@ -2,8 +2,9 @@
 # Long-lived per-account worker for remote fm-on jobs.
 #
 # This process is launched by the Firstmate-owned dev.firstmate.remote-job
-# LaunchAgent on macOS and by a detached restart supervisor on Linux. It claims
-# only complete 0700 records staged by fm-remote-job-lib.sh under the fixed
+# LaunchAgent on macOS and by a detached restart supervisor on Linux (itself the
+# ExecStart of the firstmate-remote-job.service user unit where systemd
+# applies). It claims only complete 0700 records staged by fm-remote-job-lib.sh under the fixed
 # account queue, refuses symlinks and malformed records, and executes only a
 # tracked non-symlink fm-*.sh under this worker's configured FM_ROOT/bin.
 #

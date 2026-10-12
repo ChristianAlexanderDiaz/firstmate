@@ -15,6 +15,20 @@
 # `herdr server` stays in the foreground under launchd, as verified in
 # docs/verification/runtime-backends.md under "fm-remote server birth and login-keychain access", so the final exec provides the complete supervision lifecycle.
 #
+# On Linux the same guard is the exec target of the firstmate-herdr-fm-remote
+# systemd user unit, written by bin/fm-remote-doctor.sh with --adopt:
+#
+#   fm-remote-herdr-guard.sh --adopt <herdr-path> <session>
+#
+# Adopt mode has no keychain birth test and never takes a session over: no
+# server owns the session socket -> exec `herdr server --session <s>` in the
+# foreground under systemd; any server already owns it, whoever started it (a
+# nohup start from before the unit existed, or Herdr's own remote attach) ->
+# exit 0 and leave it running untouched. That server is adopted until its
+# natural restart, and stopping it is only ever done through Herdr's own live
+# handoff, never by this script. The launchd decision table below does not
+# apply to adopt mode.
+#
 # Decision, made once per launch (exit codes matter under SuccessfulExit=false:
 # 0 tells launchd the job is done until something restarts it, non-zero asks
 # for a retry after the throttle interval):
@@ -35,7 +49,7 @@
 # bin/fm-remote-herdr-owner-lib.sh owns the owner discovery and the birth
 # markers; FM_REMOTE_HERDR_GUARD_STOP_WAIT_TENTHS (default 50) bounds the
 # release wait in tenths of a second. Every decision prints one line to
-# stdout, which launchd routes to the agent's log.
+# stdout, which launchd or the systemd unit routes to its log.
 set -u
 
 SCRIPT_SELF=${BASH_SOURCE[0]}
@@ -46,6 +60,8 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$SCRIPT_DIR" && pwd -P)
 . "$SCRIPT_DIR/fm-remote-herdr-owner-lib.sh"
 
 usage() { sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+ADOPT=0
+if [ "${1:-}" = --adopt ]; then ADOPT=1; shift; fi
 [ "$#" -eq 2 ] || usage
 HERDR_BIN=$1
 SESSION=$2
@@ -73,6 +89,11 @@ STATUS=$(herdr_status)
 if ! status_running "$STATUS"; then
   log "no server owns session $SESSION"
   start_server
+fi
+
+if [ "$ADOPT" -eq 1 ]; then
+  log "session $SESSION is already served by a running server; adopting it as it is, nothing to do"
+  exit 0
 fi
 
 SOCKET=$(printf '%s' "$STATUS" | jq -r '.server.socket // empty' 2>/dev/null)
