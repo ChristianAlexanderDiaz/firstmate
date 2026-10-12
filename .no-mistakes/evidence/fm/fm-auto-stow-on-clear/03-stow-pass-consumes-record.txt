@@ -1,0 +1,22 @@
+## Bash commands the cleared session ran (from its transcript)
+Bash: cat /home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/5f86229f-15b6-49a4-b0c2-43386335f545/tool-results/hook-e96bd2d8-2b3a-4246-9608-d2238b8bae4f-stdout.txt
+Skill: stow
+Bash: FM_HOME=/tmp/fm-lab.DQerAI/home bin/fm-startup-memory-budget.sh report; echo "exit=$?"; T=/home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/efd35ac0-02a2-45f2-815e-a293385ef188.jsonl; ls -la $T; wc -l $T; ls /tmp/fm-lab.DQerAI/home /tmp/fm-lab.DQerAI/home/data /tmp/fm-lab.DQerAI/home/config 2>&1
+Bash: T=/home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/efd35ac0-02a2-45f2-815e-a293385ef188.jsonl; jq -r 'select(.type=="user" or .type=="assistant") | .type as $t | (.message.content | if type=="string" then [{type:"text",text:.}] else . end) | .[] | if .type=="text" then "[\($t) text] " + (.text|.[0:1500]) elif .type=="tool_use" then "[tool_use] " + (.input|tostring|.[0:400]) elif .type=="tool_result" then "[tool_result] " + ((.content|tostring)|.[0:300]) else empty end' $T
+Bash: T=/home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/efd35ac0-02a2-45f2-815e-a293385ef188.jsonl; jq -r '[.type, (.subtype//""), (.attachment.type//"")] | join(" ")' $T | sort | uniq -c; ls /tmp/fm-lab.DQerAI/home/projects /tmp/fm-lab.DQerAI/home/state; ls /tmp/fm-lab.DQerAI/home/config/stow-pass-horizon 2>&1
+Write: /tmp/fm-lab.DQerAI/home/data/learnings.md
+Bash: FM_HOME=/tmp/fm-lab.DQerAI/home bin/fm-startup-memory-budget.sh report && FM_HOME=/tmp/fm-lab.DQerAI/home bin/fm-stow-cascade.sh; echo "cascade exit=$?"
+Bash: FM_HOME=/tmp/fm-lab.DQerAI/home bin/fm-stow-on-clear.sh done efd35ac0-02a2-45f2-815e-a293385ef188; echo "exit=$?"
+Skill: bootstrap-diagnostics
+
+## $ cat /tmp/fm-lab.DQerAI/home/data/learnings.md
+<!-- memory tiers: see the stow skill -->
+# Learnings
+
+- Project lab-widget's deploy token rotation day is Thursday (captain's reference code STOWPROBE-7731); lab-widget is not cloned or registered in this home yet. <!--a:2026-10-11-->
+
+## $ ls -A /tmp/fm-lab.DQerAI/home/state/.pending-stow/
+(empty: record consumed)
+
+## $ bin/fm-stow-on-clear.sh pending (output follows; empty = nothing pending)
+exit=0

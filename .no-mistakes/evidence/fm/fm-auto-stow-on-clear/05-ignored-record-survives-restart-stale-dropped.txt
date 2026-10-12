@@ -1,0 +1,70 @@
+# Main session: second /clear left record 5f86229f (hook fired 20:11:44 reason=clear); the session ignored it and was quit with /exit (no hook invocation; the SessionEnd entry is matched to clear only); a stale record with a missing transcript was planted; the primary was restarted (SessionStart:startup).
+# (A first restart attempt was invalid because a lab-only logging shim swallowed the script's stdout; the shim was fixed to pass output through and the restart was repeated.)
+
+## Model-visible SessionStart:startup hook context in the restarted session (/home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/20f553b6-b3cf-440b-b128-4ea9386eabd4.jsonl)
+<persisted-output>
+Output too large (13.8KB). Full output saved to: /home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/20f553b6-b3cf-440b-b128-4ea9386eabd4/tool-results/hook-2a656ec9-cc16-42b6-bfbb-d99cff70fad1-stdout.txt
+
+Preview (first 2KB):
+================================================================================
+SESSION START - /tmp/fm-lab.DQerAI/home
+================================================================================
+
+LOCK
+--------------------------------------------------------------------------------
+lock acquired: harness pid 3577654
+
+BOOTSTRAP
+--------------------------------------------------------------------------------
+MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)
+
+WAKE QUEUE
+--------------------------------------------------------------------------------
+(no queued wakes)
+
+PENDING STOW
+--------------------------------------------------------------------------------
+A /clear ended an earlier session of this home before /stow ran, so its
+uncaptured knowledge and open work records exist only in its transcript.
+Before taking new work, load the stow skill and run its pass for each session
+below as the swept session (handling the wake queue above may come first).
+- session 5f86229f-15b6-49a4-b0c2-43386335f545, cleared 2026-10-12T00:11Z
+  transcript: /home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/5f86229f-15b6-49a4-b0c2-43386335f545.jsonl
+  after its stow pass: bin/fm-stow-on-clear.sh done 5f86229f-15b6-49a4-b0c2-43386335f545
+Skipped stale pending-stow records:
+- session deadbeef-stale: transcript /tmp/fm-lab-nonexistent/deadbeef-stale.jsonl is missing or unreadable, so there is nothing to stow from it; its record was cleared.
+================================================================================
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude
+================================================================================
+Current state:
+- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.
+- Away/quiet mode: inactive.
+- X mode: inactive; use the default watcher cadence.
+...
+</persisted-output>
+
+## Tools the restarted session ran
+Bash: cat /home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/20f553b6-b3cf-440b-b128-4ea9386eabd4/tool-results/hook-2a656ec9-cc16-42b6-bfbb-d99cff70fad1-stdout.txt
+Skill: stow
+Skill: session-start-recovery
+Skill: bootstrap-diagnostics
+Bash: git diff --stat; echo ---; cat bin/fm-stow-on-clear.sh; echo ---REAL---; head -50 bin/fm-stow-on-clear.real.sh; wc -l bin/fm-stow-on-clear.real.sh
+Bash: export FM_HOME=/tmp/fm-lab.DQerAI/home; bin/fm-startup-memory-budget.sh report; echo ---; ls -la $FM_HOME/data $FM_HOME/config 2>&1; T=/home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/5f86229f-15b6-49a4-b0c2-43386335f545.jsonl; wc -lc $T
+Bash: T=/home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/5f86229f-15b6-49a4-b0c2-43386335f545.jsonl; jq -r 'select(.type=="user" or .type=="assistant") | [.type, (.message.content | if type=="string" then . else (map(if .type=="text" then .text elif .type=="tool_use" then "TOOL_USE: "+(.input|tostring) elif .type=="tool_result" then "RESULT: "+((.content|tostring)[0:400]) else "" end) | join(" | 
+Bash: export FM_HOME=/tmp/fm-lab.DQerAI/home
+cat > $FM_HOME/data/learnings.md <<'EOF'
+<!-- memory tiers: see the stow skill -->
+# Learnings
+
+- Project lab-widget (not yet cloned or registered in this home): deploy token rotation day is Thursday (captain's reference code STOWPROBE-7731); staging DB lives in region eu-west-9 (captain's reference code STOWPROBE-8842). <!--a:2026-10-11-->
+EOF
+bin/fm-startup
+Bash: export FM_HOME=/tmp/fm-lab.DQerAI/home; bin/fm-stow-on-clear.sh done 5f86229f-15b6-49a4-b0c2-43386335f545; echo "exit=$?"; bin/fm-startup-network.sh report
+
+## $ ls -A /tmp/fm-lab.DQerAI/home/state/.pending-stow/ (both records gone: live one consumed by done, stale one dropped)
+
+## $ cat /tmp/fm-lab.DQerAI/home/data/learnings.md
+<!-- memory tiers: see the stow skill -->
+# Learnings
+
+- Project lab-widget (not yet cloned or registered in this home): deploy token rotation day is Thursday (captain's reference code STOWPROBE-7731); staging DB lives in region eu-west-9 (captain's reference code STOWPROBE-8842). <!--a:2026-10-11-->

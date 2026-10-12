@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Opus 5.5 with high effort · Claude Max
+ ▝▝   ▝▝   /tmp/fm-lab.DQerAI/src
+
+
+❯ Follow your session-start instructions now.
+
+  Read 1 file
+
+● Skill(stow)
+  ⎿  Successfully loaded skill
+
+● Skill(session-start-recovery)
+  ⎿  Successfully loaded skill
+
+● Skill(bootstrap-diagnostics)
+  ⎿  Successfully loaded skill
+
+  Ran 3 shell commands
+
+● Saving one new fact from the cleared session to memory, then finishing startup.
+
+  Ran 2 shell commands
+
+● Captain, startup is done and nothing is running. One tool needs your OK before I can hand work to a worker.
+
+  Missing tool: treehouse. It gives each worker its own separate copy of a project. Until it's installed I can't safely start any coding or investigation work. The install command is:
+  curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh
+  Reply "aye, install treehouse" and I'll install it and check that it works. You can also run it yourself with ! <command>.
+
+  Notes from your cleared session: that session ended before its notes were saved, so I saved them now.
+  - It added one new fact: the lab-widget staging database is in region eu-west-9 (code STOWPROBE-8842). I put it in the same learnings note as the earlier one, so that note now says the deploy token
+    rotates on Thursday (STOWPROBE-7731) and the staging database is in eu-west-9.
+  - lab-widget isn't added to this home yet, so that note is the only place these facts are kept.
+  - That session had no unfinished work to record.
+  - Saved notes use about 101 of the 7,500-token budget. There are no second mates to pass anything to.
+  - Nothing that session knew was lost, so it's safe to clear again. I only checked what that session knew, not whether the home's other records are correct.
+
+  Current state:
+  - Nothing is running and nothing is waiting on you.
+  - There's no work list or project list yet.
+  - GitHub sign-in works, and the other startup checks found no problems.
+
+✻ Churned for 33s · done 8:26 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ aye, install treehouse
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

@@ -1,0 +1,11 @@
+# Non-main sessions: real SessionEnd hook invocations (lab-only logging shim around bin/fm-stow-on-clear.sh) after /clear
+# src = second Claude session in the main home while the primary holds the lock (lock pid 3251110); wt = linked task worktree with FM_HOME=main home; sm = secondmate-marked home owning its own lock
+20:10:09 cwd=/tmp/fm-lab.DQerAI/src args=hook reason=clear session=557b2e05-39ae-4185-8bde-d1f52906ff76 rc=0 stderr=[]
+20:10:10 cwd=/tmp/fm-lab.DQerAI/wt args=hook reason=clear session=8ea166fc-01e9-477c-b8fb-bf1597d25185 rc=0 stderr=[]
+20:10:11 cwd=/tmp/fm-lab.DQerAI/sm args=hook reason=clear session=bbc2bf91-d94c-4a63-a84f-f5ca400ba414 rc=0 stderr=[]
+20:10:14 cwd=/tmp/fm-lab.DQerAI/sm args=pending reason= session= rc=0 stderr=[]
+
+$ ls -A /tmp/fm-lab.DQerAI/home/state/.pending-stow/
+(empty)
+$ ls -A /tmp/fm-lab.DQerAI/sm/state/.pending-stow
+ls: cannot access '/tmp/fm-lab.DQerAI/sm/state/.pending-stow': No such file or directory

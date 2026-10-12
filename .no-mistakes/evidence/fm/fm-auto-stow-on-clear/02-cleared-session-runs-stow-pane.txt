@@ -1,0 +1,50 @@
+
+                                                                                                                                                                                                      ✕
+● I found one durable fact from the earlier session, about a project with no local clone or registry entry, so
+  I'll record it as a new entry in home learnings.
+
+● Write(/tmp/fm-lab.DQerAI/home/data/learnings.md)
+  ⎿  Wrote 4 lines to ../home/data/learnings.md
+      1 <!-- memory tiers: see the stow skill -->
+      2 # Learnings
+      3
+      4 - Project lab-widget's deploy token rotation day is Thursday (captain's reference code STOWPROB
+        E-7731); lab-widget is not cloned or registered in this home yet. <!--a:2026-10-11-->
+  ⎿  Allowed by auto mode classifier
+
+  Ran 2 shell commands
+
+● The startup check reported one missing tool, so I'll load its handling playbook before reporting.
+
+● Skill(bootstrap-diagnostics)
+  ⎿  Successfully loaded skill
+
+● Captain, the startup check is done and nothing is running. One tool needs your OK before I can give any work
+  to a worker.
+                                                                                                                                               No changes this session
+  Missing tool: treehouse. It gives each worker its own separate copy of a project to work in. Without it I
+  can't safely start any coding or investigation work. To install it, run:
+  curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh
+  Reply "aye, install treehouse" and I'll run it and confirm it works. Or install it yourself with !
+  <command>.
+
+  Notes from your earlier session: you cleared that session before its notes were saved, so I saved them now.
+  - It held one fact: the deploy token rotation day for lab-widget is Thursday (code STOWPROBE-7731). It's now
+    in this home's learnings file.
+  - lab-widget isn't added to this home yet, so that file is the only place the fact lives for now.
+  - That session had no unfinished work to record.
+  - Saved notes total about 79 of the 7,500-token budget. There are no second mates to pass anything on to.
+  - Nothing from that session was lost, so it's safe to clear again. That covers only what the session knew;
+    it doesn't confirm that the home's records are correct.
+
+  Current state:
+  - Nothing is running and nothing is waiting on you.
+  - There's no work list or project list yet.
+  - GitHub sign-in is working.
+
+✻ Cogitated for 42s · done 8:06 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ aye, install treehouse
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

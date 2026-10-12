@@ -1,0 +1,53 @@
+# Real Claude Code 2.1.296 primary in lab home /tmp/fm-lab.DQerAI/home, /clear of the lock-owning session
+## pending-stow record written by the real SessionEnd hook
+$ cat /tmp/fm-lab.DQerAI/home/state/.pending-stow/efd35ac0-02a2-45f2-815e-a293385ef188
+session=efd35ac0-02a2-45f2-815e-a293385ef188
+transcript=/home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/efd35ac0-02a2-45f2-815e-a293385ef188.jsonl
+ended=1791763443
+
+## state/.lock-session before and after clear: efd35ac0-... -> 5f86229f-15b6-49a4-b0c2-43386335f545
+
+## SessionStart digest injected into the cleared session (from its transcript /home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/5f86229f-15b6-49a4-b0c2-43386335f545.jsonl)
+
+## Model-visible SessionStart:clear hook context in the cleared session (attachment.content, transcript line 4)
+<persisted-output>
+Output too large (13.3KB). Full output saved to: /home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/5f86229f-15b6-49a4-b0c2-43386335f545/tool-results/hook-e96bd2d8-2b3a-4246-9608-d2238b8bae4f-stdout.txt
+
+Preview (first 2KB):
+================================================================================
+SESSION START (CONTEXT RE-EMIT) - /tmp/fm-lab.DQerAI/home
+================================================================================
+This session already took the helm at its own startup and has only lost its
+context. Lock ownership is re-verified and the durable records below are
+reprinted, but the sweeps startup already reconciled - project clone refresh,
+secondmate convergence and liveness, pending remote handoff
+retry, X-mode artifact writes, and stale Herdr child cleanup - are NOT repeated.
+Queued wakes ARE still drained: they arrived after startup and are this turn work.
+
+LOCK
+--------------------------------------------------------------------------------
+lock acquired: harness pid 3251110
+
+BOOTSTRAP
+--------------------------------------------------------------------------------
+MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)
+
+WAKE QUEUE
+--------------------------------------------------------------------------------
+(no queued wakes)
+
+PENDING STOW
+--------------------------------------------------------------------------------
+A /clear ended an earlier session of this home before /stow ran, so its
+uncaptured knowledge and open work records exist only in its transcript.
+Before taking new work, load the stow skill and run its pass for each session
+below as the swept session (handling the wake queue above may come first).
+- session efd35ac0-02a2-45f2-815e-a293385ef188, cleared 2026-10-12T00:04Z
+  transcript: /home/christian/.claude/projects/-tmp-fm-lab-DQerAI-src/efd35ac0-02a2-45f2-815e-a293385ef188.jsonl
+  after its stow pass: bin/fm-stow-on-clear.sh done efd35ac0-02a2-45f2-815e-a293385ef188
+================================================================================
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude
+================================================================================
+Current state:
+...
+</persisted-output>
