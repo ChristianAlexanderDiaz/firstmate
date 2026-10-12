@@ -281,8 +281,8 @@ Firstmate keeps the whole Herdr sidebar in one presentation order, top to bottom
 4. Every other space, such as the captain's personal spaces, in its existing relative order.
 
 The primary's own space is identified by the pane its agent runs in, not by its label.
-A primary home records that pane and workspace in its `state/.herdr-main-workspace` on every pass that runs inside the pane, and a second mate's pass or a pass outside any pane trusts the record only while Herdr still reports the recorded pane inside the recorded workspace of the same session.
-Without a proven pane the `firstmate` label stands in, so a renamed space is only kept on top once the primary has run a pass.
+A primary home records that pane and workspace in its `state/.herdr-main-workspace` at session start and on every pass that runs inside the pane, and a second mate's pass or a pass outside any pane trusts the record only while Herdr still reports the recorded pane inside the recorded workspace of the same session.
+Without a proven pane the `firstmate` label stands in, so a renamed space is only kept on top once the primary has recorded its space.
 
 Presentation coverage uses the `projects:` list in `data/secondmates.md`.
 Workers inside one group keep their current relative order, so a new worker joins the end of its group.
@@ -494,7 +494,7 @@ Any of these preserves the candidate and lets session startup continue with at m
 | Test | What it covers |
 | --- | --- |
 | `tests/fm-backend-herdr-presentation-e2e.test.sh` | Multi-home ordering, concurrency, lock contention, legacy coexistence, focus preservation, exact same-identity restart replacement, ambiguous bindings and tokens, and exact-pane cleanup through the guarded lab path. |
-| `tests/fm-backend-herdr-presentation-order-e2e.test.sh` | The whole-sidebar presentation order across a primary home and two second mates, including primary workers for a covered project, teardowns, a busy lock, and the captain's personal spaces. |
+| `tests/fm-backend-herdr-presentation-order-e2e.test.sh` | The whole-sidebar presentation order across a primary home and two second mates, including primary workers for a covered project, teardowns, a busy lock, a renamed primary space recorded at session start, and the captain's personal spaces. |
 | `tests/fm-herdr-session-cleanup.test.sh` | Every discovery, ownership, topology, process, locking, revalidation, focus, retirement, and continue-on-error boundary. |
 | `tests/fm-herdr-session-cleanup-e2e.test.sh` | The restored-shell cleanup in a guarded non-default named lab. |
 | `tests/fm-backend-herdr-focus-flash-e2e.test.sh` | Reproduces the raw explicit-close focus steal on the installed release, and proves the focus-safe emptying-close plan removes a doomed workspace with no wrong-focus interval. |

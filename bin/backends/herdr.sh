@@ -1582,15 +1582,38 @@ $(printf '%s\t%s' "$new_workspace" "$owner")"
   '
 }
 
+# fm_backend_herdr_presentation_record_main_workspace: when this home is a
+# primary running inside a Herdr pane of <session>, write that pane and its
+# workspace to <state-dir>/.herdr-main-workspace and print the workspace id.
+# Returns 1 and writes nothing from a second mate home, outside any pane, or
+# when the pane identity cannot be proven. This is the single writer of the
+# record; the presentation pass and primary session start both call it.
+fm_backend_herdr_presentation_record_main_workspace() {  # <session> <state-dir>
+  local session=$1 state=$2 record="$2/.herdr-main-workspace" pane workspace
+  [ ! -f "$FM_HOME/$FM_BACKEND_HERDR_SECONDMATE_MARKER" ] || return 1
+  HERDR_PANE_ID=$FM_BACKEND_HERDR_AMBIENT_PANE_ID fm_backend_herdr_launcher_identity "$session" 2>/dev/null || return 1
+  workspace=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID
+  pane=$FM_BACKEND_HERDR_LAUNCHER_PANE_ID
+  if [ -d "$state" ]; then
+    if printf 'herdr_session=%s\nherdr_pane_id=%s\nherdr_workspace_id=%s\n' "$session" "$pane" "$workspace" > "$record.$$" 2>/dev/null; then
+      mv -f "$record.$$" "$record" 2>/dev/null || rm -f "$record.$$" 2>/dev/null
+    else
+      rm -f "$record.$$" 2>/dev/null
+    fi
+  fi
+  printf '%s' "$workspace"
+}
+
 # fm_backend_herdr_presentation_main_workspace: print the workspace id of the
 # primary firstmate's own space in <session>, or nothing when it cannot be
 # proven. The space keeps its place at the top of the order whatever the captain
 # renames it to, so its identity is the pane the primary agent runs in, never
 # its label. A primary home resolves the pane it was started in
 # (fm_backend_herdr_launcher_identity) and records the pane and workspace in
-# <primary-home>/state/.herdr-main-workspace; a second mate's pass, and a pass
-# run outside any pane, read that record and trust it only while Herdr still
-# reports the recorded pane inside the recorded workspace of the same session.
+# <primary-home>/state/.herdr-main-workspace, at primary session start and on
+# every pass it runs; a second mate's pass, and a pass run outside any pane,
+# read that record and trust it only while Herdr still reports the recorded
+# pane inside the recorded workspace of the same session.
 fm_backend_herdr_presentation_main_workspace() {  # <session>
   local session=$1 primary state record running_home primary_home pane workspace recorded_session
   primary=$(fm_backend_herdr_presentation_primary_home 2>/dev/null) || return 0
@@ -1599,17 +1622,7 @@ fm_backend_herdr_presentation_main_workspace() {  # <session>
   state="$primary/state"
   [ "$primary_home" != "$running_home" ] || state="${FM_STATE_OVERRIDE:-$state}"
   record="$state/.herdr-main-workspace"
-  if [ ! -f "$FM_HOME/$FM_BACKEND_HERDR_SECONDMATE_MARKER" ] \
-    && HERDR_PANE_ID=$FM_BACKEND_HERDR_AMBIENT_PANE_ID fm_backend_herdr_launcher_identity "$session" 2>/dev/null; then
-    workspace=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID
-    pane=$FM_BACKEND_HERDR_LAUNCHER_PANE_ID
-    if [ -d "$state" ]; then
-      if printf 'herdr_session=%s\nherdr_pane_id=%s\nherdr_workspace_id=%s\n' "$session" "$pane" "$workspace" > "$record.$$" 2>/dev/null; then
-        mv -f "$record.$$" "$record" 2>/dev/null || rm -f "$record.$$" 2>/dev/null
-      else
-        rm -f "$record.$$" 2>/dev/null
-      fi
-    fi
+  if workspace=$(fm_backend_herdr_presentation_record_main_workspace "$session" "$state"); then
     printf '%s' "$workspace"
     return 0
   fi
