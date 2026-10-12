@@ -629,6 +629,64 @@ test_unverified_clean_close_exhausts_retries() {
   pass "auto-arm: unverified clean close exhausts retries and fails closed"
 }
 
+test_sleep_aged_beacon_of_live_watcher_is_not_a_failure() {
+  local dir out status pid identity
+  dir=$(make_primary_dir "$TMP_ROOT/sleep-aged")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" benign-live
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid") || fail "could not identify live watcher holder for sleep-aged beacon"
+  record_watcher_lock "$dir" "$pid" "$identity"
+  touch -t 202001010000 "$dir/state/.last-watcher-beat"
+  # The woken watcher refreshes its beacon within its first cycle.
+  ( sleep 2; touch "$dir/state/.last-watcher-beat" ) &
+  out=$(FM_CLAUDE_AUTOARM_SLEEP_SETTLE=10 run_autoarm "$dir" 2>/dev/null); status=$?
+  wait $! 2>/dev/null || true
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$status" "a beacon aged only by host sleep must not fail the auto-arm"
+  [ -z "$out" ] || fail "sleep-aged beacon produced an operator notice: $out"
+  [ "$(epoch_outcome "$dir")" = clean ] || fail "sleep-aged beacon must record outcome=clean, got: $(epoch_outcome "$dir")"
+  [ ! -e "$dir/state/.claude-autoarm-failure-notified" ] || fail "sleep-aged beacon left a failure-notice marker"
+  pass "auto-arm: a live watcher whose beacon refreshes after a host sleep is not reported as failed"
+}
+
+test_live_watcher_with_unrefreshed_beacon_still_fails() {
+  local dir out status pid identity
+  dir=$(make_primary_dir "$TMP_ROOT/hung-live")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" benign-live
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid") || fail "could not identify live watcher holder for hung watcher"
+  record_watcher_lock "$dir" "$pid" "$identity"
+  touch -t 202001010000 "$dir/state/.last-watcher-beat"
+  out=$(FM_CLAUDE_AUTOARM_SLEEP_SETTLE=1 run_autoarm "$dir" 2>/dev/null); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "a live watcher that never refreshes its beacon must still fail"
+  assert_contains "$out" "automatic supervision mechanism is broken" "a hung live watcher must still be reported"
+  [ "$(epoch_outcome "$dir")" = failed ] || fail "hung live watcher must record outcome=failed, got: $(epoch_outcome "$dir")"
+  pass "auto-arm: a live watcher whose beacon never refreshes is still reported within the bounded attempts"
+}
+
+test_dead_watcher_skips_the_sleep_settle_window() {
+  local dir out status start elapsed
+  dir=$(make_primary_dir "$TMP_ROOT/dead-no-settle")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" benign-live
+  record_watcher_lock "$dir" 9999999 "gone"
+  touch -t 202001010000 "$dir/state/.last-watcher-beat"
+  start=$(date +%s)
+  out=$(FM_CLAUDE_AUTOARM_SLEEP_SETTLE=20 run_autoarm "$dir" 2>/dev/null); status=$?
+  elapsed=$(( $(date +%s) - start ))
+  expect_code 2 "$status" "a dead watcher must still fail"
+  assert_contains "$out" "automatic supervision mechanism is broken" "a dead watcher must still be reported"
+  [ "$elapsed" -lt 15 ] || fail "a dead watcher waited ${elapsed}s for a beacon that cannot refresh"
+  pass "auto-arm: a dead watcher is reported without waiting out the sleep settle window"
+}
+
 test_post_alarm_actionable_close_is_suppressed() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/post-alarm-actionable")
@@ -1725,6 +1783,9 @@ test_failed_cycles_notify_once_and_keep_retrying
 test_failure_notice_marker_write_refuses_delivery_and_retries
 test_unverified_clean_close_exhausts_retries
 test_post_alarm_actionable_close_is_suppressed
+test_sleep_aged_beacon_of_live_watcher_is_not_a_failure
+test_live_watcher_with_unrefreshed_beacon_still_fails
+test_dead_watcher_skips_the_sleep_settle_window
 test_benign_cycle_end_with_live_watcher_is_silent
 test_positive_recovery_budget_contention_preserves_episode
 test_owner_mutex_contention_preserves_failure_episode_reset
