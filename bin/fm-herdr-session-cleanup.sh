@@ -21,6 +21,12 @@
 # The script never closes a workspace. It removes only the matching journal,
 # and only after the exact pane is confirmed gone. Every error warns and returns
 # success so session startup continues conservatively.
+#
+# It also records a primary home's own Herdr space (state/.herdr-main-workspace,
+# through the adapter's single writer) before any cleanup, so a second mate's
+# presentation pass finds the primary's space even when the captain renamed it
+# and no primary pass has run yet. That step is a quiet no-op outside a Herdr
+# pane, in a second mate home, or without herdr and jq.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -331,7 +337,18 @@ fm_herdr_session_cleanup() {
   return 0
 }
 
+fm_herdr_record_main_workspace() {
+  local session
+  [ -n "${FM_BACKEND_HERDR_AMBIENT_PANE_ID:-}" ] || return 0
+  command -v herdr >/dev/null 2>&1 \
+    && command -v jq >/dev/null 2>&1 || return 0
+  session=$(fm_backend_herdr_session) || return 0
+  fm_backend_herdr_presentation_record_main_workspace "$session" "$STATE" >/dev/null 2>&1 || true
+  return 0
+}
+
 if [ "${FM_HERDR_SESSION_CLEANUP_SOURCE_ONLY:-0}" != 1 ]; then
+  fm_herdr_record_main_workspace
   fm_herdr_session_cleanup
   exit 0
 fi

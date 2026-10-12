@@ -262,4 +262,41 @@ teardown_task "$BRAVO_HOME" b3
 assert_sidebar "captain 2ndmate-alpha 2ndmate-bravo life dotfiles" "after the rename teardowns"
 [ "$(focused_workspace)" = "$LIFE_WS" ] || fail "renamed-space ordering moved focus off the captain's personal space"
 pass "real Herdr lab: a renamed firstmate space keeps the top, primary workers stay below the second mates"
+# 5. A second mate pass that runs before any primary pass: the record is gone,
+#    so the renamed space sorts to the bottom until the primary's session start
+#    records it. Session start from a second mate home or outside any pane
+#    records nothing.
+RECORD="$PRIMARY_HOME/state/.herdr-main-workspace"
+rm -f "$RECORD"
+session_start_record() {  # <home> <pane-or-empty>
+  local home=$1 pane=$2
+  if [ -n "$pane" ]; then
+    env HERDR_ENV=1 HERDR_PANE_ID="$pane" HERDR_SESSION="$HERDR_LAB_SESSION" HERDR_SOCKET_PATH="$LAB_SOCKET" \
+      FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-herdr-session-cleanup.sh" >/dev/null 2>&1
+  else
+    env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SOCKET_PATH HERDR_SESSION="$HERDR_LAB_SESSION" \
+      FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-herdr-session-cleanup.sh" >/dev/null 2>&1
+  fi
+}
+session_start_record "$PRIMARY_HOME" ""
+[ ! -e "$RECORD" ] || fail "a session start outside any Herdr pane wrote the primary's record"
+session_start_record "$BRAVO_HOME" "$MAIN_PANE"
+[ ! -e "$RECORD" ] && [ ! -e "$BRAVO_HOME/state/.herdr-main-workspace" ] \
+  || fail "a second mate's session start recorded a primary space"
+sink_main
+spawn_task "$BRAVO_HOME" b4 "$TMP_ROOT/projects/bravo-app"
+assert_sidebar "2ndmate-alpha 2ndmate-bravo b4 life dotfiles captain" \
+  "a second mate pass before any primary pass cannot find the renamed space"
+session_start_record "$PRIMARY_HOME" "$MAIN_PANE"
+[ -f "$RECORD" ] || fail "the primary's session start did not record its Herdr space"
+grep -Fqx "herdr_workspace_id=$MAIN_WS" "$RECORD" || fail "the primary's record names the wrong workspace: $(cat "$RECORD")"
+grep -Fqx "herdr_pane_id=$MAIN_PANE" "$RECORD" || fail "the primary's record names the wrong pane: $(cat "$RECORD")"
+spawn_task "$BRAVO_HOME" b5 "$TMP_ROOT/projects/bravo-app"
+assert_sidebar "captain 2ndmate-alpha 2ndmate-bravo b4 b5 life dotfiles" \
+  "a second mate pass after the primary's session start record"
+teardown_task "$BRAVO_HOME" b4
+teardown_task "$BRAVO_HOME" b5
+assert_sidebar "captain 2ndmate-alpha 2ndmate-bravo life dotfiles" "after the session start record teardowns"
+[ "$(focused_workspace)" = "$LIFE_WS" ] || fail "session start record ordering moved focus off the captain's personal space"
+pass "real Herdr lab: the primary's session start records its space so a second mate pass keeps it on top"
 pass "real Herdr lab: presentation order validation completed on $(herdr --version 2>/dev/null) with the default-session tripwire intact"

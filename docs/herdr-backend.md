@@ -281,8 +281,8 @@ Firstmate keeps the whole Herdr sidebar in one presentation order, top to bottom
 4. Every other space, such as the captain's personal spaces, in its existing relative order.
 
 The primary's own space is identified by the pane its agent runs in, not by its label.
-A primary home records that pane and workspace in its `state/.herdr-main-workspace` on every pass that runs inside the pane, and a second mate's pass or a pass outside any pane trusts the record only while Herdr still reports the recorded pane inside the recorded workspace of the same session.
-Without a proven pane the `firstmate` label stands in, so a renamed space is only kept on top once the primary has run a pass.
+A primary home records that pane and workspace in its `state/.herdr-main-workspace` at session start and on every pass that runs inside the pane, and a second mate's pass or a pass outside any pane trusts the record only while Herdr still reports the recorded pane inside the recorded workspace of the same session.
+Without a proven pane the `firstmate` label stands in, so a renamed space is only kept on top once the primary has recorded its space.
 
 Presentation coverage uses the `projects:` list in `data/secondmates.md`.
 Workers inside one group keep their current relative order, so a new worker joins the end of its group.
@@ -382,6 +382,8 @@ Once the exact pane is confirmed gone, teardown retires the task's own journal w
 Recovery is deliberately conservative and presentation-only.
 An existing journal suppresses another projected create.
 Before any recovery mutation, Firstmate holds both the task spawn lock and the named-session presentation lock.
+That presentation lock lives in a namespace private to the OS account, so another account on the same host running its own Firstmate on Herdr cannot block this account's spawn, recovery, or teardown.
+A namespace at this account's name that another account owns, or that is not mode 700, is still refused and is never adopted, chowned, or removed.
 
 A same-identity version 2 binding may replace one exact agent-free restart husk in place.
 A husk is a restored same-labeled tab with a missing pane or no registered agent, as [Restart and liveness behavior](#restart-and-liveness-behavior) describes.
@@ -475,9 +477,9 @@ Any of these preserves the candidate and lets session startup continue with at m
 - Ordering is best-effort; only an exact same-identity version 2 binding survives a Herdr restart in place.
 - A failed journal publication or projected workspace create stops that spawn instead of falling back flat.
   So a Herdr create failure surfaces as a spawn failure in every Herdr home, rather than only in homes that opted in.
-  Every earlier degradation on the fresh projected-create path (no session server, a presentation lock still busy after the two-minute wait, absent or ambiguous parent) still warns and continues flat.
-- Recovery of an existing presentation journal deliberately refuses the spawn when the shared presentation lock stays busy through that wait, rather than falling back flat.
-  Default-on makes that refusal reachable in any Herdr home.
+  Every earlier degradation on the fresh projected-create path (no session server, presentation lock still busy after the retry budget, absent or ambiguous parent) still warns and continues flat.
+- Recovery of an existing presentation journal refuses by default when the shared presentation lock stays busy through the bounded wait, rather than falling back flat.
+  [`bin/fm-spawn.sh`'s header](../bin/fm-spawn.sh) owns the `--herdr-resume-lock-wait` opt-in, its applicability, and the default retry budget, which includes lock-probe and scheduling time rather than a wall-clock deadline.
 - Existing spaces are never renamed; the presentation order rearranges them only by verified moves.
 - Missing or ambiguous restart bindings fall back to the ordinary home workspace while the old projection remains untouched.
 - Crashes, lost responses, failed exact-pane cleanup, or human renames can leave quarantined spaces.
@@ -492,7 +494,7 @@ Any of these preserves the candidate and lets session startup continue with at m
 | Test | What it covers |
 | --- | --- |
 | `tests/fm-backend-herdr-presentation-e2e.test.sh` | Multi-home ordering, concurrency, lock contention, legacy coexistence, focus preservation, exact same-identity restart replacement, ambiguous bindings and tokens, and exact-pane cleanup through the guarded lab path. |
-| `tests/fm-backend-herdr-presentation-order-e2e.test.sh` | The whole-sidebar presentation order across a primary home and two second mates, including primary workers for a covered project, teardowns, a busy lock, and the captain's personal spaces. |
+| `tests/fm-backend-herdr-presentation-order-e2e.test.sh` | The whole-sidebar presentation order across a primary home and two second mates, including primary workers for a covered project, teardowns, a busy lock, a renamed primary space recorded at session start, and the captain's personal spaces. |
 | `tests/fm-herdr-session-cleanup.test.sh` | Every discovery, ownership, topology, process, locking, revalidation, focus, retirement, and continue-on-error boundary. |
 | `tests/fm-herdr-session-cleanup-e2e.test.sh` | The restored-shell cleanup in a guarded non-default named lab. |
 | `tests/fm-backend-herdr-focus-flash-e2e.test.sh` | Reproduces the raw explicit-close focus steal on the installed release, and proves the focus-safe emptying-close plan removes a doomed workspace with no wrong-focus interval. |
