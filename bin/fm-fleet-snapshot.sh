@@ -63,7 +63,11 @@
 #     hints.open_decisions is the keyed open-decision set returned by
 #     fm-classify-lib.sh's authoritative status_open_decisions fold and reconciled
 #     against current_state; hints.pending_decision and hints.blocked_event are
-#     booleans derived from that set.
+#     booleans derived from that set. hints.declared_wait is null, or the
+#     {verb,owner,detail} of the task's standing declared wait, where
+#     fm-classify-lib.sh's status_declared_wait_owner decides whether the captain
+#     (a verified captain-held transfer, or a pause whose own reason names the
+#     captain) or something external clears it.
 #     endpoint.exists is the cheap local backend endpoint-presence read.
 #     endpoint.agent_alive is populated for local secondmates only, where it is
 #     useful return-channel supervision data; remote secondmates use "unknown"
@@ -747,7 +751,7 @@ task_json_lines() {
   local remote_host remote_root current_file endpoint_file observation_line index=0
   local pr pr_source event_json current_json endpoint_exists agent_alive meta_json status_json report_json worktree_json home_json
   local last_event_raw current_state current_source pending_decision blocked_event report_present=0 pr_from_status
-  local open_decisions_tsv open_decisions_json
+  local open_decisions_tsv open_decisions_json declared_wait_json wait_line
 
   while [ "$index" -lt "$SNAPSHOT_TASK_META_COUNT" ]; do
     meta=${SNAPSHOT_TASK_METAS[index]}
@@ -827,6 +831,24 @@ task_json_lines() {
       [ splits("\n") | select(length > 0)
         | (capture("^(?<key>[^\t]*)\t(?<verb>[^\t]*)\t(?<summary>.*)$")?)
         | select(. != null) ]')
+    # The declared wait (fm-classify-lib.sh's status_declared_wait_line) and
+    # whose it is to clear (status_declared_wait_owner). It follows the same
+    # lifecycle clearing as the open decisions above, so a crew that resumed past
+    # its wait or finished never reports one, and a secondmate's own stream never
+    # carries a per-task wait.
+    declared_wait_json=null
+    if [ "$kind" != secondmate ] && \
+       ! { { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
+           && [ "$current_state" = working ]; } && \
+       [ "$current_state" != "done" ] && [ "$current_state" != "failed" ]; then
+      wait_line=$(status_declared_wait_line "$status_log")
+      if [ -n "$wait_line" ]; then
+        declared_wait_json=$(jq -n --arg verb "$(status_line_verb "$wait_line")" \
+          --arg owner "$(status_declared_wait_owner "$wait_line")" \
+          --arg detail "$(status_line_note "$wait_line")" \
+          '{verb:$verb,owner:$owner,detail:$detail}')
+      fi
+    fi
     pending_decision=$(printf '%s' "$open_decisions_json" | jq 'if any(.[]; .verb == "needs-decision") then 1 else 0 end')
     blocked_event=$(printf '%s' "$open_decisions_json" | jq 'if any(.[]; .verb == "blocked") then 1 else 0 end')
 
@@ -885,6 +907,7 @@ task_json_lines() {
       --argjson home_path "$home_json" \
       --argjson endpoint_exists "$endpoint_exists" \
       --argjson open_decisions "$open_decisions_json" \
+      --argjson declared_wait "$declared_wait_json" \
       --argjson pending_decision "$(bool_json "$pending_decision")" \
       --argjson blocked_event "$(bool_json "$blocked_event")" \
       --argjson report_present "$(bool_json "$report_present")" \
@@ -918,6 +941,7 @@ task_json_lines() {
           pending_decision:$pending_decision,
           blocked_event:$blocked_event,
           open_decisions:$open_decisions,
+          declared_wait:$declared_wait,
           scout_report_present:$report_present,
           last_event_text:$last_event_raw
         },
@@ -1061,9 +1085,15 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
             name:(($work.title // null) | if . == null then null else trunc(70) end),
             source:.current_state.source,
             doing:((.current_state.detail // "") | trunc(120))} ]) as $active_all
-    | ($captain_holds_all
-       + ([ $tasks[] as $t | ($t.hints.open_decisions // [])[]
-            | {id:$t.id,key,verb,summary:(.summary | trunc(160)),reason:null,source:"status"} ])) as $decisions_all
+    | ([ $tasks[] as $t | ($t.hints.open_decisions // [])[]
+         | {id:$t.id,key,verb,summary:(.summary | trunc(160)),reason:null,source:"status"} ]) as $status_decisions
+    | ([ $tasks[]
+         | select(.hints.declared_wait.owner == "captain")
+         | select(.id as $id | (($captain_holds_all + $status_decisions) | map(.id) | index($id)) | not)
+         | {id,key:.id,verb:"captain-wait",
+            summary:((.hints.declared_wait.detail // "") | if . == "" then "waiting on the captain" else . end | trunc(160)),
+            reason:null,source:"declared-wait"} ]) as $captain_waits
+    | ($captain_holds_all + $status_decisions + $captain_waits) as $decisions_all
     | ([ $queued_all[]
          | select((.unresolved_blocker_ids | length) > 0 or (.hold_reason != null and .hold_kind != null))
          | {id:(.id | trunc(120)),title:(.title | trunc(90)),

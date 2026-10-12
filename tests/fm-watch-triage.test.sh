@@ -593,6 +593,26 @@ test_status_is_paused_classifier() {
   pass "status_is_paused: only the leading paused verb matches, paused is not captain-relevant, and the two declared-wait verbs stay separable"
 }
 
+# status_declared_wait_owner names whose wait a declared wait is, from the same
+# declaration line: a captain-held transfer always waits on the captain, and a
+# pause does only when its own reason names the captain as a whole word.
+test_declared_wait_owner_names_the_captain() {
+  [ "$(status_declared_wait_owner 'captain-held [key=route]: tracked by route')" = captain ] \
+    || fail "a captain-held transfer was not a captain wait"
+  [ "$(status_declared_wait_owner "paused [at=1788576000]: waiting on the captain's review of the flow")" = captain ] \
+    || fail "a pause naming the captain was not a captain wait"
+  [ "$(status_declared_wait_owner 'paused: Captain review of the design until 2026-10-12T18:00Z')" = captain ] \
+    || fail "a capitalized captain mention was not a captain wait"
+  [ "$(status_declared_wait_owner 'paused: waiting for the upstream release')" = external ] \
+    || fail "an ordinary pause was not an external wait"
+  [ "$(status_declared_wait_owner 'paused: waiting on captaincy-tools CI')" = external ] \
+    || fail "a word merely starting with captain read as a captain wait"
+  [ -z "$(status_declared_wait_owner 'working: the captain is reviewing')" ] \
+    || fail "a non-wait line named a wait owner"
+  [ -z "$(status_declared_wait_owner '')" ] || fail "an empty line named a wait owner"
+  pass "status_declared_wait_owner: captain-held and captain-naming pauses wait on the captain, other pauses are external"
+}
+
 # crew_absorb_class: the single fm-crew-state.sh read that returns BOTH absorb
 # reasons - working (active run/busy pane), paused (declared external wait), or none
 # (surface it) - so the watcher's stale path gets both for one bounded call.
@@ -6796,6 +6816,7 @@ test_classifier_primitives
 test_unrecognized_status_prefix_is_visible
 test_crew_is_provably_working_classifier
 test_status_is_paused_classifier
+test_declared_wait_owner_names_the_captain
 test_crew_absorb_class_classifier
 test_crew_worktree_written_since_classifier
 test_empty_write_prune_widens_the_probe

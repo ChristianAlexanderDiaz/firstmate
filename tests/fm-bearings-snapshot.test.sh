@@ -1516,6 +1516,8 @@ write_large_fixture() {  # <home> <count>
   done
 }
 
+# Each of the five scouts carries both a captain hold and its own open ask, so the
+# decision set is ten rows.
 test_section_caps_and_expansion_flags() {
   local home fakebin json expanded
   home=$(make_home caps); write_large_fixture "$home" 5
@@ -1527,7 +1529,7 @@ test_section_caps_and_expansion_flags() {
     (.in_flight|length) == 2 and (.decisions_open|length) == 2 and (.gates|length) == 2
     and (.reports|length) == 2 and (.recorded_prs|length) == 2 and (.unhealthy_endpoints|length) == 2
     and ([.omitted[].surface] | index("in_flight showing 2 of 5") != null)
-    and ([.omitted[].surface] | index("decisions_open showing 2 of 5") != null)
+    and ([.omitted[].surface] | index("decisions_open showing 2 of 10") != null)
     and ([.omitted[].surface] | index("gates showing 2 of 5") != null)
     and ([.omitted[].surface] | index("reports showing 2 of 5") != null)
     and ([.omitted[].surface] | index("recorded_prs showing 2 of 5") != null)
@@ -1538,7 +1540,7 @@ test_section_caps_and_expansion_flags() {
     run "$home" "$fakebin" --json --all-in-flight --all-decisions --all-queued \
       --all-reports --all-recorded-prs --all-unhealthy)
   printf '%s' "$expanded" | jq -e '
-    (.in_flight|length) == 5 and (.decisions_open|length) == 5 and (.gates|length) == 5
+    (.in_flight|length) == 5 and (.decisions_open|length) == 10 and (.gates|length) == 5
     and (.reports|length) == 5 and (.recorded_prs|length) == 5 and (.unhealthy_endpoints|length) == 5
   ' >/dev/null || fail "section expansion flags did not reveal full sets: $expanded"
   pass "all fleet-sized sections are capped with counted opt-in expansion"
@@ -2140,6 +2142,114 @@ test_captains_call_anti_leak() {
       and ([$bearings.decisions_open[].id] | index("dead-gate") | not)
   ' >/dev/null || fail "only genuine open decisions may feed Captain's Call: $json"
   pass "action-free items (working/done/queued/landed) do not leak into Captain's Call"
+}
+
+# Captain's Call also carries every open needs-decision ask and every task whose
+# declared wait is the captain, in the main home and in each secondmate home. A
+# task already held for the captain is never listed twice, and an ordinary
+# external wait stays out of Captain's Call.
+write_ask_task() {  # <home> <id> <kind> <status-line>...
+  local home=$1 id=$2 kind=$3
+  shift 3
+  mkdir -p "$home/projects/$id"
+  fm_write_meta "$home/state/$id.meta" \
+    "window=firstmate:fm-$id" "worktree=$home/projects/$id" "project=firstmate" \
+    "harness=claude" "kind=$kind" "mode=$kind"
+  record_claude_state "$home/state" "$id" idle
+  : > "$home/state/$id.status"
+  while [ $# -gt 0 ]; do printf '%s\n' "$1" >> "$home/state/$id.status"; shift; done
+}
+
+test_main_status_asks_and_captain_waits_reach_captains_call() {
+  local home fakebin json
+  home=$(make_home main-asks)
+  : > "$home/data/secondmates.md"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] design-call - Pick the design (repo: firstmate) (kind: ship) (since 2026-07-11)
+- [ ] flow-scout - Flow design scout (repo: firstmate) (kind: scout) (since 2026-07-11)
+- [ ] ci-wait - Waits on CI (repo: firstmate) (kind: ship) (since 2026-07-11)
+- [ ] held-wait - Held and waiting (repo: firstmate) (kind: scout) (since 2026-07-11)
+
+## Queued
+- [ ] held-ask - Already held (repo: firstmate) (kind: captain) (hold: captain choice pending) (hold-kind: captain)
+
+## Done
+EOF
+  write_ask_task "$home" design-call ship 'needs-decision [key=pick-design]: choose A or B'
+  write_ask_task "$home" flow-scout scout "paused [at=1788576000]: waiting on the captain's review of the flow design"
+  write_ask_task "$home" held-ask ship 'needs-decision [key=pick-held]: already a captain hold'
+  write_ask_task "$home" ci-wait ship 'paused: waiting for the upstream release to publish'
+  write_ask_task "$home" held-wait scout 'captain-held [key=ready]: tracked by held-wait'
+  fakebin=$(make_fakebin "$home")
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    (.decisions_open | any(.[]; .id == "design-call" and .key == "pick-design"
+      and .verb == "needs-decision" and .owner == "(main)"))
+      and (.decisions_open | any(.[]; .id == "flow-scout" and .verb == "captain-wait" and .owner == "(main)"
+        and (.summary | contains("review of the flow design"))))
+      and (.decisions_open | any(.[]; .id == "held-wait" and .verb == "captain-wait"))
+      and (.decisions_open | any(.[]; .id == "held-ask" and .verb == "captain-hold"))
+      and ([.decisions_open[] | select(.id == "held-ask")] | length) == 1
+      and (.decisions_open | any(.[]; .id == "ci-wait") | not)
+  ' >/dev/null || fail "main asks or captain waits missing from Captain's Call: $json"
+  printf '%s' "$json" | jq -e '.in_flight | any(.[]; .id == "flow-scout")' >/dev/null \
+    || fail "a captain wait must also stay visible as Underway: $json"
+  pass "main-home needs-decision asks and captain waits reach Captain's Call without duplicating holds"
+}
+
+test_secondmate_status_asks_and_captain_waits_reach_captains_call() {
+  local home mate fakebin json
+  home=$(make_home mate-asks)
+  mate="$TMP_ROOT/mate-asks-home"
+  write_domain_alpha_fixture "$home" "$mate"
+  cat > "$mate/data/backlog.md" <<'EOF'
+## In flight
+- [ ] merge-ask - Merge word for the stack (repo: sample) (kind: ship) (since 2026-07-13)
+- [ ] flow-review - Flow design scout (repo: sample) (kind: scout) (since 2026-07-13)
+- [ ] ext-wait - Waits on legal (repo: sample) (kind: ship) (since 2026-07-13)
+
+## Queued
+
+## Done
+EOF
+  write_ask_task "$mate" merge-ask ship 'needs-decision [key=merge-25]: merge the stack, yes or no?' \
+    'needs-decision [key=design-108]: pick the design'
+  write_ask_task "$mate" flow-review scout 'paused: waiting for the captain review of the flow'
+  write_ask_task "$mate" ext-wait ship 'paused: waiting for the legal team'
+  fakebin=$(make_fakebin "$home")
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.decisions_open[] | select(.id == "domain-alpha/merge-ask") | .key] | sort) == ["design-108", "merge-25"]
+      and (.decisions_open | any(.[]; .id == "domain-alpha/flow-review" and .verb == "captain-wait"
+        and .owner == "domain-alpha"))
+      and (.decisions_open | any(.[]; .id == "domain-alpha/ext-wait") | not)
+  ' >/dev/null || fail "secondmate asks or captain waits missing from Captain's Call: $json"
+  printf '%s' "$json" | jq -e '
+    .secondmates | any(.[]; .id == "domain-alpha" and .state == "captain_decision"
+      and (.doing | contains("merge the stack")))
+  ' >/dev/null || fail "a secondmate home with an open ask must read as a captain decision: $json"
+  pass "secondmate needs-decision asks and captain waits reach Captain's Call"
+}
+
+test_unreadable_secondmate_parent_asks_reach_captains_call() {
+  local home mate fakebin json
+  home=$(make_home mate-parent-asks)
+  : > "$home/data/secondmates.md"
+  mate="$TMP_ROOT/mate-parent-asks-home"
+  make_valid_secondmate_home bowl "$mate"
+  printf 'someone-else\n' > "$mate/.fm-secondmate-home"
+  append_secondmate_registry "$home" bowl "$mate"
+  fm_write_secondmate_meta "$home/state/bowl.meta" "$mate" "firstmate:fm-bowl" sample
+  printf 'needs-decision [key=bowl-108]: pick the BOWL-108 design\n' > "$home/state/bowl.status"
+  fakebin=$(make_fakebin "$home")
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    (.secondmates | any(.[]; .id == "bowl" and .provenance == "parent-event-fallback"))
+      and (.decisions_open | any(.[]; .id == "bowl" and .key == "bowl-108"
+        and .verb == "needs-decision" and .owner == "bowl"))
+  ' >/dev/null || fail "an unreadable home's parent-channel ask was dropped: $json"
+  pass "an unreadable secondmate home's parent-channel ask still reaches Captain's Call"
 }
 
 # R1: main-home orphan in-flight and unstructured current rows must not vanish
@@ -3388,6 +3498,9 @@ test_all_landed_keeps_complete_global_order
 test_landed_bounded_and_disclosed
 test_live_blocker_is_not_charted_queue_work
 test_captains_call_anti_leak
+test_main_status_asks_and_captain_waits_reach_captains_call
+test_secondmate_status_asks_and_captain_waits_reach_captains_call
+test_unreadable_secondmate_parent_asks_reach_captains_call
 test_main_orphan_in_flight_is_disclosed_not_invented
 test_main_unstructured_current_is_disclosed_with_structured_sibling
 test_main_orphan_counterfactual_meta_clears_inventory_warning
