@@ -474,7 +474,7 @@ test_verified_usage_limit_without_a_menu_moves_without_escape() {
     id="t29-$scenario"
     new_case "inline-$scenario" "$id"
     message=$LIMIT_TEXT
-    [ "$scenario" != typographic ] || message='You’ve hit your weekly limit · resets Oct 10 at 4pm (America/New_York)'
+    [ "$scenario" != typographic ] || message="You’ve hit your weekly limit · resets Oct 10 at 4pm (America/New_York)"
     printf '%s\n╭────╮\n│    │\n╰────╯\n' "$message" > "$CASE/fake/screen"
     printf '2\n' > "$CASE/fake/cursor-y"
     printf 'running' > "$CASE/fake/nm-state"

@@ -215,6 +215,7 @@ marker_field() {  # <marker-text> <key>
 
 # status_blocked <reason>: the one supervisor-actionable line for this limit.
 status_blocked() {
+  # shellcheck disable=SC2153 # STATE and ID are set by bin/fm-control.sh, which sources this file.
   printf 'blocked: %s\n' "$1" >> "$STATE/$ID.status" \
     || echo "error: could not append the blocked line to $STATE/$ID.status: $1" >&2
   printf 'blocked %s %s\n' "$ID" "$1"
@@ -404,6 +405,8 @@ fm_account_failover_recover() {
       || status_blocked "Claude usage limit reached ($limit_text); no-mistakes run $run_id did not stop after its abort, so the worker was left stopped"
   fi
 
+  # These inputs are read by do_relaunch in bin/fm-control.sh, which sources this file.
+  # shellcheck disable=SC2034
   NOTE=$({
     echo "Your previous agent stopped at its Claude account's usage limit (\"$limit_text\")."
     if [ "$menu" = 1 ]; then
@@ -417,8 +420,11 @@ fm_account_failover_recover() {
     fi
     echo "Re-read your instructions and durable records, inspect git status and git log in this local copy, and continue the task from where the work stands."
   })
+  # shellcheck disable=SC2034
   NOTE_SET=1
+  # shellcheck disable=SC2034
   NEW_CLAUDE_ACCOUNT=$to
+  # shellcheck disable=SC2034
   CLAUDE_ACCOUNT_SET=1
   wait_classified "${FM_ACCOUNT_FAILOVER_SETTLE_WAIT:-20}" || true
   do_relaunch >/dev/null
