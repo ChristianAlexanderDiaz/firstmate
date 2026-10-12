@@ -703,7 +703,7 @@ identity_lock() {  # <state> <lockdir> <pid> [env-assignment...]
   mkdir "$lockdir"
   printf '%s\n' "$pid" > "$lockdir/pid"
   # shellcheck disable=SC2016 # Positional parameters expand in the child shell.
-  env "$@" FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_lock_record_identity "$2" "$3"' _ "$LIB" "$lockdir" "$pid"
+  env "$@" FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_lock_record_identity "$2" "$3"' _ "$LIB" "$lockdir/lock-identity" "$pid"
 }
 
 write_fake_boot_id() {  # <proc-root> <boot-id>
@@ -768,8 +768,14 @@ test_lock_reused_pid_is_stale_on_macos_stubs() {
   fakebin="$dir/fakebin"
   proc_root="$dir/no-proc"
   mkdir -p "$proc_root"
+  # Like the real ps, lstart renders in the caller's time zone; ps.out holds
+  # the UTC rendering.
   cat > "$fakebin/ps" <<'SH'
 #!/usr/bin/env bash
+if [ "${TZ:-}" != UTC0 ]; then
+  printf 'Fri Oct  3 zone-%s 2026 /bin/bash /x/fm-watch.sh\n' "${TZ:-local}"
+  exit 0
+fi
 cat "$FM_FAKE_PS_OUT"
 SH
   cat > "$fakebin/sysctl" <<'SH'
@@ -784,11 +790,11 @@ SH
   live=$!
 
   lockdir="$state/.same.lock"
-  identity_lock "$state" "$lockdir" "$live" "${envs[@]}"
+  identity_lock "$state" "$lockdir" "$live" "${envs[@]}" TZ=America/New_York
   grep -q '^boot=boottime:1759500000$' "$lockdir/lock-identity" || { kill "$live"; fail "macOS boot time was not recorded"; }
   grep -q '^identity=Fri Oct  3 10:00:00 2026 /bin/bash /x/fm-watch.sh$' "$lockdir/lock-identity" || { kill "$live"; fail "macOS lstart identity was not recorded"; }
-  out=$(lock_contend "$state" "$lockdir" "${envs[@]}")
-  case "$out" in "rc=1 held=$live "*) ;; *) kill "$live" 2>/dev/null; fail "matching macOS holder was reclaimed: $out" ;; esac
+  out=$(lock_contend "$state" "$lockdir" "${envs[@]}" TZ=Asia/Tokyo)
+  case "$out" in "rc=1 held=$live "*) ;; *) kill "$live" 2>/dev/null; fail "matching macOS holder read in another time zone was reclaimed: $out" ;; esac
 
   # A clock step moves kern.boottime by seconds; the holder is still the holder.
   printf '1759500007\n' > "$dir/boot.sec"
@@ -809,7 +815,7 @@ SH
   kill "$live" 2>/dev/null || true
   wait "$live" 2>/dev/null || true
   case "$out" in "rc=0 "*"recovered=$live") ;; *) fail "macOS lock held by a reused pid was honored: $out" ;; esac
-  pass "a lock whose pid was reused is stale on macOS (stubbed ps and sysctl), a clock step is not"
+  pass "a lock whose pid was reused is stale on macOS (stubbed ps and sysctl), a clock step or time-zone change is not"
 }
 
 test_lock_acquire_records_identity_and_rejects_reuse() {
@@ -846,18 +852,23 @@ test_lock_acquire_records_identity_and_rejects_reuse() {
 }
 
 test_lock_bounded_acquire_hands_identity_to_caller() {
-  local dir state lockdir holder out
+  local dir state lockdir holder out i
   dir=$(make_case lock-handoff-identity)
   state="$dir/state"
   lockdir="$state/.handoff.lock"
   FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_lock_try_acquire "$2" && { sleep 1; fm_lock_release "$2"; }' _ "$LIB" "$lockdir" &
   holder=$!
-  while [ ! -e "$lockdir" ] && [ ! -L "$lockdir" ]; do sleep 0.05; done
+  i=0
+  while [ "$i" -lt 50 ] && [ ! -e "$lockdir" ] && [ ! -L "$lockdir" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -e "$lockdir" ] || [ -L "$lockdir" ] || { kill "$holder" 2>/dev/null; fail "background holder never took the lock"; }
   out=$(FM_STATE_OVERRIDE="$state" bash -c '
     . "$1"
     fm_lock_acquire_wait_bounded "$2" 20 || { echo "acquire-failed"; exit 0; }
     me=$BASHPID
-    mine=$(fm_pid_identity "$me")
+    mine=$(TZ=UTC0 fm_pid_identity "$me")
     printf "record-matches=%s\n" "$([ "$(sed -n "s/^identity=//p" "$2/lock-identity")" = "$mine" ] && echo yes || echo no)"
     # The helper that took the lock for this caller has exited by now.
     bash -c ". \"\$1\"; fm_lock_try_acquire \"\$2\" && echo stolen || echo refused" _ "$1" "$2"

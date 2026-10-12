@@ -967,6 +967,7 @@ while [ "$i" -lt 20 ]; do
   i=$((i + 1))
 done
 
+rm -f "$FM_HOME/state/.lock-identity"
 cp "$FM_HOME/state/other-pid" "$FM_HOME/state/.lock"
 printf '%s\n' OTHER > "$FM_HOME/state/.lock-session"
 : > "$FM_HOME/state/release-holder"
@@ -1099,6 +1100,108 @@ test_verified_reclaim_keeps_new_sidecar() {
   pass "session-lock: a verified reclaim keeps the new sidecar beside the new pid"
 }
 
+# Point the fixture at boot <before|after>: a Linux boot id in the fake /proc, or
+# a macOS kern.boottime read through the stubbed sysctl.
+set_session_reuse_boot() {  # <mode> <dir> <before|after>
+  case "$1:$3" in
+    linux:*)
+      mkdir -p "$2/proc/sys/kernel/random"
+      printf 'boot-%s\n' "$3" > "$2/proc/sys/kernel/random/boot_id"
+      ;;
+    macos:before) printf '1759500000\n' > "$2/boot" ;;
+    macos:after) printf '1759509999\n' > "$2/boot" ;;
+  esac
+}
+
+# A reboot can hand the session lock's recorded pid to another harness process.
+# The lock records the boot and the holder's start time, so a contender reclaims
+# a lock whose live pid no longer matches, still refuses the genuine holder, and
+# keeps the harness test alone for a lock written without that record. Linux's
+# boot id with /proc readings and macOS's kern.boottime (a stubbed sysctl) with
+# ps readings are both driven.
+test_session_lock_pid_reused_after_reboot_is_reclaimed() {
+  local mode dir fakebin holder i out want_boot
+  local -a envs
+  for mode in linux macos; do
+    dir="$TMP_ROOT/reused-pid-$mode"
+    fakebin=$(fm_fakebin "$dir")
+    mkdir -p "$dir/state" "$dir/proc"
+    cat > "$fakebin/sysctl" <<'SH'
+#!/usr/bin/env bash
+printf '{ sec = %s, usec = 0 } Sat Oct  3 10:00:00 2026\n' "$(cat "$FM_FAKE_BOOT")"
+SH
+    chmod +x "$fakebin/sysctl"
+    set_session_reuse_boot "$mode" "$dir" before
+    envs=(PATH="$fakebin:$PATH" FM_HOME="$dir" FM_LOCK="$ROOT/bin/fm-lock.sh"
+      FM_PROC_ROOT_OVERRIDE="$dir/proc" FM_FAKE_BOOT="$dir/boot")
+
+    : > "$dir/state/hold"
+    env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID "${envs[@]}" \
+      "$NAMED_CLAUDE" -c '
+        i=0
+        while [ "$i" -lt 200 ] && [ ! -e "$FM_HOME/state/go" ]; do sleep 0.05; i=$((i + 1)); done
+        "$FM_LOCK" > "$FM_HOME/state/holder.out" 2>&1
+        printf "%s\n" "$?" > "$FM_HOME/state/holder.rc"
+        while [ -e "$FM_HOME/state/hold" ]; do sleep 0.1; done
+      ' &
+    holder=$!
+    [ "$mode" = macos ] || ln -s "/proc/$holder" "$dir/proc/$holder"
+    : > "$dir/state/go"
+    i=0
+    while [ "$i" -lt 200 ] && [ ! -s "$dir/state/holder.rc" ]; do sleep 0.05; i=$((i + 1)); done
+    expect_code 0 "$(tr -d '[:space:]' < "$dir/state/holder.rc" 2>/dev/null)" \
+      "$mode: the holder could not acquire its lock: $(cat "$dir/state/holder.out" 2>/dev/null)"
+    [ "$(tr -d '[:space:]' < "$dir/state/.lock")" = "$holder" ] || fail "$mode: the holder's pid was not recorded"
+    grep -q '^identity=.' "$dir/state/.lock-identity" || fail "$mode: the holder's identity was not recorded"
+
+    # The genuine holder is still refused and reported held.
+    env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID "${envs[@]}" \
+      "$NAMED_CLAUDE" -c '"$FM_LOCK" > "$FM_HOME/state/contend.out" 2>&1; printf "%s\n" "$?" > "$FM_HOME/state/contend.rc"'
+    expect_code 1 "$(tr -d '[:space:]' < "$dir/state/contend.rc")" "$mode: the genuine holder was not refused"
+    grep -q "another live firstmate session holds the lock (pid $holder" "$dir/state/contend.out" \
+      || fail "$mode: the genuine holder was not named: $(cat "$dir/state/contend.out")"
+    out=$(env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID "${envs[@]}" "$ROOT/bin/fm-lock.sh" status)
+    [ "$out" = "lock: held by live harness pid $holder" ] || fail "$mode: genuine holder status: $out"
+    out=$(env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID "${envs[@]}" "$NAMED_CLAUDE" -c '
+      . "$0/bin/fm-wake-lib.sh"; . "$0/bin/fm-session-lock-lib.sh"
+      fm_session_lock_foreign_owner_live "$FM_HOME/state" && printf "%s" "$FM_SESSION_LOCK_FOREIGN_OWNER_PID"' "$ROOT")
+    [ "$out" = "$holder" ] || fail "$mode: the genuine holder was not a foreign owner: '$out'"
+
+    # A lock written without the record keeps today's harness test, even after a reboot.
+    mv "$dir/state/.lock-identity" "$dir/state/lock-identity.saved"
+    set_session_reuse_boot "$mode" "$dir" after
+    env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID "${envs[@]}" \
+      "$NAMED_CLAUDE" -c '"$FM_LOCK" > "$FM_HOME/state/contend.out" 2>&1; printf "%s\n" "$?" > "$FM_HOME/state/contend.rc"'
+    expect_code 1 "$(tr -d '[:space:]' < "$dir/state/contend.rc")" "$mode: a legacy live holder was reclaimed"
+    [ "$(tr -d '[:space:]' < "$dir/state/.lock")" = "$holder" ] || fail "$mode: a legacy live holder's lock was rewritten"
+    mv "$dir/state/lock-identity.saved" "$dir/state/.lock-identity"
+
+    # After the reboot the live pid is another harness: stale, not foreign, reclaimed.
+    out=$(env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID "${envs[@]}" "$ROOT/bin/fm-lock.sh" status)
+    case "$out" in "lock: stale (pid $holder "*) ;; *) fail "$mode: a reused pid's lock was not stale: $out" ;; esac
+    out=$(env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID "${envs[@]}" "$NAMED_CLAUDE" -c '
+      . "$0/bin/fm-wake-lib.sh"; . "$0/bin/fm-session-lock-lib.sh"
+      fm_session_lock_foreign_owner_live "$FM_HOME/state" && printf "%s" "$FM_SESSION_LOCK_FOREIGN_OWNER_PID"' "$ROOT")
+    [ -z "$out" ] || fail "$mode: a reused pid was a foreign owner: $out"
+    env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID "${envs[@]}" \
+      "$NAMED_CLAUDE" -c '
+        "$FM_LOCK" > "$FM_HOME/state/contend.out" 2>&1
+        printf "%s\n" "$?" > "$FM_HOME/state/contend.rc"
+        printf "%s\n" "$$" > "$FM_HOME/state/contend-pid"
+      '
+    rm -f "$dir/state/hold"
+    wait "$holder" 2>/dev/null || true
+    expect_code 0 "$(tr -d '[:space:]' < "$dir/state/contend.rc")" \
+      "$mode: a lock whose pid was reused after a reboot was not reclaimed: $(cat "$dir/state/contend.out")"
+    [ "$(tr -d '[:space:]' < "$dir/state/.lock")" = "$(tr -d '[:space:]' < "$dir/state/contend-pid")" ] \
+      || fail "$mode: the reclaim did not record the new anchor pid"
+    case "$mode" in linux) want_boot=boot-id:boot-after ;; macos) want_boot=boottime:1759509999 ;; esac
+    grep -qx "boot=$want_boot" "$dir/state/.lock-identity" \
+      || fail "$mode: the reclaim did not record the new boot: $(cat "$dir/state/.lock-identity")"
+  done
+  pass "session-lock: a pid reused after a reboot is reclaimed, a genuine or legacy holder is refused"
+}
+
 test_version_named_session_is_identified_on_both_platforms
 test_harness_at_namespace_pid1_is_examined
 test_ordinary_paths_are_never_harness_processes
@@ -1115,3 +1218,4 @@ test_same_session_confirmation_does_not_steal_after_wait
 test_failed_lock_write_restores_previous_sidecar
 test_failed_lock_write_removes_new_sidecar_when_none_existed
 test_verified_reclaim_keeps_new_sidecar
+test_session_lock_pid_reused_after_reboot_is_reclaimed

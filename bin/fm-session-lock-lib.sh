@@ -172,6 +172,19 @@ fm_harness_pid_alive() {
   fm_harness_process_matches "$comm" "$args"
 }
 
+# True if $2, the pid recorded on line 1 of state dir $1's session lock, is a
+# live verified harness that is still the process that took the lock.
+# bin/fm-lock.sh records that process's boot and start time in
+# state/.lock-identity, and fm_lock_holder_alive (bin/fm-wake-lib.sh) rejects a
+# holder that no longer matches it: a pid handed to another harness after a
+# reboot. A lock without that record, or a caller that has not loaded
+# bin/fm-wake-lib.sh, keeps the harness test alone.
+fm_session_lock_holder_alive() {  # <state> <pid>
+  fm_harness_pid_alive "$2" || return 1
+  command -v fm_lock_holder_alive >/dev/null 2>&1 || return 0
+  fm_lock_holder_alive "$1/.lock-identity" "$2"
+}
+
 # --- trusted same-session identity -------------------------------------------
 # Claude Code hands every hook and tool shell CLAUDE_CODE_SESSION_ID (the
 # session's conversation id) and CLAUDE_PID (the pid of the process running the
@@ -264,11 +277,11 @@ fm_session_lock_anchor_pid() {
 # True when state dir $1 holds a session lock that this process's session owns:
 # the recorded pid is ANY harness ancestor of the current process, or the lock
 # was recorded by this same trusted Claude session and its recorded pid is still
-# a live harness. Membership is the honest ancestry test, because the lock owner
+# the live harness that took it (fm_session_lock_holder_alive). Membership is the honest ancestry test, because the lock owner
 # sits at an unknown depth in a contiguous Claude run - it is the outermost pid
 # when the hook fires inside the session's own nested worker chain, and an inner
 # pid when a harness-named daemon parents the session. The same-session path
-# requires the recorded pid alive so that a dead one is reclaimed through
+# requires the recorded pid alive so that a dead or reused one is reclaimed through
 # bin/fm-lock.sh's ordinary stale-owner path, which refreshes line 1, rather than
 # silently owned with a dead anchor. A missing lock, a malformed lock, a lock
 # held by a harness outside this ancestry under another (or no) session id, or
@@ -286,13 +299,14 @@ fm_session_lock_owned_by_self() {
 $pids
 EOF
   fm_session_lock_same_session "$state" "$pids" || return 1
-  fm_harness_pid_alive "$lock_pid"
+  fm_session_lock_holder_alive "$state" "$lock_pid"
 }
 
-# True when state dir $1 records a live verified harness outside this process's
-# contiguous harness ancestry that was not recorded by this same trusted Claude
-# session. Sets FM_SESSION_LOCK_FOREIGN_OWNER_PID for a diagnostic caller.
-# Malformed, missing, dead, and ancestry-uncertain locks are not foreign-owner
+# True when state dir $1 records a live verified harness that took the lock
+# (fm_session_lock_holder_alive), outside this process's contiguous harness
+# ancestry, that was not recorded by this same trusted Claude session. Sets
+# FM_SESSION_LOCK_FOREIGN_OWNER_PID for a diagnostic caller. Malformed,
+# missing, dead, reused, and ancestry-uncertain locks are not foreign-owner
 # evidence.
 # shellcheck disable=SC2034 # Output global, read by the sourcing guard caller.
 FM_SESSION_LOCK_FOREIGN_OWNER_PID=
@@ -304,7 +318,7 @@ fm_session_lock_foreign_owner_live() {
   case "$lock_pid" in
     ''|*[!0-9]*) return 1 ;;
   esac
-  fm_harness_pid_alive "$lock_pid" || return 1
+  fm_session_lock_holder_alive "$state" "$lock_pid" || return 1
   pids=$(fm_harness_ancestry_pids) || return 1
   while IFS= read -r pid; do
     [ "$pid" = "$lock_pid" ] && return 1
@@ -326,8 +340,9 @@ EOF
 #   FM_LOCK_INSPECT_PID           recorded pid, or empty
 #   FM_LOCK_INSPECT_LIVE_HARNESS  true|false|unknown
 #
-# held: the recorded pid is a live verified harness.
-# stale: the recorded pid is gone.
+# held: the recorded pid is a live verified harness that took the lock.
+# stale: the recorded pid is gone, or is a live harness that reused the number
+# (fm_session_lock_holder_alive).
 # unknown: the file or pid cannot be classified without guessing, including a
 # live process that is not a verified harness. Existence of a lock file, a
 # session record, or a pane is never treated as liveness.
@@ -367,9 +382,12 @@ fm_session_lock_inspect() {  # <state>
       ;;
   esac
   if kill -0 "$pid" 2>/dev/null; then
-    if fm_harness_pid_alive "$pid"; then
+    if fm_session_lock_holder_alive "$state" "$pid"; then
       FM_LOCK_INSPECT_STATE=held
       FM_LOCK_INSPECT_LIVE_HARNESS=true
+    elif fm_harness_pid_alive "$pid"; then
+      FM_LOCK_INSPECT_STATE=stale
+      FM_LOCK_INSPECT_LIVE_HARNESS=false
     else
       FM_LOCK_INSPECT_STATE=unknown
       FM_LOCK_INSPECT_LIVE_HARNESS=false

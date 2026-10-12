@@ -20,6 +20,15 @@
 # bin/fm-startup-network.sh compares that pid across its deferred sweeps; a dead
 # recorded pid is reclaimed and rewritten to this session's anchor.
 #
+# state/.lock-identity records the boot and start time of the process line 1
+# names (fm_lock_record_identity in bin/fm-wake-lib.sh). It is removed before
+# line 1 is rewritten and recorded once the new line 1 verifies, and a
+# confirmed-own acquisition re-records it when it no longer matches, so it never
+# describes another process. A live harness that no longer matches it was handed the
+# recorded pid after a reboot and is reclaimed like a dead one
+# (fm_session_lock_holder_alive); a lock without the record keeps the harness
+# test alone.
+#
 # Usage: fm-lock.sh           acquire; exit 1 unless ownership is verified
 #        fm-lock.sh status    print holder and liveness; always exits 0.
 #                             A held lock is not proof the holder is consuming
@@ -33,6 +42,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 LOCK="$STATE/.lock"
 LOCK_SESSION="$STATE/.lock-session"
+LOCK_IDENTITY="$STATE/.lock-identity"
 mkdir -p "$STATE" 2>/dev/null || {
   echo "error: cannot create session-lock state directory $STATE; operate read-only until resolved" >&2
   exit 1
@@ -43,6 +53,8 @@ mkdir -p "$STATE" 2>/dev/null || {
 # Stop auto-arm applies the exact same identity contract.
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
 
 if [ "${1:-}" = "status" ]; then
   fm_session_lock_inspect "$STATE"
@@ -64,8 +76,6 @@ rm -f "$probe" 2>/dev/null || {
   echo "error: cannot clean session-lock publication probe; operate read-only until resolved" >&2
   exit 1
 }
-# shellcheck source=bin/fm-wake-lib.sh
-. "$SCRIPT_DIR/fm-wake-lib.sh"
 CLAIM_LOCK="$STATE/.lock.acquire"
 CLAIM_LOCK_HELD=0
 # PHASE 0: committed/none. 1: sidecar mutated, line 1 not written. 2: line 1 written, not verified.
@@ -168,6 +178,7 @@ confirm_own_lock() {  # <recorded-pid>
   recorded=$(cat "$LOCK" 2>/dev/null || true)
   if [ "$recorded" = "$me" ] || fm_session_lock_owned_by_self "$STATE"; then
     publish_lock_session_or_die
+    fm_lock_holder_alive "$LOCK_IDENTITY" "$recorded" || fm_lock_record_identity "$LOCK_IDENTITY" "$recorded"
     commit_lock_session
     release_claim_lock
     echo "lock acquired: harness pid $recorded"
@@ -195,7 +206,7 @@ if [ -f "$LOCK" ] && [ ! -L "$LOCK" ]; then
     confirm_own_lock "$old"
     old=$(cat "$LOCK" 2>/dev/null || true)
   fi
-  if fm_harness_pid_alive "$old"; then
+  if fm_session_lock_holder_alive "$STATE" "$old"; then
     refuse_live_owner "$old"
   fi
 fi
@@ -219,10 +230,10 @@ if [ -e "$LOCK" ] || [ -L "$LOCK" ]; then
     echo "error: session lock is unreadable; operate read-only until resolved" >&2
     exit 1
   }
-  if [ "$old" != "$me" ] && fm_harness_pid_alive "$old"; then
+  if [ "$old" != "$me" ] && fm_session_lock_holder_alive "$STATE" "$old"; then
     fm_session_lock_owned_by_self "$STATE" && confirm_own_lock "$old"
     old=$(cat "$LOCK" 2>/dev/null || true)
-    if [ "$old" != "$me" ] && fm_harness_pid_alive "$old"; then
+    if [ "$old" != "$me" ] && fm_session_lock_holder_alive "$STATE" "$old"; then
       refuse_live_owner "$old"
     fi
   fi
@@ -245,6 +256,7 @@ if [ -f "$LOCK" ]; then
   fi
 fi
 LOCK_SESSION_PHASE=2
+rm -f "$LOCK_IDENTITY" 2>/dev/null || true
 if ! { printf '%s\n' "$me" > "$LOCK"; } 2>/dev/null; then
   lock_unchanged=0
   if [ -n "$LOCK_LINE_PRE" ] && cmp -s "$LOCK_LINE_PRE" "$LOCK"; then
@@ -270,6 +282,7 @@ if [ ! -f "$LOCK" ] || [ -L "$LOCK" ] || [ "$written" != "$me" ]; then
   echo "error: session lock ownership verification failed; operate read-only until resolved" >&2
   exit 1
 fi
+fm_lock_record_identity "$LOCK_IDENTITY" "$me"
 commit_lock_session
 release_claim_lock
 echo "lock acquired: harness pid $me"

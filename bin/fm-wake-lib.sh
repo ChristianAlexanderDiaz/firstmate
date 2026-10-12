@@ -143,26 +143,27 @@ fm_boot_id_differs() {  # <recorded> <current>
   esac
 }
 
-# fm_lock_record_identity <lock-or-owner-dir> <pid>
+# fm_lock_record_identity <record-file> <pid>
 # Record who holds a lock: the boot it was taken in and the holder's process
 # identity (fm_pid_identity). A bare pid cannot tell the holder from an
 # unrelated process that was handed the same number after a reboot, so
 # fm_lock_holder_alive checks this record. Records nothing, and removes a
 # previous record, when neither reading is available: that lock then keeps the
-# pid-only liveness test.
+# pid-only liveness test. The identity is read in UTC so a ps start date
+# compares equal across time-zone changes and differing TZ environments.
 fm_lock_record_identity() {
-  local dir=$1 pid=$2 boot identity tmp="$1/lock-identity.tmp"
+  local record=$1 pid=$2 boot identity tmp="$1.tmp"
   boot=$(fm_boot_id 2>/dev/null) || boot=
-  identity=$(fm_pid_identity "$pid" 2>/dev/null) || identity=
+  identity=$(TZ=UTC0 fm_pid_identity "$pid" 2>/dev/null) || identity=
   if [ -z "$boot" ] && [ -z "$identity" ]; then
-    rm -f "$dir/lock-identity" 2>/dev/null || true
+    rm -f "$record" 2>/dev/null || true
     return 0
   fi
   if { printf 'boot=%s\nidentity=%s\n' "$boot" "$identity" > "$tmp"; } 2>/dev/null \
-    && mv -f "$tmp" "$dir/lock-identity" 2>/dev/null; then
+    && mv -f "$tmp" "$record" 2>/dev/null; then
     return 0
   fi
-  rm -f "$tmp" "$dir/lock-identity" 2>/dev/null || true
+  rm -f "$tmp" "$record" 2>/dev/null || true
   return 0
 }
 
@@ -179,7 +180,7 @@ _fm_identity_start() {
   esac
 }
 
-# fm_lock_holder_alive <lock-or-owner-dir> <pid>
+# fm_lock_holder_alive <record-file> <pid>
 # True unless the lock's recorded holder is provably gone: the pid is dead, the
 # machine has rebooted since the lock was taken, or a live process holding the
 # number no longer matches the identity recorded at acquire time (the number was
@@ -188,19 +189,19 @@ _fm_identity_start() {
 # different kind, behaves exactly like the pid-only test and a genuine holder is
 # never reclaimed.
 fm_lock_holder_alive() {
-  local dir=$1 pid=$2 line rec_boot='' rec_identity='' cur_boot cur_identity
+  local record=$1 pid=$2 line rec_boot='' rec_identity='' cur_boot cur_identity
   fm_pid_alive "$pid" || return 1
-  [ -r "$dir/lock-identity" ] || return 0
+  [ -r "$record" ] || return 0
   while IFS= read -r line; do
     case "$line" in
       boot=*) rec_boot=${line#boot=} ;;
       identity=*) rec_identity=${line#identity=} ;;
     esac
-  done < "$dir/lock-identity"
+  done < "$record"
   if [ -n "$rec_boot" ] && cur_boot=$(fm_boot_id 2>/dev/null) && fm_boot_id_differs "$rec_boot" "$cur_boot"; then
     return 1
   fi
-  if [ -n "$rec_identity" ] && cur_identity=$(fm_pid_identity "$pid" 2>/dev/null) && [ -n "$cur_identity" ]; then
+  if [ -n "$rec_identity" ] && cur_identity=$(TZ=UTC0 fm_pid_identity "$pid" 2>/dev/null) && [ -n "$cur_identity" ]; then
     # A /proc reading and a ps reading never compare equal for one process, so
     # a record of one kind cannot condemn a holder read the other way.
     case "$rec_identity:$cur_identity" in
@@ -621,7 +622,7 @@ fm_lock_prepare_owner() {
   printf '%s\n' "$mypid" > "$ownerdir/pid" 2>/dev/null || return 1
   back=$(cat "$ownerdir/pid" 2>/dev/null || true)
   [ "$back" = "$mypid" ] || return 1
-  fm_lock_record_identity "$ownerdir" "$mypid"
+  fm_lock_record_identity "$ownerdir/lock-identity" "$mypid"
 }
 
 fm_lock_link_owner() {
@@ -752,7 +753,7 @@ fm_lock_recheck_stale_owner() {
   fi
   actual_pid=$(cat "$lockdir/pid" 2>/dev/null || true)
   [ "$actual_pid" = "$expected_pid" ] || return 1
-  if fm_lock_holder_alive "${expected_owner:-$lockdir}" "$actual_pid"; then
+  if fm_lock_holder_alive "${expected_owner:-$lockdir}/lock-identity" "$actual_pid"; then
     return 1
   fi
   if fm_lock_mid_acquire_is_fresh "$lockdir" "$actual_pid"; then
@@ -1299,7 +1300,7 @@ fm_lock_try_acquire() {
     FM_LOCK_HELD_PID=$(cat "$lockdir/pid" 2>/dev/null || true)
     return 1
   fi
-  if fm_lock_holder_alive "$lockdir" "$pid"; then
+  if fm_lock_holder_alive "$lockdir/lock-identity" "$pid"; then
     FM_LOCK_HELD_PID=$pid
     return 1
   fi
@@ -1317,7 +1318,7 @@ fm_lock_try_acquire() {
   steal_owner=${FM_LOCK_OWNER_DIR:-}
 
   cur=$(cat "$lockdir/pid" 2>/dev/null || true)
-  if fm_lock_holder_alive "$lockdir" "$cur"; then
+  if fm_lock_holder_alive "$lockdir/lock-identity" "$cur"; then
     fm_lock_release "$steal"
     FM_LOCK_HELD_PID=$cur
     FM_LOCK_OWNER_DIR=
@@ -1423,7 +1424,7 @@ _fm_lock_acquire_wait_handoff() {  # <lockdir> <caller-pid>
   fi
   # The record must describe the new holder, or the caller would read as a
   # reused pid once this helper exits.
-  fm_lock_record_identity "$ownerdir" "$caller_pid"
+  fm_lock_record_identity "$ownerdir/lock-identity" "$caller_pid"
   trap - TERM INT
 }
 
