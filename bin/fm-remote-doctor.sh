@@ -51,10 +51,12 @@
 # the Firstmate-owned user units firstmate-remote-job.service and
 # firstmate-herdr-fm-remote.service, so a reboot restarts them and Herdr no
 # longer warns that a nohup-started server may not survive SSH connection loss.
-# A server or worker that is already live is adopted as it is: --fix writes and
-# enables the units but never stops or restarts a running herdr server, which
-# only moves under its unit at its next natural restart. Linux hosts without a
-# usable user manager keep the direct nohup start.
+# A live herdr server, or a live worker that matches the current code, is
+# adopted as it is: --fix writes and enables the units but never stops or
+# restarts a running herdr server, which only moves under its unit at its next
+# natural restart; only a missing or stale worker is started or replaced through
+# its unit. Linux hosts without a usable user manager keep the direct nohup
+# start.
 #
 # --fix is idempotent and closes only automatable gaps: it writes and reloads
 # both Firstmate-owned Aqua agents, starts the Linux workers (through their user

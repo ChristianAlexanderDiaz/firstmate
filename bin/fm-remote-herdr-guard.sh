@@ -49,7 +49,7 @@
 # bin/fm-remote-herdr-owner-lib.sh owns the owner discovery and the birth
 # markers; FM_REMOTE_HERDR_GUARD_STOP_WAIT_TENTHS (default 50) bounds the
 # release wait in tenths of a second. Every decision prints one line to
-# stdout, which launchd routes to the agent's log.
+# stdout, which launchd or the systemd unit routes to its log.
 set -u
 
 SCRIPT_SELF=${BASH_SOURCE[0]}
