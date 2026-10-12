@@ -375,7 +375,7 @@ worker_signal_process_or_group() { # process|group <signal> <pid>
 worker_supervisor_identity_status() { # <job-dir> <pid>
   local job=$1 pid=$2 recorded_start actual_start
   recorded_start=$(fm_remote_job_read_single_line "$job/.claim/supervisor_start" 256 2>/dev/null) || return 2
-  actual_start=$(fm_remote_job_process_start "$pid" 2>/dev/null) || {
+  actual_start=$(fm_remote_job_process_start_for_record "$pid" "$recorded_start" 2>/dev/null) || {
     worker_process_or_group_alive process "$pid" && return 2
     return 1
   }
@@ -385,14 +385,14 @@ worker_supervisor_identity_status() { # <job-dir> <pid>
 
 # A leaderless live group still belongs to the recorded execution: its PGID
 # cannot be reused while any old member survives, so it remains safe to signal.
-# A live leader whose start identity mismatches proves PID reuse and makes the
-# recorded group stale; an unreadable live leader stays indeterminate so the
+# A live leader whose start identity mismatches makes the recorded group stale;
+# an unreadable live leader stays indeterminate so the
 # stop loop retries rather than signaling or declaring the group dead.
 worker_group_identity_status() { # <job-dir> <pid>
   local job=$1 pid=$2 recorded_start actual_start file="$1/.claim/group_start"
   [ -e "$file" ] || [ -L "$file" ] || return 3
   recorded_start=$(fm_remote_job_read_single_line "$file" 256 2>/dev/null) || return 2
-  actual_start=$(fm_remote_job_process_start "$pid" 2>/dev/null) || {
+  actual_start=$(fm_remote_job_process_start_for_record "$pid" "$recorded_start" 2>/dev/null) || {
     kill -0 "$pid" 2>/dev/null && return 2
     worker_process_or_group_alive group "$pid" && return 0
     return 1
@@ -488,7 +488,7 @@ worker_stop_recorded_execution() { # <job-dir>
 worker_lane_identity_matches() { # <pid> <start>
   local pid=$1 start=$2 actual_start
   [ -n "$start" ] || return 1
-  actual_start=$(fm_remote_job_process_start "$pid" 2>/dev/null) || return 1
+  actual_start=$(fm_remote_job_process_start_for_record "$pid" "$start" 2>/dev/null) || return 1
   [ "$actual_start" = "$start" ]
 }
 
@@ -614,7 +614,7 @@ worker_claim_owner_alive() { # <job-dir>
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   if [ -e "$claim/owner_start" ] || [ -L "$claim/owner_start" ]; then
     recorded_start=$(fm_remote_job_read_single_line "$claim/owner_start" 256 2>/dev/null) || return 1
-    actual_start=$(fm_remote_job_process_start "$pid" 2>/dev/null) || return 1
+    actual_start=$(fm_remote_job_process_start_for_record "$pid" "$recorded_start" 2>/dev/null) || return 1
     [ "$recorded_start" = "$actual_start" ]
     return
   fi
