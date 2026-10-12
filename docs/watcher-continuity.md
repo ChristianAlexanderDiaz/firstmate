@@ -110,6 +110,9 @@ The stale-owner claim occurs only after the existing AFK and supervision-need ga
 After each non-actionable arm close, the hook rechecks the identity-matched watcher lock and fresh beacon before retrying a bounded number of times.
 The beacon is `state/.last-watcher-beat`, which only the watcher process touches.
 
+- Before the first arm, a live identity-matched holder whose beacon is only stale gets one bounded settle window (`FM_CLAUDE_AUTOARM_SLEEP_SETTLE` in [`configuration.md`](configuration.md)) to refresh it.
+  A host sleep freezes the watcher and its beacon together, so the woken watcher refreshes it within one cycle and the arm attaches to it instead of reporting failure.
+  A dead or foreign holder is armed against at once.
 - A cycle-end failure is benign when that live-watcher predicate is true.
   In that case the hook suppresses the arm output and continues silently.
 - Only an exhausted failure with no verified watcher commits one last-resort notice for the continuous failure episode.
