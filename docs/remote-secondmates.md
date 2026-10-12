@@ -81,7 +81,7 @@ Each such command takes these steps:
 On macOS the worker is `dev.firstmate.remote-job`, an Aqua-scoped LaunchAgent at `~/Library/LaunchAgents/dev.firstmate.remote-job.plist` with logs under `~/Library/Logs/`.
 After that bootstrap, every non-doctor `fm-on.sh` target runs through that worker in the remote account's GUI session.
 It never runs in the SSH process or a Herdr pane.
-Linux uses the same queue and worker protocol without the Aqua-session requirement.
+Linux uses the same queue and worker protocol without the Aqua-session requirement; see [Linux systemd user services](#linux-systemd-user-services) for how it is supervised.
 The [`fm-remote-job-worker.sh` header](../bin/fm-remote-job-worker.sh) owns dispatch cadence and the quiet-scan latency for work arriving after its post-activity burst.
 Active-command and result waits use a separate sampling interval; the [`fm-remote-job-lib.sh` header](../bin/fm-remote-job-lib.sh) owns its defaults, overrides, and completion, cancellation, and timeout latency contract.
 
@@ -280,11 +280,34 @@ It acts on whichever server owns the `fm-remote` socket:
 `KeepAlive={SuccessfulExit=false}` lets that exit 0 rest instead of respawning against a held socket.
 The guard's header owns the decision table, and [`bin/fm-remote-herdr-owner-lib.sh`](../bin/fm-remote-herdr-owner-lib.sh) owns the birth markers it reads.
 
+### Linux systemd user services
+
+On Linux the same two workers run as systemd user units when the account's own user manager is usable, so a reboot restarts them and Herdr stops warning that a server started with nohup may not survive SSH connection loss.
+
+| Unit | Runs |
+| --- | --- |
+| `firstmate-remote-job.service` | The remote job worker, with `KillMode=process` so stopping it never takes down Herdr servers and panes that share its control group. |
+| `firstmate-herdr-fm-remote.service` | The `fm-remote` Herdr server, through the guard in `--adopt` mode. |
+
+The units are written under `~/.config/systemd/user`, enabled for `default.target`, and logged under `~/.firstmate/remote-job/logs/`.
+Lingering must be enabled for the account for the units to start with no login session; doctor reports when it is off but does not change it.
+
+A running process is adopted rather than moved.
+`--fix` writes and enables each unit but never starts, restarts, or stops a live herdr server, so a server started with nohup keeps serving, with its panes, until its natural restart.
+Doctor reports such a server as adopted.
+A live worker that matches the current code is likewise left alone; only a missing or stale worker is started or replaced through its unit.
+The guard's adopt mode starts a server in the foreground only when nothing owns the `fm-remote` socket, and otherwise exits 0 without touching the owner; it never takes a session over.
+Moving an adopted server under its unit without closing its panes is only done through Herdr's own live handoff, never by this code.
+
+Units are used only when `systemctl --user` answers and the account's home is its passwd home, which is the tree its user manager reads.
+Hosts without that, such as WSL without systemd, keep the direct start, and macOS keeps its launch agents unchanged.
+[`bin/fm-remote-job-lib.sh`](../bin/fm-remote-job-lib.sh) owns unit rendering and installation, and [`bin/fm-remote-doctor.sh`](../bin/fm-remote-doctor.sh) owns the checks and repairs.
+
 ### Other repairs and limits
 
 `--fix` also takes these actions:
 
-- It starts the same workers directly on Linux.
+- It starts the same workers on Linux, through their user units where systemd applies and directly otherwise.
 - It recreates the `~/.local/bin/fm-remote-entrypoint.sh` symlink when it is absent.
 - It creates only Firstmate-owned required-tool wrappers that it can prove resolve to a version-manager target.
   It stops after one harness satisfies the at-least-one requirement, which is the harness line of the [required remote tools](#required-remote-tools).

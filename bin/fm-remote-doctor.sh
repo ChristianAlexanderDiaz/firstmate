@@ -45,9 +45,20 @@
 # fixed. Any remaining fixable or human gap, and any missing required tool,
 # exits non-zero.
 #
+# On Linux with a usable systemd user manager (the account's own, see
+# fm_remote_systemd_user_usable in bin/fm-remote-job-lib.sh), the workers are
+# the Firstmate-owned user units firstmate-remote-job.service and
+# firstmate-herdr-fm-remote.service, so a reboot restarts them and Herdr no
+# longer warns that a nohup-started server may not survive SSH connection loss.
+# A server or worker that is already live is adopted as it is: --fix writes and
+# enables the units but never stops or restarts a running herdr server, which
+# only moves under its unit at its next natural restart. Linux hosts without a
+# usable user manager keep the direct nohup start.
+#
 # --fix is idempotent and closes only automatable gaps: it writes and reloads
-# both Firstmate-owned Aqua agents, starts the Linux workers where no Aqua agent
-# applies, recreates the entrypoint symlink, and may add an owned ~/.local/bin
+# both Firstmate-owned Aqua agents, starts the Linux workers (through their user
+# units where systemd applies, directly otherwise), recreates the entrypoint
+# symlink, and may add an owned ~/.local/bin
 # wrapper for a required tool it can discover under nvm, asdf, or mise. It never
 # installs packages, creates a login session, writes an auto-login password,
 # changes FileVault, stores an account password, or replaces a non-Firstmate
@@ -657,6 +668,54 @@ check_launch_agent_loaded() { # <resolved-login-shell>
     "close the login-session gap first; a launch agent can only be bootstrapped into an existing GUI session"
 }
 
+# Whether <unit> is installed and enabled with exactly the rendered contract.
+# <render-function> <args...> renders the expected unit to stdout.
+systemd_unit_current() { # <unit> <render-function> <args...>
+  local unit=$1 rendered rc=1
+  shift
+  rendered=$(mktemp "${TMPDIR:-/tmp}/fm-remote-doctor-unit.XXXXXX") || return 1
+  if "$@" > "$rendered" 2>/dev/null &&
+    fm_remote_systemd_unit_matches "$unit" "${HOME:-}" "$rendered" &&
+    fm_remote_systemd_unit_enabled "$unit"; then
+    rc=0
+  fi
+  rm -f -- "$rendered"
+  return "$rc"
+}
+
+systemd_in_use() {
+  fm_remote_systemd_user_usable "${HOME:-}"
+}
+
+check_systemd_services() {
+  local herdr_bin linger note=
+  if [ "$PLATFORM" != linux ] || ! systemd_in_use; then
+    record remote-job-service "skip: systemd user services do not apply on this host; the worker starts directly"
+    record herdr-service "skip: systemd user services do not apply on this host; the herdr server starts directly"
+    return 0
+  fi
+  if fm_remote_systemd_linger_enabled; then linger=enabled; else
+    linger=off
+    note="; lingering is off, so the unit stops when the last login session ends until 'loginctl enable-linger' is run on that account"
+  fi
+  if systemd_unit_current "$FM_REMOTE_SYSTEMD_JOB_UNIT" fm_remote_systemd_render_worker_unit "$FM_ROOT" "${HOME:-}"; then
+    record remote-job-service "ok: $FM_REMOTE_SYSTEMD_JOB_UNIT is installed and enabled (linger $linger)$note"
+  else
+    record remote-job-service "fixable: $FM_REMOTE_SYSTEMD_JOB_UNIT is not installed and enabled with the current worker contract" \
+      "rerun this command with --fix to write and enable it; a running worker is left alone"
+  fi
+  herdr_bin=$(command -v herdr 2>/dev/null || true)
+  if [ -z "$herdr_bin" ] || [ ! -x "$herdr_bin" ]; then
+    record herdr-service "skip: herdr does not resolve, so no unit can be rendered for it"
+  elif systemd_unit_current "$FM_REMOTE_SYSTEMD_HERDR_UNIT" fm_remote_systemd_render_herdr_unit \
+    "$FM_ROOT" "${HOME:-}" "$herdr_bin" "$HERDR_SESSION_NAME"; then
+    record herdr-service "ok: $FM_REMOTE_SYSTEMD_HERDR_UNIT is installed and enabled (linger $linger)$note"
+  else
+    record herdr-service "fixable: $FM_REMOTE_SYSTEMD_HERDR_UNIT is not installed and enabled with the current contract" \
+      "rerun this command with --fix to write and enable it; a running herdr server is left alone and adopted"
+  fi
+}
+
 check_herdr_server() {
   if ! herdr_cli_available; then
     record herdr-server "human: herdr server status cannot be read without both herdr and jq on the runtime PATH" \
@@ -665,7 +724,13 @@ check_herdr_server() {
   fi
   if herdr_server_running; then
     if [ "$PLATFORM" != darwin ]; then
-      record herdr-server "ok: session $HERDR_SESSION_NAME is running"
+      if ! systemd_in_use; then
+        record herdr-server "ok: session $HERDR_SESSION_NAME is running"
+      elif fm_remote_systemd_unit_active "$FM_REMOTE_SYSTEMD_HERDR_UNIT"; then
+        record herdr-server "ok: session $HERDR_SESSION_NAME is running under $FM_REMOTE_SYSTEMD_HERDR_UNIT"
+      else
+        record herdr-server "ok: session $HERDR_SESSION_NAME is running, adopted as started outside systemd; $FM_REMOTE_SYSTEMD_HERDR_UNIT takes over at its next natural restart"
+      fi
       return 0
     fi
     local birth
@@ -727,6 +792,7 @@ run_checks() { # <resolved-login-shell>
   check_gui_session
   check_remote_job_worker
   check_launch_agent "$shell"
+  check_systemd_services
   check_herdr_server
   check_entrypoint_link
 }
@@ -804,6 +870,52 @@ wait_for_herdr_server() {
   return 1
 }
 
+fix_systemd_unit() { # <check> <unit-label> <install-function> <args...>
+  local report=$1 label=$2
+  shift 2
+  FM_REMOTE_JOB_ERROR=
+  FM_REMOTE_JOB_REPAIRED=0
+  if "$@"; then
+    fix_report "$report" applied "wrote and enabled $label without starting or restarting anything"
+    return 0
+  fi
+  fix_report "$report" failed "${FM_REMOTE_JOB_ERROR:-$label could not be installed}"
+  return 1
+}
+
+fix_herdr_service() {
+  local herdr_bin
+  herdr_bin=$(command -v herdr 2>/dev/null || true)
+  if [ -z "$herdr_bin" ] || [ ! -x "$herdr_bin" ]; then
+    fix_report herdr-service failed "herdr does not resolve, so no unit can be written"
+    return 1
+  fi
+  fix_systemd_unit herdr-service "$FM_REMOTE_SYSTEMD_HERDR_UNIT" \
+    fm_remote_systemd_install_herdr_unit "$FM_ROOT" "${HOME:-}" "$herdr_bin" "$HERDR_SESSION_NAME"
+}
+
+# A herdr server that is not running is started through its user unit, which
+# the guard's adopt mode makes safe even if a server appears in the meantime.
+# Only reached when no server is running: a live one is never stopped here.
+start_herdr_server_unit() {
+  local out i=0
+  fix_herdr_service || return 1
+  if ! out=$(fm_remote_systemctl start "$FM_REMOTE_SYSTEMD_HERDR_UNIT" 2>&1); then
+    fix_report herdr-server failed "systemctl --user start $FM_REMOTE_SYSTEMD_HERDR_UNIT refused: ${out:-no diagnostic}"
+    return 1
+  fi
+  while [ "$i" -lt 20 ]; do
+    herdr_server_running && {
+      fix_report herdr-server applied "started the herdr server for session $HERDR_SESSION_NAME through $FM_REMOTE_SYSTEMD_HERDR_UNIT"
+      return 0
+    }
+    i=$((i + 1))
+    sleep 0.5
+  done
+  fix_report herdr-server failed "the herdr server for session $HERDR_SESSION_NAME did not come up under $FM_REMOTE_SYSTEMD_HERDR_UNIT within 10s"
+  return 1
+}
+
 start_herdr_server() {
   if ! herdr_adapter_load; then
     fix_report herdr-server failed "herdr and jq must both resolve before the server can be started"
@@ -870,8 +982,17 @@ apply_fixes() { # <resolved-login-shell>
           reload_launch_agent herdr-server || true
           continue
         fi
-        start_herdr_server || true
+        if [ "$PLATFORM" = linux ] && systemd_in_use; then
+          start_herdr_server_unit || true
+        else
+          start_herdr_server || true
+        fi
         ;;
+      remote-job-service)
+        fix_systemd_unit remote-job-service "$FM_REMOTE_SYSTEMD_JOB_UNIT" \
+          fm_remote_systemd_install_worker_unit "$FM_ROOT" "${HOME:-}" || true
+        ;;
+      herdr-service) fix_herdr_service || true ;;
       entrypoint-link) link_entrypoint || true ;;
     esac
   done

@@ -90,7 +90,16 @@
 # an Aqua requirement. The launch-agent renderer and repair helpers here are
 # shared by the entrypoint and remote doctor so their ownership cannot drift.
 #
-# The Linux start path puts the worker tree in its own process group, so
+# On Linux, when the account's own systemd user manager is usable, the worker
+# and the fm-remote Herdr server run as systemd user units
+# (firstmate-remote-job.service and firstmate-herdr-fm-remote.service) so they
+# survive a reboot and Herdr stops warning that a nohup-started server may not
+# survive SSH connection loss; fm_remote_systemd_* below own that path. Hosts
+# without a usable user manager, such as WSL without systemd, keep the nohup
+# start described next. A worker or server that is already live is adopted as
+# it is, never stopped or restarted just to move it under systemd.
+#
+# The Linux nohup start path puts the worker tree in its own process group, so
 # stopping a worker signals its restart supervisor, its serving child, and any
 # job descendant together instead of leaving a supervisor to restart what was
 # just killed. fm_remote_job_stop_worker_tree owns that stop and refuses to
@@ -103,6 +112,8 @@
 # orphaned that way.
 
 FM_REMOTE_JOB_LABEL=dev.firstmate.remote-job
+FM_REMOTE_SYSTEMD_JOB_UNIT='firstmate-remote-job.service'
+FM_REMOTE_SYSTEMD_HERDR_UNIT='firstmate-herdr-fm-remote.service'
 FM_REMOTE_JOB_MAX_BYTES=${FM_REMOTE_JOB_MAX_BYTES:-1048576}
 FM_REMOTE_JOB_QUEUE_TIMEOUT=${FM_REMOTE_JOB_QUEUE_TIMEOUT:-360}
 FM_REMOTE_JOB_TIMEOUT=${FM_REMOTE_JOB_TIMEOUT:-360}
@@ -1231,6 +1242,215 @@ fm_remote_job_reload_launchagent() { # <account-home> <uid>
   fi
 }
 
+# --- Linux systemd user units ------------------------------------------------
+
+# One systemctl entry point so tests can substitute a stub through
+# FM_REMOTE_SYSTEMCTL. A non-interactive SSH or worker environment carries no
+# XDG_RUNTIME_DIR, which the user manager's private socket lives under.
+fm_remote_systemctl() { # <systemctl --user arguments...>
+  if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u 2>/dev/null)" ]; then
+    XDG_RUNTIME_DIR="/run/user/$(id -u)" "${FM_REMOTE_SYSTEMCTL:-systemctl}" --user "$@"
+  else
+    "${FM_REMOTE_SYSTEMCTL:-systemctl}" --user "$@"
+  fi
+}
+
+# The account whose user manager reads the unit directory is the passwd account
+# at its passwd home, so units are only ever written for that real home: an
+# isolated or fake HOME has no user manager reading it and must keep the nohup
+# path. FM_REMOTE_SYSTEMCTL (a stub) lifts the home comparison.
+fm_remote_systemd_user_usable() { # <account-home>
+  local account_home=$1 passwd_home
+  [ "$(fm_remote_job_platform)" = linux ] || return 1
+  if [ -z "${FM_REMOTE_SYSTEMCTL:-}" ]; then
+    command -v systemctl >/dev/null 2>&1 || return 1
+    command -v getent >/dev/null 2>&1 || return 1
+    passwd_home=$(getent passwd "$(id -un 2>/dev/null)" 2>/dev/null | cut -d: -f6)
+    [ -n "$passwd_home" ] && [ "$passwd_home" = "$account_home" ] || return 1
+  fi
+  fm_remote_systemctl show-environment >/dev/null 2>&1
+}
+
+fm_remote_systemd_unit_dir() { # <account-home>
+  printf '%s\n' "${FM_REMOTE_SYSTEMD_UNIT_DIR:-$1/.config/systemd/user}"
+}
+
+# systemd expands %, $ and backslash inside a quoted word, so each is escaped.
+fm_remote_systemd_word() { # <value>
+  printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/%/%%/g' -e 's/\$/$$/g')"
+}
+
+# Lingering keeps the account's user manager, and so its units, up with no
+# login session. Informational only: with it off the units behave like the
+# nohup processes did and stop at logout.
+fm_remote_systemd_linger_enabled() {
+  command -v loginctl >/dev/null 2>&1 || return 1
+  loginctl show-user "$(id -un 2>/dev/null)" -p Linger 2>/dev/null | grep -q '^Linger=yes$'
+}
+
+fm_remote_systemd_state_logs() { # <account-home>; the log directory, created only on demand
+  printf '%s/logs\n' "${FM_REMOTE_JOB_STATE_ROOT:-$1/.firstmate/remote-job}"
+}
+
+# KillMode=process is load-bearing: a job run by the worker, a Herdr server
+# started from one, and every pane under it share the worker's control group,
+# and the default KillMode=control-group would take them all down when the
+# worker unit stops or restarts. The worker's own shutdown already stops its
+# serving child and lanes; nothing else belongs to this unit's lifecycle.
+fm_remote_systemd_render_worker_unit() { # <remote-root> <account-home>
+  local root=$1 account_home=$2 logs path
+  account_home=$(fm_remote_job_canonical_existing_dir "$account_home") || return 1
+  root=$(fm_remote_job_canonical_existing_dir "$root") || return 1
+  logs=$(fm_remote_systemd_state_logs "$account_home")
+  path=$(fm_remote_job_compose_operator_path "$account_home")
+  cat <<UNIT
+[Unit]
+Description=Firstmate remote job worker
+
+[Service]
+Type=simple
+Environment=$(fm_remote_systemd_word "HOME=$account_home")
+Environment=$(fm_remote_systemd_word "PATH=$path")
+Environment=$(fm_remote_systemd_word "FM_ROOT_OVERRIDE=$root")
+Environment=$(fm_remote_systemd_word "FM_REMOTE_JOB_STATE_ROOT=${FM_REMOTE_JOB_STATE_ROOT:-$account_home/.firstmate/remote-job}")
+${FM_REMOTE_JOB_PLATFORM_OVERRIDE:+Environment=$(fm_remote_systemd_word "FM_REMOTE_JOB_PLATFORM_OVERRIDE=$FM_REMOTE_JOB_PLATFORM_OVERRIDE")}
+ExecStart=$(fm_remote_systemd_word "$root/bin/fm-remote-job-worker.sh")
+KillMode=process
+Restart=on-failure
+RestartSec=10
+RestartPreventExitStatus=75
+StandardOutput=append:$logs/$FM_REMOTE_JOB_LABEL.log
+StandardError=append:$logs/$FM_REMOTE_JOB_LABEL.log
+
+[Install]
+WantedBy=default.target
+UNIT
+}
+
+# The fm-remote Herdr server unit execs the guard in its Linux adopt mode, which
+# starts the server in the foreground when no server owns the session and
+# otherwise leaves the live one alone. KillMode is the default here: stopping
+# the unit is the one deliberate way to stop its server and panes.
+fm_remote_systemd_render_herdr_unit() { # <remote-root> <account-home> <herdr-path> <session>
+  local root=$1 account_home=$2 herdr_bin=$3 session=$4 logs path
+  account_home=$(fm_remote_job_canonical_existing_dir "$account_home") || return 1
+  root=$(fm_remote_job_canonical_existing_dir "$root") || return 1
+  logs=$(fm_remote_systemd_state_logs "$account_home")
+  path=$(fm_remote_job_compose_operator_path "$account_home")
+  cat <<UNIT
+[Unit]
+Description=Firstmate fm-remote Herdr server
+
+[Service]
+Type=simple
+Environment=$(fm_remote_systemd_word "HOME=$account_home")
+Environment=$(fm_remote_systemd_word "PATH=$path")
+ExecStart=$(fm_remote_systemd_word "$root/bin/fm-remote-herdr-guard.sh") --adopt $(fm_remote_systemd_word "$herdr_bin") $(fm_remote_systemd_word "$session")
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:$logs/dev.firstmate.herdr.fm-remote.log
+StandardError=append:$logs/dev.firstmate.herdr.fm-remote.log
+
+[Install]
+WantedBy=default.target
+UNIT
+}
+
+fm_remote_systemd_unit_matches() { # <unit-name> <account-home> <rendered-unit-file>
+  local path
+  path="$(fm_remote_systemd_unit_dir "$2")/$1"
+  [ -f "$path" ] && [ ! -L "$path" ] && cmp -s "$path" "$3"
+}
+
+fm_remote_systemd_unit_enabled() { # <unit-name>
+  fm_remote_systemctl is-enabled "$1" >/dev/null 2>&1
+}
+
+fm_remote_systemd_unit_active() { # <unit-name>
+  fm_remote_systemctl is-active --quiet "$1" >/dev/null 2>&1
+}
+
+# Publish a unit file and enable it; never start, stop, or restart it, so a
+# live process that predates the unit is left untouched. Prints nothing and
+# returns 0 when the unit is already current and enabled; sets
+# FM_REMOTE_JOB_REPAIRED=1 when it changed anything.
+fm_remote_systemd_install_unit() { # <unit-name> <account-home> <rendered-unit-file>
+  local unit=$1 account_home=$2 rendered=$3 dir path tmp out changed=0
+  dir=$(fm_remote_systemd_unit_dir "$account_home")
+  path="$dir/$unit"
+  if ! fm_remote_systemd_unit_matches "$unit" "$account_home" "$rendered"; then
+    [ ! -L "$path" ] || { FM_REMOTE_JOB_ERROR="$path is a symlink; refusing to replace it"; return 1; }
+    mkdir -p "$dir" 2>/dev/null && [ -d "$dir" ] && [ ! -L "$dir" ] || {
+      FM_REMOTE_JOB_ERROR="cannot create $dir"
+      return 1
+    }
+    tmp="$dir/.$unit.tmp.$$"
+    if ! { cp "$rendered" "$tmp" && chmod 0644 "$tmp" && mv -f -- "$tmp" "$path"; }; then
+      rm -f -- "$tmp"
+      FM_REMOTE_JOB_ERROR="cannot publish $path"
+      return 1
+    fi
+    if ! out=$(fm_remote_systemctl daemon-reload 2>&1); then
+      FM_REMOTE_JOB_ERROR="systemctl --user daemon-reload refused: ${out:-no diagnostic}"
+      return 1
+    fi
+    changed=1
+  fi
+  if ! fm_remote_systemd_unit_enabled "$unit"; then
+    if ! out=$(fm_remote_systemctl enable "$unit" 2>&1); then
+      FM_REMOTE_JOB_ERROR="systemctl --user enable $unit refused: ${out:-no diagnostic}"
+      return 1
+    fi
+    changed=1
+  fi
+  [ "$changed" -eq 0 ] || FM_REMOTE_JOB_REPAIRED=1
+  return 0
+}
+
+# <unit-name> <account-home> <render-function> <render-arguments...>
+fm_remote_systemd_render_and_install() {
+  local unit=$1 account_home=$2 render=$3 rendered rc
+  shift 3
+  rendered=$(mktemp "${TMPDIR:-/tmp}/fm-remote-unit.XXXXXX") || {
+    FM_REMOTE_JOB_ERROR="cannot render $unit"
+    return 1
+  }
+  "$render" "$@" > "$rendered" || {
+    rm -f -- "$rendered"
+    FM_REMOTE_JOB_ERROR="cannot render $unit for this root and home"
+    return 1
+  }
+  # The unit's StandardOutput=append: target must have a directory to land in.
+  fm_remote_job_prepare_state "$account_home" || { rm -f -- "$rendered"; return 1; }
+  fm_remote_systemd_install_unit "$unit" "$account_home" "$rendered"
+  rc=$?
+  rm -f -- "$rendered"
+  return "$rc"
+}
+
+fm_remote_systemd_install_worker_unit() { # <remote-root> <account-home>
+  fm_remote_systemd_render_and_install "$FM_REMOTE_SYSTEMD_JOB_UNIT" "$2" \
+    fm_remote_systemd_render_worker_unit "$1" "$2"
+}
+
+# Never starts, stops, or restarts the server: a live one is adopted as it is.
+fm_remote_systemd_install_herdr_unit() { # <remote-root> <account-home> <herdr-path> <session>
+  fm_remote_systemd_render_and_install "$FM_REMOTE_SYSTEMD_HERDR_UNIT" "$2" \
+    fm_remote_systemd_render_herdr_unit "$1" "$2" "$3" "$4"
+}
+
+# Install the unit and (re)start the worker through it. Called only when a
+# worker must be started or replaced; a live matching worker never reaches it.
+fm_remote_job_start_systemd_worker() { # <remote-root> <account-home>
+  local root=$1 account_home=$2 out
+  fm_remote_systemd_install_worker_unit "$root" "$account_home" || return 1
+  if ! out=$(fm_remote_systemctl restart "$FM_REMOTE_SYSTEMD_JOB_UNIT" 2>&1); then
+    FM_REMOTE_JOB_ERROR="systemctl --user restart $FM_REMOTE_SYSTEMD_JOB_UNIT refused: ${out:-no diagnostic}"
+    return 1
+  fi
+  FM_REMOTE_JOB_REPAIRED=1
+}
+
 fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
   local root=$1 account_home=$2 worker pid
   worker="$root/bin/fm-remote-job-worker.sh"
@@ -1251,6 +1471,10 @@ fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
     }
     wait "$pid" 2>/dev/null || true
     FM_REMOTE_JOB_REPAIRED=1
+  fi
+  if fm_remote_systemd_user_usable "$account_home"; then
+    fm_remote_job_start_systemd_worker "$root" "$account_home"
+    return
   fi
   # Job control puts the worker tree in its own process group, so a later stop
   # can signal every descendant at once without ever reaching the caller's own
