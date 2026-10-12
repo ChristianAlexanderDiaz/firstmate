@@ -212,6 +212,21 @@ printf 'watcher: attached pid=%s (beacon 2s)\n' "$$"
 exit 0
 SH
       ;;
+    attach-fresh-delivers)
+      # The real arm's start gate: attach to a healthy holder and deliver its
+      # next wake, or refuse a live holder whose beacon is stale.
+      cat >> "$dir/bin/fm-watch-arm.sh" <<'SH'
+. "$FM_HOME/bin/fm-wake-lib.sh"
+if fm_watcher_healthy "$FM_HOME/state" "$(cd "$(dirname "$0")" && pwd)/fm-watch.sh" "${FM_GUARD_GRACE:-300}" "$FM_HOME"; then
+  printf 'watcher: attached pid=%s (beacon 0s)\n' "$FM_WATCHER_HEALTHY_PID"
+  printf 'pending:downtime:fixture-generation\n' > "$FM_HOME/state/.watcher-down"
+  printf 'signal: task.status done: fixture recovered watcher woke\n'
+  exit 0
+fi
+printf 'watcher: lock held by live pid but heartbeat is stale; inspect or stop that watcher before re-arming.\n'
+exit 1
+SH
+      ;;
     attached-delivered)
       cat >> "$dir/bin/fm-watch-arm.sh" <<'SH'
 printf 'watcher: attached pid=%s (beacon 2s)\n' "$$"
@@ -650,6 +665,30 @@ test_sleep_aged_beacon_of_live_watcher_is_not_a_failure() {
   [ "$(epoch_outcome "$dir")" = clean ] || fail "sleep-aged beacon must record outcome=clean, got: $(epoch_outcome "$dir")"
   [ ! -e "$dir/state/.claude-autoarm-failure-notified" ] || fail "sleep-aged beacon left a failure-notice marker"
   pass "auto-arm: a live watcher whose beacon refreshes after a host sleep is not reported as failed"
+}
+
+test_sleep_recovered_watcher_wake_is_delivered() {
+  local dir out status pid identity
+  dir=$(make_primary_dir "$TMP_ROOT/sleep-recovered-wake")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" attach-fresh-delivers
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid") || fail "could not identify live watcher holder for sleep-recovered wake"
+  record_watcher_lock "$dir" "$pid" "$identity"
+  touch -t 202001010000 "$dir/state/.last-watcher-beat"
+  ( sleep 2; touch "$dir/state/.last-watcher-beat" ) &
+  out=$(FM_CLAUDE_AUTOARM_SLEEP_SETTLE=10 run_autoarm "$dir" 2>/dev/null); status=$?
+  wait $! 2>/dev/null || true
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "the recovered watcher's wake must rewake Claude"
+  assert_contains "$out" "firstmate watcher wake" "the recovered watcher's wake must be delivered"
+  assert_contains "$out" "fixture recovered watcher woke" "the delivered banner must carry the recovered watcher's wake"
+  assert_not_contains "$out" "auto-arm FAILED" "a sleep-aged beacon must not be reported as a failure"
+  [ "$(epoch_outcome "$dir")" = rewake ] || fail "recovered watcher's wake must record outcome=rewake, got: $(epoch_outcome "$dir")"
+  [ "$(wc -l < "$dir/state/arm-ran" | tr -d ' ')" = 1 ] || fail "the arm must attach on its first attempt after the settle window"
+  pass "auto-arm: after a host sleep the arm attaches to the recovered watcher and delivers its wake"
 }
 
 test_live_watcher_with_unrefreshed_beacon_still_fails() {
@@ -1784,6 +1823,7 @@ test_failure_notice_marker_write_refuses_delivery_and_retries
 test_unverified_clean_close_exhausts_retries
 test_post_alarm_actionable_close_is_suppressed
 test_sleep_aged_beacon_of_live_watcher_is_not_a_failure
+test_sleep_recovered_watcher_wake_is_delivered
 test_live_watcher_with_unrefreshed_beacon_still_fails
 test_dead_watcher_skips_the_sleep_settle_window
 test_benign_cycle_end_with_live_watcher_is_silent

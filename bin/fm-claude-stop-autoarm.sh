@@ -88,14 +88,16 @@
 #     watcher still has a fresh beacon.
 #   - Failure handling: a typed failure is rechecked against the same live,
 #     fresh watcher predicate and retried a bounded number of times in this
-#     hook. A live identity-matched holder whose beacon merely looks stale is
-#     given one short settle window first, because a host sleep freezes the
-#     watcher and its beacon together and the watcher refreshes the beacon
-#     within one cycle of waking. A dead or foreign holder skips the window.
-#     Only an exhausted failure with no verified watcher emits one
-#     last-resort notice per failure episode; later consecutive failures still
-#     exit 2 to guarantee the next Stop-owned retry without repeating notice,
-#     until the synchronous guard has consumed its attended fail-open.
+#     hook. Before its first arm, a live identity-matched holder whose beacon
+#     merely looks stale is given one short settle window, because a host
+#     sleep freezes the watcher and its beacon together and the watcher
+#     refreshes the beacon within one cycle of waking; the arm then attaches
+#     to it and this generation delivers its close. A dead or foreign holder
+#     skips the window. Only an exhausted failure with no verified watcher
+#     emits one last-resort notice per failure episode; later consecutive
+#     failures still exit 2 to guarantee the next Stop-owned retry without
+#     repeating notice, until the synchronous guard has consumed its attended
+#     fail-open.
 #
 # The epoch ledger state/.claude-autoarm-epoch records the latest claim
 # generation and outcome, and binds rewake outcomes to the session-lock pid and
@@ -151,8 +153,9 @@ case "$AUTOARM_ATTEMPTS" in
   *) AUTOARM_ATTEMPTS=2 ;;
 esac
 # Seconds a live holder's stale beacon may take to refresh after a host sleep
-# before it counts as unhealthy; 0 disables the window. Counted in one-second
-# sleeps rather than wall-clock time so the window itself is sleep-insensitive.
+# before the first arm runs against it; 0 disables the window. Counted in
+# one-second sleeps rather than wall-clock time so the window itself is
+# sleep-insensitive.
 SLEEP_SETTLE=${FM_CLAUDE_AUTOARM_SLEEP_SETTLE:-$(( ${FM_POLL:-15} + 15 ))}
 case "$SLEEP_SETTLE" in
   ''|*[!0-9]*) SLEEP_SETTLE=30 ;;
@@ -353,22 +356,23 @@ trap 'handle_autoarm_signal INT' INT
 ARM_PID=
 CLOSED_ARM_PID=
 
-# fm_watcher_healthy plus a bounded wait for a live holder to refresh a beacon
-# that a host sleep aged. Only a live, identity-matched holder earns the wait,
-# so a dead or foreign watcher is still judged at once.
-watcher_healthy_after_sleep() {
+# Before the first arm, give a live identity-matched holder whose beacon a host
+# sleep aged a bounded wait to refresh it, so the arm attaches to that watcher
+# and this generation owns its close instead of the arm refusing it as stale.
+# A dead or foreign holder, or a healthy one, is armed against at once.
+settle_sleep_aged_watcher() {
   local pid i=0
+  [ "$SLEEP_SETTLE" -gt 0 ] || return 0
   fm_watcher_healthy "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$GRACE" "$FM_HOME" && return 0
-  [ "$SLEEP_SETTLE" -gt 0 ] || return 1
   pid=$(cat "$STATE/.watch.lock/pid" 2>/dev/null || true)
-  fm_pid_alive "$pid" || return 1
-  fm_watcher_lock_matches_pid "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$pid" "$FM_HOME" || return 1
+  fm_pid_alive "$pid" || return 0
+  fm_watcher_lock_matches_pid "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$pid" "$FM_HOME" || return 0
   while [ "$i" -lt "$SLEEP_SETTLE" ]; do
     sleep 1
     i=$((i + 1))
     fm_watcher_healthy "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$GRACE" "$FM_HOME" && return 0
   done
-  return 1
+  return 0
 }
 
 run_arm() {  # <output file, or empty for none>
@@ -435,6 +439,7 @@ if fm_supervision_host_enabled "$CONFIG" claude; then
   HOST_MODE=1
   ACTIONABLE_RE='^(signal:|stale:|check:|heartbeat($|:)|supervision-host:)'
 fi
+settle_sleep_aged_watcher
 attempt=0
 while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
   # A superseded owner must not start or attach another watcher or mutate any
@@ -492,7 +497,7 @@ while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
 
   # A non-actionable close is benign when another verified watcher already owns
   # this home and is still beating within the shared grace window.
-  if watcher_healthy_after_sleep; then
+  if fm_watcher_healthy "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$GRACE" "$FM_HOME"; then
     HEALTHY=1
     break
   fi
