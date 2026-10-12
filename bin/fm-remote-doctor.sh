@@ -45,8 +45,9 @@
 # fixed. Any remaining fixable or human gap, and any missing required tool,
 # exits non-zero.
 #
-# On Linux with a usable systemd user manager (the account's own, see
-# fm_remote_systemd_user_usable in bin/fm-remote-job-lib.sh), the workers are
+# On Linux with a usable systemd user manager (the account's own, systemd 250
+# or newer, with lingering on; see fm_remote_systemd_user_usable in
+# bin/fm-remote-job-lib.sh), the workers are
 # the Firstmate-owned user units firstmate-remote-job.service and
 # firstmate-herdr-fm-remote.service, so a reboot restarts them and Herdr no
 # longer warns that a nohup-started server may not survive SSH connection loss.
@@ -688,18 +689,14 @@ systemd_in_use() {
 }
 
 check_systemd_services() {
-  local herdr_bin linger note=
+  local herdr_bin why="they need the account's own user manager at systemd 250 or newer with lingering on"
   if [ "$PLATFORM" != linux ] || ! systemd_in_use; then
-    record remote-job-service "skip: systemd user services do not apply on this host; the worker starts directly"
-    record herdr-service "skip: systemd user services do not apply on this host; the herdr server starts directly"
+    record remote-job-service "skip: systemd user services do not apply on this host ($why); the worker starts directly"
+    record herdr-service "skip: systemd user services do not apply on this host ($why); the herdr server starts directly"
     return 0
   fi
-  if fm_remote_systemd_linger_enabled; then linger=enabled; else
-    linger=off
-    note="; lingering is off, so the unit stops when the last login session ends until 'loginctl enable-linger' is run on that account"
-  fi
   if systemd_unit_current "$FM_REMOTE_SYSTEMD_JOB_UNIT" fm_remote_systemd_render_worker_unit "$FM_ROOT" "${HOME:-}"; then
-    record remote-job-service "ok: $FM_REMOTE_SYSTEMD_JOB_UNIT is installed and enabled (linger $linger)$note"
+    record remote-job-service "ok: $FM_REMOTE_SYSTEMD_JOB_UNIT is installed and enabled"
   else
     record remote-job-service "fixable: $FM_REMOTE_SYSTEMD_JOB_UNIT is not installed and enabled with the current worker contract" \
       "rerun this command with --fix to write and enable it; a running worker is left alone"
@@ -709,7 +706,7 @@ check_systemd_services() {
     record herdr-service "skip: herdr does not resolve, so no unit can be rendered for it"
   elif systemd_unit_current "$FM_REMOTE_SYSTEMD_HERDR_UNIT" fm_remote_systemd_render_herdr_unit \
     "$FM_ROOT" "${HOME:-}" "$herdr_bin" "$HERDR_SESSION_NAME"; then
-    record herdr-service "ok: $FM_REMOTE_SYSTEMD_HERDR_UNIT is installed and enabled (linger $linger)$note"
+    record herdr-service "ok: $FM_REMOTE_SYSTEMD_HERDR_UNIT is installed and enabled"
   else
     record herdr-service "fixable: $FM_REMOTE_SYSTEMD_HERDR_UNIT is not installed and enabled with the current contract" \
       "rerun this command with --fix to write and enable it; a running herdr server is left alone and adopted"

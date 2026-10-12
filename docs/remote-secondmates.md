@@ -287,10 +287,9 @@ On Linux the same two workers run as systemd user units when the account's own u
 | Unit | Runs |
 | --- | --- |
 | `firstmate-remote-job.service` | The remote job worker, with `KillMode=process` so stopping it never takes down Herdr servers and panes that share its control group. |
-| `firstmate-herdr-fm-remote.service` | The `fm-remote` Herdr server, through the guard in `--adopt` mode. |
+| `firstmate-herdr-fm-remote.service` | The `fm-remote` Herdr server, through the guard in `--adopt` mode, with `ExitType=cgroup` so a successor left by Herdr's live handoff keeps the service and its panes up after the original server process exits. |
 
 The units are written under `~/.config/systemd/user`, enabled for `default.target`, and logged under `~/.firstmate/remote-job/logs/`.
-Lingering must be enabled for the account for the units to start with no login session; doctor reports when it is off but does not change it.
 
 A running process is adopted rather than moved.
 `--fix` writes and enables each unit but never starts, restarts, or stops a live herdr server, so a server started with nohup keeps serving, with its panes, until its natural restart.
@@ -299,8 +298,15 @@ A live worker that matches the current code is likewise left alone; only a missi
 The guard's adopt mode starts a server in the foreground only when nothing owns the `fm-remote` socket, and otherwise exits 0 without touching the owner; it never takes a session over.
 Moving an adopted server under its unit without closing its panes is only done through Herdr's own live handoff, never by this code.
 
-Units are used only when `systemctl --user` answers and the account's home is its passwd home, which is the tree its user manager reads.
-Hosts without that, such as WSL without systemd, keep the direct start, and macOS keeps its launch agents unchanged.
+Units are used only when all of these hold:
+
+- `systemctl --user` answers with systemd 250 or newer, the first version that reads `ExitType=`.
+- The account's home is its passwd home, which is the tree its user manager reads.
+- Lingering is enabled for the account.
+  Without it the user manager stops when the last login session ends and takes its units with it, while a direct start survives.
+  Doctor never enables lingering itself.
+
+Other hosts, such as WSL without systemd, keep the direct start, and macOS keeps its launch agents unchanged.
 [`bin/fm-remote-job-lib.sh`](../bin/fm-remote-job-lib.sh) owns unit rendering and installation, and [`bin/fm-remote-doctor.sh`](../bin/fm-remote-doctor.sh) owns the checks and repairs.
 
 ### Other repairs and limits

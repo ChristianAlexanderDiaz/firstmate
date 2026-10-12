@@ -1258,9 +1258,11 @@ fm_remote_systemctl() { # <systemctl --user arguments...>
 # The account whose user manager reads the unit directory is the passwd account
 # at its passwd home, so units are only ever written for that real home: an
 # isolated or fake HOME has no user manager reading it and must keep the nohup
-# path. FM_REMOTE_SYSTEMCTL (a stub) lifts the home comparison.
+# path. FM_REMOTE_SYSTEMCTL (a stub) lifts the home comparison. The manager
+# must also be systemd 250 or newer, the first to read the herdr unit's
+# ExitType=, and the account must linger (see fm_remote_systemd_linger_enabled).
 fm_remote_systemd_user_usable() { # <account-home>
-  local account_home=$1 passwd_home
+  local account_home=$1 passwd_home version
   [ "$(fm_remote_job_platform)" = linux ] || return 1
   if [ -z "${FM_REMOTE_SYSTEMCTL:-}" ]; then
     command -v systemctl >/dev/null 2>&1 || return 1
@@ -1268,7 +1270,10 @@ fm_remote_systemd_user_usable() { # <account-home>
     passwd_home=$(getent passwd "$(id -un 2>/dev/null)" 2>/dev/null | cut -d: -f6)
     [ -n "$passwd_home" ] && [ "$passwd_home" = "$account_home" ] || return 1
   fi
-  fm_remote_systemctl show-environment >/dev/null 2>&1
+  version=$(fm_remote_systemctl show --property=Version --value 2>/dev/null) || return 1
+  version=${version%%[!0-9]*}
+  [ -n "$version" ] && [ "$version" -ge 250 ] || return 1
+  fm_remote_systemd_linger_enabled
 }
 
 fm_remote_systemd_unit_dir() { # <account-home>
@@ -1281,8 +1286,9 @@ fm_remote_systemd_word() { # <value>
 }
 
 # Lingering keeps the account's user manager, and so its units, up with no
-# login session. Informational only: with it off the units behave like the
-# nohup processes did and stop at logout.
+# login session. Units are used only with it on: with it off the manager stops
+# when the last login session ends and takes every unit with it, while a direct
+# nohup start survives, so that start is kept.
 fm_remote_systemd_linger_enabled() {
   command -v loginctl >/dev/null 2>&1 || return 1
   loginctl show-user "$(id -un 2>/dev/null)" -p Linger 2>/dev/null | grep -q '^Linger=yes$'
@@ -1331,6 +1337,9 @@ UNIT
 # starts the server in the foreground when no server owns the session and
 # otherwise leaves the live one alone. KillMode is the default here: stopping
 # the unit is the one deliberate way to stop its server and panes.
+# ExitType=cgroup keeps the service, and so its panes, up while any process in
+# its group remains, so a successor that Herdr's live handoff leaves behind is
+# not torn down when the original server process exits.
 fm_remote_systemd_render_herdr_unit() { # <remote-root> <account-home> <herdr-path> <session>
   local root=$1 account_home=$2 herdr_bin=$3 session=$4 logs path
   account_home=$(fm_remote_job_canonical_existing_dir "$account_home") || return 1
@@ -1346,6 +1355,7 @@ Type=simple
 Environment=$(fm_remote_systemd_word "HOME=$account_home")
 Environment=$(fm_remote_systemd_word "PATH=$path")
 ExecStart=$(fm_remote_systemd_word "$root/bin/fm-remote-herdr-guard.sh") --adopt $(fm_remote_systemd_word "$herdr_bin") $(fm_remote_systemd_word "$session")
+ExitType=cgroup
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:$logs/dev.firstmate.herdr.fm-remote.log

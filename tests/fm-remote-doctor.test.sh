@@ -305,7 +305,10 @@ printf '%s\n' "$*" >> "$FM_FAKE_STATE/systemctl.log"
 shift
 unit_dir=$FM_REMOTE_SYSTEMD_UNIT_DIR
 case "${1:-}" in
-  show-environment) [ ! -f "$FM_FAKE_STATE/systemd-down" ] ;;
+  show)
+    [ ! -f "$FM_FAKE_STATE/systemd-down" ] || exit 1
+    cat "$FM_FAKE_STATE/systemd-version" 2>/dev/null || printf '255.4-1ubuntu8\n'
+    ;;
   daemon-reload) ;;
   enable) [ -f "$unit_dir/$2" ] || exit 1; : > "$FM_FAKE_STATE/enabled-$2" ;;
   is-enabled) [ -f "$FM_FAKE_STATE/enabled-$2" ] ;;
@@ -324,6 +327,14 @@ case "${1:-}" in
 esac
 SH
   chmod +x "$CASE_BIN/systemctl"
+
+  # The account lingers unless the case says otherwise.
+  cat > "$CASE_BIN/loginctl" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = show-user ] || exit 2
+if [ -f "$FM_FAKE_STATE/linger-off" ]; then echo Linger=no; else echo Linger=yes; fi
+SH
+  chmod +x "$CASE_BIN/loginctl"
 }
 
 # doctor [args...] -> runs the real doctor against the current fixture,
@@ -927,6 +938,37 @@ pass "the entrypoint symlink is recreated when absent and never overwritten when
 JOB_UNIT=firstmate-remote-job.service
 HERDR_UNIT=firstmate-herdr-fm-remote.service
 
+# unit_values <unit-file> <section> <key> -> every value <key> takes in
+# [<section>], one per line, read as systemd reads assignments: comment lines
+# and other sections are ignored, and a repeated key yields a repeated value.
+unit_values() {
+  awk -v section="[$2]" -v key="$3" '
+    /^[[:space:]]*[#;]/ { next }
+    /^\[/ { in_section = ($0 == section); next }
+    in_section && index($0, "=") {
+      k = substr($0, 1, index($0, "=") - 1); v = substr($0, index($0, "=") + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", k); sub(/^[[:space:]]+/, "", v)
+      if (k == key) print v
+    }' "$1"
+}
+
+# assert_unit_value <unit-file> <section> <key> <expected> <msg>; an empty
+# <expected> asserts the key is not set at all.
+assert_unit_value() {
+  local got
+  got=$(unit_values "$1" "$2" "$3")
+  [ "$got" = "$4" ] || fail "$5 (got $3='$got')"
+}
+
+# unit_exec_argv <unit-file> -> the ExecStart argv, one word per line, decoded
+# as systemd reads it: quoted words unescaped, then %% and $$ collapsed.
+unit_exec_argv() {
+  unit_values "$1" Service ExecStart | python3 -c '
+import shlex, sys
+for word in shlex.split(sys.stdin.read()):
+    print(word.replace("%%", "%").replace("$$", "$"))'
+}
+
 # A host with a usable user manager and a stopped server: --fix writes both
 # units, enables them, and starts only the herdr unit, through the real guard.
 new_case Linux with-herdr no-gui
@@ -945,15 +987,18 @@ assert_contains "$DOCTOR_OUT" 'fix herdr-server=applied: started the herdr serve
 assert_contains "$DOCTOR_OUT" 'check remote-job-service=ok:' "the worker unit was not confirmed"
 assert_contains "$DOCTOR_OUT" 'check herdr-service=ok:' "the herdr unit was not confirmed"
 assert_contains "$DOCTOR_OUT" "running under $HERDR_UNIT" "the server was not reported as unit-managed"
-assert_grep "ExecStart=\"$ROOT/bin/fm-remote-herdr-guard.sh\" --adopt \"$CASE_BIN/herdr\" \"fm-remote\"" "$UNIT_DIR/$HERDR_UNIT" \
-  "the herdr unit does not exec the guard in adopt mode for the resolved herdr"
-assert_grep 'WantedBy=default.target' "$UNIT_DIR/$HERDR_UNIT" "the herdr unit is not wanted by the default target"
-assert_grep "ExecStart=\"$ROOT/bin/fm-remote-job-worker.sh\"" "$UNIT_DIR/$JOB_UNIT" "the worker unit does not run the worker"
-assert_grep 'KillMode=process' "$UNIT_DIR/$JOB_UNIT" \
+[ "$(unit_exec_argv "$UNIT_DIR/$HERDR_UNIT")" = "$(printf '%s\n' "$ROOT/bin/fm-remote-herdr-guard.sh" --adopt "$CASE_BIN/herdr" fm-remote)" ] ||
+  fail "the herdr unit does not exec the guard in adopt mode for the resolved herdr"
+assert_unit_value "$UNIT_DIR/$HERDR_UNIT" Install WantedBy default.target "the herdr unit is not wanted by the default target"
+assert_unit_value "$UNIT_DIR/$HERDR_UNIT" Service ExitType cgroup \
+  "the herdr unit would tear down a live-handoff successor when the original server exits"
+assert_unit_value "$UNIT_DIR/$HERDR_UNIT" Service KillMode '' "the herdr unit overrides the default stop behavior"
+[ "$(unit_exec_argv "$UNIT_DIR/$JOB_UNIT")" = "$ROOT/bin/fm-remote-job-worker.sh" ] || fail "the worker unit does not run the worker"
+assert_unit_value "$UNIT_DIR/$JOB_UNIT" Service KillMode process \
   "the worker unit would kill Herdr servers and panes in its control group when it stops"
-assert_grep 'RestartPreventExitStatus=75' "$UNIT_DIR/$JOB_UNIT" "the worker unit would restart a lost lock race"
-assert_no_grep 'KillMode=' "$UNIT_DIR/$HERDR_UNIT" "the herdr unit overrides the default stop behavior"
-assert_grep "StandardOutput=append:$CASE_HOME/.firstmate/remote-job/logs/" "$UNIT_DIR/$JOB_UNIT" "the worker unit has no log target"
+assert_unit_value "$UNIT_DIR/$JOB_UNIT" Service RestartPreventExitStatus 75 "the worker unit would restart a lost lock race"
+assert_unit_value "$UNIT_DIR/$JOB_UNIT" Service StandardOutput "append:$CASE_HOME/.firstmate/remote-job/logs/$JOB_LABEL.log" \
+  "the worker unit has no log target"
 assert_grep 'enable firstmate-herdr-fm-remote.service' "$CASE_STATE/systemctl.log" "the herdr unit was not enabled"
 for forbidden_call in ' stop ' ' disable ' ' kill '; do
   assert_no_grep "$forbidden_call" "$CASE_STATE/systemctl.log" "--fix called systemctl$forbidden_call"
@@ -1013,21 +1058,29 @@ GUARD_OUT=$(FM_FAKE_STATE="$CASE_STATE" FM_FAKE_HERDR_RUNNING="$CASE_HERDR_RUNNI
 assert_grep 'server --session fm-remote' "$STOP_LOG" "adopt mode did not start a server for an unowned session"
 pass "the guard's adopt mode starts an unowned session and leaves a live one alone"
 
-# A host whose user manager is unreachable (WSL without systemd) keeps the
+# A host whose user manager is unreachable (WSL without systemd), predates
+# ExitType= (systemd 249), or would stop at logout (lingering off) keeps the
 # direct nohup path and writes no unit.
-new_case Linux with-herdr no-gui
-CASE_SYSTEMCTL=1
-: > "$CASE_STATE/systemd-down"
-doctor --fix
-expect_code 0 "$DOCTOR_RC" "--fix failed on a host without a usable user manager"
-assert_contains "$DOCTOR_OUT" 'check remote-job-service=skip:' "an unusable user manager still required the worker unit"
-assert_contains "$DOCTOR_OUT" 'check herdr-service=skip:' "an unusable user manager still required the herdr unit"
-assert_contains "$DOCTOR_OUT" 'fix herdr-server=applied: started the herdr server for session fm-remote' "the direct start fallback did not run"
-assert_absent "$CASE_HOME/.config/systemd/user" "units were written without a usable user manager"
-for mutating_call in ' enable ' ' start ' ' restart '; do
-  assert_no_grep "$mutating_call" "$CASE_STATE/systemctl.log" "an unusable user manager was asked to change something: $mutating_call"
+for unusable in systemd-down systemd-249 linger-off; do
+  new_case Linux with-herdr no-gui
+  CASE_SYSTEMCTL=1
+  case "$unusable" in
+    systemd-249) printf '249.11-0ubuntu3.12\n' > "$CASE_STATE/systemd-version" ;;
+    *) : > "$CASE_STATE/$unusable" ;;
+  esac
+  doctor --fix
+  expect_code 0 "$DOCTOR_RC" "--fix failed on a host without a usable user manager ($unusable)"
+  assert_contains "$DOCTOR_OUT" 'check remote-job-service=skip:' "an unusable user manager still required the worker unit ($unusable)"
+  assert_contains "$DOCTOR_OUT" 'check herdr-service=skip:' "an unusable user manager still required the herdr unit ($unusable)"
+  assert_contains "$DOCTOR_OUT" 'fix herdr-server=applied: started the herdr server for session fm-remote' \
+    "the direct start fallback did not run ($unusable)"
+  assert_absent "$CASE_HOME/.config/systemd/user" "units were written without a usable user manager ($unusable)"
+  for mutating_call in ' enable ' ' start ' ' restart '; do
+    assert_no_grep "$mutating_call" "$CASE_STATE/systemctl.log" \
+      "an unusable user manager was asked to change something ($unusable): $mutating_call"
+  done
 done
-pass "an unusable user manager keeps the direct nohup start"
+pass "an unreachable, pre-250, or non-lingering user manager keeps the direct nohup start"
 
 # Without the stub, the account's real user manager is never addressed for a
 # fixture HOME: its passwd home differs, so the nohup path applies.
@@ -1076,13 +1129,16 @@ assert_not_contains "$LIB_OUT" 'failed' "the unit-backed worker start reported a
 assert_grep 'restart firstmate-remote-job.service' "$CASE_STATE/systemctl.log" "the worker was not started through its unit"
 pass "the worker starts through its unit, adopts a live matching worker, and replaces a stale one"
 
-# Unit rendering is deterministic and quotes what systemd would expand.
+# Unit rendering is deterministic, and the ExecStart systemd reads back is the
+# exact worker path even when it carries quotes, backslashes, specifiers, and
+# variables.
 new_case Linux with-herdr no-gui
-ODD_ROOT="$CASE_DIR/odd root %h \$x"
+ODD_ROOT="$CASE_DIR/odd \"root\" \\ %h \$x"
 mkdir -p "$ODD_ROOT/bin"
 RENDER_A=$(HOME="$CASE_HOME" bash -c '. "$1"; fm_remote_systemd_render_worker_unit "$2" "$HOME"' _ "$ROOT/bin/fm-remote-job-lib.sh" "$ODD_ROOT")
 RENDER_B=$(HOME="$CASE_HOME" bash -c '. "$1"; fm_remote_systemd_render_worker_unit "$2" "$HOME"' _ "$ROOT/bin/fm-remote-job-lib.sh" "$ODD_ROOT")
 [ "$RENDER_A" = "$RENDER_B" ] || fail "two renders of one worker contract differ"
-# shellcheck disable=SC2016 # The expected unit text carries a literal escaped dollar.
-assert_contains "$RENDER_A" 'odd root %%h $$x' "systemd specifiers and variables were not escaped in the worker unit"
+printf '%s\n' "$RENDER_A" > "$CASE_STATE/odd.service"
+[ "$(unit_exec_argv "$CASE_STATE/odd.service")" = "$ODD_ROOT/bin/fm-remote-job-worker.sh" ] ||
+  fail "systemd would not read the worker path back from the escaped ExecStart"
 pass "unit rendering is deterministic and escapes systemd expansion"
