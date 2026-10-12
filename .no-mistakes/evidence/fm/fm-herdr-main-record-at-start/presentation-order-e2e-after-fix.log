@@ -1,0 +1,6 @@
+ok - real Herdr lab: firstmate, each second mate with its own and its covered primary workers, primary work, then personal spaces
+ok - real Herdr lab: teardowns keep the sorted order
+ok - real Herdr lab: a busy presentation lock is waited out and the worker still gets its own sorted workspace
+ok - real Herdr lab: a renamed firstmate space keeps the top, primary workers stay below the second mates
+ok - real Herdr lab: the primary's session start records its space so a second mate pass keeps it on top
+ok - real Herdr lab: presentation order validation completed on herdr 0.9.3 with the default-session tripwire intact

@@ -1,0 +1,25 @@
+== Live: real Claude primary (Claude Code in Herdr lab session fm-lab-fm-rec-dbg-2291332-6628, pane w1:p1) ran bin/fm-session-start.sh
+-- primary record state/.herdr-main-workspace after session start:
+herdr_session=fm-lab-fm-rec-dbg-2291332-6628
+herdr_pane_id=w1:p1
+herdr_workspace_id=w1
+-- Herdr pane list for workspace w1:
+[{"pane_id":"w1:p1","workspace_id":"w1"}]
+-- sidebar before any second mate pass (id:label): w1:captain  w2:life  w3:2ndmate-bravo
+-- sidebar after second mate 'bravo' spawns b1 (first presentation pass; no primary pass ever ran): w1:captain  w3:2ndmate-bravo  w4:b1  w2:life
+-- control: remove the primary record, second mate spawns b2
+-- sidebar without the record: w3:2ndmate-bravo  w4:b1  w5:b2  w1:captain  w2:life
+-- Claude primary pane screen:
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Opus 5.5 with high effort · Claude Max
+ ▝▝   ▝▝   ~/.no-mistakes/worktrees/02c2e0c2156d/01M4RE5ZJR7QKR1G37QT2XEQ4K
+❯ Run exactly this one shell command with the Bash tool and nothing else, then reply "done": bin/fm-session-start.sh >
+  /dev/null 2>&1; echo rc=$?
+  Ran 1 shell command
+● done. Captain, the session-start script ran and exited cleanly (rc=0).
+✻ Cogitated for 11s · done 12:25 PM
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+teardown exit=0

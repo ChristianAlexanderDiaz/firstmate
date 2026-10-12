@@ -1,0 +1,12 @@
+session=fm-lab-fm-rec-start-2215888-27996 main_ws=w2 main_pane=w2:p1 life=w1 bravo=w3
+--- sidebar at start: life captain 2ndmate-bravo
+--- record before session start: cat: /tmp/fm-rec-start.jkVqvh/primary/state/.herdr-main-workspace: No such file or directory
+--- pane env (injected by Herdr): HERDR_ENV=1 HERDR_PANE_ID=w2:p1 HERDR_SESSION=fm-lab-fm-rec-start-2215888-27996 
+--- fm-session-start.sh exit: 0 (output saved)
+--- record after session start:
+cat: /tmp/fm-rec-start.jkVqvh/primary/state/.herdr-main-workspace: No such file or directory
+--- second mate spawn b1 (no primary presentation pass has run)
+--- sidebar after second mate spawn: 2ndmate-bravo b1 life captain
+--- adversarial: delete record, second mate spawn b2
+--- sidebar without record: 2ndmate-bravo b1 b2 life captain
+teardown exit=0
