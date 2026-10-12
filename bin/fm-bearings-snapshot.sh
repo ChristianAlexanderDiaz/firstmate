@@ -31,7 +31,7 @@
 # its durable task id otherwise, so renderers always receive a task-identifying
 # label instead of having to substitute run status. A home classified
 # captain_decision because it has an open
-# captain hold still contributes each working child as its own Underway row;
+# captain hold or needs-decision ask still contributes each working child as its own Underway row;
 # the home row on secondmates[] keeps the decision and gate classification.
 # Captain-hold placement follows the canonical snapshot's hold_bucket and
 # nothing else; this wrapper never inspects hold reason or body prose. The
@@ -45,6 +45,17 @@
 # and drops its gate, so a hold is never in both Captain's Call and Charted Next.
 # Aging is a projection safety net only; the durable
 # deferral remains re-holding with --until.
+#
+# decisions_open also carries every open needs-decision key the captain is owed
+# beyond a captain hold (verb needs-decision, the same keyed fold the wake drain
+# prints as OPEN DECISIONS), one row per item: each main-home task's asks and each
+# readable secondmate home's child asks, deduplicated against any hold on the same
+# task (its id, or its legacy `<task>-decision-<key>` identity), plus that
+# secondmate's own asks on its parent channel in the main home. Those channel asks
+# skip `captain-hold-` keys, which mirror holds already shown, and any key the home
+# already carries as a hold or decisions_open row. A secondmate home that cannot
+# be read falls back to all keyed asks on its parent channel. Such a task also
+# stays in Underway, like any actively worked held task.
 #
 # Ordinary Charted Next gates are ordered by durable filed date, newest first,
 # before the FM_BEARINGS_GATES bound is applied. Gates without a comparable filed
@@ -148,7 +159,7 @@ remote homes under one shared snapshot budget and may refresh the parent-side ca
 Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,doing},
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
-  decisions_open{id,key,verb,summary,owner}, landed{id,what,artifact,owner},
+  decisions_open{id,key,verb,summary,owner} (verb: captain-hold, needs-decision), landed{id,what,artifact,owner},
   gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
 Default gates are selected newest filed first before their bound; undated gates
@@ -427,6 +438,10 @@ MODEL=$(printf '%s' "$SNAP" | jq \
            + ($base | fit($context_n - $title_n)))
         end
       end;
+  # A status ask is already a captain call once a captain hold carries its task
+  # id, or its legacy `<task>-decision-<key>` identity (bin/fm-captain-hold.sh).
+  def held_covers($hold_ids; $task; $key):
+    any($hold_ids[]; . == $task or . == ($task + "-decision-" + ($key | tostring)));
   def as_gate($owner):
     {id, title:(.title | trunc(60)),
      blocked_by:((.unresolved_blocker_ids // []) | if length > 0 then join(",") else "-" end | trunc(120)),
@@ -466,8 +481,9 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          | select(.endpoint.exists == false or .endpoint.agent_alive == "dead")
          | {id:($m.id + "/" + .id),backend:"secondmate-home",target:(.endpoint.target // "-"),exists:.endpoint.exists,agent:.endpoint.agent_alive} ]) as $unhealthy_all
   | ([ (.secondmate_current.records // [])[]
-       | ([.decisions_open[]? | select(.source == "backlog" and .verb == "captain-hold"
-            and live_captain_call)]) as $captain_holds
+       | ([.decisions_open[]? | select((.source == "backlog" and .verb == "captain-hold"
+              and live_captain_call)
+            or (.source == "status" and .verb == "needs-decision"))]) as $captain_holds
        | ([.holds[]? | select(.source == "backlog")]) as $backlog_holds
        | . + {
            bearings_captain_holds:$captain_holds,
@@ -544,7 +560,34 @@ MODEL=$(printf '%s' "$SNAP" | jq \
                          | index($id) | not)
                 | {id:($m.id + "/" + .id),key:.id,verb:"captain-hold",
                    summary:hold_summary((.title // .id);
-                                        (.hold_reason // "captain decision pending")),owner:$m.id} ])[] ]) as $decisions_all
+                                        (.hold_reason // "captain decision pending")),owner:$m.id} ])[] ]) as $hold_decisions
+  | ([ .backlog.records[] | select(.structured and .hold_bucket != null) | .id ]) as $main_hold_ids
+  | ([ .tasks[] | select(.kind != "secondmate") | . as $t
+       | ($t.hints.open_decisions // [])[]
+       | select(.verb == "needs-decision")
+       | select(held_covers($main_hold_ids; $t.id; .key) | not)
+       | {id:$t.id,key,verb,summary:((($t.backlog.title // $t.id) + ": " + (.summary // "")) | trunc(90)),
+          owner:"(main)"} ]) as $main_status_asks
+  | ([ (.secondmate_current.records // [])[] as $m
+       | if $m.provenance.selected == "structured-home" then
+           ([ $m.decisions_open[]? | select(.source == "backlog" and .verb == "captain-hold") | .id ]
+            + [ $m.queued[]? | select(.hold_kind == "captain") | .id ]) as $hold_ids
+           | ([ $m.decisions_open[]? | .key ]) as $home_keys
+           | (($m.decisions_open[]?
+               | select(.source == "status" and .verb == "needs-decision")
+               | select(held_covers($hold_ids; .id; .key) | not)
+               | {id:($m.id + "/" + .id),key,verb,summary:((.summary // "") | trunc(90)),owner:$m.id}),
+              ($m.parent_event.open_decisions[]?
+               | select(.verb == "needs-decision")
+               | select((.key | tostring | startswith("captain-hold-")) | not)
+               | select(.key as $k | ($hold_ids + $home_keys) | index($k) | not)
+               | {id:$m.id,key,verb,summary:((.summary // "") | trunc(90)),owner:$m.id}))
+         else
+           $m.parent_event.open_decisions[]?
+           | select(.verb == "needs-decision")
+           | {id:$m.id,key,verb,summary:((.summary // "") | trunc(90)),owner:$m.id}
+         end ]) as $mate_asks
+  | ($hold_decisions + $main_status_asks + $mate_asks) as $decisions_all
   | ([ .backlog.records[]
          | . as $record
          | select(.structured and projected_deferred_hold) ]

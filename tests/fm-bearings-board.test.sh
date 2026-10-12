@@ -689,6 +689,73 @@ EOF
   pass "build keeps remote decisions absent from the main backlog"
 }
 
+# The main-home needs-decision fixture: design-call is in flight, not held for
+# the captain, with an open ask. Its needs-decision card survives build, while a
+# captain-hold card on an equally unheld task is still dropped as stale.
+test_build_keeps_needs_decision_cards_and_checks_only_holds() {
+  local home data board out
+  home=$(make_home needs-decision-card)
+  data="$home/payload.json"
+  board="$home/.lavish/bearings-board.html"
+  cp "$ROOT/.tasks.toml" "$home/.tasks.toml"
+  cat > "$home/data/backlog.md" <<'EOF2'
+## In flight
+- [ ] design-call - Pick the design (repo: firstmate) (kind: ship) (since 2026-07-11)
+- [ ] unheld-call - Not held (repo: firstmate) (kind: ship) (since 2026-07-11)
+
+## Queued
+
+## Done
+EOF2
+  printf 'needs-decision [key=pick-design]: choose A or B\n' > "$home/state/design-call.status"
+  write_valid_payload "$data"
+  jq '.captains_call = [
+        {"key":"design-call","type":"decision","verb":"needs-decision","repo":"firstmate",
+         "title":"Pick the design","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}]},
+        {"key":"unheld-call","type":"decision","verb":"captain-hold","repo":"firstmate",
+         "title":"Not held","options":[{"value":"yes","label":"Yes"}]}
+      ]
+      | .landed = []' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+
+  out=$(run_board "$home" build "$data" 2>&1) || fail "the needs-decision build failed: $out"
+  assert_not_contains "$out" "dropped-landed-card: design-call" \
+    "a needs-decision card was checked as a captain hold and dropped: $out"
+  assert_contains "$out" "dropped-landed-card: unheld-call (no longer an open captain call)" \
+    "a captain-hold card on an unheld task escaped the stale check: $out"
+  extract_payload "$board" | jq -e '
+    [.captains_call[] | {key, verb, reconcile:any(.options[]; .value == "reconcile")}]
+      == [{key:"design-call", verb:"needs-decision", reconcile:true}]
+  ' >/dev/null || fail "the board did not keep exactly the needs-decision card"
+  pass "build keeps needs-decision cards and stale-checks only captain-hold cards"
+}
+
+# A secondmate child ask's snapshot id is <mate>/<child>; its card key is
+# <mate>.<child>, which passes the unchanged slug check, while the raw id refuses.
+test_build_accepts_a_mate_child_ask_key_and_refuses_the_raw_id() {
+  local home data board out
+  home=$(make_home mate-child-ask-card)
+  data="$home/payload.json"
+  board="$home/.lavish/bearings-board.html"
+  write_valid_payload "$data"
+  jq '.captains_call = [
+        {"key":"domain-alpha.merge-ask","type":"decision","verb":"needs-decision","repo":"sample",
+         "title":"Merge word for the stack","options":[{"value":"yes","label":"Yes"}]}
+      ]' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  out=$(run_board "$home" build "$data" 2>&1) || fail "the mate child ask build failed: $out"
+  extract_payload "$board" | jq -e '[.captains_call[].key] == ["domain-alpha.merge-ask"]' >/dev/null \
+    || fail "the board dropped the mate child ask card"
+  jq '.captains_call[0].key = "domain-alpha/merge-ask"' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  if out=$(run_board "$home" build "$data" 2>&1); then
+    fail "a raw <mate>/<child> key passed the slug check: $out"
+  fi
+  jq '.captains_call[0] |= (.key = "domain-alpha.merge-ask" | .verb = "blocked")' "$data" > "$data.tmp" \
+    && mv "$data.tmp" "$data"
+  if out=$(run_board "$home" build "$data" 2>&1); then
+    fail "an unknown card verb passed validation: $out"
+  fi
+  pass "a mate child ask carded as <mate>.<child> builds; raw ids and unknown verbs refuse"
+}
+
 # --- part 3: every decision card offers reconcile ---------------------------
 
 test_build_fails_when_reconcile_cannot_establish_a_listener() {
@@ -783,6 +850,8 @@ test_build_refuses_to_arm_when_the_session_stays_ended
 test_build_starts_a_listener_for_an_already_armed_board
 test_build_drops_decision_cards_whose_subject_already_landed
 test_build_keeps_a_decision_absent_from_the_main_backlog
+test_build_keeps_needs_decision_cards_and_checks_only_holds
+test_build_accepts_a_mate_child_ask_key_and_refuses_the_raw_id
 test_build_fails_when_reconcile_cannot_establish_a_listener
 test_every_decision_card_carries_the_reconcile_choice
 test_build_refuses_a_payload_that_occupies_the_reconcile_value
