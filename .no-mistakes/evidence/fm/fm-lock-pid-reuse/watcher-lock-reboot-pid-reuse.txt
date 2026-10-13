@@ -1,0 +1,75 @@
+# Watcher lock after a simulated power loss + reboot (fresh pid namespace + new kernel boot_id), lab FM_HOME, real bin/fm-watch.sh
+
+### BASELINE: base a96206b9 (before the fix)
+[boot] boot_id=aaaaaaaa-0000-0000-0000-000000000001 (pid namespace: this shell is pid 1)
+[boot] watcher running as pid 206; lock dir contents:
+    pid: 206
+[boot] POWER LOSS (namespace torn down; lock left behind)
+[boot] boot_id=bbbbbbbb-0000-0000-0000-000000000002 (pid namespace: this shell is pid 1)
+[boot] lock left from previous boot names pid 206
+[boot] pid 206 now belongs to an unrelated program:
+        206 Mon Oct 12 19:25:35 2026 sleep 600
+[boot] $ fm-watch.sh   (restart monitoring)
+[boot] lock taken by new watcher pid: <none>
+[boot] watcher output:
+    watcher: already running pid 206
+[boot] RESULT: lock still names pid 206 -> monitoring NOT restarted
+
+### FIXED: target 5062c2b9
+[boot] boot_id=aaaaaaaa-0000-0000-0000-000000000001 (pid namespace: this shell is pid 1)
+[boot] watcher running as pid 206; lock dir contents:
+    pid: 206
+    lock-identity: boot=boot-id:aaaaaaaa-0000-0000-0000-000000000001
+    lock-identity: identity=linux-starttime=9324505 cmdline-hex=62617368002f686f6d652f63687269737469616e2f2e6e6f2d6d697374616b65732f776f726b74726565732f3032633265306332313536642f30314d345330594a5a5a39574b334158375453304442484b50352f62696e2f666d2d77617463682e736800
+[boot] POWER LOSS (namespace torn down; lock left behind)
+[boot] boot_id=bbbbbbbb-0000-0000-0000-000000000002 (pid namespace: this shell is pid 1)
+[boot] lock left from previous boot names pid 206
+[boot] pid 206 now belongs to an unrelated program:
+        206 Mon Oct 12 19:25:37 2026 sleep 600
+[boot] $ fm-watch.sh   (restart monitoring)
+[boot] lock taken by new watcher pid: 209
+[boot] watcher output:
+    check: rearm-resurface
+[boot] RESULT: stale lock reclaimed; new watcher pid 209 took the lock (still running: no, exited after surfacing a wake)
+
+### FIXED: no reboot (same boot id), pid reused by unrelated program after the watcher died
+[boot] boot_id=dddddddd-0000-0000-0000-00000000000d (pid namespace: this shell is pid 1)
+[boot] watcher running as pid 206; lock dir contents:
+    pid: 206
+    lock-identity: boot=boot-id:dddddddd-0000-0000-0000-00000000000d
+    lock-identity: identity=linux-starttime=9269854 cmdline-hex=62617368002f686f6d652f63687269737469616e2f2e6e6f2d6d697374616b65732f776f726b74726565732f3032633265306332313536642f30314d345330594a5a5a39574b334158375453304442484b50352f62696e2f666d2d77617463682e736800
+[boot] POWER LOSS (namespace torn down; lock left behind)
+[boot] boot_id=dddddddd-0000-0000-0000-00000000000d (pid namespace: this shell is pid 1)
+[boot] lock left from previous boot names pid 206
+[boot] pid 206 now belongs to an unrelated program:
+        206 Mon Oct 12 19:16:48 2026 sleep 600
+[boot] $ fm-watch.sh   (restart monitoring)
+[boot] lock taken by new watcher pid: 209
+[boot] watcher output:
+    check: rearm-resurface
+[boot] RESULT: stale lock reclaimed; new watcher pid 209 took the lock (still running: no, exited after surfacing a wake)
+
+### FIXED: legacy watcher lock (written by pre-change code, no lock-identity) + reboot + pid reuse -> unchanged pid-only behaviour
+[boot] boot_id=aaaaaaaa-0000-0000-0000-000000000001 (pid namespace: this shell is pid 1)
+[boot] watcher running as pid 206; lock dir contents:
+    pid: 206
+[boot] POWER LOSS (namespace torn down; lock left behind)
+[boot] boot_id=bbbbbbbb-0000-0000-0000-000000000002 (pid namespace: this shell is pid 1)
+[boot] lock left from previous boot names pid 206
+[boot] pid 206 now belongs to an unrelated program:
+        206 Mon Oct 12 19:16:50 2026 sleep 600
+[boot] $ fm-watch.sh   (restart monitoring)
+[boot] lock taken by new watcher pid: <none>
+[boot] watcher output:
+    watcher: already running pid 206
+[boot] RESULT: lock still names pid 206 -> monitoring NOT restarted
+
+### FIXED: genuine live watcher, second start in the same boot
+first watcher holds the lock as pid 145335:
+     145335 bash bin/fm-watch.sh
+    lock-identity: boot=boot-id:1cefc5ad-0934-4e3b-a710-64ccf424f4ec
+    lock-identity: identity=linux-starttime=9271671 cmdline-hex=626173680062696e2f666d2d77617463682e736800
+$ fm-watch.sh  (second start)
+    watcher: already running pid 145335
+    exit=0
+lock still names pid 145335; first watcher alive: yes

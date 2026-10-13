@@ -1,0 +1,68 @@
+#!/bin/bash
+# One simulated boot for the session lock, inside a fresh user+pid+mount namespace.
+# usage: sboot.sh <boot-id> <phase> <lab> <project-dir>
+set -u
+BOOTID=$1 PHASE=$2 LAB=$3 PROJ=$4
+f=$(mktemp); echo "$BOOTID" > "$f"; mount --bind "$f" /proc/sys/kernel/random/boot_id
+export TMUX_TMPDIR="$LAB/tmux"; mkdir -p "$TMUX_TMPDIR"
+T() { tmux -L fm-lab "$@"; }
+echo "[boot] boot_id=$(cat /proc/sys/kernel/random/boot_id)"
+showlock() {
+  echo "[boot] state/.lock = $(cat "$LAB/state/.lock" 2>/dev/null)"
+  [ -e "$LAB/state/.lock-identity" ] && sed 's/^/    .lock-identity: /' "$LAB/state/.lock-identity"
+  echo "[boot] \$ FM_HOME=lab bin/fm-lock.sh status"; FM_HOME=$LAB "$PROJ/bin/fm-lock.sh" status 2>&1 | sed 's/^/    /'
+}
+startprimary() {  # start a real claude primary and have it take the session lock
+  S=${2:-primary}
+  T new-session -d -x 200 -y 50 -s $S -c "$PROJ" -e FM_HOME="$LAB" claude
+  for i in $(seq 60); do
+    T capture-pane -p -t $S 2>/dev/null | grep -qi "trust this folder" && T send-keys -t $S Enter
+    T capture-pane -p -t $S 2>/dev/null | grep -q "^❯" && break
+    sleep 1
+  done
+  sleep 2
+  echo "[boot] primary claude is pane pid $(T display -p -t $S '#{pane_pid}'); it runs: ! bin/fm-lock.sh"
+  sleep 4
+  for _ in 1 2 3 4 5; do T send-keys -t $S '!'; sleep 1.5; T capture-pane -p -t $S | grep -q '^! ' && break; T send-keys -t $S BSpace; sleep 1; done
+  T send-keys -t $S -l 'bin/fm-lock.sh'; sleep 0.5; T send-keys -t $S Enter
+  for i in $(seq 30); do T capture-pane -p -t $S | grep -q "lock acquired\|read-only\|error:" && break; sleep 1; done
+  sleep 1
+  echo "[boot] primary pane after running fm-lock.sh:"
+  T capture-pane -p -t $S | grep -v '^\s*$' | grep -v '^─' | sed 's/^/    | /'
+}
+case "$PHASE" in
+  contend)
+    startprimary "" primary
+    showlock
+    echo "[boot] a SECOND claude primary for the same home tries to take the lock while the first is alive:"
+    startprimary "" second
+    showlock
+    echo "[boot] simulate a legacy lock written before this change: remove state/.lock-identity"
+    rm -f "$LAB/state/.lock-identity"
+    T kill-session -t second
+    echo "[boot] the second primary tries again against the legacy (record-less) lock:"
+    startprimary "" second
+    showlock
+    ;;
+  start)
+    for _ in $(seq 300); do /bin/true; done
+    startprimary ""
+    showlock
+    echo "[boot] POWER LOSS (namespace torn down; session lock left behind)"
+    ;;
+  restart)
+    P=$(cat "$LAB/state/.lock")
+    echo "[boot] session lock from previous boot names pid $P"
+    while :; do /bin/true & n=$!; wait $n; [ "$n" -ge $((P - 2)) ] && break; done
+    sleep 100000 | claude mcp serve > /dev/null 2>&1 &
+    other=$!
+    sleep 3
+    echo "[boot] another Claude process (not this home's primary) now holds pid $other:"; ps -o pid=,comm=,lstart=,args= -p "$P" | sed 's/^/    /'
+    [ "$other" = "$P" ] || { echo "[boot] could not land the reused pid; abort"; exit 2; }
+    showlock
+    echo "[boot] starting a new primary (claude) for this home..."
+    startprimary "$P"
+    showlock
+    ;;
+esac
+T kill-server 2>/dev/null

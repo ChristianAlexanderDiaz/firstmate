@@ -1,0 +1,49 @@
+# Session lock guard: genuine live holder and legacy record-less lock are still refused (real Claude primaries, lab FM_HOME)
+[boot] boot_id=cccccccc-0000-0000-0000-00000000000c
+[boot] primary claude is pane pid 9; it runs: ! bin/fm-lock.sh
+[boot] primary pane after running fm-lock.sh:
+    | Claude Code's fullscreen renderer has repeatedly failed to start on this machine, so it has been turned off here. Run /tui fullscreen to try it again (this also resets after an update).
+    |  ▐▛███▛█   Claude Code v2.1.296
+    | ▝▜██████▀  Opus 5.5 with high effort · Claude Max
+    |  ▝▝   ▝▝   ~/.no-mistakes/worktrees/02c2e0c2156d/01M4S0YJZZ9WK3AX7TS0DBHKP5
+    | ! bin/fm-lock.sh
+    |   ⎿  lock acquired: harness pid 9
+    | · Frosting… (1s · thinking with high effort)
+    | ❯ 
+    |   ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents                                                                                                              ● high · /effort
+[boot] state/.lock = 9
+    .lock-identity: boot=boot-id:cccccccc-0000-0000-0000-00000000000c
+    .lock-identity: identity=linux-starttime=9266660 cmdline-hex=636c6175646500
+[boot] $ FM_HOME=lab bin/fm-lock.sh status
+    lock: held by live harness pid 9
+[boot] a SECOND claude primary for the same home tries to take the lock while the first is alive:
+[boot] primary claude is pane pid 693; it runs: ! bin/fm-lock.sh
+[boot] primary pane after running fm-lock.sh:
+    |  ▐▛███▛█   Claude Code v2.1.296
+    | ▝▜██████▀  Opus 5.5 with high effort · Claude Max
+    |  ▝▝   ▝▝   ~/.no-mistakes/worktrees/02c2e0c2156d/01M4S0YJZZ9WK3AX7TS0DBHKP5
+    | ! bin/fm-lock.sh
+    |   ⎿  error: another live firstmate session holds the lock (pid 9, session fedb7c93-ad38-4730-8477-01a01ebcda55); operate read-only until resolved
+    | · Zigzagging… (1s · thinking with high effort)
+    | ❯ 
+    |   ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents                                                                                                              ● high · /effort
+[boot] state/.lock = 9
+    .lock-identity: boot=boot-id:cccccccc-0000-0000-0000-00000000000c
+    .lock-identity: identity=linux-starttime=9266660 cmdline-hex=636c6175646500
+[boot] $ FM_HOME=lab bin/fm-lock.sh status
+    lock: held by live harness pid 9
+[boot] simulate a legacy lock written before this change: remove state/.lock-identity
+[boot] the second primary tries again against the legacy (record-less) lock:
+[boot] primary claude is pane pid 1373; it runs: ! bin/fm-lock.sh
+[boot] primary pane after running fm-lock.sh:
+    |  ▐▛███▛█   Claude Code v2.1.296
+    | ▝▜██████▀  Opus 5.5 with high effort · Claude Max
+    |  ▝▝   ▝▝   ~/.no-mistakes/worktrees/02c2e0c2156d/01M4S0YJZZ9WK3AX7TS0DBHKP5
+    | ! bin/fm-lock.sh
+    |   ⎿  error: another live firstmate session holds the lock (pid 9, session fedb7c93-ad38-4730-8477-01a01ebcda55); operate read-only until resolved
+    | · Prestidigitating… (1s · thinking with high effort)
+    | ❯ 
+    |   ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents                                                                                                              ● high · /effort
+[boot] state/.lock = 9
+[boot] $ FM_HOME=lab bin/fm-lock.sh status
+    lock: held by live harness pid 9

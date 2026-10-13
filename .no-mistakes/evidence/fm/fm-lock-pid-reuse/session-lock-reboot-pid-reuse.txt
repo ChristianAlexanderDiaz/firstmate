@@ -1,0 +1,49 @@
+# Session lock (state/.lock) driven by a real Claude Code primary in a lab FM_HOME on a private tmux socket, inside fresh pid namespaces with distinct kernel boot_ids. The primary runs '! bin/fm-lock.sh' (Claude bash mode) so Claude is the harness ancestor.
+
+## Boot 1
+[boot] boot_id=aaaaaaaa-0000-0000-0000-00000000000a
+[boot] primary claude is pane pid 310; it runs: ! bin/fm-lock.sh
+[boot] primary pane after running fm-lock.sh:
+    |  ▐▛███▛█   Claude Code v2.1.296
+    | ▝▜██████▀  Opus 5.5 with high effort · Claude Max
+    |  ▝▝   ▝▝   ~/.no-mistakes/worktrees/02c2e0c2156d/01M4S0YJZZ9WK3AX7TS0DBHKP5
+    | ! bin/fm-lock.sh
+    |   ⎿  lock acquired: harness pid 310
+    | · Forging…
+    |                                                                                                                                                                                       ● high · /effort
+    | ❯ 
+    |   ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents
+[boot] state/.lock = 310
+    .lock-identity: boot=boot-id:aaaaaaaa-0000-0000-0000-00000000000a
+    .lock-identity: identity=linux-starttime=9262952 cmdline-hex=636c6175646500
+[boot] $ FM_HOME=lab bin/fm-lock.sh status
+    lock: held by live harness pid 310
+[boot] POWER LOSS (namespace torn down; session lock left behind)
+
+## Boot 2 (after power loss): pid reused by another Claude process
+[boot] boot_id=bbbbbbbb-0000-0000-0000-00000000000b
+[boot] session lock from previous boot names pid 310
+[boot] another Claude process (not this home's primary) now holds pid 310:
+        310 claude          Mon Oct 12 19:15:53 2026 claude mcp serve
+[boot] state/.lock = 310
+    .lock-identity: boot=boot-id:aaaaaaaa-0000-0000-0000-00000000000a
+    .lock-identity: identity=linux-starttime=9262952 cmdline-hex=636c6175646500
+[boot] $ FM_HOME=lab bin/fm-lock.sh status
+    lock: stale (pid 310 dead or not a harness)
+[boot] starting a new primary (claude) for this home...
+[boot] primary claude is pane pid 370; it runs: ! bin/fm-lock.sh
+[boot] primary pane after running fm-lock.sh:
+    |  ▐▛███▛█   Claude Code v2.1.296
+    | ▝▜██████▀  Opus 5.5 with high effort · Claude Max
+    |  ▝▝   ▝▝   ~/.no-mistakes/worktrees/02c2e0c2156d/01M4S0YJZZ9WK3AX7TS0DBHKP5
+    | ! bin/fm-lock.sh
+    |   ⎿  lock acquired: harness pid 370
+    | ✽ Crystallizing… (2s · thinking with high effort)
+    |                                                                                                                                                                                       ● high · /effort
+    | ❯ 
+    |   ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents
+[boot] state/.lock = 370
+    .lock-identity: boot=boot-id:bbbbbbbb-0000-0000-0000-00000000000b
+    .lock-identity: identity=linux-starttime=9264541 cmdline-hex=636c6175646500
+[boot] $ FM_HOME=lab bin/fm-lock.sh status
+    lock: held by live harness pid 370

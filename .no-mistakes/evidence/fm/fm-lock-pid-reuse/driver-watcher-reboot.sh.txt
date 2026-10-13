@@ -1,0 +1,40 @@
+#!/bin/bash
+# Runs inside a fresh user+pid+mount namespace: one simulated "boot".
+# usage: boot.sh <boot-id> <phase> <lab> <bindir> [reuse]
+set -u
+BOOTID=$1 PHASE=$2 LAB=$3 BIN=$4 REUSE=${5:-reuse}
+f=$(mktemp); echo "$BOOTID" > "$f"; mount --bind "$f" /proc/sys/kernel/random/boot_id
+echo "[boot] boot_id=$(cat /proc/sys/kernel/random/boot_id) (pid namespace: this shell is pid $$)"
+lockpid() { cat "$LAB/state/.watch.lock/pid" 2>/dev/null; }
+waitlock() { for _ in $(seq 100); do [ -n "$(lockpid)" ] && [ "$(lockpid)" != "$1" ] && return 0; sleep 0.1; done; return 1; }
+case "$PHASE" in
+  start)
+    for _ in $(seq 200); do /bin/true; done   # ordinary boot activity: later pids are not tiny
+    FM_HOME=$LAB "$BIN/fm-watch.sh" > "$LAB/watch-$BOOTID.out" 2>&1 &
+    waitlock "" || { echo "watcher never took lock"; cat "$LAB/watch-$BOOTID.out"; exit 1; }
+    echo "[boot] watcher running as pid $(lockpid); lock dir contents:"
+    for x in pid lock-identity; do [ -e "$LAB/state/.watch.lock/$x" ] && sed "s/^/    $x: /" "$LAB/state/.watch.lock/$x"; done
+    echo "[boot] POWER LOSS (namespace torn down; lock left behind)"
+    ;;
+  restart)
+    old=$(lockpid)
+    echo "[boot] lock left from previous boot names pid $old"
+    if [ "$REUSE" = reuse ]; then
+      for _ in $(seq 5000); do sleep 600 & p=$!; [ "$p" = "$old" ] && break; kill $p 2>/dev/null; [ "$p" -gt "$old" ] && break; done
+      echo "[boot] pid $old now belongs to an unrelated program:"; ps -o pid=,lstart=,args= -p "$old" | sed 's/^/    /'
+    fi
+    echo "[boot] \$ fm-watch.sh   (restart monitoring)"
+    FM_HOME=$LAB "$BIN/fm-watch.sh" > "$LAB/watch-$BOOTID.out" 2>&1 &
+    wpid=$!
+    took=
+    for _ in $(seq 60); do cur=$(lockpid); if [ -n "$cur" ] && [ "$cur" != "$old" ]; then took=$cur; break; fi; kill -0 $wpid 2>/dev/null || break; sleep 0.1; done
+    sleep 1
+    echo "[boot] lock taken by new watcher pid: ${took:-<none>}"
+    echo "[boot] watcher output:"; sed 's/^/    /' "$LAB/watch-$BOOTID.out"
+    if [ -n "$took" ]; then echo "[boot] RESULT: stale lock reclaimed; new watcher pid $took took the lock (still running: $(kill -0 $wpid 2>/dev/null && echo yes || echo no, exited after surfacing a wake))"; else echo "[boot] RESULT: lock still names pid $(lockpid) -> monitoring NOT restarted"; fi
+    if kill -0 $wpid 2>/dev/null; then
+      echo "[boot] \$ fm-watch.sh   (second start while the genuine watcher runs)"
+      FM_HOME=$LAB timeout 5 "$BIN/fm-watch.sh" 2>&1 | sed 's/^/    /'
+    fi
+    ;;
+esac
