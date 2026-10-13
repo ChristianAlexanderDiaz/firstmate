@@ -683,6 +683,219 @@ test_lock_does_not_steal_live_lock() {
   pass "live-held lock is not stolen"
 }
 
+# One contested acquire against a lock directory, reporting the outcome.
+lock_contend() {  # <state> <lockdir> [env-assignment...]
+  local state=$1 lockdir=$2
+  shift 2
+  # shellcheck disable=SC2016 # Positional parameters expand in the child shell.
+  env "$@" FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    if fm_lock_try_acquire "$2"; then rc=0; else rc=1; fi
+    printf "rc=%s held=%s recovered=%s\n" "$rc" "${FM_LOCK_HELD_PID:-}" "${FM_LOCK_RECOVERED_PID:-}"
+  ' _ "$LIB" "$lockdir"
+}
+
+# A lock directory naming <pid> as holder, with the identity record taken by
+# the production recorder under the given environment.
+identity_lock() {  # <state> <lockdir> <pid> [env-assignment...]
+  local state=$1 lockdir=$2 pid=$3
+  shift 3
+  mkdir "$lockdir"
+  printf '%s\n' "$pid" > "$lockdir/pid"
+  # shellcheck disable=SC2016 # Positional parameters expand in the child shell.
+  env "$@" FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_lock_record_identity "$2" "$3"' _ "$LIB" "$lockdir/lock-identity" "$pid"
+}
+
+write_fake_boot_id() {  # <proc-root> <boot-id>
+  mkdir -p "$1/sys/kernel/random"
+  printf '%s\n' "$2" > "$1/sys/kernel/random/boot_id"
+}
+
+test_lock_reused_pid_after_reboot_is_stale() {
+  local dir state proc_root live out lockdir
+  dir=$(make_case lock-reuse-linux)
+  state="$dir/state"
+  proc_root="$dir/proc"
+  sleep 300 &
+  live=$!
+  write_fake_proc_identity "$proc_root" "$live" 5000
+  write_fake_boot_id "$proc_root" boot-before
+
+  # The very holder that took the lock is still running: it must not be taken.
+  lockdir="$state/.same.lock"
+  identity_lock "$state" "$lockdir" "$live" FM_PROC_ROOT_OVERRIDE="$proc_root"
+  out=$(lock_contend "$state" "$lockdir" FM_PROC_ROOT_OVERRIDE="$proc_root")
+  case "$out" in "rc=1 held=$live "*) ;; *) kill "$live" 2>/dev/null; fail "matching live holder was reclaimed: $out" ;; esac
+  [ "$(cat "$lockdir/pid")" = "$live" ] || fail "matching live holder's lock was rewritten"
+
+  # A reboot: same pid is alive, but it is a different boot.
+  lockdir="$state/.reboot.lock"
+  identity_lock "$state" "$lockdir" "$live" FM_PROC_ROOT_OVERRIDE="$proc_root"
+  write_fake_boot_id "$proc_root" boot-after
+  out=$(lock_contend "$state" "$lockdir" FM_PROC_ROOT_OVERRIDE="$proc_root")
+  case "$out" in "rc=0 "*"recovered=$live") ;; *) kill "$live" 2>/dev/null; fail "lock from before the reboot was honored: $out" ;; esac
+
+  # The same boot, but the number now belongs to a process that started later.
+  write_fake_boot_id "$proc_root" boot-before
+  lockdir="$state/.reuse.lock"
+  identity_lock "$state" "$lockdir" "$live" FM_PROC_ROOT_OVERRIDE="$proc_root"
+  write_fake_proc_identity "$proc_root" "$live" 5001
+  out=$(lock_contend "$state" "$lockdir" FM_PROC_ROOT_OVERRIDE="$proc_root")
+  case "$out" in "rc=0 "*"recovered=$live") ;; *) kill "$live" 2>/dev/null; fail "lock held by a reused pid was honored: $out" ;; esac
+
+  # A record of one kind cannot condemn a holder that is read the other way.
+  write_fake_proc_identity "$proc_root" "$live" 5000
+  lockdir="$state/.kind.lock"
+  identity_lock "$state" "$lockdir" "$live" FM_PROC_ROOT_OVERRIDE="$proc_root"
+  out=$(lock_contend "$state" "$lockdir" FM_PROC_ROOT_OVERRIDE="$dir/empty-proc")
+  case "$out" in "rc=1 held=$live "*) ;; *) kill "$live" 2>/dev/null; fail "unverifiable live holder was reclaimed: $out" ;; esac
+
+  # A lock written before identity was recorded keeps the pid-only test.
+  lockdir="$state/.legacy.lock"
+  mkdir "$lockdir"
+  printf '%s\n' "$live" > "$lockdir/pid"
+  out=$(lock_contend "$state" "$lockdir" FM_PROC_ROOT_OVERRIDE="$proc_root")
+  kill "$live" 2>/dev/null || true
+  wait "$live" 2>/dev/null || true
+  case "$out" in "rc=1 held=$live "*) ;; *) fail "legacy live holder was reclaimed: $out" ;; esac
+  pass "a lock whose pid was reused after a reboot is stale on Linux, a genuine holder is kept"
+}
+
+test_lock_reused_pid_is_stale_on_macos_stubs() {
+  local dir state fakebin proc_root live out lockdir envs
+  dir=$(make_case lock-reuse-macos)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  proc_root="$dir/no-proc"
+  mkdir -p "$proc_root"
+  # Like the real ps, lstart renders in the caller's time zone; ps.out holds
+  # the UTC rendering.
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+if [ "${TZ:-}" != UTC0 ]; then
+  printf 'Fri Oct  3 zone-%s 2026 /bin/bash /x/fm-watch.sh\n' "${TZ:-local}"
+  exit 0
+fi
+cat "$FM_FAKE_PS_OUT"
+SH
+  cat > "$fakebin/sysctl" <<'SH'
+#!/usr/bin/env bash
+printf '{ sec = %s, usec = 123456 } Fri Oct  3 10:00:00 2026\n' "$(cat "$FM_FAKE_BOOT_SEC")"
+SH
+  chmod +x "$fakebin/ps" "$fakebin/sysctl"
+  printf 'Fri Oct  3 10:00:00 2026 /bin/bash /x/fm-watch.sh\n' > "$dir/ps.out"
+  printf '1759500000\n' > "$dir/boot.sec"
+  envs=(PATH="$fakebin:$PATH" FM_PROC_ROOT_OVERRIDE="$proc_root" FM_FAKE_PS_OUT="$dir/ps.out" FM_FAKE_BOOT_SEC="$dir/boot.sec")
+  sleep 300 &
+  live=$!
+
+  lockdir="$state/.same.lock"
+  identity_lock "$state" "$lockdir" "$live" "${envs[@]}" TZ=America/New_York
+  grep -q '^boot=boottime:1759500000$' "$lockdir/lock-identity" || { kill "$live"; fail "macOS boot time was not recorded"; }
+  grep -q '^identity=Fri Oct  3 10:00:00 2026 /bin/bash /x/fm-watch.sh$' "$lockdir/lock-identity" || { kill "$live"; fail "macOS lstart identity was not recorded"; }
+  out=$(lock_contend "$state" "$lockdir" "${envs[@]}" TZ=Asia/Tokyo)
+  case "$out" in "rc=1 held=$live "*) ;; *) kill "$live" 2>/dev/null; fail "matching macOS holder read in another time zone was reclaimed: $out" ;; esac
+
+  # A clock step moves kern.boottime by its full size but leaves the holder's
+  # start time alone; the holder is still the holder.
+  printf '1759500300\n' > "$dir/boot.sec"
+  out=$(lock_contend "$state" "$lockdir" "${envs[@]}")
+  case "$out" in "rc=1 held=$live "*) ;; *) kill "$live" 2>/dev/null; fail "a clock step evicted a live macOS holder: $out" ;; esac
+
+  # Without a start time to compare, the boot time alone decides: within the
+  # tolerance the holder stands, past it the lock is from before a reboot.
+  lockdir="$state/.boot-only.lock"
+  mkdir "$lockdir"
+  printf '%s\n' "$live" > "$lockdir/pid"
+  printf 'boot=boottime:1759500000\nidentity=\n' > "$lockdir/lock-identity"
+  printf '1759500007\n' > "$dir/boot.sec"
+  out=$(lock_contend "$state" "$lockdir" "${envs[@]}")
+  case "$out" in "rc=1 held=$live "*) ;; *) kill "$live" 2>/dev/null; fail "a small clock step evicted a boot-only macOS holder: $out" ;; esac
+  printf '1759509999\n' > "$dir/boot.sec"
+  out=$(lock_contend "$state" "$lockdir" "${envs[@]}")
+  case "$out" in "rc=0 "*"recovered=$live") ;; *) kill "$live" 2>/dev/null; fail "boot-only macOS lock from before a reboot was honored: $out" ;; esac
+
+  # The Mac rebooted and the number went to another program.
+  lockdir="$state/.same.lock"
+  printf 'Fri Oct  3 12:47:00 2026 /usr/bin/other\n' > "$dir/ps.out"
+  out=$(lock_contend "$state" "$lockdir" "${envs[@]}")
+  case "$out" in "rc=0 "*"recovered=$live") ;; *) kill "$live" 2>/dev/null; fail "macOS lock from before a reboot was honored: $out" ;; esac
+
+  # Same boot, the number now runs a different program.
+  printf '1759500000\n' > "$dir/boot.sec"
+  lockdir="$state/.reuse.lock"
+  identity_lock "$state" "$lockdir" "$live" "${envs[@]}"
+  printf 'Fri Oct  3 10:05:00 2026 /usr/bin/other\n' > "$dir/ps.out"
+  out=$(lock_contend "$state" "$lockdir" "${envs[@]}")
+  kill "$live" 2>/dev/null || true
+  wait "$live" 2>/dev/null || true
+  case "$out" in "rc=0 "*"recovered=$live") ;; *) fail "macOS lock held by a reused pid was honored: $out" ;; esac
+  pass "a lock whose pid was reused is stale on macOS (stubbed ps and sysctl), a clock step or time-zone change is not"
+}
+
+test_lock_acquire_records_identity_and_rejects_reuse() {
+  local dir state lockdir holder out i
+  dir=$(make_case lock-records-identity)
+  state="$dir/state"
+  lockdir="$state/.held.lock"
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_lock_try_acquire "$2" && exec sleep 300' _ "$LIB" "$lockdir" &
+  holder=$!
+  i=0
+  while [ "$i" -lt 50 ] && [ ! -s "$lockdir/lock-identity" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -s "$lockdir/lock-identity" ] || { kill "$holder" 2>/dev/null; fail "acquire did not record the holder's identity"; }
+  i=0
+  while [ "$i" -lt 50 ] && ! ps -p "$holder" -o command= 2>/dev/null | grep -q 'sleep 300'; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -q '^identity=.' "$lockdir/lock-identity" || { kill "$holder" 2>/dev/null; fail "recorded identity is empty"; }
+  out=$(lock_contend "$state" "$lockdir")
+  case "$out" in "rc=1 held=$holder "*) ;; *) kill "$holder" 2>/dev/null; fail "genuine live holder was reclaimed: $out" ;; esac
+
+  # The holder exec'd another program, which is still the holder; now rewrite
+  # the record's start time as though another process had taken the lock.
+  sed 's/^identity=[^ ]*/&1/' "$lockdir/lock-identity" > "$dir/forged"
+  mv -f "$dir/forged" "$lockdir/lock-identity"
+  out=$(lock_contend "$state" "$lockdir")
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  case "$out" in "rc=0 "*"recovered=$holder") ;; *) fail "lock naming a reused pid was not reclaimed: $out" ;; esac
+  pass "acquire records holder identity and a live pid with a different identity is reclaimed"
+}
+
+test_lock_bounded_acquire_hands_identity_to_caller() {
+  local dir state lockdir holder out i
+  dir=$(make_case lock-handoff-identity)
+  state="$dir/state"
+  lockdir="$state/.handoff.lock"
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_lock_try_acquire "$2" && { sleep 1; fm_lock_release "$2"; }' _ "$LIB" "$lockdir" &
+  holder=$!
+  i=0
+  while [ "$i" -lt 50 ] && [ ! -e "$lockdir" ] && [ ! -L "$lockdir" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -e "$lockdir" ] || [ -L "$lockdir" ] || { kill "$holder" 2>/dev/null; fail "background holder never took the lock"; }
+  out=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_acquire_wait_bounded "$2" 20 || { echo "acquire-failed"; exit 0; }
+    me=$BASHPID
+    mine=$(TZ=UTC0 fm_pid_identity "$me")
+    printf "record-matches=%s\n" "$([ "$(sed -n "s/^identity=//p" "$2/lock-identity")" = "$mine" ] && echo yes || echo no)"
+    # The helper that took the lock for this caller has exited by now.
+    bash -c ". \"\$1\"; fm_lock_try_acquire \"\$2\" && echo stolen || echo refused" _ "$1" "$2"
+  ' _ "$LIB" "$lockdir")
+  wait "$holder" 2>/dev/null || true
+  case "$out" in
+    *"record-matches=yes"*"refused"*) ;;
+    *) fail "bounded acquire did not leave the caller's identity on the lock: $out" ;;
+  esac
+  pass "bounded acquire hands the lock's identity record to the waiting caller"
+}
+
 test_lock_empty_pid_uses_minimum_grace() {
   local dir state lockdir out
   dir=$(make_case lock-empty-grace)
@@ -1589,6 +1802,10 @@ test_lock_reclaims_self_held_steal_mutex
 test_lock_resumes_own_interrupted_steal_reap
 test_lock_live_steal_mutex_is_not_reclaimed
 test_lock_does_not_steal_live_lock
+test_lock_reused_pid_after_reboot_is_stale
+test_lock_reused_pid_is_stale_on_macos_stubs
+test_lock_acquire_records_identity_and_rejects_reuse
+test_lock_bounded_acquire_hands_identity_to_caller
 test_lock_empty_pid_uses_minimum_grace
 test_lock_late_claim_loses_after_recreate
 test_lock_paused_mid_acquire_claim_fails_during_steal
