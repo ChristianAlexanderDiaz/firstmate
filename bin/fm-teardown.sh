@@ -3544,6 +3544,20 @@ else
   fi
 fi
 
+# Capture local landing proof before cleanup removes the task artifacts.
+# This is only an external-sync hint; it never participates in teardown safety.
+LINEAR_TEARDOWN_UNLANDED=0
+if [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ]; then
+  LINEAR_TEARDOWN_UNLANDED=1
+  if [ -n "$PR_URL" ] && fm_pr_url_parse "$PR_URL" \
+      && fm_pr_poll_merge_already_notified "$STATE" "$ID" "$FM_PR_PROVIDER" "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER"; then
+    LINEAR_TEARDOWN_UNLANDED=0
+  elif [ -d "$WT" ] && [ -z "$(git -C "$WT" status --porcelain 2>/dev/null || echo unreadable)" ] \
+      && git -C "$WT" merge-base --is-ancestor HEAD "${BASE_BRANCH:-$(default_branch)}" 2>/dev/null; then
+    LINEAR_TEARDOWN_UNLANDED=0
+  fi
+fi
+
 # Every landed/discard-work refusal above has now passed (or --force skipped
 # them). Fix 1 and Fix 2 (see script header) run here, unconditionally on
 # --force, and before ANY destructive step below - a still-parked run or a
@@ -3847,6 +3861,11 @@ fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
 # Removing an ordinary worker frees its capacity place for the quota refill source.
 [ "$KIND" = secondmate ] || "$SCRIPT_DIR/fm-procevent-refill.sh" notify || true
+if [ "$LINEAR_TEARDOWN_UNLANDED" = 1 ]; then
+  FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
+    FM_LINEAR_CONTROL_LOCK_HELD=1 bash "$SCRIPT_DIR/fm-linear-lib.sh" teardown "$ID" || true
+fi
+rm -f "$STATE/$ID.linear-idle"
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi

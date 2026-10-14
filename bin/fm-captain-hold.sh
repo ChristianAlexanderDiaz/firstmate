@@ -244,6 +244,13 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 PARENT_HOLD_PUBLISHED=0
 publish_parent_hold() {  # <task-id> <occurrence> <verb> <note>
   local id=$1 occurrence=$2 verb=$3 note=$4 rc=0
+  # Both hold and every answer/reconciliation path arrive here after the
+  # durable local change. The caller already owns this task's control lock.
+  local linear_event=hold
+  [ "$verb" != resolved ] || linear_event=release
+  FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA \
+    FM_LINEAR_CONTROL_LOCK_HELD=1 \
+    bash "$SCRIPT_DIR/fm-linear-lib.sh" "$linear_event" "$id" || true
   PARENT_HOLD_PUBLISHED=0
   fm_parent_channel_report "$FM_HOME" "$STATE" \
     "$verb [key=captain-hold-$id-$occurrence]: captain hold $id: $(fm_parent_channel_clean_note "$note")" || rc=$?
