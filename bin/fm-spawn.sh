@@ -383,9 +383,20 @@
 #   sign-in, paid-usage, and model-quota checked before any endpoint changes,
 #   launched like a pinned root, and recorded as claude_account= in the task record and on the spawned
 #   line; every later relaunch keeps it until another literal account name or
-#   a harness change. It refuses beside config/claude-account. Every Claude
-#   ship and scout StopFailure hook also runs bin/fm-account-failover.sh
-#   record, which writes nothing without the map; that script owns the move.
+#   a harness change. It refuses beside a config/claude-account that fixes one
+#   account. Every Claude ship and scout StopFailure hook also runs
+#   bin/fm-account-failover.sh record, which writes nothing without the map;
+#   that script owns the move.
+# Claude account pacing (config/claude-account `paced`): every canonical
+#   Claude ship and scout spawn and relaunch without --claude-account picks
+#   its account of config/claude-failover from one fresh quota reading
+#   (fm_worker_account_pace in bin/fm-worker-account-lib.sh owns the choice and
+#   its checks), launches on it like a failover account, and records
+#   claude_account= plus a one-line claude_account_reason= naming each
+#   account's week left, reset, and pace. When no account is choosable it says
+#   so on stderr, records the reason, and launches on the home's default Claude
+#   account as an unpinned home would. A raw launch and a secondmate keep that
+#   default account.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode
@@ -2575,17 +2586,49 @@ fi
 # config/claude-failover, and every later relaunch of a task already moved,
 # resolves, sign-in checks, and checks paid usage and model quota here,
 # before any endpoint changes. Every account name is literal. A task never
-# moved, and every launch in a home without the map, selects nothing here.
+# moved, and every launch in a home without the map, selects nothing here,
+# except where config/claude-account `paced` chooses an account per launch.
 CLAUDE_ACCOUNT=
 CLAUDE_ACCOUNT_ROOT=
+CLAUDE_ACCOUNT_REASON=
+CLAUDE_ACCOUNT_PACED=0
+if [ "$HARNESS" = claude ] && [ "$RAW_LAUNCH" = 0 ] && [ "$CLAUDE_ACCOUNT_SET" -eq 0 ] \
+  && fm_worker_account_paced "$CONFIG"; then
+  case "$KIND" in ship | scout) CLAUDE_ACCOUNT_PACED=1 ;; esac
+fi
 if [ "$RELAUNCH" -eq 1 ]; then
   if [ "$CLAUDE_ACCOUNT_SET" -eq 1 ]; then
     CLAUDE_ACCOUNT=$CLAUDE_ACCOUNT_ARG
-  elif [ "$HARNESS" = claude ]; then
+  elif [ "$HARNESS" = claude ] && [ "$CLAUDE_ACCOUNT_PACED" = 0 ]; then
     CLAUDE_ACCOUNT=${CLAUDE_ACCOUNT_PRIOR:-}
   fi
 fi
-if [ -n "$CLAUDE_ACCOUNT" ]; then
+if [ "$CLAUDE_ACCOUNT_PACED" = 1 ]; then
+  # Claude account pacing (header above): a fresh choice on every launch.
+  CLAUDE_ACCOUNT_PACE_RC=0
+  CLAUDE_ACCOUNT_PACE=$(fm_worker_account_pace "$CONFIG" claude "$MODEL") || CLAUDE_ACCOUNT_PACE_RC=$?
+  case $CLAUDE_ACCOUNT_PACE_RC in
+  0)
+    # pick<TAB>name<TAB>declared<TAB>root<TAB>reason; root is empty for ordinary.
+    CLAUDE_ACCOUNT_PACE=${CLAUDE_ACCOUNT_PACE#pick$'\t'}
+    CLAUDE_ACCOUNT=${CLAUDE_ACCOUNT_PACE%%$'\t'*}
+    CLAUDE_ACCOUNT_PACE=${CLAUDE_ACCOUNT_PACE#*$'\t'}
+    CLAUDE_ACCOUNT_PACE=${CLAUDE_ACCOUNT_PACE#*$'\t'}
+    CLAUDE_ACCOUNT_ROOT=${CLAUDE_ACCOUNT_PACE%%$'\t'*}
+    CLAUDE_ACCOUNT_REASON=${CLAUDE_ACCOUNT_PACE#*$'\t'}
+    if [ -n "$CLAUDE_ACCOUNT_ROOT" ]; then
+      export CLAUDE_CONFIG_DIR=$CLAUDE_ACCOUNT_ROOT
+    else
+      unset CLAUDE_CONFIG_DIR
+    fi
+    ;;
+  1)
+    CLAUDE_ACCOUNT_REASON="${CLAUDE_ACCOUNT_PACE#none$'\t'}; launched on the home's default Claude account"
+    echo "note: Claude account pacing: $CLAUDE_ACCOUNT_REASON" >&2
+    ;;
+  *) exit 1 ;;
+  esac
+elif [ -n "$CLAUDE_ACCOUNT" ]; then
   if [ "$HARNESS" != claude ] || [ "$RAW_LAUNCH" != 0 ]; then
     echo "error: Claude account '$CLAUDE_ACCOUNT' applies only to the canonical claude launch, not '$HARNESS'" >&2
     exit 1
@@ -5183,7 +5226,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider claude_account busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider claude_account claude_account_reason busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5207,8 +5250,10 @@ preserve_relaunch_meta() {
   # task record stays byte-identical.
   [ -z "$WORKER_ACCOUNT" ] || echo "account=$WORKER_ACCOUNT_DECLARED"
   [ -z "$WORKER_ACCOUNT_PROVIDER" ] || echo "account_provider=$WORKER_ACCOUNT_PROVIDER"
-  # The Claude account failover account, only for a task moved onto one.
+  # The Claude account, only for a task moved onto one or placed by pacing.
   [ -z "$CLAUDE_ACCOUNT" ] || echo "claude_account=$CLAUDE_ACCOUNT"
+  # Why pacing chose it, or why it fell back, only in a paced home.
+  [ -z "$CLAUDE_ACCOUNT_REASON" ] || echo "claude_account_reason=$CLAUDE_ACCOUNT_REASON"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.

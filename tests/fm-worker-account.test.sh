@@ -384,6 +384,179 @@ test_local_secondmate_reads_the_launching_home_pin() {
   pass "a local secondmate reads the launching home's pin and its own home's file is never inherited over"
 }
 
+# --- Claude account pacing (config/claude-account `paced`) ---------------------
+
+# paced_case <name>: a paced home with two signed-in accounts in its failover
+# map, `near` (weekly reset 2026-10-17) and `far` (2026-10-20), and a fake
+# quota-axi that answers --all-accounts from $CASE/quota.json, failing when the
+# fixture is absent.
+paced_case() {
+  new_case "$1" claude
+  signed_in_claude_root "$CASE/accounts/near"
+  signed_in_claude_root "$CASE/accounts/far"
+  printf 'paced\n' > "$HOME_DIR/config/claude-account"
+  printf 'account near %s\naccount far %s\n' "$CASE/accounts/near" "$CASE/accounts/far" > "$HOME_DIR/config/claude-failover"
+  cat > "$FAKEBIN/quota-axi" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> '$CASE/quota-calls'
+[ -f '$CASE/quota.json' ] || exit 1
+cat '$CASE/quota.json'
+SH
+  chmod +x "$FAKEBIN/quota-axi"
+}
+
+# pace_snapshot <near-week-left> <near-reserve> <far-week-left> <far-reserve> [jq-filter]
+# An --all-accounts reading shaped like quota-axi 0.1.55's: each account's
+# weekly window carries its reset and pace (a reserve of zero or more is on or
+# behind pace).
+pace_snapshot() {
+  jq -n --argjson nw "$1" --argjson nr "$2" --argjson fw "$3" --argjson fr "$4" '
+    def row($name; $week; $reserve; $resets):
+      { provider: "claude", account: $name, state: { status: "fresh", stale: false },
+        windows: [
+          { id: "five_hour", kind: "session", resetsAt: "2026-10-14T18:00:00.000000+00:00", percentRemaining: 90 },
+          { id: "seven_day", kind: "weekly", resetsAt: $resets, percentRemaining: $week,
+            pace: { status: (if $reserve >= 0 then "behind" else "ahead" end), reservePercentPoints: $reserve } },
+          { id: "model:fable", kind: "model", resetsAt: $resets, percentRemaining: 90 } ],
+        quotaSemantics: { status: "known", effectiveAvailability: [
+          { scope: "all_models", status: "known", effectivePercentRemaining: $week,
+            boundedBy: ["five_hour", "seven_day"], limitingWindowIds: ["seven_day"],
+            runway: { status: "through_reset", limitingWindowId: "seven_day" } },
+          { scope: "model:fable", status: "known", effectivePercentRemaining: $week,
+            boundedBy: ["five_hour", "seven_day", "model:fable"], limitingWindowIds: ["seven_day"],
+            runway: { status: "through_reset", limitingWindowId: "seven_day" } } ] } };
+    { schemaVersion: 7, providers: [
+        row("near"; $nw; $nr; "2026-10-17T20:00:00.000000+00:00"),
+        row("far"; $fw; $fr; "2026-10-20T23:00:00.000000+00:00") ] }' | jq "${5:-.}" > "$CASE/quota.json"
+}
+
+# assert_line <line> <file> <msg>: the file holds exactly that whole line.
+assert_line() {
+  grep -Fqx -- "$1" "$2" || fail "$3"
+}
+
+# assert_paced_onto <id> <account> <spawn-output> <reason-needle>
+assert_paced_onto() {
+  local id=$1 account=$2 out=$3 reason=$4
+  assert_contains "$out" "claude_account=$account" "the spawn should report pacing's account"
+  assert_line "claude_account=$account" "$HOME_DIR/state/$id.meta" "the task record names the paced account"
+  assert_grep "claude_account_reason=chose $account: " "$HOME_DIR/state/$id.meta" "the task record says why"
+  assert_grep "$reason" "$HOME_DIR/state/$id.meta" "the reason names both accounts' week, reset, and pace"
+  assert_grep 'all-accounts' "$CASE/quota-calls" "pacing reads every account"
+  run_pane
+  assert_grep "CLAUDE_CONFIG_DIR=$CASE/accounts/$account" "$CASE/claude-worker" "the worker runs on the paced account"
+  assert_grep "ANTHROPIC_API_KEY=unset" "$CASE/claude-worker" "an ambient API key must not outrank the paced account"
+}
+
+test_pacing_gives_work_to_the_nearest_reset_while_it_is_behind_pace() {
+  local out rc id=pace-behind
+  paced_case pace-behind
+  pace_snapshot 60 12 100 30
+  out=$(spawn_ship "$id"); rc=$?
+  expect_code 0 "$rc" "a paced spawn should succeed: $out"
+  assert_paced_onto "$id" near "$out" \
+    'near 60% week left, resets 2026-10-17T20:00Z, on or behind pace; far 100% week left, resets 2026-10-20T23:00Z, on or behind pace'
+  pace_snapshot 60 0 100 30
+  out=$(spawn_ship "$id-on"); rc=$?
+  expect_code 0 "$rc" "a paced spawn exactly on pace should succeed: $out"
+  assert_line 'claude_account=near' "$HOME_DIR/state/$id-on.meta" "an account exactly on pace still gets the work"
+  pass "pacing: the nearest-reset account gets the work while it is on or behind pace"
+}
+
+test_pacing_moves_work_off_the_nearest_reset_while_it_is_ahead_of_pace() {
+  local out rc id=pace-ahead
+  paced_case pace-ahead
+  pace_snapshot 30 -15 100 30
+  out=$(spawn_ship "$id"); rc=$?
+  expect_code 0 "$rc" "a paced spawn should succeed: $out"
+  assert_paced_onto "$id" far "$out" 'near 30% week left, resets 2026-10-17T20:00Z, ahead of pace'
+  pass "pacing: work goes to the other account while the nearest-reset account is ahead of pace"
+}
+
+test_pacing_never_chooses_an_account_at_its_overflow_guard() {
+  local out rc id=pace-guard
+  paced_case pace-guard
+  pace_snapshot 30 -15 100 30 '.providers[1].windows[0].percentRemaining = 3'
+  out=$(spawn_ship "$id"); rc=$?
+  expect_code 0 "$rc" "a paced spawn should succeed: $out"
+  assert_paced_onto "$id" near "$out" 'far not choosable (a usage window is at or below the 5% safety margin)'
+  pace_snapshot 30 -15 100 30 '.providers[1].windows[2].percentRemaining = 4'
+  out=$(spawn_ship "$id-model"); rc=$?
+  expect_code 0 "$rc" "a paced spawn should succeed: $out"
+  assert_line 'claude_account=near' "$HOME_DIR/state/$id-model.meta" "any one window at the margin rules an account out, even another model's"
+  pace_snapshot 30 -15 100 30 '.providers[1].windows += [{id: "extra_usage", kind: "credits", percentRemaining: 50}]'
+  out=$(spawn_ship "$id-paid"); rc=$?
+  expect_code 0 "$rc" "a paced spawn should succeed: $out"
+  assert_line 'claude_account=near' "$HOME_DIR/state/$id-paid.meta" "an account with paid usage enabled is never chosen"
+  assert_grep 'far refused at launch' "$HOME_DIR/state/$id-paid.meta" "the paid-usage refusal is recorded"
+  pace_snapshot 60 12 3 30
+  out=$(spawn_ship "$id-near"); rc=$?
+  expect_code 0 "$rc" "a paced spawn should succeed: $out"
+  assert_line 'claude_account=near' "$HOME_DIR/state/$id-near.meta" "the behind-pace account with room keeps the work"
+  pace_snapshot 4 12 100 30
+  out=$(spawn_ship "$id-margin"); rc=$?
+  expect_code 0 "$rc" "a paced spawn should succeed: $out"
+  assert_line 'claude_account=far' "$HOME_DIR/state/$id-margin.meta" "a behind-pace account at the safety margin is passed over"
+  pass "pacing: an account with any window at the safety margin, or paid usage enabled, is never chosen"
+}
+
+test_pacing_skips_an_unreadable_account() {
+  local out rc id=pace-unreadable
+  paced_case pace-unreadable
+  pace_snapshot 60 12 100 30 '.providers[0].state = {status: "stale", stale: true}'
+  out=$(spawn_ship "$id"); rc=$?
+  expect_code 0 "$rc" "a paced spawn should succeed: $out"
+  assert_paced_onto "$id" far "$out" 'near not choosable (its quota reading is stale)'
+  pace_snapshot 60 12 100 30 'del(.providers[0])'
+  out=$(spawn_ship "$id-missing"); rc=$?
+  expect_code 0 "$rc" "a paced spawn should succeed: $out"
+  assert_grep 'near not choosable (no quota reading for this account)' "$HOME_DIR/state/$id-missing.meta" "a missing reading is named"
+  assert_line 'claude_account=far' "$HOME_DIR/state/$id-missing.meta" "the readable account gets the work"
+  pass "pacing: a stale or missing account reading is never chosen"
+}
+
+test_pacing_falls_back_to_the_default_account_when_nothing_is_readable() {
+  local out rc id=pace-none
+  paced_case pace-none
+  pace_snapshot 60 12 100 30 '.providers[].state = {status: "stale", stale: true}'
+  out=$(spawn_ship "$id"); rc=$?
+  expect_code 0 "$rc" "a paced spawn with no choosable account must still launch: $out"
+  assert_contains "$out" "note: Claude account pacing: no account is choosable" "the spawn output says pacing fell back"
+  assert_no_grep 'claude_account=' "$HOME_DIR/state/$id.meta" "a fallback launch records no paced account"
+  assert_line "claude_account_reason=no account is choosable: near not choosable (its quota reading is stale); far not choosable (its quota reading is stale); launched on the home's default Claude account" \
+    "$HOME_DIR/state/$id.meta" "the fallback reason is recorded"
+  run_pane
+  assert_grep "CLAUDE_CONFIG_DIR=$CASE/ambient-claude" "$CASE/claude-worker" "the fallback keeps an unpinned home's launch account"
+  rm -f "$CASE/quota.json"
+  out=$(spawn_ship "$id-failed"); rc=$?
+  expect_code 0 "$rc" "a failed quota reading must still launch: $out"
+  assert_line "claude_account_reason=the quota-axi --all-accounts reading failed; launched on the home's default Claude account" \
+    "$HOME_DIR/state/$id-failed.meta" "a failed reading is recorded"
+  pass "pacing: with no readable account the spawn launches on the default account and says why"
+}
+
+test_pacing_requires_the_failover_map_and_spares_raw_and_unpaced_launches() {
+  local out rc id=pace-config
+  paced_case pace-config
+  pace_snapshot 60 12 100 30
+  rm "$HOME_DIR/config/claude-failover"
+  out=$(spawn_ship "$id"); rc=$?
+  expect_code 1 "$rc" "pacing without accounts to pace must refuse"
+  assert_refused_before_launch "$id" "$out" "config/claude-account selects pacing across the accounts of config/claude-failover"
+  printf 'account near %s\naccount far %s\n' "$CASE/accounts/near" "$CASE/accounts/far" > "$HOME_DIR/config/claude-failover"
+  : > "$CASE/quota-calls"
+  out=$(spawn_ship "$id-raw" --harness "claude --print raw"); rc=$?
+  expect_code 0 "$rc" "a raw Claude spawn in a paced home should succeed: $out"
+  assert_no_grep 'claude_account' "$HOME_DIR/state/$id-raw.meta" "a raw launch is not paced"
+  [ ! -s "$CASE/quota-calls" ] || fail "a raw launch reads no quota"
+  rm "$HOME_DIR/config/claude-account"
+  out=$(spawn_ship "$id-off"); rc=$?
+  expect_code 0 "$rc" "an unpinned spawn should succeed: $out"
+  assert_no_grep 'claude_account' "$HOME_DIR/state/$id-off.meta" "without the paced pin nothing is paced"
+  [ ! -s "$CASE/quota-calls" ] || fail "without the paced pin no quota is read"
+  pass "pacing: needs the failover map, and raw or unpaced launches keep today's account"
+}
+
 test_absent_pin_keeps_the_launch_unchanged
 test_claude_pin_selects_the_root_and_sheds_ambient_credentials
 test_claude_pin_refuses_a_signed_out_root_despite_an_ambient_login
@@ -397,5 +570,11 @@ test_raw_claude_command_receives_the_pin
 test_raw_claude_account_override_refuses_under_a_pin
 test_raw_claude_account_override_is_kept_without_a_pin
 test_local_secondmate_reads_the_launching_home_pin
+test_pacing_gives_work_to_the_nearest_reset_while_it_is_behind_pace
+test_pacing_moves_work_off_the_nearest_reset_while_it_is_ahead_of_pace
+test_pacing_never_chooses_an_account_at_its_overflow_guard
+test_pacing_skips_an_unreadable_account
+test_pacing_falls_back_to_the_default_account_when_nothing_is_readable
+test_pacing_requires_the_failover_map_and_spares_raw_and_unpaced_launches
 
 echo "# all fm-worker-account tests passed"

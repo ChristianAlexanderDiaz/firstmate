@@ -369,7 +369,8 @@ fm_account_failover_recover() {
 
   [ "$MAP" != invalid ] \
     || status_blocked "Claude usage limit reached ($limit_text); config/$FM_WORKER_ACCOUNT_FAILOVER_FILE is malformed, so the worker was left stopped"
-  if [ -e "$CONFIG/claude-account" ] || [ -L "$CONFIG/claude-account" ]; then
+  if { [ -e "$CONFIG/claude-account" ] || [ -L "$CONFIG/claude-account" ]; } \
+    && ! fm_worker_account_paced "$CONFIG"; then
     status_blocked "Claude usage limit reached ($limit_text); config/claude-account pins every Claude worker to one account, so the worker was left stopped"
   fi
 

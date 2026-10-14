@@ -9,7 +9,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Firstmate's code, private files, or project location | [FM_HOME](#fm_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend) and [harness support](#harness-support) |
-| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [Claude account failover](#claude-account-failover-configclaude-failover), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
+| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [Claude account failover](#claude-account-failover-configclaude-failover), [Claude account pacing](#claude-account-pacing-configclaude-account-paced), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
@@ -920,7 +920,8 @@ Both files are local and gitignored.
 
 ### File format and provider selection
 
-`config/claude-account` holds one line: `ordinary`, or the absolute path of an existing Claude config directory.
+`config/claude-account` holds one line: `ordinary`, `paced`, or the absolute path of an existing Claude config directory.
+`paced` fixes no account; [Claude account pacing](#claude-account-pacing-configclaude-account-paced) owns what it does.
 `config/pi-account` holds that same root on line 1 and, on line 2, the providers this home may spend, separated by spaces, for example `openai-codex anthropic`.
 
 A final newline is optional; any other line, a relative path, or a control character such as a CR refuses.
@@ -933,7 +934,7 @@ An unqualified model, an undeclared provider, or a raw Pi launch command, which 
 
 ### Launch scope and sign-in checks
 
-When a file is present, every launch of that runner from this home uses it: ships, scouts, local secondmate agents, raw Claude launch commands, and relaunches.
+When a file names an account, every launch of that runner from this home uses it: ships, scouts, local secondmate agents, raw Claude launch commands, and relaunches.
 A raw Claude launch command refuses if its leading assignments set `CLAUDE_CONFIG_DIR` or a credential that a pinned launch unsets, such as `ANTHROPIC_API_KEY`.
 The assignment would override the pin.
 The refusal names the variable; remove that assignment from the raw command, or change or remove `config/claude-account`.
@@ -997,13 +998,39 @@ When no account qualifies, the worker stays stopped and its status gets one `blo
 ### Limits
 
 Secondmates are never moved: they carry no `StopFailure` hook, and a supervisor's account is also the one every worker it spawns inherits.
-`config/claude-account` pins every Claude worker to one account, so a home with both files leaves limited workers stopped and says so.
+A `config/claude-account` that names one account pins every Claude worker to it, so a home with both files leaves limited workers stopped and says so; the `paced` value pins nothing, and failover moves its workers as usual.
 Accounts with a paid credits window or unknown paid usage status never qualify, even when their plan has room.
 Selection, control, and spawn require an unreused vendor reading and run their quota queries with `QUOTA_AXI_MAX_AGE` unset before launching a worker on a mapped account; disable paid extra usage in the account itself before using it for failover.
 Control and spawn recheck every quota scope that applies to the replacement's model and refuse a launch when an applicable allowance is unknown, exhausted, or has 5% or less remaining.
 The recorded generation is checked inside the control plane's gate, supervision lease, and lifecycle lock before the event is consumed or the worker and validation run are changed.
 Automatic recovery refuses backends without the control plane's recovery-grade agent-state classifier before consuming the event or changing the worker or validation.
 `bin/fm-account-failover.sh` owns detection, the choice, and the move, and its header lists the remaining tuning variables.
+
+## Claude account pacing (config/claude-account `paced`)
+
+A home signed in to multiple Claude accounts can spread its Claude work across them so each account's weekly allowance is used before it resets, instead of launching every worker on one account until it runs out.
+The feature is opt-in: write `paced` as the whole of `config/claude-account`, and keep the accounts to pace across in [`config/claude-failover`](#claude-account-failover-configclaude-failover), which pacing requires.
+Every other `config/claude-account` value, and a home without the file, behaves exactly as before.
+
+### How an account is chosen
+
+Each canonical Claude ship and scout spawn and relaunch that does not name an account reads one fresh `quota-axi --all-accounts --json` snapshot and chooses among the mapped accounts:
+
+1. The account whose weekly window resets soonest gets the work while it is on or behind the pace that would empty it at that reset, which `quota-axi` reports as a weekly pace reserve of zero or more.
+2. While that account is ahead of pace, the other accounts are tried first, and it remains the last choice.
+3. An account is choosable only when it passes every failover launch check (signed in, a fresh unreused reading, paid extra usage disabled, and its model quota known and above the fixed 5% safety margin) and every usage window it reports is also above that margin, so a seat-level guard that blocks an account on any one window never strands a new worker.
+   A missing, stale, or unreadable reading is never choosable.
+
+The launch runs on the chosen account like a failover account, and the task record carries `claude_account=<name>` plus `claude_account_reason=`, one line naming each account's week left, weekly reset, and pace, and any account refused at launch.
+Every paced relaunch chooses afresh rather than keeping the last account, while a relaunch that names `--claude-account`, including a failover move, keeps that literal account.
+
+### When no account is choosable
+
+The launch is never blocked by pacing: when no account is choosable, the spawn prints a `note: Claude account pacing:` line saying why, records that reason in `claude_account_reason=`, and launches on the home's default Claude account exactly as a home without the file would.
+A home with `paced` but no `config/claude-failover` refuses Claude ship and scout launches and names the missing file.
+Raw Claude launch commands and secondmate agents are not paced and keep the home's default Claude account.
+A worker that later reaches a usage limit still moves through [Claude account failover](#claude-account-failover-configclaude-failover).
+[`bin/fm-worker-account-lib.sh`](../bin/fm-worker-account-lib.sh) owns the choice and its checks.
 
 ## Lavish server address (config/lavish-axi-host)
 

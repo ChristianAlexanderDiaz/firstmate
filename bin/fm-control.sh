@@ -1008,10 +1008,18 @@ resolve_relaunch_profile() {
   fi
   # The same pre-stop rule for a Claude account failover account: the one this
   # relaunch names, or the one a task already moved keeps (fm-spawn --relaunch
-  # owns the carry-forward this mirrors).
+  # owns the carry-forward this mirrors). A paced home's ship or scout keeps
+  # nothing: the replacement's launch picks its account afresh and falls back
+  # rather than refusing, so only the accounts to pace across are checked here.
   PRIOR_CLAUDE_ACCOUNT=$(fm_meta_get "$META" claude_account)
   if [ "$CLAUDE_ACCOUNT_SET" = 1 ]; then
     TARGET_CLAUDE_ACCOUNT=$NEW_CLAUDE_ACCOUNT
+  elif [ "$TARGET_HARNESS" = claude ] && { [ "$KIND" = ship ] || [ "$KIND" = scout ]; } \
+    && fm_worker_account_paced "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"; then
+    TARGET_CLAUDE_ACCOUNT=
+    PACED_MAP=$(fm_worker_account_failover_load "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}") || return 1
+    [ -n "$PACED_MAP" ] \
+      || die "config/claude-account selects pacing across the accounts of config/$FM_WORKER_ACCOUNT_FAILOVER_FILE, and this home has none"
   elif [ "$TARGET_HARNESS" = claude ]; then
     TARGET_CLAUDE_ACCOUNT=$PRIOR_CLAUDE_ACCOUNT
   else

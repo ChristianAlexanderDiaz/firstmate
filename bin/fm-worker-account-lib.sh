@@ -5,10 +5,11 @@
 # credentials a pinned Claude launch sheds. It also owns the opt-in Claude
 # account failover map (config/claude-failover): how that file is parsed and
 # how one of its named accounts resolves to the Claude config root a moved
-# worker launches under, and model-aware quota eligibility.
+# worker launches under, and model-aware quota eligibility; and Claude account
+# pacing, the `paced` pin value that picks one of those accounts per launch.
 #
-# docs/configuration.md "Worker account pin" and "Claude account failover" own
-# the operator-facing contracts.
+# docs/configuration.md "Worker account pin", "Claude account failover", and
+# "Claude account pacing" own the operator-facing contracts.
 # Sourced by bin/fm-spawn.sh, bin/fm-control.sh, and bin/fm-account-failover.sh.
 #
 # Pinnable runners, each a credential store inside a root its vendor lets a
@@ -24,7 +25,10 @@
 # .claude.json and keys its macOS Keychain entry to any CLAUDE_CONFIG_DIR that
 # is set, even $HOME/.claude; for Pi it is $HOME/.pi/agent. Any other value is
 # one absolute path to an existing readable, searchable directory. Firstmate
-# never copies credentials or changes a global login.
+# never copies credentials or changes a global login. For Claude only, `paced`
+# fixes no account: each ship and scout launch picks one account of
+# config/claude-failover instead (fm_worker_account_pace below), and every
+# other Claude launch keeps today's ambient behavior.
 #
 # A Pi root can hold several provider identities, so config/pi-account names
 # the root on line 1 and the providers that home may spend on line 2,
@@ -80,7 +84,8 @@ fm_worker_account_file() {
 
 # fm_worker_account_read <harness> <file>
 # Prints "declared<TAB>providers" for a valid pin, where declared is
-# `ordinary` or the absolute path and providers is empty for Claude. The final
+# `ordinary`, Claude's `paced`, or the absolute path and providers is empty for
+# Claude. The final
 # newline is optional; any other control byte, including a CR, is malformed.
 # Parses bytes before the shell can drop NULs or trailing newlines; paths are
 # literal, never shell expressions. Returns 0 on success, 3 when the file does
@@ -98,7 +103,7 @@ fm_worker_account_read() {
     open(my $fh, "<", $f) or exit 5;
     my $body = do { local $/; <$fh> } // "";
     if ($harness eq "claude") {
-      $body =~ /\A(ordinary|\/[^\x00-\x1f\x7f]*)\n?\z/ or exit 6;
+      $body =~ /\A(ordinary|paced|\/[^\x00-\x1f\x7f]*)\n?\z/ or exit 6;
       print $1, "\t";
     } else {
       $body =~ /\A(ordinary|\/[^\x00-\x1f\x7f]*)\n([A-Za-z0-9][A-Za-z0-9._-]*(?: +[A-Za-z0-9][A-Za-z0-9._-]*)*)\n?\z/ or exit 6;
@@ -111,8 +116,8 @@ fm_worker_account_read() {
 # Prints "declared<TAB>root<TAB>providers" for a valid pin, where root is the
 # directory the launch selects (empty for ordinary Claude, meaning
 # CLAUDE_CONFIG_DIR unset). Prints nothing and returns 0 when the runner is
-# not pinnable or the home has no pin. On refusal prints one error naming the
-# file and returns 1.
+# not pinnable, the home has no pin, or the Claude pin is `paced`, which fixes
+# no account. On refusal prints one error naming the file and returns 1.
 fm_worker_account_resolve() {
   local harness=$1 config=$2 file cfg token rc declared root fallback
   file=$(fm_worker_account_file "$harness") || return 0
@@ -131,12 +136,13 @@ fm_worker_account_resolve() {
     if [ "$file" = pi-account ]; then
       echo "error: config/$file must hold 'ordinary' or one absolute path on line 1 and the providers this home may spend on line 2, separated by spaces, with no other lines or control characters: $cfg" >&2
     else
-      echo "error: config/$file must hold 'ordinary' or one absolute path on a single line with no control characters: $cfg" >&2
+      echo "error: config/$file must hold 'ordinary', 'paced', or one absolute path on a single line with no control characters: $cfg" >&2
     fi
     return 1
     ;;
   esac
   declared=${token%%$'\t'*}
+  [ "$declared" != paced ] || return 0
   root=$declared
   # shellcheck disable=SC2088  # The fallbacks are literal text for the refusal.
   case "$harness" in
@@ -355,11 +361,12 @@ fm_worker_account_failover_load() {
 # root is empty for `ordinary` (CLAUDE_CONFIG_DIR unset). Refuses, printing one
 # error and returning 1, when the home has no map, the map is malformed, it
 # does not name the account, the account's root is unusable, or the home also
-# pins every Claude worker with config/claude-account, because a moved worker
-# would break that pin.
+# pins every Claude worker to one account with config/claude-account, because a
+# moved worker would break that pin (a `paced` pin fixes no account).
 fm_worker_account_failover_resolve() {
   local config=$1 name=$2 map=${3:-} line declared root
-  if [ -e "$config/claude-account" ] || [ -L "$config/claude-account" ]; then
+  if { [ -e "$config/claude-account" ] || [ -L "$config/claude-account" ]; } \
+    && ! fm_worker_account_paced "$config"; then
     echo "error: config/claude-account pins every Claude worker in this home to one account, so a worker cannot run on failover account '$name'; remove one of config/claude-account and config/$FM_WORKER_ACCOUNT_FAILOVER_FILE" >&2
     return 1
   fi
@@ -484,4 +491,98 @@ fm_worker_account_failover_select() {
     return 1
   fi
   printf '%s\n' "$selection"
+}
+
+# --- Claude account pacing (config/claude-account `paced`) --------------------
+#
+# Opt-in through the pin value `paced`; every other pin value, and a home
+# without the pin, never paces. Pacing spends the accounts of
+# config/claude-failover so each one's weekly allowance is used before it
+# resets: the account whose weekly window resets nearest gets the work while it
+# is on or behind the pace that would empty it at that reset (its weekly
+# reserve is zero or more), and otherwise the other accounts are tried first.
+# A worker that later hits a limit still fails over through
+# bin/fm-account-failover.sh.
+#
+# An account is choosable only when it passes every failover launch check
+# (fm_worker_account_failover_select: signed in, a fresh unreused reading,
+# paid usage disabled, model quota known and above the fixed 5 percent safety
+# margin) and, because a seat-level guard can block an account on any one of
+# its windows, every window it reports is also above that margin. A missing,
+# stale, or unreadable reading is never choosable.
+
+# fm_worker_account_paced <config-dir>
+# Returns 0 when this home's config/claude-account selects pacing.
+fm_worker_account_paced() {
+  local token
+  token=$(fm_worker_account_read claude "$1/claude-account" 2>/dev/null) || return 1
+  [ "${token%%$'\t'*}" = paced ]
+}
+
+# fm_worker_account_pace <config-dir> <executable> <model> [snapshot-json]
+# Picks the account for one Claude ship or scout launch in a paced home from
+# one quota-axi --all-accounts reading (read here, with QUOTA_AXI_MAX_AGE
+# unset, unless supplied). Prints
+# "pick<TAB><name><TAB><declared><TAB><root><TAB><reason>" and returns 0, or
+# "none<TAB><reason>" and returns 1 when no account is choosable, so the
+# caller can launch on the home's default account instead. The reason is one
+# line naming each account's week left, weekly reset, and pace. Prints one
+# error and returns 2 when the home has no usable config/claude-failover.
+fm_worker_account_pace() {
+  local config=$1 executable=$2 model=$3 snapshot=${4:-} map verdicts plan summary name selection err refused=
+  map=$(fm_worker_account_failover_load "$config") || return 2
+  [ -n "$map" ] || {
+    echo "error: config/claude-account selects pacing across the accounts of config/$FM_WORKER_ACCOUNT_FAILOVER_FILE, and this home has none" >&2
+    return 2
+  }
+  if [ -z "$snapshot" ]; then
+    snapshot=$(fm_run_timed "${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}" env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json 2>/dev/null </dev/null) || {
+      printf 'none\tthe quota-axi --all-accounts reading failed\n'
+      return 1
+    }
+  fi
+  verdicts=$(fm_worker_account_failover_quota "$map" "$snapshot" '' "$model" 2>/dev/null) || {
+    printf 'none\tthe quota-axi --all-accounts reading was unreadable\n'
+    return 1
+  }
+  # Line 1 is the summary; each later line is one candidate, in pacing order.
+  plan=$(printf '%s' "$snapshot" | jq -r --argjson verdicts "$verdicts" '
+    def short_time: if type == "string" then sub("\\.[0-9]+"; "") | sub(":[0-9]{2}(\\+00:00|Z)$"; "Z") else null end;
+    . as $snap |
+    [ $verdicts[] | . as $v |
+      ([ $snap.providers[] | select(type == "object" and .provider == "claude" and .account == $v.name) ][0]) as $row |
+      ([ ($row.windows // [])[] | select(type == "object") ]) as $windows |
+      ([ $windows[] | select(.kind == "weekly") ][0] // [ $windows[] | select(.id == "seven_day") ][0]) as $week |
+      ($week.pace.reservePercentPoints) as $reserve |
+      $v + { reset: ($week.resetsAt // null), week: ($week.percentRemaining // null),
+             behind: (if ($reserve | type) == "number" then $reserve >= 0
+                      else (($week.pace.status // "") | IN("behind", "on", "on_pace", "on_track")) end) } |
+      if .ok != true then .
+      elif $week == null or (.reset | type) != "string" or (.week | type) != "number" then .ok = false | .why = "its weekly reset is unknown"
+      elif any($windows[]; (.percentRemaining | type) == "number" and .percentRemaining <= 5)
+      then .ok = false | .why = "a usage window is at or below the 5% safety margin"
+      else . end ] as $accounts |
+    ($accounts | map(
+      if .ok then "\(.name) \(.week)% week left, resets \(.reset | short_time), \(if .behind then "on or behind" else "ahead of" end) pace"
+      else "\(.name) not choosable (\(.why))" end) | join("; ")) as $summary |
+    ([ $accounts[] | select(.ok) ] | sort_by((.reset | short_time), .order)) as $ready |
+    (if ($ready | length) == 0 then []
+     elif $ready[0].behind then $ready
+     else $ready[1:] + $ready[:1] end) as $order |
+    $summary, ($order[] | .name)')  || {
+    printf 'none\tthe quota-axi --all-accounts reading was unreadable\n'
+    return 1
+  }
+  summary=$(printf '%s\n' "$plan" | head -1 | tr '\t' ' ')
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    if selection=$(fm_worker_account_failover_select "$config" "$name" "$executable" "$model" "$snapshot" "$map" 2>&1); then
+      printf 'pick\t%s\t%s\t%s\n' "$name" "$selection" "chose $name: $summary$refused"
+      return 0
+    fi
+    err=$(printf '%s' "$selection" | tail -1 | tr '\t' ' ')
+    refused="$refused; $name refused at launch (${err#error: })"
+  done < <(printf '%s\n' "$plan" | tail -n +2)
+  printf 'none\tno account is choosable: %s%s\n' "$summary" "$refused"
+  return 1
 }

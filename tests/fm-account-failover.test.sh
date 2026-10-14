@@ -1051,6 +1051,44 @@ test_launch_checks_use_retained_and_overridden_models() {
   pass "launch: retained and overridden models preserve ordinary successful account moves"
 }
 
+# --- Claude account pacing beside failover -----------------------------------
+
+test_paced_relaunches_choose_afresh_and_failover_still_moves() {
+  local out rc
+  new_case paced-relaunch t31
+  rm -f "$CASE/fake/screen"
+  printf 'paced\n' > "$CASE/home/config/claude-account"
+  quota_snapshot 60 81 '.providers[0].windows[1].pace = {status: "behind", reservePercentPoints: 10}
+    | .providers[1].windows[1].pace = {status: "behind", reservePercentPoints: 20}' > "$CASE/fake/quota.json"
+  out=$(case_env "$CONTROL" t31 relaunch --note "paced" 2>&1); rc=$?
+  expect_code 0 "$rc" "a paced relaunch should succeed: $out"
+  assert_grep 'claude_account=limited' "$CASE/home/state/t31.meta" "the nearest reset on pace gets the replacement"
+  assert_grep 'claude_account_reason=chose limited: limited 60% week left, resets 2026-10-03T19:59Z, on or behind pace' \
+    "$CASE/home/state/t31.meta" "the reason is recorded"
+  assert_no_grep "CLAUDE_CONFIG_DIR='$CASE/accounts/spare'" "$CASE/fake/literal" "the replacement runs on the paced account"
+  quota_snapshot 60 81 '.providers[0].windows[1].pace = {status: "ahead", reservePercentPoints: -10}' > "$CASE/fake/quota.json"
+  : > "$CASE/fake/literal"
+  out=$(case_env "$CONTROL" t31 relaunch --note "paced again" 2>&1); rc=$?
+  expect_code 0 "$rc" "a second paced relaunch should succeed: $out"
+  assert_grep 'claude_account=spare' "$CASE/home/state/t31.meta" "every relaunch chooses afresh rather than keeping the last account"
+  assert_grep "CLAUDE_CONFIG_DIR='$CASE/accounts/spare'" "$CASE/fake/literal" "the replacement runs on the newly chosen account"
+  rm "$CASE/home/config/claude-failover"
+  : > "$CASE/fake/literal"
+  out=$(case_env "$CONTROL" t31 relaunch --note "no map" 2>&1); rc=$?
+  expect_code 1 "$rc" "pacing without accounts to pace must refuse: $out"
+  assert_contains "$out" "selects pacing across the accounts of config/claude-failover" "the refusal names the missing map"
+  assert_no_grep '/exit' "$CASE/fake/literal" "the refusal happens before the worker stops"
+
+  new_case paced-failover t32
+  printf 'paced\n' > "$CASE/home/config/claude-account"
+  record_limit t32 rate_limit ""
+  out=$(case_env "$FAILOVER" tick 2>&1)
+  assert_contains "$out" "moved t32 limited spare" "failover still moves a worker beside the paced pin: $out"
+  assert_grep 'claude_account=spare' "$CASE/home/state/t32.meta" "the failover account is recorded"
+  assert_no_grep 'claude_account_reason=' "$CASE/home/state/t32.meta" "a failover move is not a pacing choice"
+  pass "pacing: every paced relaunch chooses afresh, and failover still moves a limited worker beside the paced pin"
+}
+
 test_record_writes_a_usage_limit_record_only_for_a_rate_limit_with_the_map
 test_absent_map_is_a_no_op
 test_choose_picks_by_quota_and_respects_the_fixed_margin
@@ -1079,3 +1117,4 @@ test_recovery_respects_legacy_versioned_and_unresolved_scopes
 test_remaining_quota_is_checked_at_control_and_spawn
 test_recovery_refuses_quota_exhausted_after_selection
 test_launch_checks_use_retained_and_overridden_models
+test_paced_relaunches_choose_afresh_and_failover_still_moves
