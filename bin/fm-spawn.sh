@@ -5909,7 +5909,7 @@ SPAWN_ACCOUNT=
 # Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
 [ ! -e "$CONFIG/fleet-ledger" ] || [ "$RELAUNCH" -eq 1 ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" dispatched "$ID" "$KIND" "${PROJ_ABS##*/}" "$HARNESS" "$MODEL" || true
 # Best-effort external sync follows the successful local dispatch commit.
-if [ "$KIND" = ship ]; then
+if [ "$KIND" = ship ] && [ -f "$CONFIG/linear" ]; then
   FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
     FM_LINEAR_CONTROL_LOCK_HELD=$RELAUNCH \
     bash "$SCRIPT_DIR/fm-linear-lib.sh" spawn "$ID" || true

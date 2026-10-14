@@ -138,9 +138,9 @@ run() {
 }
 sync_event() { run bash "$ROOT/bin/fm-linear-lib.sh" "$@"; }
 seed_issue() {
-  jq -n --arg type "${1:-unstarted}" --arg team "$TEAM" \
+  jq -n --arg type "${1:-unstarted}" --arg team "$TEAM" --arg started "$STARTED" \
     '[{id:"00000000-0000-4000-8000-000000000010",identifier:"ABC-42",team:{id:$team},
-       state:{id:"old",type:$type},labels:["unrelated"]}]' > "$CASE/issues.json"
+       state:{id:(if $type == "started" then $started else "old" end),type:$type},labels:["unrelated"]}]' > "$CASE/issues.json"
 }
 mutations() { jq -sr '[.[] | select(.query | startswith("mutation"))] | length' "$CASE/requests"; }
 
@@ -230,6 +230,31 @@ sync_event spawn "$TASK" 2>/dev/null
 assert_equals 0 "$(wc -l < "$CASE/requests" | tr -d ' ')" 'malformed exclusion fails closed'
 pass 'saved linkage, token boundaries and invalid input are handled safely'
 
+for event in spawn merge; do
+  make_case "incidental-$event"
+  seed_issue completed
+  if [ "$event" = spawn ]; then
+    tasks update "$TASK" --body 'Regression from ABC-42' >/dev/null
+  else
+    printf 'pull_request:\n  body: "Related: ABC-42"\n' > "$CASE/pr-body"
+  fi
+  sync_event "$event" "$TASK" "$PR" 2>/dev/null
+  assert_equals completed "$(jq -r '.[0].state.type' "$CASE/issues.json")" "$event leaves incidentally mentioned finished work"
+  assert_equals 0 "$(mutations)" "$event incidental mention never mutates"
+  assert_not_contains "$(tasks show "$TASK" --full)" 'Linear issue:' "$event incidental mention is not saved"
+done
+make_case saved-finished
+seed_issue completed
+tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+sync_event spawn "$TASK"
+assert_equals "$STARTED" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'saved linkage may restart finished work'
+make_case pr-without-keyword
+seed_issue
+printf 'pull_request:\n  body: "See ABC-42"\n' > "$CASE/pr-body"
+sync_event merge "$TASK" "$PR" 2>/dev/null
+assert_equals 0 "$(mutations)" 'PR mention without a closing keyword never links'
+pass 'finished issues move only through saved linkage; PR bodies link only through closing keywords'
+
 make_case hold
 seed_issue
 tasks update "$TASK" --body 'Issue ABC-42' >/dev/null
@@ -274,6 +299,13 @@ for skip in project pattern scout unmapped config key; do
 done
 pass 'exclusions, scouts, missing mapping/config/key skip before API access'
 
+make_case no-config-lifecycle
+rm "$HOME_DIR/config/linear"
+tasks add prerequisite 'Prerequisite' --repo sample --kind ship >/dev/null
+out=$(run bash "$ROOT/bin/fm-tasks-axi.sh" block "$TASK" --by prerequisite 2>&1)
+assert_not_contains "$out" 'linear:' 'lifecycle command without config is silent'
+pass 'a home without config/linear sees no Linear output from lifecycle commands'
+
 make_case key-command
 printf 'fake-secret-value\n' > "$CASE/secret"
 printf 'key_command=cat "%s"\n' "$CASE/secret" >> "$HOME_DIR/config/linear"
@@ -296,15 +328,11 @@ make_case fallback
 touch "$CASE/fallback"
 sync_event spawn "$TASK"
 assert_equals fallback "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'fallback started state'
-make_case override
+make_case retired-state-directive
 printf 'state=%s|started|fallback\n' "$TEAM" >> "$HOME_DIR/config/linear"
-sync_event spawn "$TASK"
-assert_equals fallback "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'explicit valid override'
-make_case bad-override
-printf 'state=%s|started|%s\n' "$TEAM" "$DONE" >> "$HOME_DIR/config/linear"
 sync_event spawn "$TASK" 2>/dev/null
-assert_equals 0 "$(mutations)" 'wrong-type override refuses'
-pass 'state mapping prefers names, falls back by type, validates overrides'
+assert_equals 0 "$(wc -l < "$CASE/requests" | tr -d ' ')" 'unknown state directive fails closed'
+pass 'state mapping prefers names and falls back by type'
 
 for origin in self poll; do
   make_case "merge-$origin"
@@ -395,6 +423,24 @@ for event in idle teardown; do
 done
 pass 'inactive and unlanded work returns to Todo with one reason; repeats and completed issues are safe'
 
+for guard in review held; do
+  make_case "keep-$guard"
+  seed_issue started
+  tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+  if [ "$guard" = review ]; then
+    jq '.[0].state.id="review"' "$CASE/issues.json" > "$CASE/new"
+    mv "$CASE/new" "$CASE/issues.json"
+  else
+    run bash "$ROOT/bin/fm-captain-hold.sh" hold "$TASK" --reason 'Choose an option' >/dev/null
+  fi
+  for event in idle teardown; do
+    sync_event "$event" "$TASK"
+    assert_equals started "$(jq -r '.[0].state.type' "$CASE/issues.json")" "$guard issue survives $event"
+  done
+  assert_equals 0 "$(jq -s '[.[] | select(.query | startswith("mutation Comment"))] | length' "$CASE/requests")" "$guard issue gets no reason comment"
+done
+pass 'other started states and captain-held work keep their status'
+
 make_case dependencies
 seed_issue started
 tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
@@ -450,6 +496,8 @@ make_case periodic-idle
 seed_issue started
 tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
 fm_write_meta "$HOME_DIR/state/$TASK.meta" 'kind=ship' 'backend=tmux' 'window=fm-work' 'harness=claude' 'spawn_gen=example'
+# A sorted-earlier non-ship record must not consume the heartbeat.
+fm_write_meta "$HOME_DIR/state/aaa-scout.meta" 'kind=scout' 'backend=tmux' 'window=fm-aaa-scout'
 printf 'example\n' > "$HOME_DIR/state/$TASK.busy-gen"
 printf 'v1 gen=example seq=1 state=idle source=claude-hook event=Stop ts=1\n' > "$HOME_DIR/state/$TASK.busy-state"
 sync_event tick
@@ -475,7 +523,13 @@ assert_equals started "$(jq -r '.[0].state.type' "$CASE/issues.json")" 'busy wor
 printf 'v1 gen=wrong seq=2 state=idle source=claude-hook event=Stop ts=2\n' > "$HOME_DIR/state/$TASK.busy-state"
 sync_event tick
 [ ! -e "$HOME_DIR/state/$TASK.linear-idle" ] || fail 'unknown state counted as idle'
-pass 'periodic semantic idle check requires a full day and resets on activity or unknown state'
+printf 'v1 gen=example seq=3 state=idle source=claude-hook event=Stop ts=3\n' > "$HOME_DIR/state/$TASK.busy-state"
+for skip in 'harness=grok' "pr=$PR"; do
+  fm_write_meta "$HOME_DIR/state/$TASK.meta" 'kind=ship' 'backend=tmux' 'window=fm-work' 'harness=claude' 'spawn_gen=example' "$skip"
+  sync_event tick
+  [ ! -e "$HOME_DIR/state/$TASK.linear-idle" ] || fail "$skip counted toward idle"
+done
+pass 'periodic semantic idle check requires a full day and resets on activity, unknown state, hookless harness or recorded PR'
 
 make_case timeout
 touch "$CASE/slow"

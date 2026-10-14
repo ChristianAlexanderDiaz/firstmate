@@ -248,7 +248,7 @@ publish_parent_hold() {  # <task-id> <occurrence> <verb> <note>
   # durable local change. The caller already owns this task's control lock.
   local linear_event=hold
   [ "$verb" != resolved ] || linear_event=release
-  FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA \
+  [ ! -f "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/linear" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA \
     FM_LINEAR_CONTROL_LOCK_HELD=1 \
     bash "$SCRIPT_DIR/fm-linear-lib.sh" "$linear_event" "$id" || true
   PARENT_HOLD_PUBLISHED=0

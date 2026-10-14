@@ -55,16 +55,16 @@ fm_linear_candidates() {  # <text>; one distinct identifier per line
 }
 
 fm_linear_state() {  # <team-id> <started|completed|unstarted>
-  local override name
-  override=$(printf '%s' "$LINEAR_CONFIG" | jq -r --arg team "$1" --arg type "$2" '
-    [.[] | select(.key == "state") | .value | split("|")
-      | select(.[0] == $team and .[1] == $type) | .[2]] |
-    if length > 1 then error("duplicate state") else .[0] // "" end')
+  local name
   case "$2" in started) name='In Progress' ;; completed) name=Done ;; unstarted) name=Todo ;; esac
-  printf '%s' "$LINEAR_TEAMS" | jq -er --arg team "$1" --arg type "$2" --arg name "$name" --arg override "$override" '
+  printf '%s' "$LINEAR_TEAMS" | jq -er --arg team "$1" --arg type "$2" --arg name "$name" '
     [.[] | select(.id == $team) | .states.nodes[] | select(.type == $type)] |
-    if $override != "" then [.[] | select(.id == $override)][0].id
-    else ([.[] | select(.name == $name)][0].id // .[0].id) end | select(type == "string" and length > 0)'
+    ([.[] | select(.name == $name)][0].id // .[0].id) | select(type == "string" and length > 0)'
+}
+
+fm_linear_closing_references() {  # <text>; identifiers named by a closing keyword
+  printf '%s' "$1" | jq -Rrs '
+    [scan("(?<![A-Za-z])(?i:fixes|closes|resolves):?\\s+([A-Z][A-Z0-9]*-[0-9]+)(?![A-Za-z0-9])") | .[0]] | .[]'
 }
 
 fm_linear_pr_body() {  # <url>; read only the supported forge's complete PR body
@@ -155,6 +155,12 @@ fm_linear_idle_due() {  # <state> <task>; classifier owns all harness/backend fa
   . "$LINEAR_DIR/fm-busy-lib.sh"
   [ "$(fm_meta_get "$meta" kind)" = ship ] || return 1
   backend=$(fm_backend_of_meta "$meta"); target=$(fm_backend_target_of_meta "$meta"); harness=$(fm_meta_get "$meta" harness)
+  # A recorded PR awaits review, and harnesses without busy-state hooks offer
+  # only sparse samples, which cannot prove a continuous idle day.
+  if [ -n "$(fm_meta_get "$meta" pr)" ] || [ -z "$(fm_busy_sources_for_harness "$harness")" ]; then
+    rm -f "$state/$task.linear-idle"
+    return 1
+  fi
   verdict=$(fm_busy_classify_live "$backend" "$target" "$harness" "$task" "$state")
   case "$verdict" in idle\ *|dead\ *) ;; *) rm -f "$state/$task.linear-idle"; return 1 ;; esac
   signature=$(printf '%s\n%s\n%s' "$(fm_meta_get "$meta" spawn_gen)" "$(cat "$state/$task.busy-state" 2>/dev/null || true)" "$verdict" | cksum)
@@ -169,20 +175,33 @@ fm_linear_idle_due() {  # <state> <task>; classifier owns all harness/backend fa
   [ "$((now - since))" -gt 86400 ]
 }
 
-# One task per heartbeat keeps supervision bounded, rotating fairly even if a
-# task's API call times out. This is part of the existing watcher, not a daemon.
+# Each heartbeat refreshes ship records and dependency markers in rotation
+# within one ten-second budget, resuming after the last task it reached, so a
+# timed-out task cannot starve the rest. This is part of the existing watcher,
+# not a daemon.
 fm_linear_tick() {
-  local state=${FM_STATE_OVERRIDE:-${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$LINEAR_DIR/.." && pwd)}}/state} previous task ids
+  local state=${FM_STATE_OVERRIDE:-${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$LINEAR_DIR/.." && pwd)}}/state}
+  local previous task ids file deadline=$((SECONDS + 10)) LINEAR_BOUND
   previous=$(cat "$state/.linear-cursor" 2>/dev/null || true)
-  ids=$(for task in "$state"/*.meta "$state"/*.linear-dependencies; do
-    [ -f "$task" ] || continue
-    task=${task##*/}; printf '%s\n' "${task%.*}"
-  done | LC_ALL=C sort -u)
-  task=$(printf '%s\n' "$ids" | LC_ALL=C awk -v previous="$previous" '$0 > previous {print; exit}')
-  [ -n "$task" ] || task=$(printf '%s\n' "$ids" | head -1)
-  [ -n "$task" ] || return 0
-  printf '%s\n' "$task" > "$state/.linear-cursor"
-  fm_linear_main refresh "$task"
+  ids=$({
+    for file in "$state"/*.meta; do
+      [ -f "$file" ] || continue
+      [ "$(sed -n 's/^kind=//p' "$file" | tail -1)" = ship ] || continue
+      task=${file##*/}; printf '%s\n' "${task%.meta}"
+    done
+    for file in "$state"/*.linear-dependencies; do
+      [ -f "$file" ] || continue
+      task=${file##*/}; printf '%s\n' "${task%.linear-dependencies}"
+    done
+  } | LC_ALL=C sort -u | LC_ALL=C awk -v previous="$previous" '
+    $0 > previous {print; next} {rest = rest $0 "\n"} END {printf "%s", rest}')
+  while IFS= read -r task; do
+    [ -n "$task" ] || continue
+    LINEAR_BOUND=$((deadline - SECONDS))
+    [ "$LINEAR_BOUND" -gt 0 ] || break
+    printf '%s\n' "$task" > "$state/.linear-cursor"
+    fm_linear_main refresh "$task"
+  done <<< "$ids"
 }
 
 # shellcheck disable=SC2016 # GraphQL variables are literal; JSON variables carry their values.
@@ -204,11 +223,9 @@ fm_linear_event() {
     if test("^[^=]+=.*$") then capture("^(?<key>[^=]+)=(?<value>.*)$") else error("invalid directive") end]' < "$config")
   printf '%s' "$LINEAR_CONFIG" | jq -e 'all(.[];
     (.key == "key_command" or .key == "waiting_label" or .key == "project" or
-     .key == "exclude_project" or .key == "exclude_task" or .key == "state") and
+     .key == "exclude_project" or .key == "exclude_task") and
     (.value | length > 0) and (.value | explode | all(.[]; . >= 32 and . != 127))) and
-    all(.[] | select(.key == "project"); (.value | split("|") | length == 2 and all(.[]; length > 0))) and
-    all(.[] | select(.key == "state"); (.value | split("|") | length == 3 and
-      (.[1] == "started" or .[1] == "completed" or .[1] == "unstarted") and all(.[]; length > 0)))' >/dev/null
+    all(.[] | select(.key == "project"); (.value | split("|") | length == 2 and all(.[]; length > 0)))' >/dev/null
   if [ -z "${FM_LINEAR_API_KEY:-}" ] && ! printf '%s' "$LINEAR_CONFIG" | jq -e 'any(.[]; .key == "key_command")' >/dev/null; then
     exit 21
   fi
@@ -287,9 +304,10 @@ fm_linear_event() {
   else
     candidates=$(fm_linear_candidates "$id"$'\n'"$title"$'\n'"$body")
     if [ -z "$candidates" ] && [ -n "$url" ]; then
-      # A failed forge read is not proof that the PR has no ticket.
+      # A failed forge read is not proof that the PR has no ticket. Only a
+      # closing keyword makes a PR mention a link.
       pr_body=$(fm_linear_pr_body "$url")
-      candidates=$(fm_linear_candidates "$pr_body")
+      candidates=$(fm_linear_candidates "$(fm_linear_closing_references "$pr_body")")
     fi
   fi
   case "$candidates" in *$'\n'*) exit 23 ;; esac
@@ -325,6 +343,9 @@ fm_linear_event() {
   [ "$(fm_linear_candidates "$identifier")" = "$identifier" ]
   issue_type=$(printf '%s' "$issue" | jq -er '.state.type | select(type == "string" and length > 0)')
   [ "$issue_type" != triage ] || exit 24
+  # Finished work is reopened or re-completed only through its saved linkage,
+  # never through an incidental mention.
+  case "$issue_type" in completed|canceled) [ -n "$marker" ] || exit 22 ;; esac
   if [ "$marker" != "$identifier" ]; then
     # Re-read before writing, preserving current body and all other fields.
     row=$(fm_backlog_row_show "$data" "$id" --full)
@@ -338,8 +359,11 @@ fm_linear_event() {
     ;; esac
   case "$event" in
     idle|teardown)
-      # Never reopen completed/canceled work or disturb an already queued issue.
-      [ "$issue_type" = started ] || exit 0
+      # Only the In Progress state this sync sets means a working ship. Other
+      # states, including custom review or waiting states, and captain-held
+      # work keep their status.
+      [ "$(printf '%s' "$issue" | jq -r '.state.id')" = "$(fm_linear_state "$issue_team" started)" ] || exit 0
+      [ "$(fm_linear_field "$row" hold_kind)" != captain ] || [ "$(fm_linear_field "$row" state)" = done ] || exit 0
       state_id=$(fm_linear_state "$issue_team" unstarted)
       input=$(jq -cn --arg id "$issue_id" --arg state "$state_id" '{id:$id,input:{stateId:$state}}')
       ;;
@@ -354,8 +378,8 @@ fm_linear_event() {
   fm_linear_api 'mutation UpdateIssue($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}' "$input"
   printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.issueUpdate.success == true' >/dev/null
   case "$event" in idle|teardown)
-    local reason='Worker has been idle or parked for more than a day; returned to Todo.'
-    [ "$event" != teardown ] || reason='Worker ended without a recorded landing; returned to Todo.'
+    local reason='Worker has been idle or gone for more than a day; returned to Todo.'
+    [ "$event" != teardown ] || reason='Worker was torn down with its work discarded; returned to Todo.'
     fm_linear_api 'mutation Comment($input:CommentCreateInput!){commentCreate(input:$input){success}}' \
       "$(jq -cn --arg id "$issue_id" --arg body "$reason" '{input:{issueId:$id,body:$body}}')"
     printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.commentCreate.success == true' >/dev/null
@@ -391,7 +415,7 @@ fm_linear_main() {
   if [ "${1:-}" = tick ]; then fm_linear_tick; return 0; fi
   # shellcheck source=bin/fm-timeout-lib.sh
   . "$LINEAR_DIR/fm-timeout-lib.sh"
-  fm_run_timed 10 bash "$LINEAR_DIR/fm-linear-lib.sh" --run "$@" >/dev/null 2>&1 || result=$?
+  fm_run_timed "${LINEAR_BOUND:-10}" bash "$LINEAR_DIR/fm-linear-lib.sh" --run "$@" >/dev/null 2>&1 || result=$?
   case "$result" in
     0) ;;
     20) printf 'linear: sync off (no config)\n' >&2 ;;

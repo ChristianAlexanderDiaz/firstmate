@@ -155,7 +155,7 @@ case "${1:-}" in
   block|unblock)
     tasks-axi ${ARGS[@]+"${ARGS[@]}"}
     result=$?
-    if [ "$result" = 0 ]; then
+    if [ "$result" = 0 ] && [ -f "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/linear" ]; then
       FM_HOME=$FM_HOME FM_DATA_OVERRIDE=$DATA bash "$SCRIPT_DIR/fm-linear-lib.sh" dependencies "${2:-}" || true
     fi
     exit "$result"

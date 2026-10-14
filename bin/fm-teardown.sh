@@ -3546,13 +3546,13 @@ fi
 
 # Capture local landing proof before cleanup removes the task artifacts.
 # This is only an external-sync hint; it never participates in teardown safety.
+# Only an explicit --force discard of work with no recorded PR and no local
+# landing proof is known not to have landed; a merely unrecorded landing leaves
+# the Linear status unchanged.
 LINEAR_TEARDOWN_UNLANDED=0
-if [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ]; then
+if [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ] && [ "$FORCE" = --force ] && [ -z "$PR_URL" ]; then
   LINEAR_TEARDOWN_UNLANDED=1
-  if [ -n "$PR_URL" ] && fm_pr_url_parse "$PR_URL" \
-      && fm_pr_poll_merge_already_notified "$STATE" "$ID" "$FM_PR_PROVIDER" "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER"; then
-    LINEAR_TEARDOWN_UNLANDED=0
-  elif [ -d "$WT" ] && [ -z "$(git -C "$WT" status --porcelain 2>/dev/null || echo unreadable)" ] \
+  if [ -d "$WT" ] && [ -z "$(git -C "$WT" status --porcelain 2>/dev/null || echo unreadable)" ] \
       && git -C "$WT" merge-base --is-ancestor HEAD "${BASE_BRANCH:-$(default_branch)}" 2>/dev/null; then
     LINEAR_TEARDOWN_UNLANDED=0
   fi

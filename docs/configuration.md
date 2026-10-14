@@ -343,7 +343,8 @@ While the home runs the host, main's lease-checked commands also take the per-ta
 Linear sync is opt-in for each home and uses `curl`, `jq`, Perl with `Digest::SHA`, and the configured backlog through `tasks-axi`.
 Keep all real workspace, team, label, project and ticket values in the home's gitignored configuration and records.
 This file is not inherited by secondmate provisioning; configure each participating home explicitly.
-An absent file or absent credential disables sync with one diagnostic and does not fail a lifecycle command.
+Lifecycle commands skip sync silently when the file is absent.
+A present file without a credential disables sync with one diagnostic and does not fail a lifecycle command.
 
 The file contains literal `key=value` lines, with blank lines and lines beginning with `#` ignored.
 Values are not shell-quoted or expanded, except for `key_command`, which is explicitly a trusted shell command.
@@ -359,8 +360,6 @@ waiting_label=00000000-0000-4000-8000-000000000004
 exclude_project=private-sample
 exclude_task=private-*
 exclude_task=research-*
-state=00000000-0000-4000-8000-000000000001|started|00000000-0000-4000-8000-000000000002
-state=00000000-0000-4000-8000-000000000001|completed|00000000-0000-4000-8000-000000000003
 ```
 
 | Directive | Meaning |
@@ -370,7 +369,6 @@ state=00000000-0000-4000-8000-000000000001|completed|00000000-0000-4000-8000-000
 | `waiting_label` | Optional single UUID of the waiting-for-answer label; without it, hold and release sync are skipped. |
 | `exclude_project` | Repeatable exact project basename that overrides any mapping. |
 | `exclude_task` | Repeatable task-id shell glob, matched case-sensitively without executing it. |
-| `state` | Optional repeatable `team UUID\|started, completed or unstarted\|state UUID` override; the state must belong to that team and type. |
 
 Scouts and secondmates never sync.
 Exclude any additional private work explicitly, and map only projects whose backlog titles and bodies may be sent to Linear.
@@ -379,12 +377,14 @@ Creation specifies that state explicitly, avoiding Linear's default Triage intak
 A recorded PR merge, including one detected from the forge, selects the completed state named `Done`, falling back to the first completed state, and attaches the PR URL.
 A captain hold adds the configured label without changing workflow status; its answer, release or reconciled close removes only that label.
 `In Progress` represents a working ship, not a standing assignment.
-After teardown without local landing proof, a started issue returns to the team's unstarted `Todo` state (or first unstarted state), with a reason comment.
-Completed, canceled and already unstarted issues are preserved.
-The existing watcher heartbeat rotates through recorded workers and dependency records, checking one task per heartbeat to bound supervision delays.
-A worker classified idle or dead continuously for more than a day returns to Todo with a reason comment; activity, a new worker incarnation or unknown classification resets that interval.
-This uses the existing semantic busy classifier across supported harnesses and backends; missing evidence is never treated as idle.
-A new successful spawn restores In Progress.
+After a forced teardown that discards work with no recorded PR and no local landing proof, an issue still in the started state sync selects (normally `In Progress`) returns to the team's unstarted `Todo` state (or first unstarted state), with a reason comment.
+Any other teardown, including one whose landing is merely unrecorded, leaves the status unchanged.
+Each existing watcher heartbeat checks recorded ships and dependency records in rotation within one ten-second budget.
+A ship classified idle or dead continuously for more than a day returns to Todo the same way, with a reason comment; activity, a new worker incarnation or unknown classification resets that interval.
+This uses the existing semantic busy classifier; missing evidence is never treated as idle.
+Ships whose harness has no busy-state hooks are never returned to Todo for inactivity, because sparse samples cannot prove a continuous day.
+Ships with a recorded PR or an open captain hold, and issues in any other state, such as a custom review, waiting or blocked state, keep their status.
+A successful spawn or relaunch restores In Progress.
 Backlog `block` and `unblock` commands mirror dependencies as Linear blocking relations when both tasks have eligible linked tickets.
 The heartbeat removes owned relations when a dependency clears through task completion.
 Dependency sync leaves workflow status unchanged and preserves manually created relations.
@@ -392,9 +392,10 @@ It never creates a ticket for a dependency.
 Sync never mutates a Triage issue, deletes an issue, or writes a cycle field.
 Linear's own cycle behavior still applies to status changes.
 
-Existing linkage is found in the task id, backlog title/body, or, on merge, the complete PR record from GitHub or GitLab.
+Existing linkage is found in the task id, backlog title/body, or, on merge, an identifier following `fixes`, `closes` or `resolves` (case-insensitive) in the complete PR record from GitHub or GitLab.
 Only identifiers belonging to mapped teams are eligible, and ambiguous references are skipped.
 The saved backlog linkage takes precedence over incidental references elsewhere.
+A completed or canceled issue changes only through saved linkage; an incidental reference to one is skipped and never saved.
 Only spawn creates tickets; other events without a linked or previously created issue are skipped.
 A failed forge read never causes ticket creation.
 GitHub reads use `gh-axi`; GitLab reads use `glab`.
