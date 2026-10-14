@@ -56,8 +56,8 @@
 #      reads only the instructions, the local copy, and a short note.
 # `run` prints one line for its caller: `moved <id> <from> <to>`,
 # `blocked <id> <reason>`, or `skipped <id> <reason>`. Secondmates are not
-# moved: they carry no StopFailure hook, and a supervisor's account is also the
-# account every worker it spawns inherits.
+# moved: they carry no StopFailure hook; their workers use their own home's
+# worker account configuration (docs/configuration.md).
 #
 # Choice. `choose` reads the map's account names in order and one snapshot,
 # and qualifies an account only when exactly one fresh, unreused claude row carries its
@@ -111,7 +111,7 @@ FM_ACCOUNT_FAILOVER_EXHAUSTED_RE="^(You've|You’ve) hit your [^·]*limit([[:spa
 
 # --- record -----------------------------------------------------------------
 
-# record never fails and never writes outside <state-dir>/<id>.usage-limit.
+# record never fails; its record and atomic-write temporary file stay in <state-dir>.
 cmd_record() {
   local config=${1:-} state=${2:-} id=${3:-} gen=${4:-} payload fields error message tmp turn
   [ -n "$config" ] && [ -n "$state" ] && [ -n "$id" ] || return 0

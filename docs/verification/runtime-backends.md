@@ -425,8 +425,8 @@ Observed 2026-10-10 on Claude Code 2.1.295 against an account genuinely at its w
 ```
 
 The [failover contract](../configuration.md#what-happens-at-a-usage-limit) accepts that verified exhaustion wording without sending a prompt key.
-The focused `bash tests/fm-account-failover.test.sh` regression exercises both apostrophes, successful recovery and blocked recovery without a menu, and refusal of the throttle message "API Error: Rate limit reached"; its lifecycle and quota fixtures do not prove a live account move.
-The opt-in live guard reproduces the hook record and the Escape outcome through the production recorder and recognizer:
+The focused `bash tests/fm-account-failover.test.sh` regression exercises both apostrophes in the default and C locales, recovery without a menu, rejection of superseded turns, and refusal of the throttle message "API Error: Rate limit reached"; its lifecycle and quota fixtures do not prove a live account move.
+The opt-in live guard exercises the production recorder and recovery with no eligible destination, and checks the final idle composer; it accepts inline exhaustion too, so a pass alone does not prove a menu appeared or Escape was sent:
 
 ```sh
 FM_ACCOUNT_FAILOVER_LIVE=1 FM_ACCOUNT_FAILOVER_LIVE_ROOT=ordinary tests/fm-account-failover-live-e2e.test.sh

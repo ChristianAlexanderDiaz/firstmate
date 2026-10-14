@@ -365,8 +365,8 @@
 # Worker account pin (config/claude-account, config/pi-account):
 #   Opt-in. With no file, a Claude or Pi launch is unchanged: Claude still
 #   receives this process's own CLAUDE_CONFIG_DIR when it is set, and Pi the
-#   destination pane's ambient account. A present file pins every launch of
-#   that runner from this home - ship, scout, local secondmate, raw Claude
+#   destination pane's ambient account. A file naming an account pins every
+#   launch of that runner from this home - ship, scout, local secondmate, raw Claude
 #   command, and relaunch - to the declared account root, and the spawn
 #   refuses before any endpoint, worktree, or record exists when the file is
 #   malformed, the root is unusable, or the runner's own check says it is not
@@ -376,15 +376,16 @@
 #   raw Pi command refuses. The pin is recorded as account= (and Pi's
 #   account_provider=) in the task record and on the spawned line. A local
 #   secondmate reads this launching home's file; pins are never inherited.
+#   Claude's `paced` value fixes no account; see account pacing below.
 #   bin/fm-worker-account-lib.sh owns parsing, the check, and the shed list.
 # Claude account failover (config/claude-failover; --claude-account <name>):
 #   Opt-in, relaunch only. `--relaunch --claude-account <name>` moves a ship or
 #   scout Claude worker onto one named account of config/claude-failover,
 #   sign-in, paid-usage, and model-quota checked before any endpoint changes,
 #   launched like a pinned root, and recorded as claude_account= in the task record and on the spawned
-#   line; every later relaunch keeps it until another literal account name or
-#   a harness change. It refuses beside a config/claude-account that fixes one
-#   account. Every Claude ship and scout StopFailure hook also runs
+#   line; later relaunches retain it unless another literal account name, a
+#   harness change, or pacing overrides it. It refuses beside a
+#   config/claude-account that fixes one account. Every Claude ship and scout StopFailure hook also runs
 #   bin/fm-account-failover.sh record, which writes nothing without the map;
 #   that script owns the move.
 # Claude account pacing (config/claude-account `paced`): every canonical
@@ -396,7 +397,7 @@
 #   account's week left, reset, and pace. When no account is choosable it
 #   refuses before creating an endpoint, local copy, or task record, naming
 #   each account's week left and reset when available. A raw launch and a
-#   secondmate keep the home's default account.
+#   secondmate keep their ambient launch account.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode

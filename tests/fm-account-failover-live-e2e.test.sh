@@ -10,10 +10,11 @@
 #      "error": "rate_limit", and the real hook, wired to the production
 #      recorder, writes the usage-limit record naming the account root and
 #      Claude's limit text.
-#   2. The production `run` recognizes the rendered limit prompt, answers it
-#      with Escape alone, and the prompt closes to an idle composer. quota-axi
-#      is faked to report no account with room, so the guard stops at the
-#      blocked line and never relaunches or moves anything.
+#   2. The production `run` handles the limit and leaves an idle composer,
+#      answering a shown menu with Escape or accepting verified inline
+#      exhaustion without a key. This guard does not separately assert that
+#      a menu appeared or Escape was sent. quota-axi is faked to report no
+#      account with room, so the guard stops at the blocked line and never moves anything.
 # A limited account spends no model tokens, but the guard still submits a
 # prompt, so it is opt-in: FM_ACCOUNT_FAILOVER_LIVE=1 (or FM_LIVE=1).
 # Record a passing run in docs/verification/runtime-backends.md

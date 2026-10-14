@@ -922,7 +922,7 @@ Both files are local and gitignored.
 
 `config/claude-account` holds one line: `ordinary`, `paced`, or the absolute path of an existing Claude config directory.
 `paced` fixes no account; [Claude account pacing](#claude-account-pacing-configclaude-account-paced) owns what it does.
-`config/pi-account` holds that same root on line 1 and, on line 2, the providers this home may spend, separated by spaces, for example `openai-codex anthropic`.
+`config/pi-account` holds `ordinary` or an absolute root path on line 1 and, on line 2, the providers this home may spend, separated by spaces, for example `openai-codex anthropic`.
 
 A final newline is optional; any other line, a relative path, or a control character such as a CR refuses.
 For Claude, `ordinary` unsets `CLAUDE_CONFIG_DIR` rather than pointing it at `~/.claude`, because Claude reads `$CLAUDE_CONFIG_DIR/.claude.json` and keys its macOS Keychain entry to any directory that is set ([authentication, "Credential management"](https://code.claude.com/docs/en/authentication#credential-management)).
@@ -960,7 +960,7 @@ A remote secondmate is launched on its host from its own home's configuration, s
 ## Claude account failover (config/claude-failover)
 
 A home signed in to multiple Claude accounts can let firstmate move a Claude worker that hits its account's usage limit onto another of those accounts that still has room, instead of leaving the worker stopped.
-The feature is opt-in: with no `config/claude-failover`, a worker that reaches its limit stops at Claude's limit prompt exactly as before.
+The feature is opt-in: with no `config/claude-failover`, Firstmate leaves Claude's usage-limit handling unchanged.
 The file is local and gitignored, because it names this machine's accounts and config directories.
 
 ### File format
@@ -980,28 +980,29 @@ Blank lines and lines starting with `#` are ignored, names are unique, and a con
 
 Every Claude ship and scout records its turn end through Claude's `StopFailure` hook, and a `rate_limit` turn end counts as a usage limit when either the rendered prompt shows both "Stop and wait for limit to reset" and "Esc to cancel", or the recorded message starts with "You've hit your <window> limit" (with a straight or typographic apostrophe).
 Claude can report a repeat account limit with that verified wording without reopening the menu.
-Other hook text, including "API Error: Rate limit reached", never triggers an account move or validation cancellation.
+Without a rendered limit menu, other hook text, including "API Error: Rate limit reached", never triggers an account move or validation cancellation.
 Firstmate's monitoring then, within one cycle:
 
 1. When the limit menu is shown, answers it with Escape, its cancel key, which leaves the worker stopped just as "Stop and wait for limit to reset" does and can never pick usage credits, extra usage, or an upgrade; when only the verified exhaustion wording is recorded, sends no prompt key.
-2. Reads one fresh `quota-axi --all-accounts --json` snapshot and picks another listed account whose quota is known, fresh, above the fixed 5% safety margin in every window that applies to the worker's model, with a usable signed-in root and paid extra usage disabled.
+2. Reads one fresh `quota-axi --all-accounts --json` snapshot and picks another listed account whose quota is known, fresh, above the fixed 5% safety margin in every quota scope that applies to the worker's model, with a usable signed-in root and paid extra usage disabled.
 3. Stops the task's own active no-mistakes run through `no-mistakes axi abort --run <id>` and confirms it ended, and moves nothing while a run it cannot read or stop may still be active.
 4. Relaunches the worker on the chosen account through `bin/fm-control.sh <id> relaunch --claude-account <name>` with a handoff note, so the replacement resumes from the task's instructions and durable records.
 
 The move always starts a fresh agent and never resumes the old conversation.
 Prompt caching does not carry across accounts, so resuming would resend the whole transcript uncached, while a fresh agent reads only the task's instructions, its local copy with every uncommitted change, and a short note.
 
-The task record then carries `claude_account=<name>` and every later relaunch keeps that account.
+The task record then carries `claude_account=<name>`; later relaunches retain it unless an explicit account or harness change overrides it, or [pacing](#claude-account-pacing-configclaude-account-paced) chooses afresh.
 Every selected account name, including `default`, resolves literally through the map.
 When no account qualifies, the worker stays stopped and its status gets one `blocked:` line naming each account's remaining quota and reset time.
 
 ### Limits
 
-Secondmates are never moved: they carry no `StopFailure` hook, and a supervisor's account is also the one every worker it spawns inherits.
+Secondmates are never moved: they carry no `StopFailure` hook, and their workers use their own home's [worker account configuration](#worker-account-pin-configclaude-account-configpi-account).
 A `config/claude-account` that names one account pins every Claude worker to it, so a home with both files leaves limited workers stopped and says so; the `paced` value pins nothing, and failover moves its workers as usual.
 Accounts with a paid credits window or unknown paid usage status never qualify, even when their plan has room.
 Selection, control, and spawn require an unreused vendor reading and run their quota queries with `QUOTA_AXI_MAX_AGE` unset before launching a worker on a mapped account; disable paid extra usage in the account itself before using it for failover.
 Control and spawn recheck every quota scope that applies to the replacement's model and refuse a launch when an applicable allowance is unknown, exhausted, or has 5% or less remaining.
+An exhausted scope for an unrelated known model family does not rule an account out; unresolved model or scope identities are checked conservatively.
 The recorded generation is checked inside the control plane's gate, supervision lease, and lifecycle lock before the event is consumed or the worker and validation run are changed.
 Claude's turn hooks invalidate pending limit records on a new submission, normal completion, or session end; recovery checks the failed turn's busy-state sequence again before cancelling validation or stopping the worker.
 Automatic recovery refuses backends without the control plane's recovery-grade agent-state classifier before consuming the event or changing the worker or validation.
@@ -1020,12 +1021,10 @@ Each canonical Claude ship and scout spawn and relaunch that does not name an ac
 1. The account whose weekly window resets soonest gets the work while it is on or behind the pace that would empty it at that reset, which `quota-axi` reports as a weekly pace reserve of zero or more.
 2. While that account is ahead of pace, the other accounts are tried first, and it remains the last choice.
    Unknown pace keeps the nearest-reset preference and is reported as `pace unknown`; only affirmative ahead-of-pace evidence defers an account.
-3. An account is choosable only when it passes the shared model-aware failover launch checks (signed in, a fresh unreused reading, paid extra usage disabled, and its applicable model quota known and above the fixed 5% safety margin).
-   An exhausted window for an unrelated model does not rule the account out.
-   A missing, stale, or unreadable reading is never choosable.
+3. An account is choosable only when it passes the shared [model-aware failover launch checks](#limits).
 
 The launch runs on the chosen account like a failover account, and the task record carries `claude_account=<name>` plus `claude_account_reason=`, one line naming each account's week left, weekly reset, and pace, and any account refused at launch.
-Every paced relaunch chooses afresh rather than keeping the last account, while a relaunch that names `--claude-account`, including a failover move, keeps that literal account.
+Every paced relaunch chooses afresh rather than keeping the last account, while a relaunch that names `--claude-account`, including a failover move, uses that literal account for its replacement.
 Control checks a fresh pacing choice before stopping the current worker, and spawn chooses again from a fresh reading before launching its replacement.
 
 ### When no account is choosable
@@ -1033,7 +1032,7 @@ Control checks a fresh pacing choice before stopping the current worker, and spa
 When no account is choosable, the launch refuses with an `error: Claude account pacing:` line saying why and naming each account's week left and reset when available.
 A fresh spawn refuses before creating an endpoint, local copy, or task record; a relaunch whose pre-stop pacing check fails leaves the current worker running.
 A home with `paced` but no `config/claude-failover` refuses Claude ship and scout launches and names the missing file.
-Raw Claude launch commands and secondmate agents are not paced and keep the home's default Claude account.
+Raw Claude launch commands and secondmate agents are not paced and keep their ambient launch account.
 A worker that later reaches a usage limit still moves through [Claude account failover](#claude-account-failover-configclaude-failover).
 [`bin/fm-worker-account-lib.sh`](../bin/fm-worker-account-lib.sh) owns the choice and its checks.
 

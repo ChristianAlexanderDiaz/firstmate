@@ -16,10 +16,7 @@ Busy hooks verified 2026-07-28 on Claude Code 2.1.220.
 
 ## Usage-limit prompt
 
-Verified 2026-10-01 on Claude Code 2.1.287 against an account at its weekly limit.
-The turn ends through `StopFailure` with `"error": "rate_limit"` and `last_assistant_message` carrying Claude's limit text, such as "You've hit your weekly limit · resets Oct 3 at 4pm (America/New_York)", and Claude then opens a "What do you want to do?" menu: "Stop and wait for limit to reset", "Wait here, then continue automatically at ...", "Switch to usage credits", and "Upgrade your plan", ending "Enter to confirm · Esc to cancel".
-Escape closes the menu to an empty idle composer without choosing an option, the same stopped outcome as its first option, so it is the only key Firstmate sends there; Enter or a number could select a paid option if the order ever changed.
-`../../../bin/fm-account-failover.sh` owns the opt-in move to another account (`../../../docs/configuration.md` "Claude account failover"), and the opt-in `paced` pin value chooses each ship and scout launch's account (`../../../docs/configuration.md` "Claude account pacing").
+Follow the [Claude account failover and pacing contracts](../../../../../docs/configuration.md#claude-account-failover-configclaude-failover); [runtime verification](../../../../../docs/verification/runtime-backends.md#claude-usage-limit-prompt) owns the captured menu, safe Escape outcome, and repeat-limit evidence without a menu.
 
 ## Workspace trust
 

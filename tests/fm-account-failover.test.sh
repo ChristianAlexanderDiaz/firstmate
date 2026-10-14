@@ -7,8 +7,9 @@
 # or an inline repeat limit above an idle composer; its
 # exit command stops the agent, and a launch starts a fresh one), and fakes
 # stand in for `claude auth status`, `quota-axi --all-accounts --json`, and
-# `no-mistakes`. tests/fm-account-failover-live-e2e.test.sh proves the prompt,
-# the hook payload, and Escape's outcome against the real Claude Code.
+# `no-mistakes`. tests/fm-account-failover-live-e2e.test.sh exercises recovery
+# against real Claude Code; docs/verification/runtime-backends.md owns the
+# captured prompt, hook payload, and Escape outcome.
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
@@ -180,7 +181,7 @@ new_case() {
   quota_snapshot 0 81 > "$dir/fake/quota.json"
 }
 
-# quota_snapshot <limited-percent> <spare-percent> [spare-extra-jq]: an
+# quota_snapshot <limited-percent> <spare-percent> [jq-filter]: an
 # --all-accounts snapshot shaped like quota-axi 0.1.55's schema 7 output.
 quota_snapshot() {
   jq -n --argjson limited "$1" --argjson spare "$2" '
@@ -223,7 +224,7 @@ record_limit() {
     case_env "$FAILOVER" record "$CASE/home/config" "$CASE/home/state" "$id" "$gen"
 }
 
-# Keys and literals the terminal received, in order, as one transcript.
+# The task's supervisor-actionable status lines, if any.
 status_of() { cat "$CASE/home/state/$1.status" 2>/dev/null; }
 
 # --- record ------------------------------------------------------------------
@@ -405,9 +406,9 @@ test_limit_prompt_is_answered_with_stop_and_the_worker_moves_to_an_account_with_
   record_limit t3 rate_limit ""
   out=$(case_env "$FAILOVER" tick 2>&1)
   assert_contains "$out" "moved t3 limited spare" "the failover should report the move: $out"
-  # The prompt gets exactly one key, its cancel, and nothing reaches the
-  # terminal until the old worker's exit command: no option number, arrow, or
-  # Enter can land on a paid choice.
+  # The prompt gets exactly one key, its cancel. After that, no other input
+  # reaches the terminal until the old worker's exit command: no option number,
+  # arrow, or Enter can land on a paid choice.
   assert_equals "key:Escape"$'\n'"text:/exit" "$(head -2 "$CASE/fake/events")" \
     "the limit prompt must be answered with Escape alone before the worker stops"
   assert_grep "CLAUDE_CONFIG_DIR='$CASE/accounts/spare'" "$CASE/fake/literal" "the replacement must launch under the chosen account"

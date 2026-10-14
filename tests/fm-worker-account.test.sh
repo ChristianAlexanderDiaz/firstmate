@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behavior tests for the opt-in per-home worker account pin
+# Behavior tests for the opt-in per-home worker account pin and Claude pacing
 # (config/claude-account, config/pi-account; bin/fm-worker-account-lib.sh).
 #
 # Each case drives the real fm-spawn.sh through the shared fake tmux, which

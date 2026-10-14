@@ -1065,8 +1065,7 @@ EOF
 # choice, and the move; this tick only runs it once per cycle and turns each
 # move into one durable `check` wake row. A home without config/claude-failover
 # pays one file test. A blocked outcome already appended the task's blocked:
-# status line, and a skipped one is an ordinary rate-limit turn end, so both
-# stay in the triage log.
+# status line; blocked and skipped diagnostics stay in the triage log.
 account_failover_tick() {
   [ -e "$CONFIG/claude-failover" ] || [ -L "$CONFIG/claude-failover" ] || return 0
   local out verb id from to rest reason key first_reason=''

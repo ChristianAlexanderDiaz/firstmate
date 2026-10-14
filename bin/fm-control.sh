@@ -7,8 +7,8 @@
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
 #                                         [--claude-account <name>]
-#                                         (--note <text> | --note-file <path>
-#                                          | --usage-limit)
+#                                         (--note <text> | --note-file <path>)
+#        fm-control.sh <task-id> relaunch --usage-limit
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
 # DATA plane: conversational text for the agent to read, always routing-marked
@@ -83,13 +83,16 @@
 #              malformed list, or a replacement runtime that cannot hide the tools.
 #              --claude-account <name> moves a ship or scout Claude worker onto
 #              that named account of config/claude-failover (docs/configuration.md
-#              "Claude account failover"); every name is literal, and a task
-#              already moved keeps its recorded account. The account is resolved,
+#              "Claude account failover"); every name is literal. Without an
+#              override, a moved task retains its account unless this home's
+#              pacing setting chooses afresh (bin/fm-worker-account-lib.sh).
+#              The account is resolved,
 #              sign-in checked, and checked for paid usage and model quota
 #              before the old agent stops.
 #              --usage-limit handles the recorded limit under this transaction
 #              boundary, with its generation and turn checks and automatic handoff.
-#              A manual relaunch requires --note for a ship or scout, whose replacement
+#              A manual relaunch requires --note or --note-file for a ship or
+#              scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
 #              standing charter is never rewritten.
