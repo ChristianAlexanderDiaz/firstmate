@@ -376,7 +376,7 @@ A recorded PR merge, including one detected from the forge, selects the complete
 A captain hold adds the configured label without changing workflow status; its answer, release or reconciled close removes only that label.
 `In Progress` represents a working ship, not a standing assignment.
 After a teardown of a ship with no recorded PR whose branch has no commits of its own beyond origin's copy of its base (or the local base without an origin), and whose forge lookup finds no merged PR for the branch, an issue still in the started state sync selects (normally `In Progress`) returns to the team's unstarted `Todo` state (or first unstarted state), with a reason comment.
-That branch lookup uses `gh-axi` within the sync's time bound, so ships on other forges, and lookups that fail or time out, keep their status.
+That branch lookup uses `gh-axi`, so ships on other forges keep their status.
 Local-only ships are excluded from that rule, because their landed work is a fast-forward of the base and looks the same.
 A forced teardown that discards work with no recorded PR and no local landing proof (a clean worktree, ignoring harness leftovers, whose commits are on a remote or the base branch) returns the issue to Todo the same way.
 Any other teardown, including one whose landing is merely unrecorded or unknown, or whose recorded worktree slot now belongs to another task, leaves the status unchanged.

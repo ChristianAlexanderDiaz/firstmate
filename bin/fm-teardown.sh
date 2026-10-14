@@ -1589,6 +1589,18 @@ landing_base_ref() {
   fi
 }
 
+# Does the worktree branch's PR lookup succeed without finding a merged PR?
+# Any lookup failure is unknown landing and returns non-zero.
+branch_pr_lookup_unmerged() {
+  local branch out
+  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null) || return 1
+  [ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
+  out=$(cd "$WT" && gh-axi pr list --state all --head "$branch" --limit 1 2>/dev/null) || return 1
+  if printf '%s\n' "$out" | grep -qE '^[[:space:]]*[0-9]+,'; then
+    ! ( pr_is_merged "$branch" )
+  fi
+}
+
 # Is the branch's content already present in its up-to-date landing branch
 # (the recorded base branch, else the default)? Fetches first, then 3-way merges
 # that branch with HEAD: when HEAD introduces nothing it does not already contain
@@ -3562,20 +3574,17 @@ fi
 # Capture local landing proof before cleanup removes the task artifacts.
 # This is only an external-sync hint; it never participates in teardown safety.
 # A ship with no recorded PR is known not to have landed when its branch has no
-# commits of its own beyond its landing branch (outside local-only mode, where a
-# landed fast-forward looks the same) and the Linear sync's bounded forge
-# lookup for that branch finds no merged PR, or when an explicit --force
-# discards work with no local landing proof. A reassigned slot proves nothing
-# about this task, and a merely unrecorded or unknown landing leaves the Linear
-# status unchanged.
+# commits of its own beyond its landing branch and its forge lookup finds no
+# merged PR (outside local-only mode, where a landed fast-forward looks the
+# same), or when an explicit --force discards work with no local landing proof.
+# A reassigned slot proves nothing about this task, and a merely unrecorded or
+# unknown landing leaves the Linear status unchanged.
 LINEAR_TEARDOWN_UNLANDED=0
-LINEAR_TEARDOWN_BRANCH=
 if [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ] && [ -z "$PR_URL" ] && teardown_owns_worktree; then
   LINEAR_TEARDOWN_BASE=$(landing_base_ref 2>/dev/null || true)
   if [ -d "$WT" ] && [ "$MODE" != local-only ] && [ -n "$LINEAR_TEARDOWN_BASE" ] \
       && [ -z "$(git -C "$WT" log --oneline HEAD --not "$LINEAR_TEARDOWN_BASE" -- 2>/dev/null || echo unreadable)" ]; then
-    LINEAR_TEARDOWN_BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-    case "$LINEAR_TEARDOWN_BRANCH" in ''|HEAD) LINEAR_TEARDOWN_BRANCH= ;; *) LINEAR_TEARDOWN_UNLANDED=1 ;; esac
+    if branch_pr_lookup_unmerged; then LINEAR_TEARDOWN_UNLANDED=1; fi
   elif [ "$FORCE" = --force ]; then
     LINEAR_TEARDOWN_UNLANDED=1
     if [ -d "$WT" ] && LINEAR_TEARDOWN_STATUS=$(git -C "$WT" status --porcelain 2>/dev/null) \
@@ -3892,7 +3901,6 @@ META_LOCK_HELD=0
 [ "$KIND" = secondmate ] || "$SCRIPT_DIR/fm-procevent-refill.sh" notify || true
 if [ "$LINEAR_TEARDOWN_UNLANDED" = 1 ]; then
   FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
-    FM_LINEAR_TEARDOWN_BRANCH=$LINEAR_TEARDOWN_BRANCH FM_LINEAR_TEARDOWN_REPO=$PROJ \
     FM_LINEAR_CONTROL_LOCK_HELD=1 bash "$SCRIPT_DIR/fm-linear-lib.sh" teardown "$ID" || true
 fi
 rm -f "$STATE/$ID.linear-idle"
