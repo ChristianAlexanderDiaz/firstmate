@@ -375,7 +375,9 @@ Creation specifies that state explicitly, avoiding Linear's default Triage intak
 A recorded PR merge, including one detected from the forge, selects the completed state named `Done`, falling back to the first completed state, and attaches the PR URL.
 A captain hold adds the configured label without changing workflow status; its answer, release or reconciled close removes only that label.
 `In Progress` represents a working ship, not a standing assignment.
-After a forced teardown that discards work with no recorded PR and no local landing proof (a clean worktree, ignoring harness leftovers, whose commits are on a remote or the base branch), an issue still in the started state sync selects (normally `In Progress`) returns to the team's unstarted `Todo` state (or first unstarted state), with a reason comment.
+After a teardown of a ship with no recorded PR whose branch has no commits of its own beyond its base, an issue still in the started state sync selects (normally `In Progress`) returns to the team's unstarted `Todo` state (or first unstarted state), with a reason comment.
+Local-only ships are excluded from that rule, because their landed work is a fast-forward of the base and looks the same.
+A forced teardown that discards work with no recorded PR and no local landing proof (a clean worktree, ignoring harness leftovers, whose commits are on a remote or the base branch) returns the issue to Todo the same way.
 Any other teardown, including one whose landing is merely unrecorded, leaves the status unchanged.
 Each existing watcher heartbeat checks recorded ships and dependency records in rotation within one ten-second budget; a timed-out task waits for its next turn.
 Heartbeat checks stay quiet for excluded, unmapped, unlinked, ambiguous or Triage work, and drop a dependency record whose task no longer exists.

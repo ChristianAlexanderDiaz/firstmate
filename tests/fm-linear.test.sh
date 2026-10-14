@@ -378,7 +378,7 @@ assert_equals "$DONE" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'watcher sy
 assert_not_contains "$(cat "$CASE/watch.err")" 'timed out' 'watcher does not deadlock with Linear sync'
 pass 'real watcher syncs an externally merged PR under its existing control lock'
 
-for failure in no landed yes; do
+for failure in no landed zero-work yes; do
   make_case "real-spawn-$failure"
   fm_test_spawn_home "$HOME_DIR" claude
   printf '%s\n' "$$" > "$HOME_DIR/state/.lock"
@@ -399,12 +399,22 @@ for failure in no landed yes; do
       bash "$ROOT/bin/fm-teardown.sh" "$TASK" --force 2>&1) || fail "real teardown failed: $out"
     assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'successful unlanded teardown queues issue'
   elif [ "$failure" = landed ]; then
-    # Harness leftovers are not unlanded work under teardown's own rule.
+    # Harness leftovers are not unlanded work under teardown's own rule, and
+    # pushed commits are on a remote.
+    printf 'pushed change\n' > "$CASE/wt/change"
+    git -C "$CASE/wt" add change
+    git -C "$CASE/wt" -c user.name=Test -c user.email=test@example.invalid commit -qm 'Test change'
+    git -C "$CASE/wt" push -q origin "HEAD:refs/heads/fm/$TASK"
     mkdir -p "$CASE/wt/.claude"
     printf '{}\n' > "$CASE/wt/.claude/settings.local.json"
     out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
       bash "$ROOT/bin/fm-teardown.sh" "$TASK" --force 2>&1) || fail "real teardown failed: $out"
     assert_equals "$STARTED" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'forced teardown of landed work keeps status'
+  elif [ "$failure" = zero-work ]; then
+    out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
+      bash "$ROOT/bin/fm-teardown.sh" "$TASK" 2>&1) || fail "real teardown failed: $out"
+    assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'teardown of a ship without commits queues issue'
+    assert_equals 1 "$(jq -s '[.[] | select(.query | startswith("mutation Comment"))] | length' "$CASE/requests")" 'zero-work teardown comments once'
   else
     assert_contains "$out" 'sync failed' 'actual spawn tolerates API failure'
   fi

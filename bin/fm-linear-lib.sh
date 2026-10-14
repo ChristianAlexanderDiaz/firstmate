@@ -390,7 +390,7 @@ fm_linear_event() {
   printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.issueUpdate.success == true' >/dev/null
   case "$event" in idle|teardown)
     local reason='Worker has been idle or gone for more than a day; returned to Todo.'
-    [ "$event" != teardown ] || reason='Worker was torn down with its work discarded; returned to Todo.'
+    [ "$event" != teardown ] || reason='Worker was torn down without landed work; returned to Todo.'
     fm_linear_api 'mutation Comment($input:CommentCreateInput!){commentCreate(input:$input){success}}' \
       "$(jq -cn --arg id "$issue_id" --arg body "$reason" '{input:{issueId:$id,body:$body}}')"
     printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.commentCreate.success == true' >/dev/null

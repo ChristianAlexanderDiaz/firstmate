@@ -3550,11 +3550,16 @@ fi
 
 # Capture local landing proof before cleanup removes the task artifacts.
 # This is only an external-sync hint; it never participates in teardown safety.
-# Only an explicit --force discard of work with no recorded PR and no local
-# landing proof is known not to have landed; a merely unrecorded landing leaves
-# the Linear status unchanged.
+# A ship with no recorded PR is known not to have landed when its branch has no
+# commits of its own beyond the base (outside local-only mode, where a landed
+# fast-forward looks the same), or when an explicit --force discards work with
+# no local landing proof. A merely unrecorded landing leaves the Linear status
+# unchanged.
 LINEAR_TEARDOWN_UNLANDED=0
-if [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ] && [ "$FORCE" = --force ] && [ -z "$PR_URL" ]; then
+if [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ] && [ -z "$PR_URL" ] && [ "$MODE" != local-only ] \
+    && [ -d "$WT" ] && [ -z "$(git -C "$WT" log --oneline HEAD --not "${BASE_BRANCH:-$(default_branch)}" -- 2>/dev/null || echo unreadable)" ]; then
+  LINEAR_TEARDOWN_UNLANDED=1
+elif [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ] && [ "$FORCE" = --force ] && [ -z "$PR_URL" ]; then
   LINEAR_TEARDOWN_UNLANDED=1
   if [ -d "$WT" ] && LINEAR_TEARDOWN_STATUS=$(git -C "$WT" status --porcelain 2>/dev/null) \
       && [ -z "$(worktree_dirt "$LINEAR_TEARDOWN_STATUS")" ] \
