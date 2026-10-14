@@ -10,7 +10,7 @@
 # and a harness without a reserve line is admitted unpaced with one diagnostic.
 # Its machine admission lock supplements the existing project lock, waits at most
 # 45s for a concurrent admission or refill sample, and stays held until
-# fm_quota_plan_release after publication or on the spawn EXIT path.
+# fm_quota_plan_release, which bin/fm-spawn.sh runs on its EXIT path.
 # An admitted attempt invalidates the shared cache, forcing the next admission
 # to read account-wide usage again. Neither lock can reserve future token spend:
 # running workers and other machines can cross the line after admission.
