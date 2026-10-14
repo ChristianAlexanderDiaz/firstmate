@@ -3547,6 +3547,10 @@ test_structured_captain_waits() {
     write_ask_task "$home" "$id" scout 'paused [key=review] [wait=captain]: awaiting Christian review'
   done
   write_ask_task "$home" readable scout 'paused [at=10:30] [wait=captain]: awaiting design answer'
+  write_ask_task "$home" unverified scout 'paused [key=review] [wait=captain]: awaiting Christian review'
+  fm_write_meta "$home/state/unverified.meta" \
+    "window=firstmate:fm-unverified" "worktree=$home/projects/unverified" "project=firstmate" \
+    "harness=codex" "kind=scout" "mode=scout"
   record_claude_state "$home/state" resumed busy
   fm_git_init_commit "$home/projects/terminal"
   git -C "$home/projects/terminal" checkout -q -b fm/terminal
@@ -3562,6 +3566,7 @@ test_structured_captain_waits() {
 - [ ] resumed - Busy flow (repo: firstmate) (kind: scout) (since 2026-07-13)
 - [ ] terminal - Failed flow (repo: firstmate) (kind: ship) (since 2026-07-13)
 - [ ] readable - Readable flow (repo: firstmate) (kind: scout) (since 2026-07-13)
+- [ ] unverified - Codex flow (repo: firstmate) (kind: scout) (since 2026-07-13)
 
 ## Queued
 - [ ] held-review - Held flow (repo: firstmate) (kind: captain) (hold: review flow) (hold-kind: captain)
@@ -3587,7 +3592,8 @@ EOF
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
     ([.decisions_open[] | select(.verb == "captain-wait") | .id] | sort)
-      == ["domain-alpha", "domain-alpha/child-review", "readable", "review"]
+      == ["domain-alpha", "domain-alpha/child-review", "readable", "review", "unverified"]
+    and ([.in_flight[] | select(.id == "unverified") | .state] == ["unknown"])
     and ([.decisions_open[] | select(.id == "held-review") | .verb] == ["captain-hold"])
     and ([.in_flight[].id] | contains(["review", "readable", "prose", "resumed"]))
     and (.decisions_open | any(.id == "resolved" or .id == "superseded" or .id == "prose"
@@ -3597,14 +3603,14 @@ EOF
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
     [.decisions_open[] | select(.verb == "captain-wait") | .id] | sort
-      == ["domain-alpha/child-review", "readable", "review"]
+      == ["domain-alpha/child-review", "readable", "review", "unverified"]
   ' >/dev/null || fail "parent wait duplicated a child call: $json"
   printf 'resolved [key=child]: reviewed\n' >> "$mate/state/child-review.status"
   printf 'working: resumed\n' >> "$home/state/domain-alpha.status"
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
-    [.decisions_open[] | select(.verb == "captain-wait") | .id] | sort == ["readable", "review"]
+    [.decisions_open[] | select(.verb == "captain-wait") | .id] | sort == ["readable", "review", "unverified"]
   ' >/dev/null || fail "closed mate waits survived: $json"
-  pass "structured captain waits surface once across main, child, and parent channels, stay Underway, and clear on resolution, resumption, or a terminal run"
+  pass "structured captain waits surface once across main, child, and parent channels, stay Underway, survive an unknown pane read, and clear on resolution, resumption, or a terminal run"
 }
 test_structured_captain_waits

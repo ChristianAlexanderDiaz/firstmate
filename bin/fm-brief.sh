@@ -493,6 +493,7 @@ If its first reportable event is \`working [key=<work-slug>]: {material phase}\`
 When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>] [at=<epoch>]: {why it is no longer active}\`.
 \`resolved\` separately closes an escalated decision or blocker, and only a \`resolved\` line carrying that decision's exact key closes it: a later \`done\` or \`working\` event never does, even when the answer is what started that work.
 The main firstmate's answer normally writes that closing line at answer time; when a blocker or wait clears WITHOUT an answer from the main firstmate, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (keyed with \`[key=<slug>]\` if you opened it with one) as your domain resumes.
+When a declared \`[wait=captain]\` wait ends after the captain's answer, append \`resolved [key=<slug>] [at=<epoch>]: {how it was answered}\` yourself with that wait's key, or a keyless \`resolved\` line for a keyless pause.
 Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
 
 # Definition of done

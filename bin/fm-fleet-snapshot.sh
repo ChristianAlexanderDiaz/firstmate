@@ -817,8 +817,9 @@ task_json_lines() {
     # multiplex many concerns onto one stream, so activity on one concern must
     # never clear another concern's keyed decision. A parked/blocked state, or a
     # non-authoritative status-log/none read on a still-live task, keeps the fold's
-    # open decision surfacing. The current structured captain wait follows the
-    # same lifecycle rule, so a resumed or finished crew's answered wait closes.
+    # open decision surfacing. The current structured captain wait closes only on
+    # positive evidence: a run-step or pane read of working, or a done/failed
+    # state. An unknown pane read, which some harnesses always report, keeps it.
     open_decisions_tsv=$(status_open_decisions "$status_log" "$kind")
     wait_line=$(status_declared_wait_line "$status_log")
     if [ "$kind" != secondmate ] && \
@@ -826,6 +827,11 @@ task_json_lines() {
            && [ "$current_state" != parked ] && [ "$current_state" != blocked ]; } \
          || { [ "$current_state" = "done" ] || [ "$current_state" = "failed" ]; }; }; then
       open_decisions_tsv=""
+    fi
+    if [ "$kind" != secondmate ] && \
+       { { { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
+           && [ "$current_state" = working ]; } \
+         || [ "$current_state" = "done" ] || [ "$current_state" = "failed" ]; }; then
       wait_line=""
     fi
     open_decisions_json=$(printf '%s' "$open_decisions_tsv" | jq -R -s '

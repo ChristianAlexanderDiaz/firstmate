@@ -723,6 +723,8 @@ test_secondmate_marked_request_reporting_contract() {
     "secondmate charter changed the preserved status vocabulary"
   assert_grep "Add \`[wait=captain]\` before the colon on a \`paused:\` line only when your domain is deliberately waiting on the captain's own review or answer." "$brief" \
     "secondmate charter lost the opt-in captain wait owner"
+  assert_grep "When a declared \`[wait=captain]\` wait ends after the captain's answer, append \`resolved [key=<slug>] [at=<epoch>]: {how it was answered}\` yourself with that wait's key, or a keyless \`resolved\` line for a keyless pause." "$brief" \
+    "secondmate charter did not close an answered captain wait"
   pass "fm-brief.sh: marked requests avoid generic acknowledgements and preserve material reporting"
 }
 
