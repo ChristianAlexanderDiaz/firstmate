@@ -179,12 +179,12 @@ fm_linear_idle_due() {  # <state> <task>; classifier owns all harness/backend fa
 
 # Each heartbeat refreshes ship records and dependency markers in rotation
 # within one ten-second budget, starting no task with less than five seconds
-# left. The cursor names the last task that finished, so a timed-out task is
-# retried first on the next heartbeat. This is part of the existing watcher,
-# not a daemon.
+# left. The cursor names the last task attempted, so a timed-out task waits for
+# its next turn instead of starving the rest. This is part of the existing
+# watcher, not a daemon.
 fm_linear_tick() {
   local state=${FM_STATE_OVERRIDE:-${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$LINEAR_DIR/.." && pwd)}}/state}
-  local previous task ids file deadline=$((SECONDS + 10)) LINEAR_BOUND LINEAR_RESULT
+  local previous task ids file deadline=$((SECONDS + 10)) LINEAR_BOUND
   previous=$(cat "$state/.linear-cursor" 2>/dev/null || true)
   ids=$({
     for file in "$state"/*.meta; do
@@ -203,7 +203,6 @@ fm_linear_tick() {
     LINEAR_BOUND=$((deadline - SECONDS))
     [ "$LINEAR_BOUND" -ge 5 ] || break
     fm_linear_main refresh "$task"
-    case "$LINEAR_RESULT" in 124|137) break ;; esac
     printf '%s\n' "$task" > "$state/.linear-cursor"
   done <<< "$ids"
 }
@@ -245,14 +244,19 @@ fm_linear_event() {
   . "$LINEAR_DIR/fm-backlog-transition-lib.sh"
   # shellcheck source=bin/fm-wake-lib.sh
   . "$LINEAR_DIR/fm-wake-lib.sh"
+  # A heartbeat with nothing due must not contend for the lifecycle lock.
+  if [ "$event" = refresh ]; then
+    if fm_linear_idle_due "$state" "$id"; then idle_due=1; fi
+    [ "$idle_due" = 1 ] || [ -f "$state/$id.linear-dependencies" ] || exit 0
+  fi
   if [ "${FM_LINEAR_CONTROL_LOCK_HELD:-0}" != 1 ]; then
     lock="$state/.control-$id.lock"
     fm_lock_acquire_wait "$lock"
     LINEAR_LOCK=$lock
     trap 'fm_lock_release "$LINEAR_LOCK"' EXIT
   fi
-  if [ "$event" = refresh ]; then
-    if fm_linear_idle_due "$state" "$id"; then idle_due=1; fi
+  if [ "$idle_due" = 1 ]; then
+    fm_linear_idle_due "$state" "$id" || idle_due=0
     [ "$idle_due" = 1 ] || [ -f "$state/$id.linear-dependencies" ] || exit 0
   fi
   if [ "$event" = merge ]; then fm_pr_url_parse "$url"; else url=''; fi
@@ -404,7 +408,6 @@ fm_linear_event() {
 
 fm_linear_main() {
   local result=0 config
-  LINEAR_RESULT=0
   LINEAR_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   case "${1:-}" in
     -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; return 0 ;;
@@ -424,7 +427,6 @@ fm_linear_main() {
   # shellcheck source=bin/fm-timeout-lib.sh
   . "$LINEAR_DIR/fm-timeout-lib.sh"
   fm_run_timed "${LINEAR_BOUND:-10}" bash "$LINEAR_DIR/fm-linear-lib.sh" --run "$@" >/dev/null 2>&1 || result=$?
-  LINEAR_RESULT=$result
   # Heartbeat refreshes revisit excluded, unmapped and unlinked work routinely.
   [ "${1:-}" != refresh ] || case "$result" in 22|23|24) return 0 ;; esac
   case "$result" in

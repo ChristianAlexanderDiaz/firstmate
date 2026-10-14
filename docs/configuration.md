@@ -377,7 +377,7 @@ A captain hold adds the configured label without changing workflow status; its a
 `In Progress` represents a working ship, not a standing assignment.
 After a forced teardown that discards work with no recorded PR and no local landing proof (a clean worktree, ignoring harness leftovers, whose commits are on a remote or the base branch), an issue still in the started state sync selects (normally `In Progress`) returns to the team's unstarted `Todo` state (or first unstarted state), with a reason comment.
 Any other teardown, including one whose landing is merely unrecorded, leaves the status unchanged.
-Each existing watcher heartbeat checks recorded ships and dependency records in rotation within one ten-second budget, retrying a timed-out task first on the next heartbeat.
+Each existing watcher heartbeat checks recorded ships and dependency records in rotation within one ten-second budget; a timed-out task waits for its next turn.
 Heartbeat checks stay quiet for excluded, unmapped, unlinked, ambiguous or Triage work, and drop a dependency record whose task no longer exists.
 A ship classified idle or dead continuously for more than a day returns to Todo the same way, with a reason comment; activity, a new worker incarnation or unknown classification resets that interval.
 This uses the existing semantic busy classifier; missing evidence is never treated as idle.

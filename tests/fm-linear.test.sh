@@ -544,8 +544,23 @@ assert_equals '' "$out" 'heartbeat skips excluded work quietly'
 rm -f "$HOME_DIR/state/.linear-cursor"
 touch "$HOME_DIR/state/$TASK.linear-dependencies" "$CASE/slow"
 sync_event tick 2>/dev/null
-assert_equals private-work "$(cat "$HOME_DIR/state/.linear-cursor")" 'timed-out task is retried first'
-pass 'heartbeat is quiet for expected skips, retires orphaned records, and retries a timed-out task first'
+assert_equals "$TASK" "$(cat "$HOME_DIR/state/.linear-cursor")" 'timed-out task does not hold the rotation'
+pass 'heartbeat is quiet for expected skips, retires orphaned records, and moves past a timed-out task'
+
+make_case heartbeat-lock
+fm_write_meta "$HOME_DIR/state/$TASK.meta" 'kind=ship' 'backend=tmux' 'window=fm-work' 'harness=claude' 'spawn_gen=example'
+# shellcheck disable=SC2016 # The child expands its own positional arguments.
+run bash -c '. "$1/bin/fm-wake-lib.sh"; fm_lock_acquire_wait "$2"; touch "$3"; exec sleep 30' \
+  _ "$ROOT" "$HOME_DIR/state/.control-$TASK.lock" "$CASE/locked" &
+holder=$!
+until [ -e "$CASE/locked" ]; do sleep 0.1; done
+before=$SECONDS
+out=$(sync_event tick 2>&1)
+kill "$holder" 2>/dev/null || true
+wait "$holder" 2>/dev/null || true
+assert_equals '' "$out" 'heartbeat with nothing due ignores a held lifecycle lock'
+[ "$((SECONDS - before))" -lt 5 ] || fail 'heartbeat waited on a held lifecycle lock'
+pass 'heartbeat takes the lifecycle lock only when a task has work due'
 
 make_case timeout
 touch "$CASE/slow"
