@@ -609,7 +609,8 @@ test_recorded_line_stays_recorded_across_a_resolve
 test_declared_wait_owner() {
   local line
   for line in 'paused [wait=captain]: awaiting review' \
-    'paused [key=review] [at=1788576000] [wait=captain]: awaiting review'; do
+    'paused [key=review] [at=1788576000] [wait=captain]: awaiting review' \
+    'paused [at=10:30] [wait=captain]: awaiting review'; do
     [ "$(status_declared_wait_owner "$line")" = captain ] || fail "missing owner: $line"
   done
   for line in 'paused: captain-tools CI' 'paused: [wait=captain] quoted example' \

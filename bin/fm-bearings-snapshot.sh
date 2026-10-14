@@ -58,7 +58,7 @@
 # stays in Underway, like any actively worked held task.
 # A current declared pause with [wait=captain] instead contributes a captain-wait
 # row through those same home surfaces, deduplicated against captain holds, and
-# leaves Underway when shown in Captain's Call; prose never selects this row.
+# likewise stays in Underway; prose never selects this row.
 #
 # Ordinary Charted Next gates are ordered by durable filed date, newest first,
 # before the FM_BEARINGS_GATES bound is applied. Gates without a comparable filed
@@ -608,9 +608,6 @@ MODEL=$(printf '%s' "$SNAP" | jq \
              | select(.key as $key | any($m.decisions_open[]?; .key == $key) | not)
              | {id:$m.id,key,verb,summary:(.summary | trunc(90)),owner:$m.id})) ]) as $captain_waits
   | ($hold_decisions + $main_status_asks + $mate_asks + $captain_waits) as $decisions_all
-  | (if $all_decisions == 1 then $decisions_all else $decisions_all[:$decisions_n] end) as $visible_decisions
-  | ([$visible_decisions[] | select(.verb == "captain-wait") | .id]) as $captain_wait_ids
-  | ($in_flight_all | map(select(.id as $id | $captain_wait_ids | index($id) | not))) as $in_flight_all
   | ([ .backlog.records[]
          | . as $record
          | select(.structured and projected_deferred_hold) ]
@@ -706,7 +703,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
       secondmate_reconcile: [ (.secondmate_current.records // [])[]
         | select(.reconcile_inventory != null)
         | {id, spawn_gen:(.spawn_gen // null), host:(.host // null), kind:(.reconcile_inventory.kind // null), ids:((.reconcile_inventory.ids // []) | map(select(type == "string")) | sort)} ],
-      decisions_open: $visible_decisions,
+      decisions_open: (if $all_decisions == 1 then $decisions_all else $decisions_all[:$decisions_n] end),
       landed: ($done | map({id, what:(.title | trunc(70)),
                             artifact:(landed_artifact // "-"),owner:.home_id})),
       gates: ($return_catchup_gate

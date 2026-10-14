@@ -381,14 +381,16 @@ status_declared_wait_line() {  # <status-file>
     || _fm_status_declared_wait_scan "$resolve" "$legacy_re" < "$f" || :
 }
 
-# Optional pause owner: exactly one [wait=captain] field before the first
-# colon declares the captain's own review or answer. Missing, duplicate, malformed,
-# or unknown owners return nothing; reason prose never determines ownership.
+# Optional pause owner: exactly one [wait=captain] field in the head declares
+# the captain's own review or answer. The head ends at the first colon of the
+# unstamped copy (_fm_status_unstamped). Missing, duplicate, malformed, or
+# unknown owners return nothing; reason prose never determines ownership.
 # Pass status_declared_wait_line output to inspect only the current declaration.
 status_declared_wait_owner() {  # <status-line> -> owner, or nothing
-  local line=$1 head rest owner
+  local line=$1 unstamped head rest owner
   status_is_paused "$line" || return 0
-  case "$line" in *:*) head=${line%%:*} ;; *) return 0 ;; esac
+  _fm_status_unstamped "$line" unstamped
+  case "$unstamped" in *:*) head=${unstamped%%:*} ;; *) return 0 ;; esac
   case "$head" in *\[wait=*\]*) ;; *) return 0 ;; esac
   rest=${head#*\[wait=}
   owner=${rest%%\]*}

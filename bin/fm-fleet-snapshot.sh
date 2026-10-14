@@ -817,19 +817,21 @@ task_json_lines() {
     # multiplex many concerns onto one stream, so activity on one concern must
     # never clear another concern's keyed decision. A parked/blocked state, or a
     # non-authoritative status-log/none read on a still-live task, keeps the fold's
-    # open decision surfacing.
+    # open decision surfacing. The current structured captain wait follows the
+    # same lifecycle rule, so a resumed or finished crew's answered wait closes.
     open_decisions_tsv=$(status_open_decisions "$status_log" "$kind")
+    wait_line=$(status_declared_wait_line "$status_log")
     if [ "$kind" != secondmate ] && \
        { { { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
            && [ "$current_state" != parked ] && [ "$current_state" != blocked ]; } \
          || { [ "$current_state" = "done" ] || [ "$current_state" = "failed" ]; }; }; then
       open_decisions_tsv=""
+      wait_line=""
     fi
     open_decisions_json=$(printf '%s' "$open_decisions_tsv" | jq -R -s '
       [ splits("\n") | select(length > 0)
         | (capture("^(?<key>[^\t]*)\t(?<verb>[^\t]*)\t(?<summary>.*)$")?)
         | select(. != null) ]')
-    wait_line=$(status_declared_wait_line "$status_log")
     captain_wait_json=null
     if [ "$(status_declared_wait_owner "$wait_line")" = captain ]; then
       captain_wait_json=$(jq -n --arg key "$(_fm_decision_key "$wait_line")" \
