@@ -690,7 +690,7 @@ test_batch_reports_a_deferred_pair() {
   write_live "$home" live-a "$case_dir/project"
   out=$(run_spawn "$case_dir" "$home" "$case_dir/unused" "task-c=$case_dir/project" --mode no-mistakes --yolo off) || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "a batch whose only pair was deferred did not exit with the deferral status: $out"
-  assert_contains "$out" "batch: DEFERRED task-c ($case_dir/project) - its project is at capacity, so it stays queued" \
+  assert_contains "$out" "batch: DEFERRED task-c ($case_dir/project) - admission deferred, so it stays queued" \
     "the batch did not report the deferral"
   assert_not_contains "$out" "batch: FAILED" "the batch reported a deferral as a failure"
   pass "a batch reports a capacity deferral as deferred, not failed"
@@ -763,6 +763,42 @@ SH
   assert_no_grep "orca " "$case_dir/calls.log" "the deferred Orca spawn created an Orca worktree"
   pass "an Orca spawn takes the shared project lock whenever a same-origin clone is capped and defers before creating anything"
 }
+
+# Quota pacing shares capacity's admission point and must preserve queued work.
+test_quota_deferral_leaves_ticket_queued() {
+  local case_dir home before worktrees out rc now
+  case_dir=$(make_case quota-defer quota-task)
+  home="$case_dir/home"
+  before=$(call_count "$case_dir")
+  worktrees=$(worktree_list "$case_dir")
+  printf '%s\n' 'reserve claude 15' 'reserve codex 0' > "$home/config/quota-plan"
+  now=$(date +%s)
+  jq -n --argjson now "$now" \
+    '{fetchedAt:$now,snapshot:{providers:[{provider:"codex",windows:[
+      {id:"weekly",percentRemaining:0,resetsAt:($now+604800)}]}]}}' > "$home/state/quota-plan-snapshot.json"
+  rc=0
+  out=$(spawn_ship "$case_dir" quota-task "$case_dir/unused") || rc=$?
+  expect_code "$DEFER_EXIT" "$rc" "closed quota gate did not defer: $out"
+  assert_contains "$out" 'quota pace:' 'quota diagnostic absent'
+  assert_nothing_created "$case_dir" "$home" quota-task "$before" "$worktrees"
+  printf '%s\n' 'invalid quota declaration' > "$home/config/quota-plan"
+  rc=0
+  out=$(spawn_ship "$case_dir" quota-task "$case_dir/unused") || rc=$?
+  expect_code "$DEFER_EXIT" "$rc" "malformed quota plan did not defer: $out"
+  assert_nothing_created "$case_dir" "$home" quota-task "$before" "$worktrees"
+  printf '%s\n' 'reserve claude 15' 'reserve codex 0' > "$home/config/quota-plan"
+  jq '.snapshot.providers[0].windows[0].percentRemaining = 100' \
+    "$home/state/quota-plan-snapshot.json" > "$case_dir/open-quota.json"
+  mv "$case_dir/open-quota.json" "$home/state/quota-plan-snapshot.json"
+  rc=0
+  out=$(spawn_ship "$case_dir" quota-task) || rc=$?
+  expect_code 0 "$rc" "open quota gate did not admit: $out"
+  [ -f "$home/state/quota-task.meta" ] || fail 'admitted worker metadata missing'
+  assert_absent "$home/state/.quota-plan-admission.lock" 'completed spawn leaked quota lock'
+  pass "quota admission launches only under its line; refusals preserve queued work"
+}
+
+test_quota_deferral_leaves_ticket_queued
 
 test_undeclared_capacity_keeps_dispatch_uncapped
 test_available_capacity_admits_the_worker

@@ -66,6 +66,8 @@
 #          tasks-axi feature probes remain a separate defense-in-depth check.
 #          tasks-axi and quota-axi are essential bootstrap tools.
 #          A compatible tasks-axi default backend is silent.
+#          The mutable local phase registers the optional root-home quota refill
+#          source; bin/fm-procevent-refill.sh owns registration and polling.
 #          quota-axi is required for the agent-owned dispatch-profile array
 #          procedure in AGENTS.md section 4 and
 #          .agents/skills/quota-array-dispatch/SKILL.md.
@@ -1399,6 +1401,12 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ] && local_phase; then
     if [ "$BOOTSTRAP_BACKLOG_GATE_STATUS" -eq 2 ]; then
       echo "error: bootstrap cannot access configured backlog data directory $DATA ($FM_BACKLOG_TRANSITION_ERROR)" >&2
       exit 1
+    fi
+  fi
+  # Only the root home owns the machine-wide refill source; children notify it.
+  if [ -e "$CONFIG/quota-plan" ] || [ -L "$CONFIG/quota-plan" ]; then
+    if ! "$SCRIPT_DIR/fm-procevent-refill.sh" arm --root-only >/dev/null; then
+      echo "MISSING_MANUAL: quota refill source (fix config/quota-plan; see docs/configuration.md Quota plan)"
     fi
   fi
   startup_memory_budget_setup

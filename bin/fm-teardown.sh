@@ -3845,6 +3845,8 @@ else
 fi
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
+# Removing an ordinary worker frees its capacity place for the quota refill source.
+[ "$KIND" = secondmate ] || "$SCRIPT_DIR/fm-procevent-refill.sh" notify || true
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi

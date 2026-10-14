@@ -1157,6 +1157,51 @@ When every place is held, `bin/fm-spawn.sh` launches nothing, creates no record,
 A malformed or unreadable file refuses every fresh ship or scout spawn until it is fixed, rather than guessing the intended limit, and so does a local home's state directory or task record that cannot be read while counting a capped project's holders.
 Firstmate cannot see which part of a worker's life uses the resource, so the number bounds whole workers from launch to handoff, and the tightest resource every worker needs should decide it.
 
+## Quota plan (config/quota-plan)
+
+The optional, gitignored `config/quota-plan` in this machine's root Firstmate home paces fresh worker admission and orders refill suggestions across its local homes.
+It is read in place, like `config/project-capacity`, rather than copied into secondmate homes.
+An absent file disables pacing; a present unreadable or malformed file defers fresh workers with exit 75 and leaves their tickets queued.
+Relaunches and persistent secondmates are exempt.
+
+This section owns the declaration schema:
+
+```text
+reserve claude 15
+reserve codex 0
+lane carryrank until 2026-10-20
+lane lounge-card
+lane firstmate
+```
+
+Both provider reserve lines are required exactly once, with a decimal percentage from 0 through 100.
+Lane lines are optional and ordered, with unique project names containing letters, digits, dots, underscores or dashes and starting with a letter or digit.
+A lane may have one `until YYYY-MM-DD` date, inclusive in UTC; after that date it no longer contributes refill suggestions.
+Blank lines and lines starting with `#` after whitespace are ignored; unknown directives, duplicate providers or lanes, extra fields and invalid dates are errors.
+Only active listed lanes contribute suggestions, so omitting a project excludes it from refill notifications without changing manual dispatch authority.
+No actual home configuration is installed automatically.
+
+The fleet allowance is `100 - reserve`, released in seven equal daily portions relative to the weekly reset, with unused allowance rolling forward within that cycle.
+A fresh worker starts only when observed used percentage is strictly below `allowance * day / 7`; equality defers.
+The resolved `claude` harness reads the combined all-models weekly Claude quota, and `codex` reads the normal Codex weekly window.
+Other harnesses defer while a plan is enabled because this gate has no authoritative provider mapping for them.
+The gate reads account-wide usage, including spending from other machines, through `quota-axi --all-accounts --json`, with a cache no older than five minutes.
+An unsupported command, absent combined Claude reading, stale snapshot, ambiguous provider or invalid reset refuses the affected admission rather than substituting local usage.
+The combined reader expects fields reported from a local quota-axi build and unavailable in the published PC binary; its fixture assumptions and exact compatibility boundary are recorded in [`bin/fm-quota-plan-lib.sh`](../bin/fm-quota-plan-lib.sh).
+The gate neither selects accounts nor schedules an overflow seat.
+
+Admissions hold the existing project lock and an additional machine-wide admission lock through launch, re-reading quota for the next admitted start.
+This controls admission against observed usage; it cannot guarantee a final spend ceiling because running workers are never stopped and their future spending is not reserved.
+Running work and spending on other machines can cross the line after a successful admission.
+
+Root-home bootstrap registers the refill source through `bin/fm-procevent.sh` when a plan exists.
+The source checks every ten minutes and promptly after PR handoff or cleanup, using the existing capacity accounting and canonical backlog snapshot.
+It reports open places and up to five ready ticket ids per active lane, qualified by home, only when some provider's gate is open and ready work exists.
+An uncapped lane's reported places equal its ready ticket count, rather than implying a machine concurrency limit.
+Notices include the current Claude admission verdict for a possible Codex-to-Claude validation fallback; they do not change validation policy or select work, credentials or models.
+Firstmate makes each dispatch decision, and spawn rechecks admission.
+[`bin/fm-procevent-refill.sh`](../bin/fm-procevent-refill.sh) owns registration, polling, trigger and deduplication mechanics; the [process-event skill](../.agents/skills/process-event-sources/SKILL.md) owns wake handling.
+
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
