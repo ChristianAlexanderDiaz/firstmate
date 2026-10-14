@@ -102,7 +102,7 @@ FM_ACCOUNT_FAILOVER_MENU_CANCEL_RE='Esc to cancel'
 # Claude Code 2.1.295 can report a repeat account limit without reopening the
 # menu. Match only its verified exhaustion wording at the start of the hook
 # message, never generic throttling text (docs/verification/runtime-backends.md).
-FM_ACCOUNT_FAILOVER_EXHAUSTED_RE="^You['’]ve hit your [^·]*limit([[:space:]·]|$)"
+FM_ACCOUNT_FAILOVER_EXHAUSTED_RE="^(You've|You’ve) hit your [^·]*limit([[:space:]·]|$)"
 
 # --- record -----------------------------------------------------------------
 

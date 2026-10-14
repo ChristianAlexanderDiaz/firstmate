@@ -470,16 +470,21 @@ test_stale_records_never_move_a_worker() {
 
 test_verified_usage_limit_without_a_menu_moves_without_escape() {
   local scenario message id out
-  for scenario in straight typographic; do
+  for scenario in straight typographic straight-c typographic-c; do
     id="t29-$scenario"
     new_case "inline-$scenario" "$id"
     message=$LIMIT_TEXT
-    [ "$scenario" != typographic ] || message="You’ve hit your weekly limit · resets Oct 10 at 4pm (America/New_York)"
+    case "$scenario" in
+      typographic*) message="You’ve hit your weekly limit · resets Oct 10 at 4pm (America/New_York)" ;;
+    esac
     printf '%s\n╭────╮\n│    │\n╰────╯\n' "$message" > "$CASE/fake/screen"
     printf '2\n' > "$CASE/fake/cursor-y"
     printf 'running' > "$CASE/fake/nm-state"
     record_limit "$id" rate_limit "$message"
-    out=$(case_env "$FAILOVER" run "$id" 2>&1)
+    case "$scenario" in
+      *-c) out=$(case_env LC_ALL=C "$FAILOVER" run "$id" 2>&1) ;;
+      *) out=$(case_env "$FAILOVER" run "$id" 2>&1) ;;
+    esac
     assert_contains "$out" "moved $id limited spare" "a verified inline usage limit must move: $out"
     assert_no_grep 'key:Escape' "$CASE/fake/events" "an absent limit menu must receive no Escape"
     assert_equals 'text:/exit' "$(head -1 "$CASE/fake/events")" "no key is sent before normal relaunch"
@@ -491,7 +496,7 @@ test_verified_usage_limit_without_a_menu_moves_without_escape() {
     [ ! -e "$CASE/home/state/$id.usage-limit" ] || fail "the inline limit event must be consumed"
     [ -z "$(status_of "$id")" ] || fail "successful inline recovery raises no blocked line"
   done
-  pass "run: verified inline exhaustion with either apostrophe moves without Escape"
+  pass "run: verified inline exhaustion with either apostrophe moves without Escape in default and C locales"
 }
 
 test_verified_usage_limit_without_room_and_menu_blocks_once() {
