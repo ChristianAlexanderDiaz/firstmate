@@ -98,15 +98,23 @@ PANE=$(printf '%s' "$ws" | jq -r '.result.root_pane.pane_id // empty')
 WORKSPACE=$(printf '%s' "$ws" | jq -r '.result.root_pane.workspace_id // .result.workspace.workspace_id // empty')
 TAB=$(printf '%s' "$ws" | jq -r '.result.root_pane.tab_id // empty')
 [ -n "$PANE" ] && [ -n "$WORKSPACE" ] && [ -n "$TAB" ] || fail "the lab workspace reported no pane, workspace, or tab: $ws"
+BUSY_GEN=$("$ROOT/bin/fm-busy-event.sh" arm "$HOME_DIR/state" "$ID") || fail "could not arm the live turn state"
 fm_write_meta "$HOME_DIR/state/$ID.meta" \
   "window=$HERDR_LAB_SESSION:$PANE" "endpoint_task_id=$ID" "worktree=$WORK" "project=$WORK" \
-  harness=claude kind=scout "tasktmp=$TMP_ROOT/tasktmp" model=default effort=default busy_gen=g1 \
+  harness=claude kind=scout "tasktmp=$TMP_ROOT/tasktmp" model=default effort=default "busy_gen=$BUSY_GEN" \
   backend=herdr "herdr_session=$HERDR_LAB_SESSION" "herdr_workspace_id=$WORKSPACE" \
   "herdr_tab_id=$TAB" "herdr_pane_id=$PANE"
 
 # The same StopFailure recorder fm-spawn wires into every Claude ship and scout.
-recorder="'$ROOT/bin/fm-account-failover.sh' record '$HOME_DIR/config' '$HOME_DIR/state' $ID g1"
-jq -n --arg c "$recorder" '{hooks: {StopFailure: [{hooks: [{type: "command", command: $c}]}]}}' > "$TMP_ROOT/settings.json"
+busy_prefix="'$ROOT/bin/fm-busy-event.sh' apply '$HOME_DIR/state' $ID"
+busy_suffix="--gen '$BUSY_GEN' --source claude-hook"
+recorder="$busy_prefix idle $busy_suffix --event stop-failure && '$ROOT/bin/fm-account-failover.sh' record '$HOME_DIR/config' '$HOME_DIR/state' $ID '$BUSY_GEN'"
+jq -n --arg c "$recorder" --arg submit "$busy_prefix busy $busy_suffix --event user-prompt-submit" \
+  --arg stop "$busy_prefix idle $busy_suffix --event stop" --arg end "$busy_prefix idle $busy_suffix --event session-end" \
+  '{hooks: {UserPromptSubmit: [{hooks: [{type: "command", command: $submit}]}],
+            Stop: [{hooks: [{type: "command", command: $stop}]}],
+            SessionEnd: [{hooks: [{type: "command", command: $end}]}],
+            StopFailure: [{hooks: [{type: "command", command: $c}]}]}}' > "$TMP_ROOT/settings.json"
 if [ "$LIMIT_ROOT" = ordinary ]; then
   account_env="-u CLAUDE_CONFIG_DIR"
 else
@@ -131,7 +139,7 @@ for _ in $(seq 1 120); do
 done
 marker=$(cat "$HOME_DIR/state/$ID.usage-limit" 2>/dev/null) \
   || fail "$CLAUDE_VERSION: no usage-limit record; is the account at its limit? screen: $(screen)"
-assert_contains "$marker" "gen=g1" "$CLAUDE_VERSION: the record names the hook's busy generation"
+assert_contains "$marker" "gen=$BUSY_GEN" "$CLAUDE_VERSION: the record names the hook's busy generation"
 if [ "$LIMIT_ROOT" = ordinary ]; then
   assert_contains "$marker" "config_dir_set=0" "$CLAUDE_VERSION: the record names the ordinary account"
 else

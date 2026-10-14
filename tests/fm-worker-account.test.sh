@@ -473,6 +473,28 @@ test_pacing_moves_work_off_the_nearest_reset_while_it_is_ahead_of_pace() {
   pass "pacing: work goes to the other account while the nearest-reset account is ahead of pace"
 }
 
+test_pacing_preserves_unknown_pace() {
+  local out rc scenario id=pace-unknown
+  paced_case pace-unknown
+  for scenario in missing unknown status-ahead status-behind; do
+    case "$scenario" in
+      missing) pace_snapshot 60 12 100 30 'del(.providers[0].windows[1].pace)' ;;
+      unknown) pace_snapshot 60 12 100 30 '.providers[0].windows[1].pace = {status: "unknown", reason: "expired_reset"}
+        | .providers[0].quotaSemantics.effectiveAvailability[].runway = {status: "unknown"}' ;;
+      status-ahead) pace_snapshot 60 12 100 30 '.providers[0].windows[1].pace = {status: "ahead"}' ;;
+      status-behind) pace_snapshot 60 12 100 30 '.providers[0].windows[1].pace = {status: "behind"}' ;;
+    esac
+    out=$(spawn_ship "$id-$scenario"); rc=$?
+    expect_code 0 "$rc" "a known allowance with $scenario pace remains eligible: $out"
+    case "$scenario" in
+      status-ahead) assert_paced_onto "$id-$scenario" far "$out" 'near 60% week left, resets 2026-10-17T20:00Z, ahead of pace' ;;
+      status-behind) assert_paced_onto "$id-$scenario" near "$out" 'near 60% week left, resets 2026-10-17T20:00Z, on or behind pace' ;;
+      *) assert_paced_onto "$id-$scenario" near "$out" 'near 60% week left, resets 2026-10-17T20:00Z, pace unknown' ;;
+    esac
+  done
+  pass "pacing: missing or unknown pace keeps the nearest reset; only affirmative ahead evidence defers it"
+}
+
 test_pacing_checks_applicable_quota_and_paid_usage() {
   local out rc id=pace-guard
   paced_case pace-guard
@@ -586,6 +608,7 @@ test_raw_claude_account_override_is_kept_without_a_pin
 test_local_secondmate_reads_the_launching_home_pin
 test_pacing_gives_work_to_the_nearest_reset_while_it_is_behind_pace
 test_pacing_moves_work_off_the_nearest_reset_while_it_is_ahead_of_pace
+test_pacing_preserves_unknown_pace
 test_pacing_checks_applicable_quota_and_paid_usage
 test_pacing_skips_an_unreadable_account
 test_pacing_refuses_when_no_account_qualifies

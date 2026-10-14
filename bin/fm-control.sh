@@ -88,7 +88,7 @@
 #              sign-in checked, and checked for paid usage and model quota
 #              before the old agent stops.
 #              --usage-limit handles the recorded limit under this transaction
-#              boundary, with its generation check and automatic handoff.
+#              boundary, with its generation and turn checks and automatic handoff.
 #              A manual relaunch requires --note for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
@@ -1198,6 +1198,7 @@ do_relaunch() {
   record_note
   journal_write noted "${CHECKPOINT_LINES[@]}" "$note_line"
 
+  [ "$USAGE_LIMIT" = 0 ] || fm_account_failover_require_current_turn
   journal_write stopping "${CHECKPOINT_LINES[@]}" "$note_line"
   exit_result=$(do_exit)
   journal_write exited "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
@@ -1243,7 +1244,9 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
-  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT${TARGET_CLAUDE_ACCOUNT:+ claude_account=$TARGET_CLAUDE_ACCOUNT} backend=$BACKEND endpoint=$T worktree=$WT"
+  if [ "$USAGE_LIMIT" = 0 ]; then
+    echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT${TARGET_CLAUDE_ACCOUNT:+ claude_account=$TARGET_CLAUDE_ACCOUNT} backend=$BACKEND endpoint=$T worktree=$WT"
+  fi
 }
 
 # --- verbs ------------------------------------------------------------------

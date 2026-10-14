@@ -1003,6 +1003,7 @@ Accounts with a paid credits window or unknown paid usage status never qualify, 
 Selection, control, and spawn require an unreused vendor reading and run their quota queries with `QUOTA_AXI_MAX_AGE` unset before launching a worker on a mapped account; disable paid extra usage in the account itself before using it for failover.
 Control and spawn recheck every quota scope that applies to the replacement's model and refuse a launch when an applicable allowance is unknown, exhausted, or has 5% or less remaining.
 The recorded generation is checked inside the control plane's gate, supervision lease, and lifecycle lock before the event is consumed or the worker and validation run are changed.
+Claude's turn hooks invalidate pending limit records on a new submission, normal completion, or session end; recovery checks the failed turn's busy-state sequence again before cancelling validation or stopping the worker.
 Automatic recovery refuses backends without the control plane's recovery-grade agent-state classifier before consuming the event or changing the worker or validation.
 `bin/fm-account-failover.sh` owns detection, the choice, and the move, and its header lists the remaining tuning variables.
 
@@ -1018,6 +1019,7 @@ Each canonical Claude ship and scout spawn and relaunch that does not name an ac
 
 1. The account whose weekly window resets soonest gets the work while it is on or behind the pace that would empty it at that reset, which `quota-axi` reports as a weekly pace reserve of zero or more.
 2. While that account is ahead of pace, the other accounts are tried first, and it remains the last choice.
+   Unknown pace keeps the nearest-reset preference and is reported as `pace unknown`; only affirmative ahead-of-pace evidence defers an account.
 3. An account is choosable only when it passes the shared model-aware failover launch checks (signed in, a fresh unreused reading, paid extra usage disabled, and its applicable model quota known and above the fixed 5% safety margin).
    An exhausted window for an unrelated model does not rule the account out.
    A missing, stale, or unreadable reading is never choosable.

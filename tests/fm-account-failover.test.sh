@@ -168,7 +168,9 @@ new_case() {
   fm_write_meta "$dir/home/state/$id.meta" \
     "window=fmses:fm-$id" "endpoint_task_id=$id" "worktree=$dir/wt" "project=$dir/proj" \
     harness=claude "kind=$kind" mode=no-mistakes yolo=off "tasktmp=/tmp/fm-$id" \
-    model=claude-fable-5-1 effort=default busy_gen=g1
+    model=claude-fable-5-1 effort=default
+  CASE_GEN=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" "$id") || fail "could not arm fixture turn state"
+  printf 'busy_gen=%s\n' "$CASE_GEN" >> "$dir/home/state/$id.meta"
   TASK_TMPS+=("/tmp/fm-$id")
   printf 'account limited ordinary\naccount spare %s\n' "$dir/accounts/spare" > "$dir/home/config/claude-failover"
   # Keep the home off the supervision host, which a Claude caller would
@@ -213,9 +215,12 @@ case_env() {
 # record_limit <id> [error] [message]: what the worker's StopFailure hook does,
 # from inside a worker running under the ordinary account.
 record_limit() {
-  local id=$1 error=${2:-rate_limit} message=${3-$LIMIT_TEXT}
+  local id=$1 error=${2:-rate_limit} message=${3-$LIMIT_TEXT} gen
+  gen=$(sed -n 's/^busy_gen=//p' "$CASE/home/state/$id.meta" | tail -1)
+  case_env "$ROOT/bin/fm-busy-event.sh" apply "$CASE/home/state" "$id" idle --gen "$gen" \
+    --source claude-hook --event stop-failure || fail "could not close the fixture turn"
   jq -nc --arg e "$error" --arg m "$message" '{hook_event_name: "StopFailure", error: $e, last_assistant_message: $m}' |
-    case_env "$FAILOVER" record "$CASE/home/config" "$CASE/home/state" "$id" g1
+    case_env "$FAILOVER" record "$CASE/home/config" "$CASE/home/state" "$id" "$gen"
 }
 
 # Keys and literals the terminal received, in order, as one transcript.
@@ -230,11 +235,11 @@ test_record_writes_a_usage_limit_record_only_for_a_rate_limit_with_the_map() {
   [ ! -e "$CASE/home/state/t1.usage-limit" ] || fail "a non-rate-limit turn end must not be recorded"
   record_limit t1
   marker=$(cat "$CASE/home/state/t1.usage-limit" 2>/dev/null) || fail "a rate-limit turn end should be recorded"
-  assert_contains "$marker" "gen=g1" "the record must name the hook's busy generation"
+  assert_contains "$marker" "gen=$CASE_GEN" "the record must name the hook's busy generation"
   assert_contains "$marker" "config_dir_set=0" "the record must say the worker ran with CLAUDE_CONFIG_DIR unset"
   assert_contains "$marker" "message=$LIMIT_TEXT" "the record must carry Claude's limit text"
   jq -nc '{error: "rate_limit", last_assistant_message: "limit"}' |
-    case_env CLAUDE_CONFIG_DIR="$CASE/accounts/spare" "$FAILOVER" record "$CASE/home/config" "$CASE/home/state" t1 g1
+    case_env CLAUDE_CONFIG_DIR="$CASE/accounts/spare" "$FAILOVER" record "$CASE/home/config" "$CASE/home/state" t1 "$CASE_GEN"
   assert_contains "$(cat "$CASE/home/state/t1.usage-limit")" "config_dir=$CASE/accounts/spare" \
     "the record must name the config root the worker actually ran under"
   pass "record: only a rate-limit StopFailure writes the usage-limit record, naming the worker's real account root"
@@ -468,6 +473,92 @@ test_stale_records_never_move_a_worker() {
   pass "run: stale records are skipped"
 }
 
+test_turn_hooks_invalidate_superseded_limits() {
+  local event id out failure hook marker gen
+  for event in UserPromptSubmit Stop SessionEnd; do
+    id="t34-$event"
+    new_case "superseded-$event" "$id"
+    rm -f "$CASE/fake/screen"
+    printf zsh > "$CASE/fake/command"
+    out=$(case_env "$ROOT/bin/fm-spawn.sh" "$id" --relaunch 2>&1)
+    expect_code 0 $? "the hook fixture must launch: $out"
+    rm -f "$CASE/fake/nm-calls" "$CASE/fake/quota-calls"
+    failure=$(jq -r '.hooks.StopFailure[0].hooks[0].command' "$CASE/wt/.claude/settings.local.json")
+    hook=$(jq -r --arg event "$event" '.hooks[$event][0].hooks[0].command' "$CASE/wt/.claude/settings.local.json")
+    jq -nc --arg m "$LIMIT_TEXT" '{error: "rate_limit", last_assistant_message: $m}' | case_env bash -c "$failure"
+    marker=$(cat "$CASE/home/state/$id.usage-limit") || fail "the generated failure hook must record the limit"
+    case_env bash -c "$hook" || fail "$event hook must succeed"
+    assert_absent "$CASE/home/state/$id.usage-limit" "$event must invalidate the pending limit"
+    printf '%s\n' "$marker" > "$CASE/home/state/$id.usage-limit"
+    printf running > "$CASE/fake/nm-state"
+    : > "$CASE/fake/literal"
+    : > "$CASE/fake/keys"
+    out=$(case_env "$FAILOVER" run "$id" 2>&1)
+    assert_contains "$out" "skipped $id" "a superseded report must be skipped: $out"
+    assert_equals running "$(cat "$CASE/fake/nm-state")" "$event must preserve validation"
+    assert_absent "$CASE/fake/nm-calls" "a superseded turn must not inspect or cancel validation"
+    assert_absent "$CASE/fake/quota-calls" "a superseded turn must not read quota"
+    [ ! -s "$CASE/fake/keys" ] && [ ! -s "$CASE/fake/literal" ] || fail "$event must leave the worker untouched"
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$CASE/home/state" "$id")
+    printf 'v1\ngen=%s\n' "$gen" > "$CASE/home/state/$id.usage-limit"
+    case_env bash -c "$hook" || fail "a stale hook must tolerate its refusal"
+    assert_present "$CASE/home/state/$id.usage-limit" "a stale $event hook must not invalidate a new incarnation's limit"
+  done
+  pass "recovery: generated turn hooks invalidate superseded limits and stale hooks preserve newer incarnations"
+}
+
+test_recovery_rechecks_the_turn_before_cancellation_and_stopping() {
+  local stage id out failure submit trigger prior_meta prior_brief
+  for stage in quota validation pre-stop; do
+    id="t35-$stage"
+    new_case "turn-race-$stage" "$id"
+    rm -f "$CASE/fake/screen"
+    printf zsh > "$CASE/fake/command"
+    out=$(case_env "$ROOT/bin/fm-spawn.sh" "$id" --relaunch 2>&1)
+    expect_code 0 $? "the hook fixture must launch: $out"
+    failure=$(jq -r '.hooks.StopFailure[0].hooks[0].command' "$CASE/wt/.claude/settings.local.json")
+    submit=$(jq -r '.hooks.UserPromptSubmit[0].hooks[0].command' "$CASE/wt/.claude/settings.local.json")
+    printf '%s\n' "$submit" > "$CASE/new-turn.sh"
+    jq -nc --arg m "$LIMIT_TEXT" '{error: "rate_limit", last_assistant_message: $m}' | case_env bash -c "$failure"
+    prior_meta=$(cat "$CASE/home/state/$id.meta")
+    prior_brief=$(cat "$CASE/home/data/$id/brief.md")
+    : > "$CASE/fake/literal"
+    : > "$CASE/fake/keys"
+    if [ "$stage" = validation ]; then
+      mv "$CASE/fakebin/no-mistakes" "$CASE/fakebin/nm-base"
+      cat > "$CASE/fakebin/no-mistakes" <<SH
+#!/usr/bin/env bash
+if [ "\$*" = axi ]; then bash '$CASE/new-turn.sh'; fi
+exec '$CASE/fakebin/nm-base' "\$@"
+SH
+      chmod +x "$CASE/fakebin/no-mistakes"
+    else
+      trigger=1
+      [ "$stage" != pre-stop ] || trigger=2
+      mv "$CASE/fakebin/quota-axi" "$CASE/fakebin/quota-base"
+      cat > "$CASE/fakebin/quota-axi" <<SH
+#!/usr/bin/env bash
+printf x >> '$CASE/fake/read-count'
+if [ "\$(wc -c < '$CASE/fake/read-count' | tr -d ' ')" = '$trigger' ]; then bash '$CASE/new-turn.sh'; fi
+exec '$CASE/fakebin/quota-base' "\$@"
+SH
+      chmod +x "$CASE/fakebin/quota-axi"
+    fi
+    [ "$stage" = pre-stop ] || printf running > "$CASE/fake/nm-state"
+    out=$(case_env "$FAILOVER" run "$id" 2>&1)
+    assert_contains "$out" "skipped $id" "a newer turn during $stage must supersede recovery: $out"
+    [ ! -e "$CASE/fake/nm-calls" ] || assert_no_grep 'axi abort' "$CASE/fake/nm-calls" "a newer turn must not cause validation cancellation"
+    if [ "$stage" != pre-stop ]; then
+      assert_equals running "$(cat "$CASE/fake/nm-state")" "validation must remain running"
+    fi
+    assert_equals claude "$(cat "$CASE/fake/command")" "the newer turn's worker must remain running"
+    [ ! -s "$CASE/fake/keys" ] && [ ! -s "$CASE/fake/literal" ] || fail "a newer turn must receive no stop or launch input"
+    assert_equals "$prior_meta" "$(cat "$CASE/home/state/$id.meta")" "supersession must preserve the worker record"
+    assert_equals "$prior_brief" "$(cat "$CASE/home/data/$id/brief.md")" "supersession must preserve the original brief"
+  done
+  pass "recovery: a newer submitted turn during quota, validation discovery, or pre-stop checks prevents the move"
+}
+
 test_verified_usage_limit_without_a_menu_moves_without_escape() {
   local scenario message id out
   for scenario in straight typographic straight-c typographic-c; do
@@ -576,6 +667,7 @@ test_a_second_usage_limit_moves_to_a_third_account() {
   gen=$(sed -n 's/^busy_gen=//p' "$CASE/home/state/t9.meta" | tail -1)
   printf '%s' "$LIMIT_SCREEN" > "$CASE/fake/screen"
   quota_snapshot 0 0 '.providers += [.providers[1] | .account = "third" | .quotaSemantics.effectiveAvailability[] |= (.effectivePercentRemaining = 80 | .runway.status = "through_reset")]' > "$CASE/fake/quota.json"
+  case_env "$ROOT/bin/fm-busy-event.sh" apply "$CASE/home/state" t9 idle --gen "$gen" --source claude-hook --event stop-failure
   jq -nc --arg m "$LIMIT_TEXT" '{error: "rate_limit", last_assistant_message: $m}' |
     case_env CLAUDE_CONFIG_DIR="$CASE/accounts/spare" "$FAILOVER" record "$CASE/home/config" "$CASE/home/state" t9 "$gen"
   out=$(case_env "$FAILOVER" run t9 2>&1)
@@ -704,7 +796,7 @@ test_recovery_guards_precede_every_mutation() {
     [ ! -s "$CASE/fake/keys" ] || fail "$mode refusal must not touch the terminal"
     [ ! -e "$CASE/fake/nm-calls" ] || fail "$mode refusal must not mutate validation"
     assert_equals running "$(cat "$CASE/fake/nm-state")" "$mode refusal preserves validation"
-    assert_grep 'busy_gen=g1' "$CASE/home/state/t14.meta" "$mode refusal preserves the generation"
+    assert_grep "busy_gen=$CASE_GEN" "$CASE/home/state/t14.meta" "$mode refusal preserves the generation"
   done
   pass "run: gate, lease, and lifecycle boundaries protect all recovery mutations"
 }
@@ -1139,6 +1231,8 @@ test_limit_prompt_is_answered_with_stop_and_the_worker_moves_to_an_account_with_
 test_no_qualifying_account_leaves_the_worker_stopped_with_one_blocked_line
 test_an_active_no_mistakes_run_is_aborted_before_the_move
 test_stale_records_never_move_a_worker
+test_turn_hooks_invalidate_superseded_limits
+test_recovery_rechecks_the_turn_before_cancellation_and_stopping
 test_verified_usage_limit_without_a_menu_moves_without_escape
 test_verified_usage_limit_without_room_and_menu_blocks_once
 test_unconfirmed_rate_limits_leave_validation_and_worker_untouched

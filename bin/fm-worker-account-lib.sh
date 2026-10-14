@@ -501,7 +501,8 @@ fm_worker_account_failover_select() {
 # config/claude-failover so each one's weekly allowance is used before it
 # resets: the account whose weekly window resets nearest gets the work while it
 # is on or behind the pace that would empty it at that reset (its weekly
-# reserve is zero or more), and otherwise the other accounts are tried first.
+# reserve is zero or more), or its pace is unknown. Only affirmative
+# ahead-of-pace evidence moves it behind the other accounts.
 # A worker that later hits a limit still fails over through
 # bin/fm-account-failover.sh.
 #
@@ -554,18 +555,20 @@ fm_worker_account_pace() {
       ($week.pace.reservePercentPoints) as $reserve |
       $v + { reset: ($week.resetsAt // null), week: ($week.percentRemaining // null),
              behind: (if ($reserve | type) == "number" then $reserve >= 0
-                      else (($week.pace.status // "") | IN("behind", "on", "on_pace", "on_track")) end) } |
+                      elif ($week.pace.status // "") == "ahead" then false
+                      elif (($week.pace.status // "") | IN("behind", "on", "on_pace", "on_track")) then true
+                      else null end) } |
       if .ok != true then .
       elif $week == null or (.reset | type) != "string" or (.week | type) != "number" then .ok = false | .why = "its weekly reset is unknown"
       else . end ] as $accounts |
     ($accounts | map(
       "\(.name) \(if (.week | type) == "number" then "\(.week)%" else "unknown" end) week left, resets \((.reset | short_time) // "unknown"), " +
-      (if .ok then "\(if .behind then "on or behind" else "ahead of" end) pace"
+      (if .ok then (if .behind == null then "pace unknown" elif .behind then "on or behind pace" else "ahead of pace" end)
        else "not choosable (\(.why))" end)) | join("; ")) as $summary |
     ([ $accounts[] | select(.ok) ] | sort_by((.reset | short_time), .order)) as $ready |
     (if ($ready | length) == 0 then []
-     elif $ready[0].behind then $ready
-     else $ready[1:] + $ready[:1] end) as $order |
+     elif $ready[0].behind == false then $ready[1:] + $ready[:1]
+     else $ready end) as $order |
     $summary, ($order[] | .name)')  || {
     echo 'error: Claude account pacing: the quota-axi --all-accounts reading was unreadable' >&2
     return 1

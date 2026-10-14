@@ -4809,7 +4809,7 @@ if [ "$KIND" != secondmate ]; then
     # StopFailure also hands its payload to the Claude account failover
     # recorder, which writes nothing in a home without config/claude-failover.
     failover_record="$(shell_quote "$FM_ROOT/bin/fm-account-failover.sh") record $(shell_quote "$CONFIG") $(shell_quote "$STATE_REAL") $(shell_quote "$ID") $(shell_quote "$BUSY_GEN")"
-    j_stopfail=$(json_escape "$failover_record 2>/dev/null; $busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null || true")
+    j_stopfail=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null && $failover_record 2>/dev/null || true")
     j_sessionend=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event session-end 2>/dev/null || true")
     cat >"$WT/.claude/settings.local.json" <<EOF
 {"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
