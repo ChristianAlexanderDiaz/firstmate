@@ -1891,6 +1891,10 @@ report_worktree_dirt() {
   ' >&2
 }
 
+worktree_dirt() {  # <porcelain>; drops untracked harness leftovers
+  printf '%s\n' "$1" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' || true
+}
+
 validate_worktree_teardown_safety() {
   local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
   [ -d "$WT" ] || return 0
@@ -1907,7 +1911,7 @@ validate_worktree_teardown_safety() {
     echo "Restore the git index state, or get the captain's explicit OK to discard, then --force." >&2
     return 1
   fi
-  dirty=$(printf '%s\n' "$dirty_raw" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' || true)
+  dirty=$(worktree_dirt "$dirty_raw")
 
   if ! unpushed_raw=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null); then
     if worktree_safety_blocked_by_lock "commits not on a remote"; then
@@ -3552,8 +3556,10 @@ fi
 LINEAR_TEARDOWN_UNLANDED=0
 if [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ] && [ "$FORCE" = --force ] && [ -z "$PR_URL" ]; then
   LINEAR_TEARDOWN_UNLANDED=1
-  if [ -d "$WT" ] && [ -z "$(git -C "$WT" status --porcelain 2>/dev/null || echo unreadable)" ] \
-      && git -C "$WT" merge-base --is-ancestor HEAD "${BASE_BRANCH:-$(default_branch)}" 2>/dev/null; then
+  if [ -d "$WT" ] && LINEAR_TEARDOWN_STATUS=$(git -C "$WT" status --porcelain 2>/dev/null) \
+      && [ -z "$(worktree_dirt "$LINEAR_TEARDOWN_STATUS")" ] \
+      && { [ -z "$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null || echo unreadable)" ] \
+        || git -C "$WT" merge-base --is-ancestor HEAD "${BASE_BRANCH:-$(default_branch)}" 2>/dev/null; }; then
     LINEAR_TEARDOWN_UNLANDED=0
   fi
 fi

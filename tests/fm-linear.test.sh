@@ -225,7 +225,7 @@ touch "$CASE/forge-fail"
 sync_event merge "$TASK" "$PR" 2>/dev/null
 assert_equals 0 "$(mutations)" 'failed PR read never creates'
 make_case malformed-config
-printf 'exclude_project sample\n' >> "$HOME_DIR/config/linear"
+printf 'exclude_task work\n' >> "$HOME_DIR/config/linear"
 sync_event spawn "$TASK" 2>/dev/null
 assert_equals 0 "$(wc -l < "$CASE/requests" | tr -d ' ')" 'malformed exclusion fails closed'
 pass 'saved linkage, token boundaries and invalid input are handled safely'
@@ -280,10 +280,9 @@ for event in spawn merge hold release idle teardown dependencies; do
 done
 pass 'every event leaves Triage untouched'
 
-for skip in project pattern scout unmapped config key; do
+for skip in pattern scout unmapped config key; do
   make_case "skip-$skip"
   case "$skip" in
-    project) printf 'exclude_project=sample\n' >> "$HOME_DIR/config/linear" ;;
     pattern) printf 'exclude_task=w*\n' >> "$HOME_DIR/config/linear" ;;
     scout) tasks update "$TASK" --kind scout >/dev/null ;;
     unmapped) tasks update "$TASK" --repo other >/dev/null ;;
@@ -297,7 +296,7 @@ for skip in project pattern scout unmapped config key; do
   assert_equals 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" 'one quiet diagnostic'
   assert_equals 0 "$(wc -l < "$CASE/requests" | tr -d ' ')" "$skip makes no API call"
 done
-pass 'exclusions, scouts, missing mapping/config/key skip before API access'
+pass 'task exclusions, scouts, missing mapping/config/key skip before API access'
 
 make_case no-config-lifecycle
 rm "$HOME_DIR/config/linear"
@@ -379,13 +378,13 @@ assert_equals "$DONE" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'watcher sy
 assert_not_contains "$(cat "$CASE/watch.err")" 'timed out' 'watcher does not deadlock with Linear sync'
 pass 'real watcher syncs an externally merged PR under its existing control lock'
 
-for failure in no yes; do
+for failure in no landed yes; do
   make_case "real-spawn-$failure"
   fm_test_spawn_home "$HOME_DIR" claude
   printf '%s\n' "$$" > "$HOME_DIR/state/.lock"
   fm_test_spawn_brief "$HOME_DIR" "$TASK" 'Exercise automatic issue sync.'
   fm_git_worktree "$CASE/sample" "$CASE/wt" "fm/$TASK"
-  [ "$failure" = no ] || touch "$CASE/error"
+  [ "$failure" != yes ] || touch "$CASE/error"
   out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
     HOME="$HOME_DIR/user-home" CLAUDE_CONFIG_DIR='' \
     bash "$ROOT/bin/fm-spawn.sh" "$TASK" "$CASE/sample" --mode direct-PR --yolo off 2>&1) \
@@ -399,12 +398,18 @@ for failure in no yes; do
     out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
       bash "$ROOT/bin/fm-teardown.sh" "$TASK" --force 2>&1) || fail "real teardown failed: $out"
     assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'successful unlanded teardown queues issue'
-
+  elif [ "$failure" = landed ]; then
+    # Harness leftovers are not unlanded work under teardown's own rule.
+    mkdir -p "$CASE/wt/.claude"
+    printf '{}\n' > "$CASE/wt/.claude/settings.local.json"
+    out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
+      bash "$ROOT/bin/fm-teardown.sh" "$TASK" --force 2>&1) || fail "real teardown failed: $out"
+    assert_equals "$STARTED" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'forced teardown of landed work keeps status'
   else
     assert_contains "$out" 'sync failed' 'actual spawn tolerates API failure'
   fi
 done
-pass 'real ship spawn calls sync after dispatch and survives API failure'
+pass 'real ship spawn calls sync after dispatch and survives API failure; teardown demotes only unlanded work'
 
 
 for event in idle teardown; do
@@ -469,7 +474,7 @@ assert_equals started "$(jq -r '.[0].state.type' "$CASE/issues.json")" 'dependen
 pass 'real block/unblock and dependency completion sync directional owned relations without changing status'
 
 
-for guard in triage excluded unlinked; do
+for guard in triage unmapped unlinked; do
   make_case "dependency-$guard"
   seed_issue started
   tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
@@ -481,16 +486,13 @@ for guard in triage excluded unlinked; do
       jq '.[1].state.type="triage"' "$CASE/issues.json" > "$CASE/new"
       mv "$CASE/new" "$CASE/issues.json"
       ;;
-    excluded)
-      printf 'project=private-sample|%s\nexclude_project=private-sample\n' "$TEAM" >> "$HOME_DIR/config/linear"
-      tasks update prerequisite --repo private-sample >/dev/null
-      ;;
+    unmapped) tasks update prerequisite --repo private-sample >/dev/null ;;
     unlinked) tasks update prerequisite --title 'Unlinked prerequisite' >/dev/null ;;
   esac
   run bash "$ROOT/bin/fm-tasks-axi.sh" block "$TASK" --by prerequisite >/dev/null
   assert_equals 0 "$(mutations)" "$guard dependency never mutates Linear"
 done
-pass 'Triage, excluded and unlinked dependencies never mutate Linear'
+pass 'Triage, unmapped and unlinked dependencies never mutate Linear'
 
 make_case periodic-idle
 seed_issue started
@@ -530,6 +532,20 @@ for skip in 'harness=grok' "pr=$PR"; do
   [ ! -e "$HOME_DIR/state/$TASK.linear-idle" ] || fail "$skip counted toward idle"
 done
 pass 'periodic semantic idle check requires a full day and resets on activity, unknown state, hookless harness or recorded PR'
+
+make_case heartbeat-quiet
+printf 'exclude_task=private-*\n' >> "$HOME_DIR/config/linear"
+tasks add private-work 'Private work' --repo sample --kind ship >/dev/null
+fm_write_meta "$HOME_DIR/state/private-work.meta" 'kind=ship' 'backend=tmux' 'window=fm-private-work' 'harness=claude' 'spawn_gen=example'
+touch "$HOME_DIR/state/gone.linear-dependencies"
+out=$(sync_event tick 2>&1)
+assert_equals '' "$out" 'heartbeat skips excluded work quietly'
+[ ! -e "$HOME_DIR/state/gone.linear-dependencies" ] || fail 'dependency record for a removed task was kept'
+rm -f "$HOME_DIR/state/.linear-cursor"
+touch "$HOME_DIR/state/$TASK.linear-dependencies" "$CASE/slow"
+sync_event tick 2>/dev/null
+assert_equals private-work "$(cat "$HOME_DIR/state/.linear-cursor")" 'timed-out task is retried first'
+pass 'heartbeat is quiet for expected skips, retires orphaned records, and retries a timed-out task first'
 
 make_case timeout
 touch "$CASE/slow"

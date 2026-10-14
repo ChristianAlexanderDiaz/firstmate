@@ -103,7 +103,10 @@ fm_linear_dependencies() {  # <data> <state> <task> <row> <issue-id>
   while IFS= read -r dep; do
     [ -n "$dep" ] || continue
     case "$dep" in *[!A-Za-z0-9._-]*) return 1 ;; esac
-    other=$(fm_backlog_row_show "$data" "$dep" --full)
+    other=$(fm_backlog_row_show "$data" "$dep" --full) || {
+      printf '%s\n' "$other" | grep -q '^code: NOT_FOUND$' || return 1
+      continue
+    }
     project=$(fm_linear_field "$other" repo); kind=$(fm_linear_field "$other" kind)
     case "$kind" in scout|secondmate) continue ;; esac
     skip=0
@@ -113,8 +116,7 @@ fm_linear_dependencies() {  # <data> <state> <task> <row> <issue-id>
     done < <(printf '%s' "$LINEAR_CONFIG" | jq -r '.[] | select(.key == "exclude_task") | .value')
     [ "$skip" = 0 ] || continue
     printf '%s' "$LINEAR_CONFIG" | jq -e --arg project "$project" '
-      any(.[]; .key == "project" and (.value | split("|")[0]) == $project) and
-      (any(.[]; .key == "exclude_project" and .value == $project) | not)' >/dev/null || continue
+      any(.[]; .key == "project" and (.value | split("|")[0]) == $project)' >/dev/null || continue
     text=$(fm_linear_field "$other" body)
     candidates=$(printf '%s\n' "$text" | sed -n 's/^Linear issue: //p')
     [ -n "$candidates" ] || candidates=$(fm_linear_candidates "$dep"$'\n'"$(fm_linear_field "$other" title)"$'\n'"$text")
@@ -176,12 +178,13 @@ fm_linear_idle_due() {  # <state> <task>; classifier owns all harness/backend fa
 }
 
 # Each heartbeat refreshes ship records and dependency markers in rotation
-# within one ten-second budget, resuming after the last task it reached, so a
-# timed-out task cannot starve the rest. This is part of the existing watcher,
+# within one ten-second budget, starting no task with less than five seconds
+# left. The cursor names the last task that finished, so a timed-out task is
+# retried first on the next heartbeat. This is part of the existing watcher,
 # not a daemon.
 fm_linear_tick() {
   local state=${FM_STATE_OVERRIDE:-${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$LINEAR_DIR/.." && pwd)}}/state}
-  local previous task ids file deadline=$((SECONDS + 10)) LINEAR_BOUND
+  local previous task ids file deadline=$((SECONDS + 10)) LINEAR_BOUND LINEAR_RESULT
   previous=$(cat "$state/.linear-cursor" 2>/dev/null || true)
   ids=$({
     for file in "$state"/*.meta; do
@@ -198,9 +201,10 @@ fm_linear_tick() {
   while IFS= read -r task; do
     [ -n "$task" ] || continue
     LINEAR_BOUND=$((deadline - SECONDS))
-    [ "$LINEAR_BOUND" -gt 0 ] || break
-    printf '%s\n' "$task" > "$state/.linear-cursor"
+    [ "$LINEAR_BOUND" -ge 5 ] || break
     fm_linear_main refresh "$task"
+    case "$LINEAR_RESULT" in 124|137) break ;; esac
+    printf '%s\n' "$task" > "$state/.linear-cursor"
   done <<< "$ids"
 }
 
@@ -223,7 +227,7 @@ fm_linear_event() {
     if test("^[^=]+=.*$") then capture("^(?<key>[^=]+)=(?<value>.*)$") else error("invalid directive") end]' < "$config")
   printf '%s' "$LINEAR_CONFIG" | jq -e 'all(.[];
     (.key == "key_command" or .key == "waiting_label" or .key == "project" or
-     .key == "exclude_project" or .key == "exclude_task") and
+     .key == "exclude_task") and
     (.value | length > 0) and (.value | explode | all(.[]; . >= 32 and . != 127))) and
     all(.[] | select(.key == "project"); (.value | split("|") | length == 2 and all(.[]; length > 0)))' >/dev/null
   if [ -z "${FM_LINEAR_API_KEY:-}" ] && ! printf '%s' "$LINEAR_CONFIG" | jq -e 'any(.[]; .key == "key_command")' >/dev/null; then
@@ -252,7 +256,12 @@ fm_linear_event() {
     [ "$idle_due" = 1 ] || [ -f "$state/$id.linear-dependencies" ] || exit 0
   fi
   if [ "$event" = merge ]; then fm_pr_url_parse "$url"; else url=''; fi
-  row=$(fm_backlog_row_show "$data" "$id" --full)
+  row=$(fm_backlog_row_show "$data" "$id" --full) || {
+    # An archived or removed task has no dependencies left to clear.
+    [ "$event" = refresh ] && printf '%s\n' "$row" | grep -q '^code: NOT_FOUND$' || exit 1
+    rm -f "$state/$id.linear-dependencies"
+    exit 0
+  }
   body=$(fm_linear_field "$row" body)
   title=$(fm_linear_field "$row" title)
   project=$(fm_linear_field "$row" repo)
@@ -268,8 +277,6 @@ fm_linear_event() {
     fi
   fi
   case "$kind" in scout|secondmate) exit 22 ;; esac
-  printf '%s' "$LINEAR_CONFIG" | jq -e --arg project "$project" \
-    'any(.[]; .key == "exclude_project" and .value == $project)' >/dev/null && exit 22
   team=$(printf '%s' "$LINEAR_CONFIG" | jq -er --arg project "$project" '
     [.[] | select(.key == "project") | .value | split("|") | select(.[0] == $project) | .[1]] |
     if length == 0 then "" elif length == 1 then .[0] else error("duplicate project") end')
@@ -397,6 +404,7 @@ fm_linear_event() {
 
 fm_linear_main() {
   local result=0 config
+  LINEAR_RESULT=0
   LINEAR_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   case "${1:-}" in
     -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; return 0 ;;
@@ -416,6 +424,9 @@ fm_linear_main() {
   # shellcheck source=bin/fm-timeout-lib.sh
   . "$LINEAR_DIR/fm-timeout-lib.sh"
   fm_run_timed "${LINEAR_BOUND:-10}" bash "$LINEAR_DIR/fm-linear-lib.sh" --run "$@" >/dev/null 2>&1 || result=$?
+  LINEAR_RESULT=$result
+  # Heartbeat refreshes revisit excluded, unmapped and unlinked work routinely.
+  [ "${1:-}" != refresh ] || case "$result" in 22|23|24) return 0 ;; esac
   case "$result" in
     0) ;;
     20) printf 'linear: sync off (no config)\n' >&2 ;;

@@ -357,7 +357,6 @@ The environment key takes precedence over the command.
 key_command=security find-generic-password -s example-linear-api -w
 project=sample|00000000-0000-4000-8000-000000000001
 waiting_label=00000000-0000-4000-8000-000000000004
-exclude_project=private-sample
 exclude_task=private-*
 exclude_task=research-*
 ```
@@ -365,21 +364,21 @@ exclude_task=research-*
 | Directive | Meaning |
 | --- | --- |
 | `key_command` | Optional single command executed with `bash -c` when the environment key is absent; stdout supplies the credential. |
-| `project` | Repeatable exact project basename to Linear team UUID mapping, separated by `\|`; unmapped projects never sync. |
+| `project` | Repeatable exact project basename to Linear team UUID mapping, separated by `\|`; unmapped projects never sync, so leave private projects unmapped. |
 | `waiting_label` | Optional single UUID of the waiting-for-answer label; without it, hold and release sync are skipped. |
-| `exclude_project` | Repeatable exact project basename that overrides any mapping. |
 | `exclude_task` | Repeatable task-id shell glob, matched case-sensitively without executing it. |
 
 Scouts and secondmates never sync.
-Exclude any additional private work explicitly, and map only projects whose backlog titles and bodies may be sent to Linear.
+Map only projects whose backlog titles and bodies may be sent to Linear, and exclude any private tasks within them with `exclude_task`.
 A successful ship spawn creates a ticket when no linkage exists, then selects the team's started state named `In Progress`, falling back to the first started state returned by Linear.
 Creation specifies that state explicitly, avoiding Linear's default Triage intake for teams with Triage enabled.
 A recorded PR merge, including one detected from the forge, selects the completed state named `Done`, falling back to the first completed state, and attaches the PR URL.
 A captain hold adds the configured label without changing workflow status; its answer, release or reconciled close removes only that label.
 `In Progress` represents a working ship, not a standing assignment.
-After a forced teardown that discards work with no recorded PR and no local landing proof, an issue still in the started state sync selects (normally `In Progress`) returns to the team's unstarted `Todo` state (or first unstarted state), with a reason comment.
+After a forced teardown that discards work with no recorded PR and no local landing proof (a clean worktree, ignoring harness leftovers, whose commits are on a remote or the base branch), an issue still in the started state sync selects (normally `In Progress`) returns to the team's unstarted `Todo` state (or first unstarted state), with a reason comment.
 Any other teardown, including one whose landing is merely unrecorded, leaves the status unchanged.
-Each existing watcher heartbeat checks recorded ships and dependency records in rotation within one ten-second budget.
+Each existing watcher heartbeat checks recorded ships and dependency records in rotation within one ten-second budget, retrying a timed-out task first on the next heartbeat.
+Heartbeat checks stay quiet for excluded, unmapped, unlinked, ambiguous or Triage work, and drop a dependency record whose task no longer exists.
 A ship classified idle or dead continuously for more than a day returns to Todo the same way, with a reason comment; activity, a new worker incarnation or unknown classification resets that interval.
 This uses the existing semantic busy classifier; missing evidence is never treated as idle.
 Ships whose harness has no busy-state hooks are never returned to Todo for inactivity, because sparse samples cannot prove a continuous day.
