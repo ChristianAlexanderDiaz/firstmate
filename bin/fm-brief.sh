@@ -155,6 +155,7 @@ IFS= read -r -d '' CREWMATE_PAUSE_INSTRUCTIONS <<EOF || true
    Use \`$PAUSED_VERB: {why}\` - distinct from \`blocked:\` - when deliberately waiting for work or an external condition expected to clear on its own, including your own validation round.
    Before ending your turn with your own background shell or monitor still running, or before waiting on your own pipeline run or a long foreground command, append \`$PAUSED_VERB [at=<epoch>]: {job and completion condition}\` to the status file.
    Add \`[wait=captain]\` before the colon on a \`$PAUSED_VERB:\` line only when deliberately waiting on the captain's own review or answer.
+   When a declared \`[wait=captain]\` wait ends after the captain's answer, append \`resolved [key=<slug>] [at=<epoch>]: {how it was answered}\` yourself with that wait's key, or a keyless \`resolved\` line for a keyless pause.
    Name what you are waiting for and what will let you resume; do not repeat the declaration on every poll.
    Do not declare active implementation or reasoning as a wait.
    Firstmate may still raise one first-sight alert; the declared wait then uses the existing long recheck cadence instead of repeated possible-wedge alarms.
