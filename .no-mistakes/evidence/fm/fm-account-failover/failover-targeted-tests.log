@@ -1,0 +1,34 @@
+ok - record: only a rate-limit StopFailure writes the usage-limit record, naming the worker's real account root
+ok - absent config/claude-failover: the hook records nothing and the watcher tick does nothing
+error: config/claude-failover line 3: expected "account <name> <ordinary|/absolute/path>": /private/var/folders/sc/52nstfkd3wvff75x02xj4mbm0000gn/T/fm-account-failover.29Y80b/choose/home/config/claude-failover
+error: map '/private/var/folders/sc/52nstfkd3wvff75x02xj4mbm0000gn/T/fm-account-failover.29Y80b/choose/home/config/claude-failover' is absent, unreadable, or malformed
+ok - choose: uses only the fixed 5% safety margin and refuses removed configuration
+ok - choose: unknown, missing, stale, and credit-backed quota never qualifies, and model scopes apply
+ok - run: the limit prompt gets its stop answer and the worker relaunches on an account with room
+ok - run: with no account above the fixed margin the worker stays stopped and one blocked line names the resets
+ok - run: an active no-mistakes run is aborted and proven stopped before the worker moves
+ok - run: stale records are skipped
+ok - recovery: generated turn hooks invalidate superseded limits and stale hooks preserve newer incarnations
+ok - recovery: a newer submitted turn during quota, validation discovery, or pre-stop checks prevents the move
+ok - run: verified inline exhaustion with either apostrophe moves without Escape in default and C locales
+ok - run: verified inline exhaustion without room blocks once with reset times
+ok - recovery: throttling, unverified exhaustion text, and partial prompts leave validation and the worker untouched
+ok - run: consecutive genuine usage limits can move onto another account
+ok - watcher: a recorded usage limit is moved by the per-cycle tick and surfaces as one check wake
+ok - fm-control relaunch: an unknown, signed-out, or pin-conflicting account refuses before the worker stops
+ok - fm-control relaunch: every selected account name is literal and retained
+ok - run: unusable and signed-out preferred accounts do not hide usable alternatives
+ok - run: gate, lease, and lifecycle boundaries protect all recovery mutations
+ok - recovery: unsupported restart backends preserve the event, prompt, worker, and validation
+ok - run: quota selection cannot race a manual replacement
+ok - launch: control and spawn both refuse paid-enabled accounts
+ok - choose: aliases and full model ids check all usable families; unresolved names check every scope
+ok - run: recorded model choices constrain recovery and eligible aliases survive relaunch
+ok - quota: supplied cache refuses; selection and both launch boundaries force vendor reads
+ok - choose: legacy, versioned, and unresolved model allowances cannot be skipped
+ok - run: scope representations preserve relevant refusals and ordinary successful moves
+ok - launch: both fresh launch readings enforce model certainty, exhaustion, and the fixed margin
+ok - run: quota exhausted between selection and either launch check blocks the move
+ok - launch: retained and overridden models preserve ordinary successful account moves
+ok - pacing: control refuses before stopping; spawn independently refuses an unsafe replacement
+ok - pacing: every paced relaunch chooses afresh, and failover still moves a limited worker beside the paced pin

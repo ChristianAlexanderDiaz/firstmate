@@ -1,0 +1,42 @@
+Real Herdr lab and Claude CLI, synthetic hook events for safety guards; no genuine exhausted-account menu or account switch is claimed.
+
+Superseded exhaustion after a newer submission:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+skipped guard the usage-limit turn was superseded
+
+Documented transient throttle with no usage menu:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+skipped guard the rate-limit turn end shows no verified account exhaustion
+
+Straight-apostrophe exhaustion with no menu and no qualifying map rows:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+blocked guard Claude usage limit reached (You've hit your weekly limit · resets Oct 17 at 4pm); no other Claude account has room (near: the account the worker just ran out on; far: no quota reading for this account), so the worker was left stopped
+
+Curly-apostrophe exhaustion under C locale with no menu and no qualifying map rows:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+blocked guard Claude usage limit reached (You’ve hit your weekly limit · resets Oct 17 at 4pm); no other Claude account has room (near: the account the worker just ran out on; far: no quota reading for this account), so the worker was left stopped
+
+Repeat run consumes the event only once:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+skipped guard no usage-limit record
+
+Recorded status:
+blocked: Claude usage limit reached (You've hit your weekly limit · resets Oct 17 at 4pm); no other Claude account has room (near: the account the worker just ran out on; far: no quota reading for this account), so the worker was left stopped
+blocked: Claude usage limit reached (You’ve hit your weekly limit · resets Oct 17 at 4pm); no other Claude account has room (near: the account the worker just ran out on; far: no quota reading for this account), so the worker was left stopped
+
+Paced relaunch with no matching quota account refuses before stopping:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+error: Claude account pacing: no account is choosable: near unknown week left, resets unknown, not choosable (no quota reading for this account); far unknown week left, resets unknown, not choosable (no quota reading for this account)
+
+Paced fresh spawn refuses before creating a task record:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision according to the session-start block for this harness; do not use shell &.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+error: Claude account pacing: no account is choosable: near unknown week left, resets unknown, not choosable (no quota reading for this account); far unknown week left, resets unknown, not choosable (no quota reading for this account)
+
+No runtime keys, launch commands, or endpoint creation were sent by these guard operations.

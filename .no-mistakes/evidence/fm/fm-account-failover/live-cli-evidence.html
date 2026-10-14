@@ -1,0 +1,131 @@
+<!doctype html><meta charset="utf-8"><title>Account validation: live CLI captures</title><style>body{background:#16181d;color:#e9edf3;font:15px system-ui;margin:32px}pre{font:13px/1.5 ui-monospace,monospace;white-space:pre-wrap;border:1px solid #454b56;padding:20px}h1{font-size:23px}h2{font-size:18px}</style><h1>Live CLI captures</h1><p>Exact captured terminal and product output, rendered for review. This is not a native screenshot. The runtime uses synthetic hook events, and the planner uses disposable quota snapshots. No successful switch between distinct logins is claimed.</p>
+<h2>Real Claude lab: workspace trust blocked submission</h2><pre>env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION -u ANTHROPIC_API_KEY
+ -u CLAUDE_CODE_OAUTH_TOKEN claude --setting-sources &#x27;&#x27; --settings &#x27;/Users/christianalexanderdiaz/.no-mistakes/worktree
+s/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/settings.json&#x27; &#x27;Reply with only hi; do not run any
+ tools or write any files.&#x27;
+work on  main [?]
+❯ env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION -u ANTHROPIC_API_K
+EY -u CLAUDE_CODE_OAUTH_TOKEN claude --setting-sources &#x27;&#x27; --settings &#x27;/Users/christianalexanderdiaz/.no-mistakes/worktr
+ees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/settings.json&#x27; &#x27;Reply with only hi; do not run a
+ny tools or write any files.&#x27;
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runti
+ me/work
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source
+ project, or work from your team). If not, take a moment to review what&#x27;s in this folder first.
+
+ Claude Code&#x27;ll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+</pre>
+<h2>Live runtime safety guards</h2><pre>Real Herdr lab and Claude CLI, synthetic hook events for safety guards; no genuine exhausted-account menu or account switch is claimed.
+
+Superseded exhaustion after a newer submission:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+skipped guard the usage-limit turn was superseded
+
+Documented transient throttle with no usage menu:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+skipped guard the rate-limit turn end shows no verified account exhaustion
+
+Straight-apostrophe exhaustion with no menu and no qualifying map rows:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+blocked guard Claude usage limit reached (You&#x27;ve hit your weekly limit · resets Oct 17 at 4pm); no other Claude account has room (near: the account the worker just ran out on; far: no quota reading for this account), so the worker was left stopped
+
+Curly-apostrophe exhaustion under C locale with no menu and no qualifying map rows:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+blocked guard Claude usage limit reached (You’ve hit your weekly limit · resets Oct 17 at 4pm); no other Claude account has room (near: the account the worker just ran out on; far: no quota reading for this account), so the worker was left stopped
+
+Repeat run consumes the event only once:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+skipped guard no usage-limit record
+
+Recorded status:
+blocked: Claude usage limit reached (You&#x27;ve hit your weekly limit · resets Oct 17 at 4pm); no other Claude account has room (near: the account the worker just ran out on; far: no quota reading for this account), so the worker was left stopped
+blocked: Claude usage limit reached (You’ve hit your weekly limit · resets Oct 17 at 4pm); no other Claude account has room (near: the account the worker just ran out on; far: no quota reading for this account), so the worker was left stopped
+
+Paced relaunch with no matching quota account refuses before stopping:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+error: Claude account pacing: no account is choosable: near unknown week left, resets unknown, not choosable (no quota reading for this account); far unknown week left, resets unknown, not choosable (no quota reading for this account)
+
+Paced fresh spawn refuses before creating a task record:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/runtime/home
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell &amp; for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision according to the session-start block for this harness; do not use shell &amp;.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+error: Claude account pacing: no account is choosable: near unknown week left, resets unknown, not choosable (no quota reading for this account); far unknown week left, resets unknown, not choosable (no quota reading for this account)
+
+No runtime keys, launch commands, or endpoint creation were sent by these guard operations.
+</pre>
+<h2>Real account planner with disposable data and normal login checks</h2><pre>Real Firstmate account planner with disposable quota data; Claude auth checks use the normal signed-in login.
+near and far are synthetic labels both mapped to ordinary for planner-only coverage; no second account or switch is claimed.
+
+Nearest weekly reset, on or behind pace
+pick	near	ordinary		chose near: near 60% week left, resets 2026-10-17T20:00Z, on or behind pace; far 90% week left, resets 2026-10-20T23:00Z, on or behind pace
+exit=0
+
+Ahead-of-pace nearest account defers to overflow
+pick	far	ordinary		chose far: near 60% week left, resets 2026-10-17T20:00Z, ahead of pace; far 90% week left, resets 2026-10-20T23:00Z, on or behind pace
+exit=0
+
+Unknown pace keeps the nearest reset
+pick	near	ordinary		chose near: near 60% week left, resets 2026-10-17T20:00Z, pace unknown; far 90% week left, resets 2026-10-20T23:00Z, on or behind pace
+exit=0
+
+Absent pace keeps the nearest reset
+pick	near	ordinary		chose near: near 60% week left, resets 2026-10-17T20:00Z, pace unknown; far 90% week left, resets 2026-10-20T23:00Z, on or behind pace
+exit=0
+
+Sonnet remains eligible despite unrelated Opus exhaustion
+pick	near	ordinary		chose near: near 60% week left, resets 2026-10-17T20:00Z, on or behind pace; far 90% week left, resets 2026-10-20T23:00Z, on or behind pace
+exit=0
+
+Refuse margin nearest account and use safe overflow
+pick	far	ordinary		chose far: near 60% week left, resets 2026-10-17T20:00Z, not choosable (at or below the 5% safety margin); far 90% week left, resets 2026-10-20T23:00Z, on or behind pace
+exit=0
+
+Refuse exhausted nearest account and use safe overflow
+pick	far	ordinary		chose far: near 60% week left, resets 2026-10-17T20:00Z, not choosable (it is exhausted now); far 90% week left, resets 2026-10-20T23:00Z, on or behind pace
+exit=0
+
+Refuse paid nearest account and use safe overflow
+pick	far	ordinary		chose far: near 60% week left, resets 2026-10-17T20:00Z, on or behind pace; far 90% week left, resets 2026-10-20T23:00Z, on or behind pace; near refused at launch (Claude account &#x27;near&#x27; has paid usage enabled or its paid usage status is unknown)
+exit=0
+
+Refuse stale nearest account and use safe overflow
+pick	far	ordinary		chose far: near 60% week left, resets 2026-10-17T20:00Z, not choosable (its quota reading is stale); far 90% week left, resets 2026-10-20T23:00Z, on or behind pace
+exit=0
+
+Refuse reused nearest account and use safe overflow
+pick	far	ordinary		chose far: near 60% week left, resets 2026-10-17T20:00Z, on or behind pace; far 90% week left, resets 2026-10-20T23:00Z, on or behind pace; near refused at launch (Claude account &#x27;near&#x27; has paid usage enabled or its paid usage status is unknown)
+exit=0
+
+Refuse unknown nearest account and use safe overflow
+pick	far	ordinary		chose far: near 60% week left, resets 2026-10-17T20:00Z, not choosable (its quota is unknown); far 90% week left, resets 2026-10-20T23:00Z, on or behind pace
+exit=0
+
+No eligible account refuses with each weekly reset
+error: Claude account pacing: no account is choosable: near 60% week left, resets 2026-10-17T20:00Z, not choosable (at or below the 5% safety margin); far 90% week left, resets 2026-10-20T23:00Z, not choosable (at or below the 5% safety margin)
+exit=1
+
+Signed-out overflow refuses and safe nearest account remains usable
+pick	near	ordinary		chose near: near 60% week left, resets 2026-10-17T20:00Z, ahead of pace; far 90% week left, resets 2026-10-20T23:00Z, on or behind pace; far refused at launch (config/claude-failover account &#x27;far&#x27; (/Users/christianalexanderdiaz/.no-mistakes/worktrees/8ef411716190/01M4XV5N71PBXBHYYR54NGJWRK/.test-account-live/user) is not signed in (claude auth status); sign in to it, or remove it from the map)
+exit=0
+
+Failover choice excludes exhausted current account
+pick	far	90
+exit=0
+</pre>

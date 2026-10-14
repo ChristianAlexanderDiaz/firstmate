@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 7,
+  "claude": [
+    {
+      "state": {
+        "status": "fresh",
+        "stale": false
+      },
+      "windows": [
+        {
+          "id": "five_hour",
+          "kind": "session",
+          "percentRemaining": 79,
+          "resetsAt": "2026-10-14T20:30:00.053088+00:00"
+        },
+        {
+          "id": "seven_day",
+          "kind": "weekly",
+          "percentRemaining": 19,
+          "resetsAt": "2026-10-17T20:00:00.053110+00:00"
+        },
+        {
+          "id": "model:fable",
+          "kind": "model",
+          "percentRemaining": 88,
+          "resetsAt": "2026-10-17T20:00:00.053293+00:00"
+        }
+      ],
+      "quotaStatus": "known"
+    },
+    {
+      "state": {
+        "status": "fresh",
+        "stale": false
+      },
+      "windows": [
+        {
+          "id": "five_hour",
+          "kind": "session",
+          "percentRemaining": 92,
+          "resetsAt": "2026-10-14T23:20:00.085448+00:00"
+        },
+        {
+          "id": "seven_day",
+          "kind": "weekly",
+          "percentRemaining": 95,
+          "resetsAt": "2026-10-20T23:00:00.085467+00:00"
+        },
+        {
+          "id": "model:fable",
+          "kind": "model",
+          "percentRemaining": 98,
+          "resetsAt": "2026-10-20T23:00:00.085621+00:00"
+        }
+      ],
+      "quotaStatus": "known"
+    }
+  ]
+}
