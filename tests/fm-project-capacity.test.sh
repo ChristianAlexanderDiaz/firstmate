@@ -775,7 +775,7 @@ test_quota_deferral_leaves_ticket_queued() {
   now=$(date +%s)
   jq -n --argjson now "$now" \
     '{fetchedAt:$now,snapshot:{providers:[{provider:"codex",windows:[
-      {id:"weekly",percentRemaining:0,resetsAt:($now+604800)}]}]}}' > "$home/state/quota-plan-snapshot.json"
+      {id:"weekly",kind:"weekly",percentRemaining:0,resetsAt:($now+604800|todateiso8601)}]}]}}' > "$home/state/quota-plan-snapshot.json"
   rc=0
   out=$(spawn_ship "$case_dir" quota-task "$case_dir/unused") || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "closed quota gate did not defer: $out"

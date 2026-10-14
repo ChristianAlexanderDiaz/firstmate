@@ -10,8 +10,9 @@
 # poll is runner-only: sample every 600s, or within 5s of a PR handoff/cleanup
 # notification. notify atomically replaces a cheap root-state trigger token.
 # check takes one sample (0 = refill output, 75 = no change/no ready work/closed
-# gate/unreadable evidence). Unsupported quota-axi cannot start work or emit a
-# refill. A successful later read resumes without requiring a re-arm.
+# gate/unreadable evidence, 73 = admission lock busy; poll retries it within 5s
+# without consuming the pending trigger or interval). Unsupported quota-axi cannot
+# start work or emit a refill. A successful later read resumes without a re-arm.
 #
 # Candidates use fm-fleet-snapshot.sh --contribution-input for each local home,
 # excluding held, blocked, already-dispatched and non-worker rows. Active lanes
@@ -116,7 +117,7 @@ refill_sample() {
   [ -n "$FM_QUOTA_PLAN_JSON" ] || { refill_closed; return 75; }
   now=$(date +%s)
   today=$(date -u +%Y-%m-%d)
-  fm_lock_try_acquire "$STATE/.quota-plan-admission.lock" || return 75
+  fm_lock_try_acquire "$STATE/.quota-plan-admission.lock" || return 73
   FM_QUOTA_PLAN_LOCK_HELD="$STATE/.quota-plan-admission.lock"
   if ! fm_quota_plan_snapshot "$STATE" "$now"; then
     fm_quota_plan_release
@@ -209,8 +210,9 @@ case "${1:-}" in
       now=$(date +%s)
       trigger=$(cat "$STATE/quota-refill-trigger" 2>/dev/null || true)
       if [ "$now" -ge "$next" ] || [ "$trigger" != "$prior_trigger" ]; then
-        prior_trigger=$trigger; next=$((now + 600))
-        if refill_sample; then exit 0; fi
+        rc=0; refill_sample || rc=$?
+        [ "$rc" != 0 ] || exit 0
+        [ "$rc" = 73 ] || { prior_trigger=$trigger; next=$((now + 600)); }
       fi
       sleep 5
     done ;;

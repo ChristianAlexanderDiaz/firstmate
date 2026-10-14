@@ -37,13 +37,15 @@ plan() {
   printf '%s\n' 'reserve claude 15' 'reserve codex 0' 'lane carryrank until 2099-10-20' 'lane lounge-card' > "$FM_HOME/config/quota-plan"
   fm_quota_plan_load "$FM_HOME/config" || fail 'valid plan rejected'
 }
+# Times use the fractional Z and +00:00 forms the established quota-axi emits.
 fixture() { # <now> <reset> <remaining>
   jq -n --argjson now "$1" --argjson reset "$2" --argjson left "$3" '
-    {generatedAt:($now|todateiso8601),claudeCombined:[
-      {scope:"all_models",window:"seven_day",remaining:$left,resetsAt:($reset|todateiso8601),
+    def offset: todateiso8601 | sub("Z$"; ".617813+00:00");
+    {generatedAt:($now|todateiso8601|sub("Z$"; ".437Z")),claudeCombined:[
+      {scope:"all_models",window:"seven_day",remaining:$left,resetsAt:($reset|offset),
        pace:"ahead",burnMultiple:1,projectedLeftAtLaterReset:15,runway:"through_reset"}],
      claudeCombinedAccounts:[],providers:[{provider:"codex",state:{status:"fresh",stale:false},
-       windows:[{id:"weekly",kind:"weekly",percentRemaining:$left,resetsAt:($reset|todateiso8601)}]}]}' > "$FM_TEST_QUOTA_FILE"
+       windows:[{id:"weekly",kind:"weekly",percentRemaining:$left,resetsAt:($reset|offset)}]}]}' > "$FM_TEST_QUOTA_FILE"
   jq -n --argjson now "$1" --slurpfile snapshot "$FM_TEST_QUOTA_FILE" \
     '{fetchedAt:$now,snapshot:$snapshot[0]}' > "$FM_HOME/state/quota-plan-snapshot.json"
   FM_QUOTA_PLAN_CACHE="$FM_HOME/state/quota-plan-snapshot.json"
@@ -59,6 +61,7 @@ now=1900000000
 reset=$((now+604800))
 fixture "$now" "$reset" 88
 fm_quota_plan_verdict claude "$now" || fail 'day one under line'
+fm_quota_plan_verdict codex "$now" || fail 'codex offset-formatted weekly reset refused'
 fixture "$now" "$reset" 87
 if fm_quota_plan_verdict claude "$now"; then fail 'day one over line admitted'; fi
 fixture "$((now+86399))" "$reset" 80
@@ -73,15 +76,26 @@ fixture "$reset" "$reset" 100
 if fm_quota_plan_verdict claude "$reset"; then fail 'expired cycle admitted'; fi
 fixture "$reset" "$((reset+604800))" 100
 fm_quota_plan_verdict claude "$reset" || fail 'new cycle refused'
-# Tolerated combined reader variants remain explicit, never arbitrary fallbacks.
-jq '.snapshot.claudeCombined[0] |= (.remaining = "100%" | .window = {id:"weekly",resetAt:.resetsAt} | del(.resetsAt))' \
-  "$FM_QUOTA_PLAN_CACHE" > "$TMP_ROOT/variant"
-mv "$TMP_ROOT/variant" "$FM_QUOTA_PLAN_CACHE"
-fm_quota_plan_verdict claude "$reset" || fail 'documented combined variant refused'
-jq '.snapshot.claudeCombined += .snapshot.claudeCombined' "$FM_QUOTA_PLAN_CACHE" > "$TMP_ROOT/duplicate"
-mv "$TMP_ROOT/duplicate" "$FM_QUOTA_PLAN_CACHE"
-if fm_quota_plan_verdict claude "$reset"; then fail 'ambiguous combined row admitted'; fi
-pass 'day boundaries, rollover, unused allowance, exact reserve line and explicit reader variants'
+# Only the one documented shape is read; other spellings refuse, never guess.
+for variant in '.snapshot.claudeCombined[0].remaining = "100%"' \
+  '.snapshot.claudeCombined[0].scope = "all-models"' \
+  '.snapshot.claudeCombined[0].window = {id:"seven_day"}' \
+  '.snapshot.claudeCombined[0] |= (.resetAt = .resetsAt | del(.resetsAt))' \
+  ".snapshot.claudeCombined[0].resetsAt = $((reset+604800))" \
+  '.snapshot.claudeCombined += .snapshot.claudeCombined'; do
+  fixture "$reset" "$((reset+604800))" 100
+  jq "$variant" "$FM_QUOTA_PLAN_CACHE" > "$TMP_ROOT/variant"
+  mv "$TMP_ROOT/variant" "$FM_QUOTA_PLAN_CACHE"
+  if fm_quota_plan_verdict claude "$reset"; then fail "undocumented combined shape admitted: $variant"; fi
+done
+for variant in '.snapshot.providers[0].windows[0] |= (.effectivePercentRemaining = .percentRemaining | del(.percentRemaining))' \
+  '.snapshot.providers[0].windows[0].kind = "seven_day"'; do
+  fixture "$reset" "$((reset+604800))" 100
+  jq "$variant" "$FM_QUOTA_PLAN_CACHE" > "$TMP_ROOT/variant"
+  mv "$TMP_ROOT/variant" "$FM_QUOTA_PLAN_CACHE"
+  if fm_quota_plan_verdict codex "$reset"; then fail "undocumented codex shape admitted: $variant"; fi
+done
+pass 'day boundaries, rollover, unused allowance, exact reserve line and one exact reader shape'
 
 for bad in 'reserve claude -1' 'reserve claude 101' 'reserve claude 15
 reserve claude 20
@@ -122,7 +136,13 @@ mv "$TMP_ROOT/missing" "$FM_QUOTA_PLAN_CACHE"
 expect_defer claude 0 ship
 fm_quota_plan_admit "$FM_HOME" "$FM_HOME/config" codex 0 ship || fail 'codex needs unrelated combined Claude data'
 fm_quota_plan_release
-pass 'stale outage refuses, admission lock serializes, next start refreshes, providers stay separate'
+fixture "$now" "$((now+500000))" 100
+jq 'del(.snapshot.claudeCombined)' "$FM_QUOTA_PLAN_CACHE" > "$TMP_ROOT/missing"
+mv "$TMP_ROOT/missing" "$FM_QUOTA_PLAN_CACHE"
+out=$(fm_quota_plan_admit "$FM_HOME" "$FM_HOME/config" pi 0 ship 2>&1) || fail 'undeclared harness was not admitted unpaced'
+assert_contains "$out" 'harness pi is not paced by config/quota-plan' 'unpaced harness diagnostic'
+assert_absent "$FM_HOME/state/.quota-plan-admission.lock" 'unpaced harness took the admission lock'
+pass 'stale outage refuses, admission lock serializes, next start refreshes, providers stay separate, undeclared harnesses run unpaced'
 
 # Real snapshot parser, capacity count, source registration and durable capture.
 fm_git_init_commit "$FM_HOME/projects/carryrank"
@@ -146,6 +166,18 @@ fixture "$now" "$((now+500000))" 100
 REFILL="$ROOT/bin/fm-procevent-refill.sh"
 "$REFILL" arm > "$TMP_ROOT/arm"
 [ -f "$FM_HOME/state/procevent/quota-refill.source" ] || fail 'refill not registered'
+# A busy admission lock is retried promptly, not consumed as a quiet sample.
+fm_lock_try_acquire "$FM_HOME/state/.quota-plan-admission.lock" || fail 'could not hold admission lock'
+rc=0; "$REFILL" check > "$TMP_ROOT/busy" || rc=$?
+[ "$rc" = 73 ] && [ ! -s "$TMP_ROOT/busy" ] || fail "busy admission lock was not reported as busy: $rc"
+"$REFILL" poll > "$TMP_ROOT/polled" &
+poll_pid=$!
+sleep 1
+fm_lock_release "$FM_HOME/state/.quota-plan-admission.lock"
+for _ in $(seq 40); do kill -0 "$poll_pid" 2>/dev/null || break; sleep 0.5; done
+if kill -0 "$poll_pid" 2>/dev/null; then kill "$poll_pid"; fail 'poll deferred a busy sample to the next interval'; fi
+wait "$poll_pid" || fail 'poll did not report the retried refill'
+assert_contains "$(cat "$TMP_ROOT/polled")" 'refill: 2 places open' 'retried poll refill'
 "$REFILL" check > "$TMP_ROOT/result" || fail 'refill missing'
 assert_contains "$(cat "$TMP_ROOT/result")" 'refill: 2 places open; next ready: carryrank: carry-1@' 'priority and occupancy'
 assert_contains "$(cat "$TMP_ROOT/result")" 'Codex-to-Claude validation fallback: open' 'fallback visibility'

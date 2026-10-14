@@ -200,7 +200,8 @@
 #   admission; an existing worker's occupancy follows the library's contract.
 #   Quota pace: optional root config/quota-plan adds account-wide admission
 #   (bin/fm-quota-plan-lib.sh); closed or unreadable quota defers with exit 75.
-#   Relaunches and secondmates are exempt; absence keeps current behavior.
+#   Relaunches, secondmates and harnesses without a reserve line are exempt;
+#   absence keeps current behavior.
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
 #   spawns require an explicit harness so firstmate cannot silently skip dispatch

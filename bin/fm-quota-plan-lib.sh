@@ -6,9 +6,11 @@
 # fm_quota_plan_load <config-dir> validates the whole declaration into
 # FM_QUOTA_PLAN_JSON; absent means off. Every failure sets FM_QUOTA_PLAN_ERROR.
 # fm_quota_plan_admit <home> <config> <resolved-harness> <relaunch> <kind>
-# returns 0 or 75, before any launch mutation. Relaunches/secondmates are exempt.
-# Its machine admission lock supplements the existing project lock, and stays
-# held until fm_quota_plan_release after publication or on the spawn EXIT path.
+# returns 0 or 75, before any launch mutation. Relaunches/secondmates are exempt,
+# and a harness without a reserve line is admitted unpaced with one diagnostic.
+# Its machine admission lock supplements the existing project lock, waits at most
+# 45s for a concurrent admission or refill sample, and stays held until
+# fm_quota_plan_release after publication or on the spawn EXIT path.
 # An admitted attempt invalidates the shared cache, forcing the next admission
 # to read account-wide usage again. Neither lock can reserve future token spend:
 # running workers and other machines can cross the line after admission.
@@ -19,14 +21,16 @@
 # validity are also checked by the reader. No ordinary --json fallback is used.
 #
 # fm_quota_plan_read <cache-file> <claude|codex> <now-epoch> is the ONLY quota
-# field reader. The combined Claude shape is from a local quota-axi build;
-# published 0.1.55 does not support it. Until a producer sample is available,
-# fixtures assume all_models/all-models + seven_day/seven-day/weekly/7d,
-# remaining as numeric percentage (or percentRemaining/remaining.percent), and
-# resetsAt/resetAt as UTC ISO time or epoch seconds, on the row or its window.
-# An ambiguous row, missing reset, unknown unit, stale reading, or missing
-# claudeCombined refuses rather than guessing or combining account seats.
-# Codex uses the sole provider row's weekly window, never a model-name guess.
+# field reader, and it parses exactly one shape per provider. The combined
+# Claude shape is from a local quota-axi build; published 0.1.55 does not
+# support it. Until a producer sample is available, it assumes exactly one
+# claudeCombined row with scope "all_models", window "seven_day", numeric
+# remaining percentage, and resetsAt spelled as the established quota-axi rows
+# spell it. Codex reads the sole codex provider row of the established quota-axi
+# --json shape: its one kind "weekly" window's percentRemaining and resetsAt.
+# Times are UTC ISO strings ending in Z or +00:00, with optional fractions.
+# Any other shape, an ambiguous row, stale reading, or missing claudeCombined
+# refuses rather than guessing, combining account seats, or matching model names.
 # Account selection and the overflow seat are outside this library: it never
 # changes credentials or selects an account. The configured worker pin remains
 # authoritative; the combined reading is admission evidence only.
@@ -76,33 +80,23 @@ fm_quota_plan_load() {
 fm_quota_plan_read() {  # <cache-file> <provider> <now>
   jq -er --arg provider "$2" --argjson now "$3" '
     def epoch:
-      if type == "number" then .
-      elif type == "string" then sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601
-      else error("missing reset") end;
+      if type == "string" then sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601
+      else error("missing time") end;
     def fresh:
       (.state.stale // false) == false and
       ((.state.status // "fresh") == "fresh") and
       (if .refreshedAt? then (.refreshedAt | epoch) as $t | $t <= $now and $now-$t <= 300 else true end);
-    def weekly:
-      . == "seven_day" or . == "seven-day" or . == "weekly" or . == "7d";
-    def window_id:
-      if type == "object" then (.id // .kind // .name) else . end;
     select((.fetchedAt|type) == "number" and .fetchedAt <= $now and $now - .fetchedAt <= 300) | .snapshot |
     select(if .generatedAt? then (.generatedAt|epoch) as $t | $t <= $now and $now-$t <= 300 else true end) |
     (if $provider == "claude" then
-       [.claudeCombined[]? | select((.scope == "all_models" or .scope == "all-models") and
-         (.window | window_id | weekly))]
+       [.claudeCombined[]? | select(.scope == "all_models" and .window == "seven_day")] |
+       select(length == 1) | .[0] | select(fresh) | {left:.remaining,reset:.resetsAt}
      elif $provider == "codex" then
-       [.providers[]? | select(.provider == "codex")] |
-       if length != 1 or (.[0] | fresh | not) then []
-       else [.[0].windows[]? | select((.id | weekly) or (.kind | weekly))] end
-     else [] end) |
-    select(length == 1) | .[0] | select(fresh) |
-    (if (.remaining|type) == "number" then .remaining
-     elif (.remaining|type) == "string" and (.remaining|test("^[0-9]+(\\.[0-9]+)?%$")) then (.remaining|rtrimstr("%")|tonumber)
-     elif (.remaining|type) == "object" then (.remaining.percent // .remaining.percentRemaining)
-     else (.percentRemaining // .effectivePercentRemaining) end) as $left |
-    (.resetsAt // .resetAt // (if (.window|type) == "object" then (.window.resetsAt // .window.resetAt) else null end) | epoch) as $reset |
+       [.providers[]? | select(.provider == "codex")] | select(length == 1) | .[0] | select(fresh) |
+       [.windows[]? | select(.kind == "weekly")] | select(length == 1) | .[0] |
+       {left:.percentRemaining,reset:.resetsAt}
+     else empty end) |
+    .left as $left | (.reset | epoch) as $reset |
     select(($left|type) == "number" and $left >= 0 and $left <= 100 and
       $reset > $now and $reset <= $now + 604800) |
     {used:(100-$left),reset:$reset,day:((($now-($reset-604800))/86400|floor)+1)}
@@ -160,13 +154,13 @@ fm_quota_plan_admit() {
   fm_quota_plan_load "$config" || return 75
   [ -n "$FM_QUOTA_PLAN_JSON" ] || return 0
   case "$harness" in claude|codex) ;; *)
-    FM_QUOTA_PLAN_ERROR="quota-plan cannot map resolved harness $harness to claude or codex"
-    return 75 ;;
+    echo "quota pace: harness $harness is not paced by config/quota-plan; admitted unpaced" >&2
+    return 0 ;;
   esac
   root=$(fm_firstmate_root_home "$home") || return 75
   mkdir -p "$root/state" || return 75
-  if ! fm_lock_try_acquire "$root/state/.quota-plan-admission.lock"; then
-    FM_QUOTA_PLAN_ERROR='another quota admission is in progress; retry the queued ticket'
+  if ! fm_lock_acquire_wait_max "$root/state/.quota-plan-admission.lock" 45; then
+    FM_QUOTA_PLAN_ERROR='another quota admission is still in progress; retry the queued ticket'
     return 75
   fi
   FM_QUOTA_PLAN_LOCK_HELD="$root/state/.quota-plan-admission.lock"

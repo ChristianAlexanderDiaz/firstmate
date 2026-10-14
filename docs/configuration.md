@@ -1184,9 +1184,9 @@ No actual home configuration is installed automatically.
 The fleet allowance is `100 - reserve`, released in seven equal daily portions relative to the weekly reset, with unused allowance rolling forward within that cycle.
 A fresh worker starts only when observed used percentage is strictly below `allowance * day / 7`; equality defers.
 The resolved `claude` harness reads the combined all-models weekly Claude quota, and `codex` reads the normal Codex weekly window.
-Other harnesses defer while a plan is enabled because this gate has no authoritative provider mapping for them.
+The plan paces only the providers it declares: any other resolved harness, such as `pi` or `omp`, has no reserve line, so its fresh spawn is admitted unpaced with one diagnostic line naming the harness, and it is never mapped onto the Claude gate.
 The gate reads account-wide usage, including spending from other machines, through `quota-axi --all-accounts --json`, with a cache no older than five minutes.
-An unsupported command, absent combined Claude reading, stale snapshot, ambiguous provider or invalid reset refuses the affected admission rather than substituting local usage.
+An unsupported command, absent combined Claude reading, unexpected field shape, stale snapshot, ambiguous provider or invalid reset refuses the affected admission rather than substituting local usage.
 The combined reader expects fields reported from a local quota-axi build and unavailable in the published PC binary; its fixture assumptions and exact compatibility boundary are recorded in [`bin/fm-quota-plan-lib.sh`](../bin/fm-quota-plan-lib.sh).
 The gate neither selects accounts nor schedules an overflow seat.
 
