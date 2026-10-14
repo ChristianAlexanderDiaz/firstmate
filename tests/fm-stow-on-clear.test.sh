@@ -246,6 +246,89 @@ test_session_start_surfaces_pending_stow() {
   pass "session start: a clear's digest surfaces the pending stow until stow consumes it"
 }
 
+# Both hooks must reject a stale identity even when the recorded pid is a real
+# harness ancestor. Drive their public entries with the same legacy, genuine,
+# and reboot-reused lock; only boot/start-time readings are stubbed on macOS.
+test_hooks_check_lock_holder_identity() {
+  local mode scenario source root fakebin real_ps out t
+  local run_path=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
+  local -a envs
+  real_ps=$(command -v ps)
+  for mode in linux macos; do
+    fakebin="$TMP_ROOT/identity-$mode-bin"
+    mkdir -p "$fakebin"
+    cat > "$fakebin/sysctl" <<'SH'
+#!/usr/bin/env bash
+printf '{ sec = %s, usec = 0 }\n' "$(cat "$FM_FAKE_BOOT")"
+SH
+    chmod +x "$fakebin/sysctl"
+    if [ "$mode" = macos ]; then
+      cat > "$fakebin/ps" <<SH
+#!/usr/bin/env bash
+case " \$* " in
+  *" lstart= "*) printf '%s /fake/codex\\n' "\$(cat "\$FM_FAKE_LSTART")"; exit 0 ;;
+esac
+exec "$real_ps" "\$@"
+SH
+      chmod +x "$fakebin/ps"
+    fi
+    for scenario in genuine reused legacy; do
+      for source in clear compact; do
+        root="$TMP_ROOT/identity-$mode-$scenario-$source"
+        make_primary "$root"
+        own_lock "$root"
+        printf '%s\n' "$HARNESS_PID" > "$root/state/.session-start-complete"
+        mkdir -p "$root/proc"
+        if [ "$mode" = linux ]; then
+          mkdir -p "$root/proc/sys/kernel/random"
+          printf 'boot-before\n' > "$root/proc/sys/kernel/random/boot_id"
+        fi
+        printf '1759500000\n' > "$root/boot"
+        printf 'Sat Oct  3 10:00:00 2026\n' > "$root/lstart"
+        envs=(PATH="$fakebin:$run_path" FM_PROC_ROOT_OVERRIDE="$root/proc"
+          FM_FAKE_BOOT="$root/boot" FM_FAKE_LSTART="$root/lstart")
+        # shellcheck disable=SC2016 # Expand in the identity-recording shell.
+        env FM_HOME="$root" "${envs[@]}" bash -c '
+          . "$1/bin/fm-wake-lib.sh"
+          fm_lock_record_identity "$2/state/.lock-identity" "$3"
+        ' _ "$ROOT" "$root" "$HARNESS_PID"
+        grep -q '^identity=.' "$root/state/.lock-identity" \
+          || fail "$mode: fixture did not record the live holder identity"
+        if [ "$scenario" != genuine ]; then
+          [ "$mode" != linux ] || printf 'boot-after\n' > "$root/proc/sys/kernel/random/boot_id"
+          printf '1759509999\n' > "$root/boot"
+          printf 'Sat Oct  3 12:47:00 2026\n' > "$root/lstart"
+        fi
+        [ "$scenario" != legacy ] || rm -f "$root/state/.lock-identity"
+        t="$root/transcript.jsonl"
+        make_transcript "$t"
+        out=$(run_hook "$root" "$(payload SessionEnd clear sess-identity "$t")" "${envs[@]}" 2>&1)
+        [ -z "$out" ] || fail "$mode/$scenario: clear hook printed output: $out"
+        if [ "$scenario" = reused ]; then
+          expect_no_record "$root" "$mode: a reused ancestor pid"
+        else
+          assert_present "$root/state/.pending-stow/sess-identity" \
+            "$mode: clear hook rejected the $scenario holder"
+        fi
+        out=$(env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+          FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE="$root" FM_HOME="$root" "${envs[@]}" \
+          "$RUN" --source "$source" </dev/null)
+        if [ "$scenario" = reused ]; then
+          assert_contains "$out" "SESSION START - $root" \
+            "$mode: $source trusted completion from a reused ancestor pid"
+          assert_not_contains "$out" 'SESSION START (CONTEXT RE-EMIT)' \
+            "$mode: $source re-emitted a stale owner's startup"
+        else
+          assert_contains "$out" "SESSION START (CONTEXT RE-EMIT) - $root" \
+            "$mode: $source rejected the $scenario holder's completed startup"
+        fi
+      done
+    done
+  done
+  pass "both hooks reject reboot-reused ancestor pids and honor genuine and legacy holders on Linux and macOS"
+}
+
+test_hooks_check_lock_holder_identity
 test_primary_clear_records
 test_non_clear_reasons_ignored
 test_secondmate_home_is_silent
