@@ -83,7 +83,7 @@ This routing deliberately inverts the previous nudge matcher, which fired on `st
 
 Two records together are the idempotency interlock for the whole scheme:
 
-- Current harness ownership of the lock.
+- Current harness ownership of the lock, by a holder that still matches its recorded boot and start-time identity (`fm_session_lock_holder_alive`), so a pid reused after a reboot never counts.
 - Its matching `state/.session-start-complete` record.
 
 The full digest updates the completion record in this order:
