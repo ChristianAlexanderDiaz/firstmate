@@ -56,6 +56,9 @@
 # already carries as a hold or decisions_open row. A secondmate home that cannot
 # be read falls back to all keyed asks on its parent channel. Such a task also
 # stays in Underway, like any actively worked held task.
+# A current declared pause with [wait=captain] instead contributes a captain-wait
+# row through those same home surfaces, deduplicated against captain holds, and
+# leaves Underway when shown in Captain's Call; prose never selects this row.
 #
 # Ordinary Charted Next gates are ordered by durable filed date, newest first,
 # before the FM_BEARINGS_GATES bound is applied. Gates without a comparable filed
@@ -159,7 +162,7 @@ remote homes under one shared snapshot budget and may refresh the parent-side ca
 Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,doing},
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
-  decisions_open{id,key,verb,summary,owner} (verb: captain-hold, needs-decision), landed{id,what,artifact,owner},
+  decisions_open{id,key,verb,summary,owner} (verb: captain-hold, needs-decision, captain-wait), landed{id,what,artifact,owner},
   gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
 Default gates are selected newest filed first before their bound; undated gates
@@ -483,7 +486,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   | ([ (.secondmate_current.records // [])[]
        | ([.decisions_open[]? | select((.source == "backlog" and .verb == "captain-hold"
               and live_captain_call)
-            or (.source == "status" and .verb == "needs-decision"))]) as $captain_holds
+            or (.source == "status" and (.verb == "needs-decision" or .verb == "captain-wait")))]) as $captain_holds
        | ([.holds[]? | select(.source == "backlog")]) as $backlog_holds
        | . + {
            bearings_captain_holds:$captain_holds,
@@ -572,7 +575,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
        | if $m.provenance.selected == "structured-home" then
            ([ $m.decisions_open[]? | select(.source == "backlog" and .verb == "captain-hold") | .id ]
             + [ $m.queued[]? | select(.hold_kind == "captain") | .id ]) as $hold_ids
-           | ([ $m.decisions_open[]? | .key ]) as $home_keys
+           | ([ $m.decisions_open[]? | select(.verb != "captain-wait") | .key ]) as $home_keys
            | (($m.decisions_open[]?
                | select(.source == "status" and .verb == "needs-decision")
                | select(held_covers($hold_ids; .id; .key) | not)
@@ -587,7 +590,27 @@ MODEL=$(printf '%s' "$SNAP" | jq \
            | select(.verb == "needs-decision")
            | {id:$m.id,key,verb,summary:((.summary // "") | trunc(90)),owner:$m.id}
          end ]) as $mate_asks
-  | ($hold_decisions + $main_status_asks + $mate_asks) as $decisions_all
+  | ([ .tasks[] | select(.kind != "secondmate") | . as $t
+       | .hints.captain_wait | select(. != null)
+       | select(held_covers($main_hold_ids; $t.id; .key) | not)
+       | {id:$t.id,key,verb,summary:((($t.backlog.title // $t.id) + ": " + .summary) | trunc(90)),owner:"(main)"} ]
+     + [ $secondmate_views[] as $m
+         | ([ $m.decisions_open[]? | select(.source == "backlog" and .verb == "captain-hold") | .id ]
+            + [ $m.queued[]? | select(.hold_kind == "captain") | .id ]) as $hold_ids
+         | (($m.decisions_open[]?
+             | select(.source == "status" and .verb == "captain-wait")
+             | select(held_covers($hold_ids; .id; .key) | not)
+             | {id:($m.id + "/" + .id),key,verb,summary:(.summary | trunc(90)),owner:$m.id}),
+            ($m.parent_event.captain_wait | select(. != null)
+             | select((.key | tostring | startswith("captain-hold-")) | not)
+             | select(held_covers($main_hold_ids; $m.id; .key) | not)
+             | select(held_covers($hold_ids; $m.id; .key) | not)
+             | select(.key as $key | any($m.decisions_open[]?; .key == $key) | not)
+             | {id:$m.id,key,verb,summary:(.summary | trunc(90)),owner:$m.id})) ]) as $captain_waits
+  | ($hold_decisions + $main_status_asks + $mate_asks + $captain_waits) as $decisions_all
+  | (if $all_decisions == 1 then $decisions_all else $decisions_all[:$decisions_n] end) as $visible_decisions
+  | ([$visible_decisions[] | select(.verb == "captain-wait") | .id]) as $captain_wait_ids
+  | ($in_flight_all | map(select(.id as $id | $captain_wait_ids | index($id) | not))) as $in_flight_all
   | ([ .backlog.records[]
          | . as $record
          | select(.structured and projected_deferred_hold) ]
@@ -683,7 +706,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
       secondmate_reconcile: [ (.secondmate_current.records // [])[]
         | select(.reconcile_inventory != null)
         | {id, spawn_gen:(.spawn_gen // null), host:(.host // null), kind:(.reconcile_inventory.kind // null), ids:((.reconcile_inventory.ids // []) | map(select(type == "string")) | sort)} ],
-      decisions_open: (if $all_decisions == 1 then $decisions_all else $decisions_all[:$decisions_n] end),
+      decisions_open: $visible_decisions,
       landed: ($done | map({id, what:(.title | trunc(70)),
                             artifact:(landed_artifact // "-"),owner:.home_id})),
       gates: ($return_catchup_gate

@@ -712,6 +712,8 @@ EOF2
   jq '.captains_call = [
         {"key":"design-call","type":"decision","verb":"needs-decision","repo":"firstmate",
          "title":"Pick the design","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}]},
+        {"key":"wait-call","type":"decision","verb":"captain-wait","repo":"firstmate",
+         "title":"Review flow","options":[{"value":"yes","label":"Yes"}]},
         {"key":"unheld-call","type":"decision","verb":"captain-hold","repo":"firstmate",
          "title":"Not held","options":[{"value":"yes","label":"Yes"}]}
       ]
@@ -724,7 +726,8 @@ EOF2
     "a captain-hold card on an unheld task escaped the stale check: $out"
   extract_payload "$board" | jq -e '
     [.captains_call[] | {key, verb, reconcile:any(.options[]; .value == "reconcile")}]
-      == [{key:"design-call", verb:"needs-decision", reconcile:true}]
+      == [{key:"design-call", verb:"needs-decision", reconcile:true},
+          {key:"wait-call", verb:"captain-wait", reconcile:true}]
   ' >/dev/null || fail "the board did not keep exactly the needs-decision card"
   pass "build keeps needs-decision cards and stale-checks only captain-hold cards"
 }

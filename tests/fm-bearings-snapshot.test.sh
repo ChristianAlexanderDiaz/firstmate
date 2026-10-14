@@ -2148,7 +2148,7 @@ test_captains_call_anti_leak() {
 # Captain's Call also carries every open needs-decision ask, in the main home and
 # in each secondmate home, including a readable secondmate's own parent-channel
 # asks. A task already held for the captain is never listed twice, and a declared
-# paused: wait stays out of Captain's Call whatever its reason names.
+# unmarked paused: wait stays out of Captain's Call whatever its reason names.
 write_ask_task() {  # <home> <id> <kind> <status-line>...
   local home=$1 id=$2 kind=$3
   shift 3
@@ -3526,3 +3526,64 @@ test_revealed_deferred_holds_show_their_deferral_reason
 test_pr_repository_cap_and_expansion
 test_per_repository_pr_cap_is_disclosed
 test_projection_and_toon_fail_closed
+
+
+test_structured_captain_waits() {
+  local home mate fakebin json id
+  home=$(make_home captain-waits)
+  mate="$TMP_ROOT/captain-waits-home"
+  write_domain_alpha_fixture "$home" "$mate"
+  for id in review prose resolved superseded held-review; do
+    write_ask_task "$home" "$id" scout 'paused [key=review] [wait=captain]: awaiting Christian review'
+  done
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] review - Review flow (repo: firstmate) (kind: scout) (since 2026-07-13)
+- [ ] prose - CI flow (repo: firstmate) (kind: scout) (since 2026-07-13)
+- [ ] resolved - Answered flow (repo: firstmate) (kind: scout) (since 2026-07-13)
+- [ ] superseded - Resumed flow (repo: firstmate) (kind: scout) (since 2026-07-13)
+
+## Queued
+- [ ] held-review - Held flow (repo: firstmate) (kind: captain) (hold: review flow) (hold-kind: captain)
+
+## Done
+EOF
+  printf 'paused: captain-tools CI\n' > "$home/state/prose.status"
+  printf 'resolved [key=review]: answered\n' >> "$home/state/resolved.status"
+  printf 'working: resumed\n' >> "$home/state/superseded.status"
+  printf 'resolved [key=unrelated]: answered elsewhere\n' >> "$home/state/review.status"
+  cat > "$mate/data/backlog.md" <<'EOF'
+## In flight
+- [ ] child-review - Child flow (repo: sample) (kind: scout) (since 2026-07-13)
+
+## Queued
+
+## Done
+EOF
+  write_ask_task "$mate" child-review scout 'paused [wait=captain] [key=child]: awaiting review'
+  printf 'paused [key=parent] [wait=captain]: awaiting parent answer\n' > "$home/state/domain-alpha.status"
+  fakebin=$(make_fakebin "$home")
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.decisions_open[] | select(.verb == "captain-wait") | .id] | sort)
+      == ["domain-alpha", "domain-alpha/child-review", "review"]
+    and ([.decisions_open[] | select(.id == "held-review") | .verb] == ["captain-hold"])
+    and (.in_flight | any(.id == "review" or .id == "domain-alpha/child-review") | not)
+    and (.in_flight | any(.id == "prose"))
+    and (.decisions_open | any(.id == "resolved" or .id == "superseded" or .id == "prose") | not)
+  ' >/dev/null || fail "structured captain waits projected incorrectly: $json"
+  printf 'paused [key=child] [wait=captain]: mirrors child review\n' > "$home/state/domain-alpha.status"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    [.decisions_open[] | select(.verb == "captain-wait") | .id] | sort
+      == ["domain-alpha/child-review", "review"]
+  ' >/dev/null || fail "parent wait duplicated a child call: $json"
+  printf 'resolved [key=child]: reviewed\n' >> "$mate/state/child-review.status"
+  printf 'working: resumed\n' >> "$home/state/domain-alpha.status"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    [.decisions_open[] | select(.verb == "captain-wait") | .id] == ["review"]
+  ' >/dev/null || fail "closed mate waits survived: $json"
+  pass "structured captain waits surface once across main, child, and parent channels and clear on resolution"
+}
+test_structured_captain_waits
