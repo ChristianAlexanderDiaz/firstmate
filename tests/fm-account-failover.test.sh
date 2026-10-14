@@ -1053,6 +1053,42 @@ test_launch_checks_use_retained_and_overridden_models() {
 
 # --- Claude account pacing beside failover -----------------------------------
 
+test_paced_relaunch_refuses_before_stopping_when_no_account_qualifies() {
+  local out rc boundary reason id=t33
+  for boundary in control spawn; do
+    for reason in paid stale failed; do
+      new_case "paced-refusal-$boundary-$reason" "$id"
+      rm -f "$CASE/fake/screen"
+      printf 'paced\n' > "$CASE/home/config/claude-account"
+      cp "$CASE/home/state/$id.meta" "$CASE/prior.meta"
+      cp "$CASE/home/data/$id/brief.md" "$CASE/prior-brief.md"
+      quota_snapshot 0 81 '.providers[1].windows += [{id: "extra_usage", kind: "credits", percentRemaining: 50}]' > "$CASE/fake/quota.json"
+      case "$reason" in
+        stale) quota_snapshot 60 81 '.providers[].state = {status: "stale", stale: true}' > "$CASE/fake/quota.json" ;;
+        failed) rm "$CASE/fake/quota.json" ;;
+      esac
+      if [ "$boundary" = control ]; then
+        out=$(case_env QUOTA_AXI_MAX_AGE=1h "$CONTROL" "$id" relaunch --note "refused" 2>&1); rc=$?
+        assert_equals claude "$(cat "$CASE/fake/command")" "the existing worker must remain running"
+        [ ! -s "$CASE/fake/literal" ] || fail "pacing refusal must send no stop or launch text"
+        cmp -s "$CASE/prior-brief.md" "$CASE/home/data/$id/brief.md" || fail "the original brief must remain unchanged"
+      else
+        printf zsh > "$CASE/fake/command"
+        out=$(case_env "$ROOT/bin/fm-spawn.sh" "$id" --relaunch 2>&1); rc=$?
+        [ ! -s "$CASE/fake/literal" ] || fail "spawn's independent pacing check must refuse the launch"
+      fi
+      expect_code 1 "$rc" "a paced $boundary without qualifying accounts must refuse: $out"
+      assert_contains "$out" 'error: Claude account pacing:' "the refusal names pacing"
+      cmp -s "$CASE/prior.meta" "$CASE/home/state/$id.meta" || fail "a refused replacement must retain the prior task record"
+      if [ "$reason" != failed ]; then
+        assert_contains "$out" '% week left, resets 2026-10-03T19:59Z' "the refusal shows the first weekly allowance and reset"
+        assert_contains "$out" 'spare 81% week left, resets 2026-10-06T22:59Z' "the refusal shows the other weekly allowance and reset"
+      fi
+    done
+  done
+  pass "pacing: control refuses before stopping; spawn independently refuses an unsafe replacement"
+}
+
 test_paced_relaunches_choose_afresh_and_failover_still_moves() {
   local out rc
   new_case paced-relaunch t31
@@ -1066,6 +1102,7 @@ test_paced_relaunches_choose_afresh_and_failover_still_moves() {
   assert_grep 'claude_account_reason=chose limited: limited 60% week left, resets 2026-10-03T19:59Z, on or behind pace' \
     "$CASE/home/state/t31.meta" "the reason is recorded"
   assert_no_grep "CLAUDE_CONFIG_DIR='$CASE/accounts/spare'" "$CASE/fake/literal" "the replacement runs on the paced account"
+  assert_equals 2 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "control and spawn each request a fresh pacing snapshot"
   quota_snapshot 60 81 '.providers[0].windows[1].pace = {status: "ahead", reservePercentPoints: -10}' > "$CASE/fake/quota.json"
   : > "$CASE/fake/literal"
   out=$(case_env "$CONTROL" t31 relaunch --note "paced again" 2>&1); rc=$?
@@ -1117,4 +1154,5 @@ test_recovery_respects_legacy_versioned_and_unresolved_scopes
 test_remaining_quota_is_checked_at_control_and_spawn
 test_recovery_refuses_quota_exhausted_after_selection
 test_launch_checks_use_retained_and_overridden_models
+test_paced_relaunch_refuses_before_stopping_when_no_account_qualifies
 test_paced_relaunches_choose_afresh_and_failover_still_moves

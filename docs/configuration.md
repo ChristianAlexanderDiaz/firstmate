@@ -1018,15 +1018,18 @@ Each canonical Claude ship and scout spawn and relaunch that does not name an ac
 
 1. The account whose weekly window resets soonest gets the work while it is on or behind the pace that would empty it at that reset, which `quota-axi` reports as a weekly pace reserve of zero or more.
 2. While that account is ahead of pace, the other accounts are tried first, and it remains the last choice.
-3. An account is choosable only when it passes every failover launch check (signed in, a fresh unreused reading, paid extra usage disabled, and its model quota known and above the fixed 5% safety margin) and every usage window it reports is also above that margin, so a seat-level guard that blocks an account on any one window never strands a new worker.
+3. An account is choosable only when it passes the shared model-aware failover launch checks (signed in, a fresh unreused reading, paid extra usage disabled, and its applicable model quota known and above the fixed 5% safety margin).
+   An exhausted window for an unrelated model does not rule the account out.
    A missing, stale, or unreadable reading is never choosable.
 
 The launch runs on the chosen account like a failover account, and the task record carries `claude_account=<name>` plus `claude_account_reason=`, one line naming each account's week left, weekly reset, and pace, and any account refused at launch.
 Every paced relaunch chooses afresh rather than keeping the last account, while a relaunch that names `--claude-account`, including a failover move, keeps that literal account.
+Control checks a fresh pacing choice before stopping the current worker, and spawn chooses again from a fresh reading before launching its replacement.
 
 ### When no account is choosable
 
-The launch is never blocked by pacing: when no account is choosable, the spawn prints a `note: Claude account pacing:` line saying why, records that reason in `claude_account_reason=`, and launches on the home's default Claude account exactly as a home without the file would.
+When no account is choosable, the launch refuses with an `error: Claude account pacing:` line saying why and naming each account's week left and reset when available.
+A fresh spawn refuses before creating an endpoint, local copy, or task record; a relaunch whose pre-stop pacing check fails leaves the current worker running.
 A home with `paced` but no `config/claude-failover` refuses Claude ship and scout launches and names the missing file.
 Raw Claude launch commands and secondmate agents are not paced and keep the home's default Claude account.
 A worker that later reaches a usage limit still moves through [Claude account failover](#claude-account-failover-configclaude-failover).

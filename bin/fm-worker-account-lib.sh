@@ -6,7 +6,8 @@
 # account failover map (config/claude-failover): how that file is parsed and
 # how one of its named accounts resolves to the Claude config root a moved
 # worker launches under, and model-aware quota eligibility; and Claude account
-# pacing, the `paced` pin value that picks one of those accounts per launch.
+# pacing, the `paced` pin value that picks one qualifying account per launch
+# and refuses when none qualifies.
 #
 # docs/configuration.md "Worker account pin", "Claude account failover", and
 # "Claude account pacing" own the operator-facing contracts.
@@ -507,9 +508,7 @@ fm_worker_account_failover_select() {
 # An account is choosable only when it passes every failover launch check
 # (fm_worker_account_failover_select: signed in, a fresh unreused reading,
 # paid usage disabled, model quota known and above the fixed 5 percent safety
-# margin) and, because a seat-level guard can block an account on any one of
-# its windows, every window it reports is also above that margin. A missing,
-# stale, or unreadable reading is never choosable.
+# margin). A missing, stale, or unreadable reading is never choosable.
 
 # fm_worker_account_paced <config-dir>
 # Returns 0 when this home's config/claude-account selects pacing.
@@ -523,26 +522,25 @@ fm_worker_account_paced() {
 # Picks the account for one Claude ship or scout launch in a paced home from
 # one quota-axi --all-accounts reading (read here, with QUOTA_AXI_MAX_AGE
 # unset, unless supplied). Prints
-# "pick<TAB><name><TAB><declared><TAB><root><TAB><reason>" and returns 0, or
-# "none<TAB><reason>" and returns 1 when no account is choosable, so the
-# caller can launch on the home's default account instead. The reason is one
-# line naming each account's week left, weekly reset, and pace. Prints one
-# error and returns 2 when the home has no usable config/claude-failover.
+# "pick<TAB><name><TAB><declared><TAB><root><TAB><reason>" and returns 0.
+# The reason is one line naming each account's week left, weekly reset, and
+# pace. Prints one error and returns 1 when no account is choosable or the
+# home has no usable config/claude-failover; callers must refuse the launch.
 fm_worker_account_pace() {
   local config=$1 executable=$2 model=$3 snapshot=${4:-} map verdicts plan summary name selection err refused=
-  map=$(fm_worker_account_failover_load "$config") || return 2
+  map=$(fm_worker_account_failover_load "$config") || return 1
   [ -n "$map" ] || {
     echo "error: config/claude-account selects pacing across the accounts of config/$FM_WORKER_ACCOUNT_FAILOVER_FILE, and this home has none" >&2
-    return 2
+    return 1
   }
   if [ -z "$snapshot" ]; then
     snapshot=$(fm_run_timed "${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}" env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json 2>/dev/null </dev/null) || {
-      printf 'none\tthe quota-axi --all-accounts reading failed\n'
+      echo 'error: Claude account pacing: the quota-axi --all-accounts reading failed' >&2
       return 1
     }
   fi
   verdicts=$(fm_worker_account_failover_quota "$map" "$snapshot" '' "$model" 2>/dev/null) || {
-    printf 'none\tthe quota-axi --all-accounts reading was unreadable\n'
+    echo 'error: Claude account pacing: the quota-axi --all-accounts reading was unreadable' >&2
     return 1
   }
   # Line 1 is the summary; each later line is one candidate, in pacing order.
@@ -559,18 +557,17 @@ fm_worker_account_pace() {
                       else (($week.pace.status // "") | IN("behind", "on", "on_pace", "on_track")) end) } |
       if .ok != true then .
       elif $week == null or (.reset | type) != "string" or (.week | type) != "number" then .ok = false | .why = "its weekly reset is unknown"
-      elif any($windows[]; (.percentRemaining | type) == "number" and .percentRemaining <= 5)
-      then .ok = false | .why = "a usage window is at or below the 5% safety margin"
       else . end ] as $accounts |
     ($accounts | map(
-      if .ok then "\(.name) \(.week)% week left, resets \(.reset | short_time), \(if .behind then "on or behind" else "ahead of" end) pace"
-      else "\(.name) not choosable (\(.why))" end) | join("; ")) as $summary |
+      "\(.name) \(if (.week | type) == "number" then "\(.week)%" else "unknown" end) week left, resets \((.reset | short_time) // "unknown"), " +
+      (if .ok then "\(if .behind then "on or behind" else "ahead of" end) pace"
+       else "not choosable (\(.why))" end)) | join("; ")) as $summary |
     ([ $accounts[] | select(.ok) ] | sort_by((.reset | short_time), .order)) as $ready |
     (if ($ready | length) == 0 then []
      elif $ready[0].behind then $ready
      else $ready[1:] + $ready[:1] end) as $order |
     $summary, ($order[] | .name)')  || {
-    printf 'none\tthe quota-axi --all-accounts reading was unreadable\n'
+    echo 'error: Claude account pacing: the quota-axi --all-accounts reading was unreadable' >&2
     return 1
   }
   summary=$(printf '%s\n' "$plan" | head -1 | tr '\t' ' ')
@@ -583,6 +580,6 @@ fm_worker_account_pace() {
     err=$(printf '%s' "$selection" | tail -1 | tr '\t' ' ')
     refused="$refused; $name refused at launch (${err#error: })"
   done < <(printf '%s\n' "$plan" | tail -n +2)
-  printf 'none\tno account is choosable: %s%s\n' "$summary" "$refused"
+  printf 'error: Claude account pacing: no account is choosable: %s%s\n' "$summary" "$refused" >&2
   return 1
 }

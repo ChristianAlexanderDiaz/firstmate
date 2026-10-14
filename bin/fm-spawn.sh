@@ -393,10 +393,10 @@
 #   (fm_worker_account_pace in bin/fm-worker-account-lib.sh owns the choice and
 #   its checks), launches on it like a failover account, and records
 #   claude_account= plus a one-line claude_account_reason= naming each
-#   account's week left, reset, and pace. When no account is choosable it says
-#   so on stderr, records the reason, and launches on the home's default Claude
-#   account as an unpinned home would. A raw launch and a secondmate keep that
-#   default account.
+#   account's week left, reset, and pace. When no account is choosable it
+#   refuses before creating an endpoint, local copy, or task record, naming
+#   each account's week left and reset when available. A raw launch and a
+#   secondmate keep the home's default account.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode
@@ -2605,29 +2605,19 @@ if [ "$RELAUNCH" -eq 1 ]; then
 fi
 if [ "$CLAUDE_ACCOUNT_PACED" = 1 ]; then
   # Claude account pacing (header above): a fresh choice on every launch.
-  CLAUDE_ACCOUNT_PACE_RC=0
-  CLAUDE_ACCOUNT_PACE=$(fm_worker_account_pace "$CONFIG" claude "$MODEL") || CLAUDE_ACCOUNT_PACE_RC=$?
-  case $CLAUDE_ACCOUNT_PACE_RC in
-  0)
-    # pick<TAB>name<TAB>declared<TAB>root<TAB>reason; root is empty for ordinary.
-    CLAUDE_ACCOUNT_PACE=${CLAUDE_ACCOUNT_PACE#pick$'\t'}
-    CLAUDE_ACCOUNT=${CLAUDE_ACCOUNT_PACE%%$'\t'*}
-    CLAUDE_ACCOUNT_PACE=${CLAUDE_ACCOUNT_PACE#*$'\t'}
-    CLAUDE_ACCOUNT_PACE=${CLAUDE_ACCOUNT_PACE#*$'\t'}
-    CLAUDE_ACCOUNT_ROOT=${CLAUDE_ACCOUNT_PACE%%$'\t'*}
-    CLAUDE_ACCOUNT_REASON=${CLAUDE_ACCOUNT_PACE#*$'\t'}
-    if [ -n "$CLAUDE_ACCOUNT_ROOT" ]; then
-      export CLAUDE_CONFIG_DIR=$CLAUDE_ACCOUNT_ROOT
-    else
-      unset CLAUDE_CONFIG_DIR
-    fi
-    ;;
-  1)
-    CLAUDE_ACCOUNT_REASON="${CLAUDE_ACCOUNT_PACE#none$'\t'}; launched on the home's default Claude account"
-    echo "note: Claude account pacing: $CLAUDE_ACCOUNT_REASON" >&2
-    ;;
-  *) exit 1 ;;
-  esac
+  CLAUDE_ACCOUNT_PACE=$(fm_worker_account_pace "$CONFIG" claude "$MODEL") || exit 1
+  # pick<TAB>name<TAB>declared<TAB>root<TAB>reason; root is empty for ordinary.
+  CLAUDE_ACCOUNT_PACE=${CLAUDE_ACCOUNT_PACE#pick$'\t'}
+  CLAUDE_ACCOUNT=${CLAUDE_ACCOUNT_PACE%%$'\t'*}
+  CLAUDE_ACCOUNT_PACE=${CLAUDE_ACCOUNT_PACE#*$'\t'}
+  CLAUDE_ACCOUNT_PACE=${CLAUDE_ACCOUNT_PACE#*$'\t'}
+  CLAUDE_ACCOUNT_ROOT=${CLAUDE_ACCOUNT_PACE%%$'\t'*}
+  CLAUDE_ACCOUNT_REASON=${CLAUDE_ACCOUNT_PACE#*$'\t'}
+  if [ -n "$CLAUDE_ACCOUNT_ROOT" ]; then
+    export CLAUDE_CONFIG_DIR=$CLAUDE_ACCOUNT_ROOT
+  else
+    unset CLAUDE_CONFIG_DIR
+  fi
 elif [ -n "$CLAUDE_ACCOUNT" ]; then
   if [ "$HARNESS" != claude ] || [ "$RAW_LAUNCH" != 0 ]; then
     echo "error: Claude account '$CLAUDE_ACCOUNT' applies only to the canonical claude launch, not '$HARNESS'" >&2
@@ -5252,7 +5242,7 @@ preserve_relaunch_meta() {
   [ -z "$WORKER_ACCOUNT_PROVIDER" ] || echo "account_provider=$WORKER_ACCOUNT_PROVIDER"
   # The Claude account, only for a task moved onto one or placed by pacing.
   [ -z "$CLAUDE_ACCOUNT" ] || echo "claude_account=$CLAUDE_ACCOUNT"
-  # Why pacing chose it, or why it fell back, only in a paced home.
+  # Why pacing chose it, only in a paced home.
   [ -z "$CLAUDE_ACCOUNT_REASON" ] || echo "claude_account_reason=$CLAUDE_ACCOUNT_REASON"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
