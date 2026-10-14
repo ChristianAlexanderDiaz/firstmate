@@ -22,6 +22,8 @@
 #       Claude fm-send --key Escape path (fm-interrupt) and firstmate recovery
 #       paths (fm-recovery) may pass --current-gen to bind to the incarnation
 #       armed right now.
+#       Claude submission, normal completion, and session-end events also
+#       invalidate any pending usage-limit record under the same gen lock.
 #
 #   progress <state-dir> <id> --gen G
 #       Refresh state/<id>.progress for observed native-harness activity under
@@ -235,6 +237,13 @@ if [ -f "$REC" ]; then
         ''|*[!0-9]*) OLD_SEQ=0 ;;
         *) OLD_SEQ=$old_seq_field ;;
       esac
+      ;;
+  esac
+fi
+if [ "$SOURCE" = claude-hook ]; then
+  case "$EVENT" in
+    user-prompt-submit|stop|session-end)
+      rm -f "$STATE/$ID.usage-limit"
       ;;
   esac
 fi

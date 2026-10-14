@@ -393,6 +393,61 @@ Removing the `--force` arm makes the forced generic case refuse; honoring `--for
 Restoring `fm_backend_orca_kill`'s swallowed tool check makes the CLI-absent adapter case report success.
 Dropping the retention-is-not-durable line makes the refusal claim a retention teardown does not own.
 
+## Claude usage-limit prompt
+
+Verified 2026-10-01 on Claude Code 2.1.287 with herdr 0.9.0, against a Claude account at its weekly limit.
+`bin/fm-account-failover.sh` builds on three facts this run proved.
+
+A prompt to that account ends its turn through the `StopFailure` hook with this payload (session fields omitted):
+
+```json
+{"hook_event_name": "StopFailure", "error": "rate_limit",
+ "last_assistant_message": "You've hit your weekly limit · resets <reset time>"}
+```
+
+Claude then opens this menu on its own:
+
+```text
+   What do you want to do?
+   ❯ 1. Stop and wait for limit to reset
+     2. Wait here, then continue automatically at <reset time>
+     3. Switch to usage credits
+     4. Upgrade your plan
+   Enter to confirm · Esc to cancel
+```
+
+Escape closes it to an empty idle composer without choosing an option; Herdr reports the pane's agent status as `unknown` while the menu is open and for a moment after it closes, then `idle`.
+Observed 2026-10-10 on Claude Code 2.1.295 against an account genuinely at its weekly limit: after Escape closed the first limit menu and the move was refused, a later prompt ended through the real `StopFailure` hook with the payload below, but only the inline limit line and an idle composer appeared, with no reopened menu:
+
+```json
+{"error": "rate_limit",
+ "last_assistant_message": "You've hit your weekly limit · resets Oct 10 at 4pm (America/New_York)"}
+```
+
+The [failover contract](../configuration.md#what-happens-at-a-usage-limit) accepts that verified exhaustion wording without sending a prompt key.
+The focused `bash tests/fm-account-failover.test.sh` regression exercises both apostrophes in the default and C locales, recovery without a menu, rejection of superseded turns, and refusal of the throttle message "API Error: Rate limit reached"; its lifecycle and quota fixtures do not prove a live account move.
+The opt-in live guard exercises the production recorder and recovery with no eligible destination, and checks the final idle composer; it accepts inline exhaustion too, so a pass alone does not prove a menu appeared or Escape was sent:
+
+```sh
+FM_ACCOUNT_FAILOVER_LIVE=1 FM_ACCOUNT_FAILOVER_LIVE_ROOT=ordinary tests/fm-account-failover-live-e2e.test.sh
+```
+
+```text
+# 2.1.287 (Claude Code): StopFailure record: message=You've hit your weekly limit · resets <reset time>
+# 2.1.287 (Claude Code): limit prompt recognized, closed with Escape to an idle composer
+ok - account failover live: 2.1.287 (Claude Code) records the usage limit and its prompt closes on Escape alone
+```
+
+Full moves were verified 2026-10-08 on Claude Code 2.1.293, herdr 0.9.0, and quota-axi 0.1.55, in an isolated Herdr lab home whose `config/claude-failover` mapped two real signed-in accounts, with the limit recorded through the production `record` subcommand because the first account still had 4% left.
+Each worker was a real Claude ship or scout spawned on the first account by `bin/fm-spawn.sh`, and `fm-account-failover.sh tick` ran against the real `quota-axi --all-accounts` unless noted:
+
+- A scout that had finished its first step was moved (`moved <id> <first> <second>`, task record `claude_account=<second>`), and the replacement, whose status line named the second account, found the first step done in the preserved local copy and finished the second.
+- With the second account rewritten to 3% in the quota reading, the worker stayed alive and stopped, and one `blocked:` line named both accounts' remaining quota and resets.
+- With the second account rewritten to exhausted at the control launch check, the relaunch was refused before the worker was stopped; rewritten to exhausted at the spawn launch check, the worker was stopped, no replacement started, and the task record kept no account.
+- A ship whose own no-mistakes run was `running` had that run `cancelled` before it moved, and its handoff note named the aborted run.
+
+The vendor's quota endpoint rate-limits a burst of reads, and a reading taken during that window reports the account stale, so a move attempted then blocks rather than moves.
+
 ## Claude workspace trust
 
 Verified 2026-09-03 on Claude Code 2.1.259.

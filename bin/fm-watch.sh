@@ -144,6 +144,14 @@
 #                          the same verdict authorized recovery but the
 #                          relaunch itself failed; the attempt is ledgered and
 #                          counts toward the bound below
+#   check: account failover moved <id> from Claude account <a> to <b> ...
+#                          a Claude ship or scout hit its account's usage
+#                          limit and bin/fm-account-failover.sh moved it to
+#                          another signed-in account with room (opt-in through
+#                          config/claude-failover); one wake per move. A
+#                          limit no account can absorb appends the task's own
+#                          blocked: status line instead, which wakes through
+#                          the ordinary signal path
 #   check: secondmate <id> auto-relaunch paused after <n> attempts in <s>s; ...
 #                          a mate that kept dying exceeded its bounded relaunch
 #                          budget and is parked until a probe reads it live
@@ -1051,6 +1059,33 @@ EOF
     wake "$reason"
   done
   return 0
+}
+
+# Claude account failover: bin/fm-account-failover.sh owns detection, the
+# choice, and the move; this tick only runs it once per cycle and turns each
+# move into one durable `check` wake row. A home without config/claude-failover
+# pays one file test. A blocked outcome already appended the task's blocked:
+# status line; blocked and skipped diagnostics stay in the triage log.
+account_failover_tick() {
+  [ -e "$CONFIG/claude-failover" ] || [ -L "$CONFIG/claude-failover" ] || return 0
+  local out verb id from to rest reason key first_reason=''
+  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-account-failover.sh" tick 2>/dev/null) || true
+  while read -r verb id from to rest; do
+    case "$verb" in
+      moved)
+        reason="check: account failover moved $id from Claude account $from to $to after a usage limit"
+        key="account-failover-$id-$(date +%s)"
+        if fm_wake_append check "$key" "$reason"; then
+          [ -n "$first_reason" ] || first_reason=$reason
+        else
+          echo "watcher: account failover: check wake row could not be queued: $reason" >&2
+          triage_log "account failover wake could not be queued: $reason" || true
+        fi
+        ;;
+      blocked | skipped) triage_log "account failover $verb $id: $from${to:+ $to}${rest:+ $rest}" || true ;;
+    esac
+  done <<< "$out"
+  [ -z "$first_reason" ] || wake "$first_reason"
 }
 
 # The ordinary-supervision half of the secondmate liveness guarantee, paired
@@ -2775,6 +2810,10 @@ while :; do
     echo "watcher: secondmate liveness check failed" >&2
     exit 1
   }
+
+  # A Claude worker stopped at its account's usage limit is moved to another
+  # account with room before the signal scan would surface its idle pane.
+  account_failover_tick
 
   # A live secondmate endpoint does not prove that its own wake loop is alive.
   # Observe the foreign queue before the rest of this cycle so an aged row wakes
