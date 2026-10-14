@@ -31,7 +31,11 @@ CONFIG
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_LINEAR/forge-argv"
 [ ! -f "$FM_TEST_LINEAR/forge-fail" ] || exit 1
-case "$*" in *'--repo example/sample --hostname github.com --full'*) ;; *) exit 1 ;; esac
+case "$*" in
+  'pr list --state all --head '*) cat "$FM_TEST_LINEAR/pr-list" 2>/dev/null; exit 0 ;;
+  *'--repo example/sample --hostname github.com --full'*) ;;
+  *) exit 1 ;;
+esac
 cat "$FM_TEST_LINEAR/pr-body"
 SH
   cat > "$FAKEBIN/curl" <<'PY'
@@ -378,13 +382,19 @@ assert_equals "$DONE" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'watcher sy
 assert_not_contains "$(cat "$CASE/watch.err")" 'timed out' 'watcher does not deadlock with Linear sync'
 pass 'real watcher syncs an externally merged PR under its existing control lock'
 
-for failure in no landed zero-work yes; do
+for failure in no landed zero-work merge-commit fast-forward yes; do
   make_case "real-spawn-$failure"
   fm_test_spawn_home "$HOME_DIR" claude
   printf '%s\n' "$$" > "$HOME_DIR/state/.lock"
   fm_test_spawn_brief "$HOME_DIR" "$TASK" 'Exercise automatic issue sync.'
   fm_git_worktree "$CASE/sample" "$CASE/wt" "fm/$TASK"
   [ "$failure" != yes ] || touch "$CASE/error"
+  if [ "$failure" = zero-work ]; then
+    # Upstream moved past the local base before spawn.
+    upstream=$(git -C "$CASE/sample" -c user.name=Test -c user.email=test@example.invalid \
+      commit-tree "$(git -C "$CASE/sample" rev-parse 'HEAD^{tree}')" -p HEAD -m 'Upstream change')
+    git -C "$CASE/sample" push -q origin "$upstream:refs/heads/main"
+  fi
   out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
     HOME="$HOME_DIR/user-home" CLAUDE_CONFIG_DIR='' \
     bash "$ROOT/bin/fm-spawn.sh" "$TASK" "$CASE/sample" --mode direct-PR --yolo off 2>&1) \
@@ -415,6 +425,28 @@ for failure in no landed zero-work yes; do
       bash "$ROOT/bin/fm-teardown.sh" "$TASK" 2>&1) || fail "real teardown failed: $out"
     assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'teardown of a ship without commits queues issue'
     assert_equals 1 "$(jq -s '[.[] | select(.query | startswith("mutation Comment"))] | length' "$CASE/requests")" 'zero-work teardown comments once'
+  elif [ "$failure" = merge-commit ] || [ "$failure" = fast-forward ]; then
+    # A PR merged without a recorded pr= leaves the ship's commits in the base.
+    printf 'merged change\n' > "$CASE/wt/change"
+    git -C "$CASE/wt" add change
+    git -C "$CASE/wt" -c user.name=Test -c user.email=test@example.invalid commit -qm 'Test change'
+    git -C "$CASE/wt" push -q origin "HEAD:refs/heads/fm/$TASK"
+    if [ "$failure" = merge-commit ]; then
+      git -C "$CASE/sample" -c user.name=Test -c user.email=test@example.invalid merge -q --no-ff -m 'Merge pull request' "fm/$TASK"
+    else
+      git -C "$CASE/sample" merge -q --ff-only "fm/$TASK"
+    fi
+    git -C "$CASE/sample" push -q origin main
+    printf 'prs[1]{number,state}:\n  7,MERGED\n' > "$CASE/pr-list"
+    printf 'MERGED\t%s\t%s\n' "$(git -C "$CASE/wt" rev-parse HEAD)" "$PR" > "$CASE/pr-view"
+    cat > "$FAKEBIN/gh" <<'SH'
+#!/usr/bin/env bash
+case "$*" in 'pr view 7 --json state,headRefOid,url '*) cat "$FM_TEST_LINEAR/pr-view" ;; *) exit 1 ;; esac
+SH
+    chmod +x "$FAKEBIN/gh"
+    out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
+      bash "$ROOT/bin/fm-teardown.sh" "$TASK" 2>&1) || fail "real teardown failed: $out"
+    assert_equals "$STARTED" "$(jq -r '.[0].state.id' "$CASE/issues.json")" "$failure landing without recorded PR keeps status"
   else
     assert_contains "$out" 'sync failed' 'actual spawn tolerates API failure'
   fi

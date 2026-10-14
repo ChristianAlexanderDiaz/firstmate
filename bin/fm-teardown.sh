@@ -1575,6 +1575,32 @@ pr_is_merged() {
   return 0
 }
 
+# The landing branch ref (the recorded base branch, else the default): origin's
+# copy when an origin remote exists, else the local branch. Does not fetch.
+landing_base_ref() {
+  local name=${BASE_BRANCH:-}
+  [ -n "$name" ] || name=$(default_branch) || return 1
+  if git -C "$WT" remote get-url origin >/dev/null 2>&1; then
+    printf 'refs/remotes/origin/%s\n' "$name"
+  elif git -C "$WT" rev-parse --quiet --verify "refs/heads/$name" >/dev/null 2>&1; then
+    printf 'refs/heads/%s\n' "$name"
+  else
+    return 1
+  fi
+}
+
+# Does the worktree branch's PR lookup succeed without finding a merged PR?
+# Any lookup failure is unknown landing and returns non-zero.
+branch_pr_lookup_unmerged() {
+  local branch out
+  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null) || return 1
+  [ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
+  out=$(cd "$WT" && gh-axi pr list --state all --head "$branch" --limit 1 2>/dev/null) || return 1
+  if printf '%s\n' "$out" | grep -qE '^[[:space:]]*[0-9]+,'; then
+    ! ( pr_is_merged "$branch" )
+  fi
+}
+
 # Is the branch's content already present in its up-to-date landing branch
 # (the recorded base branch, else the default)? Fetches first, then 3-way merges
 # that branch with HEAD: when HEAD introduces nothing it does not already contain
@@ -1583,16 +1609,13 @@ pr_is_merged() {
 # as "added". Returns non-zero when inconclusive (no base ref, or a merge conflict),
 # so the caller refuses rather than guesses.
 content_in_default() {
-  local name=${BASE_BRANCH:-} ref default_tree merged_tree
-  [ -n "$name" ] || name=$(default_branch) || return 1
-  if git -C "$WT" remote get-url origin >/dev/null 2>&1; then
-    git -C "$WT" fetch --quiet origin "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1 || return 1
-    ref="refs/remotes/origin/$name"
-  elif git -C "$WT" rev-parse --quiet --verify "refs/heads/$name" >/dev/null 2>&1; then
-    ref="refs/heads/$name"
-  else
-    return 1
-  fi
+  local ref default_tree merged_tree
+  ref=$(landing_base_ref) || return 1
+  case "$ref" in
+    refs/remotes/origin/*)
+      git -C "$WT" fetch --quiet origin "+refs/heads/${ref#refs/remotes/origin/}:$ref" >/dev/null 2>&1 || return 1
+      ;;
+  esac
   default_tree=$(git -C "$WT" rev-parse --quiet --verify "$ref^{tree}" 2>/dev/null) || return 1
   [ -n "$default_tree" ] || return 1
   merged_tree=$(git -C "$WT" merge-tree --write-tree "$ref" HEAD 2>/dev/null) || return 1
@@ -3551,21 +3574,25 @@ fi
 # Capture local landing proof before cleanup removes the task artifacts.
 # This is only an external-sync hint; it never participates in teardown safety.
 # A ship with no recorded PR is known not to have landed when its branch has no
-# commits of its own beyond the base (outside local-only mode, where a landed
-# fast-forward looks the same), or when an explicit --force discards work with
-# no local landing proof. A merely unrecorded landing leaves the Linear status
-# unchanged.
+# commits of its own beyond its landing branch and its forge lookup finds no
+# merged PR (outside local-only mode, where a landed fast-forward looks the
+# same), or when an explicit --force discards work with no local landing proof.
+# A reassigned slot proves nothing about this task, and a merely unrecorded or
+# unknown landing leaves the Linear status unchanged.
 LINEAR_TEARDOWN_UNLANDED=0
-if [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ] && [ -z "$PR_URL" ] && [ "$MODE" != local-only ] \
-    && [ -d "$WT" ] && [ -z "$(git -C "$WT" log --oneline HEAD --not "${BASE_BRANCH:-$(default_branch)}" -- 2>/dev/null || echo unreadable)" ]; then
-  LINEAR_TEARDOWN_UNLANDED=1
-elif [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ] && [ "$FORCE" = --force ] && [ -z "$PR_URL" ]; then
-  LINEAR_TEARDOWN_UNLANDED=1
-  if [ -d "$WT" ] && LINEAR_TEARDOWN_STATUS=$(git -C "$WT" status --porcelain 2>/dev/null) \
-      && [ -z "$(worktree_dirt "$LINEAR_TEARDOWN_STATUS")" ] \
-      && { [ -z "$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null || echo unreadable)" ] \
-        || git -C "$WT" merge-base --is-ancestor HEAD "${BASE_BRANCH:-$(default_branch)}" 2>/dev/null; }; then
-    LINEAR_TEARDOWN_UNLANDED=0
+if [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ] && [ -z "$PR_URL" ] && teardown_owns_worktree; then
+  LINEAR_TEARDOWN_BASE=$(landing_base_ref 2>/dev/null || true)
+  if [ -d "$WT" ] && [ "$MODE" != local-only ] && [ -n "$LINEAR_TEARDOWN_BASE" ] \
+      && [ -z "$(git -C "$WT" log --oneline HEAD --not "$LINEAR_TEARDOWN_BASE" -- 2>/dev/null || echo unreadable)" ]; then
+    if branch_pr_lookup_unmerged; then LINEAR_TEARDOWN_UNLANDED=1; fi
+  elif [ "$FORCE" = --force ]; then
+    LINEAR_TEARDOWN_UNLANDED=1
+    if [ -d "$WT" ] && LINEAR_TEARDOWN_STATUS=$(git -C "$WT" status --porcelain 2>/dev/null) \
+        && [ -z "$(worktree_dirt "$LINEAR_TEARDOWN_STATUS")" ] \
+        && { [ -z "$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null || echo unreadable)" ] \
+          || git -C "$WT" merge-base --is-ancestor HEAD "${BASE_BRANCH:-$(default_branch)}" 2>/dev/null; }; then
+      LINEAR_TEARDOWN_UNLANDED=0
+    fi
   fi
 fi
 
