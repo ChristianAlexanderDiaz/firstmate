@@ -381,7 +381,7 @@ Local-only ships are excluded from that rule, because their landed work is a fas
 A forced teardown that discards work with no recorded PR and no local landing proof (a clean worktree, ignoring harness leftovers, whose commits are on a remote or the base branch) returns the issue to Todo the same way.
 Any other teardown, including one whose landing is merely unrecorded or unknown, or whose recorded worktree slot now belongs to another task, leaves the status unchanged.
 Each existing watcher heartbeat checks recorded ships and dependency records in rotation within one ten-second budget; a timed-out task waits for its next turn.
-Heartbeat checks stay quiet for excluded, unmapped, unlinked, ambiguous or Triage work, and drop a dependency record whose task no longer exists.
+Heartbeat checks stay quiet when nothing is due (even without a credential) and for excluded, unmapped, unlinked, ambiguous or Triage work, and drop a dependency record whose task no longer exists.
 A ship classified idle or dead continuously for more than a day returns to Todo the same way, with a reason comment; activity, a new worker incarnation or unknown classification resets that interval.
 This uses the existing semantic busy classifier; missing evidence is never treated as idle.
 Ships whose harness has no busy-state hooks are never returned to Todo for inactivity, because sparse samples cannot prove a continuous day.
