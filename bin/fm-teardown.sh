@@ -3901,7 +3901,7 @@ if [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ] && [ -n "$PR_URL" ]; then
   FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
     FM_LINEAR_CONTROL_LOCK_HELD=1 bash "$SCRIPT_DIR/fm-linear-lib.sh" closed "$ID" "$PR_URL" || true
 fi
-rm -f "$STATE/$ID.linear-idle" "$STATE/$ID.linear-closed"
+rm -f "$STATE/$ID.linear-idle"
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi

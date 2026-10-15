@@ -20,12 +20,11 @@
 # `closed` returns a started issue (In Progress or a review state) to Todo when
 # its recorded PR is closed without merging and no worker is on it. Teardown
 # produces it with the recorded PR URL; the heartbeat produces it for a ship
-# whose worker the busy classifier reports idle or dead, and
-# <id>.linear-closed remembers the handled PR so the rotation stays quiet.
+# whose worker the busy classifier reports idle or dead.
 # A relaunch (FM_LINEAR_RELAUNCH=1) preserves a started In Review issue.
 # `merge` skips an attachment the issue already has for that PR URL.
 # Private runtime records: <id>.linear-idle stores observation signature and
-# epoch, <id>.linear-closed names a handled closed PR, <id>.linear-dependencies keeps dependency clearing eligible after the
+# epoch, <id>.linear-dependencies keeps dependency clearing eligible after the
 # worker ends, and .linear-cursor rotates the existing heartbeat over tasks.
 # Dependencies use deterministic home/source/target UUIDs; only owned blocking
 # relations are removed. No issue is deleted.
@@ -172,7 +171,7 @@ fm_linear_pr_closed() {  # <url>; succeeds only for a PR the forge reports close
   case "$FM_PR_RECORD_STATE" in CLOSED|closed) ;; *) return 1 ;; esac
 }
 
-# A ship nobody is working on: hook-capable harness and an idle or dead verdict.
+# A ship nobody is working on: a dead endpoint or hook-backed idle verdict.
 # Missing evidence is never treated as absence of a worker.
 fm_linear_worker_gone() {  # <state> <task>; sets LINEAR_VERDICT
   local state=$1 task=$2 meta="$1/$2.meta" backend target harness
@@ -183,13 +182,16 @@ fm_linear_worker_gone() {  # <state> <task>; sets LINEAR_VERDICT
   . "$LINEAR_DIR/fm-busy-lib.sh"
   [ "$(fm_meta_get "$meta" kind)" = ship ] || return 1
   backend=$(fm_backend_of_meta "$meta"); target=$(fm_backend_target_of_meta "$meta"); harness=$(fm_meta_get "$meta" harness)
-  [ -n "$(fm_busy_sources_for_harness "$harness")" ] || return 1
   LINEAR_VERDICT=$(fm_busy_classify_live "$backend" "$target" "$harness" "$task" "$state")
-  case "$LINEAR_VERDICT" in idle\ *|dead\ *) ;; *) return 1 ;; esac
+  case "$LINEAR_VERDICT" in
+    dead\ *) return 0 ;;
+    idle\ *) [ -n "$(fm_busy_sources_for_harness "$harness")" ] ;;
+    *) return 1 ;;
+  esac
 }
 
 # A ship whose recorded PR was closed without merging while no worker is on it.
-# The cheap local checks run before the forge read; a handled PR is remembered.
+# The cheap local checks run before the forge read.
 fm_linear_closed_due() {  # <state> <task>; sets LINEAR_CLOSED_URL
   local state=$1 task=$2 meta="$1/$2.meta"
   [ -f "$meta" ] || return 1
@@ -197,14 +199,8 @@ fm_linear_closed_due() {  # <state> <task>; sets LINEAR_CLOSED_URL
   . "$LINEAR_DIR/fm-backend.sh"
   LINEAR_CLOSED_URL=$(fm_meta_get "$meta" pr)
   [ -n "$LINEAR_CLOSED_URL" ] || return 1
-  [ "$(cat "$state/$task.linear-closed" 2>/dev/null || true)" != "$LINEAR_CLOSED_URL" ] || return 1
   fm_linear_worker_gone "$state" "$task" || return 1
   fm_linear_pr_closed "$LINEAR_CLOSED_URL"
-}
-
-fm_linear_closed_mark() {  # <state> <task> <heartbeat-due> <url>; stop re-checking a handled closed PR
-  [ "$3" = 1 ] || return 0
-  printf '%s\n' "$4" > "$1/$2.linear-closed"
 }
 
 fm_linear_idle_due() {  # <state> <task>; classifier owns all harness/backend facts
@@ -456,7 +452,7 @@ fm_linear_event() {
     closed)
       # Any started state, including In Review, means the ticket still claims
       # a ship whose PR will never land. Captain-held work keeps its status.
-      if [ "$issue_type" != started ]; then fm_linear_closed_mark "$state" "$id" "$closed_due" "$url"; exit 0; fi
+      [ "$issue_type" = started ] || exit 0
       [ "$(fm_linear_field "$row" hold_kind)" != captain ] || [ "$(fm_linear_field "$row" state)" = "done" ] || exit 0
       fm_linear_pr_closed "$url" || exit 0
       state_id=$(fm_linear_state "$issue_team" unstarted)
@@ -465,7 +461,6 @@ fm_linear_event() {
     spawn|merge)
       if [ "$event" = spawn ]; then
         kind=started
-        rm -f "$state/$id.linear-closed"
         # A relaunch resumes work on a ticket whose PR is already up for review.
         if [ "${FM_LINEAR_RELAUNCH:-0}" = 1 ] && fm_linear_review_state "$issue"; then kind=''; fi
       else
@@ -492,7 +487,6 @@ fm_linear_event() {
     fm_linear_api 'mutation Comment($input:CommentCreateInput!){commentCreate(input:$input){success}}' \
       "$(jq -cn --arg id "$issue_id" --arg body "$reason" '{input:{issueId:$id,body:$body}}')"
     printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.commentCreate.success == true' >/dev/null
-    [ "$event" != closed ] || fm_linear_closed_mark "$state" "$id" "$closed_due" "$url"
     ;; esac
   if [ "$event" = spawn ]; then
     fm_linear_dependencies "$data" "$state" "$id" "$row" "$issue_id"

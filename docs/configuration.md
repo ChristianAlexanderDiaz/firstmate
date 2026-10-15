@@ -388,7 +388,8 @@ This uses the existing semantic busy classifier; missing evidence is never treat
 Ships whose harness has no busy-state hooks are never returned to Todo for inactivity, because sparse samples cannot prove a continuous day.
 Ships with a recorded PR or an open captain hold, and issues in any other state, such as a custom review, waiting or blocked state, keep their status under those two rules.
 A ship whose recorded PR the forge reports closed without merging, with no worker on it, returns its ticket to Todo the same way, with a reason comment, from whichever started state it sits in, including In Review.
-Teardown of a ship with a recorded PR makes that check once, and the existing watcher heartbeat makes it for a ship whose worker the busy classifier reports idle or dead (so a hookless harness is never judged), remembering the handled PR in a private record so later heartbeats stay quiet.
+Teardown of a ship with a recorded PR makes that check once, and the existing watcher heartbeat repeats it for a ship whose worker the busy classifier reports idle with hooks or whose endpoint is dead, including harnesses without hooks.
+Later heartbeats make no further state changes or reason comments while the ticket remains outside a started state, but can reconcile the same PR again after it is reopened and closed again.
 Open or merged PRs, a failed forge read, an issue that is not in a started state, and captain-held work leave the ticket as it is; only GitHub and GitLab PRs are read.
 A successful first spawn restores In Progress, while a relaunch preserves a ticket in a started state named exactly `In Review` (case-insensitive), because its PR is awaiting review.
 Backlog `block` and `unblock` commands mirror dependencies as Linear blocking relations when both tasks have eligible linked tickets.

@@ -581,7 +581,7 @@ assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'a busy work
 write_ship_meta grok
 printf 'v1 gen=example seq=2 state=idle source=claude-hook event=Stop ts=2\n' > "$HOME_DIR/state/$TASK.busy-state"
 sync_event tick
-assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'a harness without busy hooks is never judged'
+assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'a live harness without busy hooks is never judged idle'
 write_ship_meta
 printf 'state: open\n' > "$CASE/pr-state"
 sync_event tick
@@ -590,14 +590,32 @@ printf 'state: closed\n' > "$CASE/pr-state"
 sync_event tick
 assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'idle worker with a closed PR returns the ticket to Todo'
 assert_equals 1 "$(count 'mutation Comment')" 'heartbeat comments once'
-assert_equals "$PR" "$(cat "$HOME_DIR/state/$TASK.linear-closed")" 'handled PR is remembered'
-seed_review
-before=$(wc -l < "$CASE/requests" | tr -d ' ')
+before=$(mutations)
 rm -f "$HOME_DIR/state/.linear-cursor"
 sync_event tick
-assert_equals "$before" "$(wc -l < "$CASE/requests" | tr -d ' ')" 'a handled closed PR makes no further Linear calls'
-assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'handled closed PR is not re-processed'
-pass 'heartbeat returns a closed-PR ticket to Todo only when no worker is on it, then stays quiet'
+assert_equals "$before" "$(mutations)" 'a closed PR already in Todo makes no further mutations'
+printf 'state: open\n' > "$CASE/pr-state"
+seed_review
+sync_event tick
+assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'a reopened PR stays in review'
+printf 'state: closed\n' > "$CASE/pr-state"
+sync_event tick
+assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'closing the reopened PR returns its ticket to Todo again'
+assert_equals 2 "$(count 'mutation Comment')" 'each closure comments once'
+pass 'heartbeat reconciles repeated PR closures without duplicate transitions or comments'
+
+for harness in claude grok; do
+  make_case "closed-dead-$harness"
+  seed_review
+  tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+  printf 'state: closed\n' > "$CASE/pr-state"
+  write_ship_meta "$harness"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$FAKEBIN/tmux"
+  sync_event tick
+  assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" "a dead $harness endpoint returns a closed-PR ticket to Todo"
+  assert_equals 1 "$(count 'mutation Comment')" 'a dead endpoint closure comments once'
+done
+pass 'dead endpoints reconcile closed PRs with or without harness hooks'
 
 for pr_state in closed merged; do
   make_case "real-teardown-$pr_state"
