@@ -3,6 +3,8 @@
 # Usage: fm-linear-lib.sh spawn|merge|hold|release|idle|teardown|dependencies|refresh <task-id> [pr-url]
 #        fm-linear-lib.sh tick
 # FM_HOME and FM_{STATE,DATA,CONFIG}_OVERRIDE address the owning home.
+# FM_LINEAR_TEARDOWN_{BRANCH,REPO} name a zero-work teardown's branch and clone;
+# its issue is demoted only after a GitHub lookup there lists no merged PR.
 # Configuration schema: docs/configuration.md, "Linear sync".
 #
 # Call only AFTER the local lifecycle action succeeds. Every public invocation
@@ -212,7 +214,7 @@ fm_linear_event() {
   local event=$1 id=$2 url=${3:-} home state data config row project kind team ids
   local key_command key_count pattern label title body linked candidates issue issue_id issue_team state_id input
   local idle_due=0
-  local identifier marker pr_body create_id lock='' metadata meta_kind meta_project issue_type
+  local identifier marker pr_body create_id lock='' metadata meta_kind meta_project issue_type merged
   home=${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$LINEAR_DIR/.." && pwd)}}
   state=${FM_STATE_OVERRIDE:-$home/state}
   data=${FM_DATA_OVERRIDE:-$home/data}
@@ -375,6 +377,13 @@ fm_linear_event() {
       # work keep their status.
       [ "$(printf '%s' "$issue" | jq -r '.state.id')" = "$(fm_linear_state "$issue_team" started)" ] || exit 0
       [ "$(fm_linear_field "$row" hold_kind)" != captain ] || [ "$(fm_linear_field "$row" state)" = "done" ] || exit 0
+      if [ "$event" = teardown ] && [ -n "${FM_LINEAR_TEARDOWN_BRANCH:-}" ]; then
+        # Merged, failed or unreadable lookups are not proof that nothing landed.
+        [ -n "${FM_LINEAR_TEARDOWN_REPO:-}" ] || exit 0
+        merged=$(cd "$FM_LINEAR_TEARDOWN_REPO" && gh-axi pr list --state merged \
+          --head "$FM_LINEAR_TEARDOWN_BRANCH" --limit 1 2>/dev/null) || exit 0
+        printf '%s\n' "$merged" | grep -qx 'count: 0' || exit 0
+      fi
       state_id=$(fm_linear_state "$issue_team" unstarted)
       input=$(jq -cn --arg id "$issue_id" --arg state "$state_id" '{id:$id,input:{stateId:$state}}')
       ;;

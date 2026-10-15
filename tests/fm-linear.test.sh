@@ -32,7 +32,7 @@ CONFIG
 printf '%s\n' "$*" >> "$FM_TEST_LINEAR/forge-argv"
 [ ! -f "$FM_TEST_LINEAR/forge-fail" ] || exit 1
 case "$*" in
-  'pr list --state all --head '*) cat "$FM_TEST_LINEAR/pr-list" 2>/dev/null; exit 0 ;;
+  'pr list --state merged --head '*) cat "$FM_TEST_LINEAR/pr-list" 2>/dev/null; exit 0 ;;
   *'--repo example/sample --hostname github.com --full'*) ;;
   *) exit 1 ;;
 esac
@@ -382,7 +382,7 @@ assert_equals "$DONE" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'watcher sy
 assert_not_contains "$(cat "$CASE/watch.err")" 'timed out' 'watcher does not deadlock with Linear sync'
 pass 'real watcher syncs an externally merged PR under its existing control lock'
 
-for failure in no landed zero-work merge-commit fast-forward yes; do
+for failure in no landed zero-work lookup-failed merge-commit fast-forward yes; do
   make_case "real-spawn-$failure"
   fm_test_spawn_home "$HOME_DIR" claude
   printf '%s\n' "$$" > "$HOME_DIR/state/.lock"
@@ -420,7 +420,13 @@ for failure in no landed zero-work merge-commit fast-forward yes; do
     out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
       bash "$ROOT/bin/fm-teardown.sh" "$TASK" --force 2>&1) || fail "real teardown failed: $out"
     assert_equals "$STARTED" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'forced teardown of landed work keeps status'
+  elif [ "$failure" = lookup-failed ]; then
+    touch "$CASE/forge-fail"
+    out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
+      bash "$ROOT/bin/fm-teardown.sh" "$TASK" 2>&1) || fail "real teardown failed: $out"
+    assert_equals "$STARTED" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'unknown landing keeps status'
   elif [ "$failure" = zero-work ]; then
+    printf 'count: 0\npull_requests[0]:\n' > "$CASE/pr-list"
     out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
       bash "$ROOT/bin/fm-teardown.sh" "$TASK" 2>&1) || fail "real teardown failed: $out"
     assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'teardown of a ship without commits queues issue'
@@ -437,13 +443,7 @@ for failure in no landed zero-work merge-commit fast-forward yes; do
       git -C "$CASE/sample" merge -q --ff-only "fm/$TASK"
     fi
     git -C "$CASE/sample" push -q origin main
-    printf 'prs[1]{number,state}:\n  7,MERGED\n' > "$CASE/pr-list"
-    printf 'MERGED\t%s\t%s\n' "$(git -C "$CASE/wt" rev-parse HEAD)" "$PR" > "$CASE/pr-view"
-    cat > "$FAKEBIN/gh" <<'SH'
-#!/usr/bin/env bash
-case "$*" in 'pr view 7 --json state,headRefOid,url '*) cat "$FM_TEST_LINEAR/pr-view" ;; *) exit 1 ;; esac
-SH
-    chmod +x "$FAKEBIN/gh"
+    printf 'count: 1\npull_requests[1]{number,title,state,author,draft,review}:\n  7,Sample work,merged,example,no,none\n' > "$CASE/pr-list"
     out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
       bash "$ROOT/bin/fm-teardown.sh" "$TASK" 2>&1) || fail "real teardown failed: $out"
     assert_equals "$STARTED" "$(jq -r '.[0].state.id' "$CASE/issues.json")" "$failure landing without recorded PR keeps status"
