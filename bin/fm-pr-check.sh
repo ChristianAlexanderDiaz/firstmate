@@ -18,7 +18,7 @@
 # bin/fm-pr-merge.sh records through this script with FM_PR_CHECK_MERGE=1 and
 # skips this refusal, because its own merge-time draft refusal is authoritative.
 # The recorded pr= also frees the task's place in a declared project capacity
-# (bin/fm-project-capacity-lib.sh).
+# (bin/fm-project-capacity-lib.sh) and notifies the optional quota refill source.
 # Usage: fm-pr-check.sh <task-id> <pr-url>
 set -eu
 
@@ -205,6 +205,7 @@ fm_pr_metadata_identity_parse "$META" || exit 1
   && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
+"$SCRIPT_DIR/fm-procevent-refill.sh" notify || true
 
 PR_POLL_PUBLISH_LOCK="$STATE/.pr-poll-publish-$ID.lock"
 fm_lock_acquire_wait "$PR_POLL_PUBLISH_LOCK"
