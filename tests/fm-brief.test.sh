@@ -190,7 +190,8 @@ EOF
 }
 
 # fm-brief.sh must exit 0 and produce a brief with no unreplaced shell
-# metacharacter corruption for every ship delivery mode. This also guards
+# metacharacter corruption for every ship delivery mode, and ship and scout
+# briefs both carry the captain-wait declaration and close rules. This also guards
 # against any *new* unescaped apostrophe or unbalanced quote later added to
 # one of these DOD blocks, since a broken heredoc corrupts or empties the
 # generated brief content, not just the script's own syntax.
@@ -209,6 +210,9 @@ test_ship_modes_generate_clean_briefs() {
     assert_grep "# Definition of done" "$brief" "$id: brief missing Definition of done section"
     grep -qx "Delivery contract: mode=$mode" "$brief" \
       || fail "$id: brief did not record its machine-readable delivery contract line"
+    assert_grep '[wait=captain]' "$brief" "$id: brief missing opt-in wait owner instruction"
+    assert_grep "When a declared \`[wait=captain]\` wait ends after the captain's answer, append \`resolved [key=<slug>] [at=<epoch>]: {how it was answered}\` yourself with that wait's key, or a keyless \`resolved\` line for a keyless pause." "$brief" \
+      "$id: brief did not close an answered captain wait"
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
     assert_grep "{FIRSTMATE_SPEC}" "$brief" "$id: brief missing the {FIRSTMATE_SPEC} placeholder"
     assert_grep "## Captain's intent" "$brief" "$id: brief missing Captain's intent subsection"
@@ -218,7 +222,12 @@ test_ship_modes_generate_clean_briefs() {
       "$id: brief missing nonterminal working:/setup-complete gate protection"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
   done
-  pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-scout-a4 some-proj --scout >/dev/null 2>&1
+  brief="$home/data/brief-scout-a4/brief.md"
+  assert_grep '[wait=captain]' "$brief" "scout brief missing opt-in wait owner instruction"
+  assert_grep "When a declared \`[wait=captain]\` wait ends after the captain's answer, append \`resolved [key=<slug>] [at=<epoch>]: {how it was answered}\` yourself with that wait's key, or a keyless \`resolved\` line for a keyless pause." "$brief" \
+    "scout brief did not close an answered captain wait"
+  pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly; ship and scout briefs carry captain-wait rules"
 }
 
 # A ship task's delivery mode is firstmate's per-task decision, so a missing or
@@ -720,6 +729,10 @@ test_secondmate_marked_request_reporting_contract() {
     "secondmate charter did not name a landed merge as a reporting trigger"
   assert_grep 'States: working, needs-decision, blocked, paused, done, failed.' "$brief" \
     "secondmate charter changed the preserved status vocabulary"
+  assert_grep "Add \`[wait=captain]\` before the colon on a \`paused:\` line only when your domain is deliberately waiting on the captain's own review or answer." "$brief" \
+    "secondmate charter lost the opt-in captain wait owner"
+  assert_grep "When a declared \`[wait=captain]\` wait ends after the captain's answer, append \`resolved [key=<slug>] [at=<epoch>]: {how it was answered}\` yourself with that wait's key, or a keyless \`resolved\` line for a keyless pause." "$brief" \
+    "secondmate charter did not close an answered captain wait"
   pass "fm-brief.sh: marked requests avoid generic acknowledgements and preserve material reporting"
 }
 

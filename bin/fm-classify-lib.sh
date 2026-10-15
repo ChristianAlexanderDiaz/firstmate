@@ -381,6 +381,24 @@ status_declared_wait_line() {  # <status-file>
     || _fm_status_declared_wait_scan "$resolve" "$legacy_re" < "$f" || :
 }
 
+# Optional pause owner: exactly one [wait=captain] field in the head declares
+# the captain's own review or answer. The head ends at the first colon of the
+# unstamped copy (_fm_status_unstamped). Missing, duplicate, malformed, or
+# unknown owners return nothing; reason prose never determines ownership.
+# Pass status_declared_wait_line output to inspect only the current declaration.
+status_declared_wait_owner() {  # <status-line> -> owner, or nothing
+  local line=$1 unstamped head rest owner
+  status_is_paused "$line" || return 0
+  _fm_status_unstamped "$line" unstamped
+  case "$unstamped" in *:*) head=${unstamped%%:*} ;; *) return 0 ;; esac
+  case "$head" in *\[wait=*\]*) ;; *) return 0 ;; esac
+  rest=${head#*\[wait=}
+  owner=${rest%%\]*}
+  case "${rest#*\]}" in *\[wait=*) return 0 ;; esac
+  [ "$owner" != captain ] || printf '%s\n' "$owner"
+  return 0
+}
+
 # Walk the status lines on stdin back from the newest event past resolved lines
 # to the first other event, and print it when it is a pause none of those
 # resolved lines share a phase key with. Returns 1 when every event is a

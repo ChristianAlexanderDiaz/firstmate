@@ -48,11 +48,11 @@
 #
 # CAPTAIN'S CALL HYGIENE. A decision card MAY carry `verb`, the snapshot
 # decisions_open verb it was composed from: `captain-hold` (the default when
-# absent) or `needs-decision`. A captain-hold card is dropped when its work item,
+# absent), `needs-decision`, or `captain-wait`. A captain-hold card is dropped when its work item,
 # PR, or structured artifact/version subject appears among the payload's own
 # landed rows, or when `bin/fm-captain-hold.sh open` reports the task is no
 # longer an open captain call. A newer published version also supersedes a
-# version card. A needs-decision card is an open ask on a task that is not
+# version card. A needs-decision or captain-wait card is an open ask on a task that is not
 # captain-held, already current from the snapshot, so it is always kept. A task
 # whose state cannot be established is kept, because a call wrongly hidden is
 # worse than a card wrongly shown. Cleanup is therefore a normal rebuild effect
@@ -167,7 +167,7 @@ validate_payload() {  # <data.json>
       and (optional_string("freeform_hint"))
       and ((has("close") | not) or (.close == "done" or .close == "release"))
       and ((has("verb") | not)
-        or (.type == "decision" and (.verb == "captain-hold" or .verb == "needs-decision")))
+        or (.type == "decision" and (.verb == "captain-hold" or .verb == "needs-decision" or .verb == "captain-wait")))
       and ((has("allow_freeform") | not) or (.allow_freeform | type == "boolean"))
       and ((has("recommend_value") | not)
         or ((.recommend_value | slug(128))

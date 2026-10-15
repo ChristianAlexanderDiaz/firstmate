@@ -2148,7 +2148,7 @@ test_captains_call_anti_leak() {
 # Captain's Call also carries every open needs-decision ask, in the main home and
 # in each secondmate home, including a readable secondmate's own parent-channel
 # asks. A task already held for the captain is never listed twice, and a declared
-# paused: wait stays out of Captain's Call whatever its reason names.
+# unmarked paused: wait stays out of Captain's Call whatever its reason names.
 write_ask_task() {  # <home> <id> <kind> <status-line>...
   local home=$1 id=$2 kind=$3
   shift 3
@@ -3526,3 +3526,91 @@ test_revealed_deferred_holds_show_their_deferral_reason
 test_pr_repository_cap_and_expansion
 test_per_repository_pr_cap_is_disclosed
 test_projection_and_toon_fail_closed
+
+
+write_failed_run_fake() {  # <fakebin> <branch> <head>
+  cat > "$1/no-mistakes" <<SH
+#!/usr/bin/env bash
+case "\${1:-} \${2:-}" in
+  "axi "|"axi status") printf 'run:\n  id: "01RUN"\n  branch: %s\n  status: failed\n  head: "%s"\n  pr: ""\n  findings: none\noutcome: failed\n' '$2' '$3' ;;
+esac
+exit 0
+SH
+}
+
+test_structured_captain_waits() {
+  local home mate fakebin json id
+  home=$(make_home captain-waits)
+  mate="$TMP_ROOT/captain-waits-home"
+  write_domain_alpha_fixture "$home" "$mate"
+  for id in review prose resolved superseded resumed terminal held-review; do
+    write_ask_task "$home" "$id" scout 'paused [key=review] [wait=captain]: awaiting Christian review'
+  done
+  write_ask_task "$home" readable scout 'paused [at=10:30] [wait=captain]: awaiting design answer'
+  write_ask_task "$home" unverified scout 'paused [key=review] [wait=captain]: awaiting Christian review'
+  fm_write_meta "$home/state/unverified.meta" \
+    "window=firstmate:fm-unverified" "worktree=$home/projects/unverified" "project=firstmate" \
+    "harness=codex" "kind=scout" "mode=scout"
+  record_claude_state "$home/state" resumed busy
+  fm_git_init_commit "$home/projects/terminal"
+  git -C "$home/projects/terminal" checkout -q -b fm/terminal
+  fm_write_meta "$home/state/terminal.meta" \
+    "window=firstmate:fm-terminal" "worktree=$home/projects/terminal" "project=firstmate" \
+    "harness=claude" "kind=ship" "mode=no-mistakes"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] review - Review flow (repo: firstmate) (kind: scout) (since 2026-07-13)
+- [ ] prose - CI flow (repo: firstmate) (kind: scout) (since 2026-07-13)
+- [ ] resolved - Answered flow (repo: firstmate) (kind: scout) (since 2026-07-13)
+- [ ] superseded - Resumed flow (repo: firstmate) (kind: scout) (since 2026-07-13)
+- [ ] resumed - Busy flow (repo: firstmate) (kind: scout) (since 2026-07-13)
+- [ ] terminal - Failed flow (repo: firstmate) (kind: ship) (since 2026-07-13)
+- [ ] readable - Readable flow (repo: firstmate) (kind: scout) (since 2026-07-13)
+- [ ] unverified - Codex flow (repo: firstmate) (kind: scout) (since 2026-07-13)
+
+## Queued
+- [ ] held-review - Held flow (repo: firstmate) (kind: captain) (hold: review flow) (hold-kind: captain)
+
+## Done
+EOF
+  printf 'paused: captain-tools CI\n' > "$home/state/prose.status"
+  printf 'resolved [key=review]: answered\n' >> "$home/state/resolved.status"
+  printf 'working: resumed\n' >> "$home/state/superseded.status"
+  printf 'resolved [key=unrelated]: answered elsewhere\n' >> "$home/state/review.status"
+  cat > "$mate/data/backlog.md" <<'EOF'
+## In flight
+- [ ] child-review - Child flow (repo: sample) (kind: scout) (since 2026-07-13)
+
+## Queued
+
+## Done
+EOF
+  write_ask_task "$mate" child-review scout 'paused [wait=captain] [key=child]: awaiting review'
+  printf 'paused [key=parent] [wait=captain]: awaiting parent answer\n' > "$home/state/domain-alpha.status"
+  fakebin=$(make_fakebin "$home")
+  write_failed_run_fake "$fakebin" fm/terminal "$(git -C "$home/projects/terminal" rev-parse HEAD)"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.decisions_open[] | select(.verb == "captain-wait") | .id] | sort)
+      == ["domain-alpha", "domain-alpha/child-review", "readable", "review", "unverified"]
+    and ([.in_flight[] | select(.id == "unverified") | .state] == ["unknown"])
+    and ([.decisions_open[] | select(.id == "held-review") | .verb] == ["captain-hold"])
+    and ([.in_flight[].id] | contains(["review", "readable", "prose", "resumed"]))
+    and (.decisions_open | any(.id == "resolved" or .id == "superseded" or .id == "prose"
+      or .id == "resumed" or .id == "terminal") | not)
+  ' >/dev/null || fail "structured captain waits projected incorrectly: $json"
+  printf 'paused [key=child] [wait=captain]: mirrors child review\n' > "$home/state/domain-alpha.status"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    [.decisions_open[] | select(.verb == "captain-wait") | .id] | sort
+      == ["domain-alpha/child-review", "readable", "review", "unverified"]
+  ' >/dev/null || fail "parent wait duplicated a child call: $json"
+  printf 'resolved [key=child]: reviewed\n' >> "$mate/state/child-review.status"
+  printf 'working: resumed\n' >> "$home/state/domain-alpha.status"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    [.decisions_open[] | select(.verb == "captain-wait") | .id] | sort == ["readable", "review", "unverified"]
+  ' >/dev/null || fail "closed mate waits survived: $json"
+  pass "structured captain waits surface once across main, child, and parent channels, stay Underway, survive an unknown pane read, and clear on resolution, resumption, or a terminal run"
+}
+test_structured_captain_waits
