@@ -496,18 +496,20 @@ sync_event merge "$TASK" "$PR"
 assert_equals 1 "$(count 'mutation AttachPR')" 'a failed attachment lookup still attaches the PR'
 pass 'merge attaches the PR only when the issue does not already have it'
 
-for kind in review progress todo other; do
+for kind in review mixed-case preview progress todo other; do
   make_case "relaunch-$kind"
   seed_issue started
   case "$kind" in
     review) seed_review ;;
+    mixed-case) jq '.[0].state={id:"review",name:"iN rEvIeW",type:"started"}' "$CASE/issues.json" > "$CASE/new"; mv "$CASE/new" "$CASE/issues.json" ;;
+    preview) jq '.[0].state={id:"preview",name:"Preview Deployment",type:"started"}' "$CASE/issues.json" > "$CASE/new"; mv "$CASE/new" "$CASE/issues.json" ;;
     progress) ;;
     todo) seed_issue unstarted ;;
     other) jq '.[0].state={id:"blocked",name:"Blocked",type:"started"}' "$CASE/issues.json" > "$CASE/new"; mv "$CASE/new" "$CASE/issues.json" ;;
   esac
   tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
   run env FM_LINEAR_RELAUNCH=1 bash "$ROOT/bin/fm-linear-lib.sh" spawn "$TASK"
-  if [ "$kind" = review ]; then
+  if [ "$kind" = review ] || [ "$kind" = mixed-case ]; then
     assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'relaunch leaves a ticket in review'
     assert_equals 0 "$(mutations)" 'relaunch of a review ticket writes nothing'
     sync_event spawn "$TASK"

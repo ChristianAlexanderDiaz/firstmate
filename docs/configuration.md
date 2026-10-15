@@ -390,7 +390,7 @@ Ships with a recorded PR or an open captain hold, and issues in any other state,
 A ship whose recorded PR the forge reports closed without merging, with no worker on it, returns its ticket to Todo the same way, with a reason comment, from whichever started state it sits in, including In Review.
 Teardown of a ship with a recorded PR makes that check once, and the existing watcher heartbeat makes it for a ship whose worker the busy classifier reports idle or dead (so a hookless harness is never judged), remembering the handled PR in a private record so later heartbeats stay quiet.
 Open or merged PRs, a failed forge read, an issue that is not in a started state, and captain-held work leave the ticket as it is; only GitHub and GitLab PRs are read.
-A successful first spawn restores In Progress, while a relaunch leaves a ticket already in a started state named for review where it is, because its PR is awaiting review.
+A successful first spawn restores In Progress, while a relaunch preserves a ticket in a started state named exactly `In Review` (case-insensitive), because its PR is awaiting review.
 Backlog `block` and `unblock` commands mirror dependencies as Linear blocking relations when both tasks have eligible linked tickets.
 The heartbeat removes owned relations when a dependency clears through task completion.
 Dependency sync leaves workflow status unchanged and preserves manually created relations.

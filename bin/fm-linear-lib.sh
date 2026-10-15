@@ -22,7 +22,7 @@
 # produces it with the recorded PR URL; the heartbeat produces it for a ship
 # whose worker the busy classifier reports idle or dead, and
 # <id>.linear-closed remembers the handled PR so the rotation stays quiet.
-# A relaunch (FM_LINEAR_RELAUNCH=1) leaves a review-state issue where it is.
+# A relaunch (FM_LINEAR_RELAUNCH=1) preserves a started In Review issue.
 # `merge` skips an attachment the issue already has for that PR URL.
 # Private runtime records: <id>.linear-idle stores observation signature and
 # epoch, <id>.linear-closed names a handled closed PR, <id>.linear-dependencies keeps dependency clearing eligible after the
@@ -157,8 +157,8 @@ fm_linear_dependencies() {  # <data> <state> <task> <row> <issue-id>
   [ -n "$active" ] || rm -f "$state/$task.linear-dependencies"
 }
 
-fm_linear_review_state() {  # <issue-json>; a started state whose name says review
-  printf '%s' "$1" | jq -e '.state.type == "started" and ((.state.name // "") | test("review"; "i"))' >/dev/null
+fm_linear_review_state() {  # <issue-json>
+  printf '%s' "$1" | jq -e '.state.type == "started" and ((.state.name // "") | ascii_downcase) == "in review"' >/dev/null
 }
 
 fm_linear_pr_closed() {  # <url>; succeeds only for a PR the forge reports closed and unmerged
