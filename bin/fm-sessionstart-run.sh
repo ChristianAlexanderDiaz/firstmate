@@ -107,6 +107,10 @@ session_start_completed() {
   lock_pid=$(cat "$STATE/.lock" 2>/dev/null) || return 1
   completion_pid=$(cat "$COMPLETION_FILE" 2>/dev/null) || return 1
   case "$lock_pid" in ''|*[!0-9]*) return 1 ;; esac
+  # An ancestor can reuse the recorded pid, so completion also needs identity.
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  fm_session_lock_holder_alive "$STATE" "$lock_pid" || return 1
   [ "$completion_pid" = "$lock_pid" ]
 }
 

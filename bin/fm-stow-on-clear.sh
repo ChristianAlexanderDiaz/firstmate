@@ -30,7 +30,8 @@
 #   - the root is a primary home (fm_primary_scope_matches), so a linked task
 #     worktree is excluded, and it carries no secondmate-home marker;
 #   - the ending session owns this home's session lock
-#     (fm_session_lock_owned_by_self), which is what makes it the main firstmate
+#     (fm_session_lock_owned_by_self) and its holder is still live
+#     (fm_session_lock_holder_alive), which is what makes it the main firstmate
 #     session rather than a read-only second session or a headless helper.
 #
 # Failure direction: every subcommand exits 0 on every path except a usage
@@ -69,7 +70,7 @@ record_field() {  # <record-file> <key>
 }
 
 cmd_hook() {
-  local payload session transcript reason event tmp
+  local payload session transcript reason event tmp lock_pid
   # shellcheck source=bin/fm-gate-refuse-lib.sh
   . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
   # shellcheck source=bin/fm-primary-scope-lib.sh
@@ -95,6 +96,11 @@ cmd_hook() {
   # shellcheck source=bin/fm-session-lock-lib.sh
   . "$SCRIPT_DIR/fm-session-lock-lib.sh"
   fm_session_lock_owned_by_self "$STATE" || return 0
+  lock_pid=$(cat "$STATE/.lock" 2>/dev/null) || return 0
+  # An ancestor can reuse the recorded pid, so ownership also needs identity.
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  fm_session_lock_holder_alive "$STATE" "$lock_pid" || return 0
 
   session=$(printf '%s' "$payload" | jq -r '.session_id // "" | tostring' 2>/dev/null) || session=
   transcript=$(printf '%s' "$payload" | jq -r '.transcript_path // "" | tostring' 2>/dev/null) || transcript=
