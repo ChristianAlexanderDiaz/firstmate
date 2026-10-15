@@ -589,6 +589,17 @@ sync_event tick 2>/dev/null
 assert_equals "$TASK" "$(cat "$HOME_DIR/state/.linear-cursor")" 'timed-out task does not hold the rotation'
 pass 'heartbeat is quiet for expected skips, retires orphaned records, and moves past a timed-out task'
 
+make_case heartbeat-no-key
+fm_write_meta "$HOME_DIR/state/$TASK.meta" 'kind=ship' 'backend=tmux' 'window=fm-work' 'harness=claude' 'spawn_gen=example'
+out=$(run env -u FM_LINEAR_API_KEY bash "$ROOT/bin/fm-linear-lib.sh" tick 2>&1)
+assert_equals '' "$out" 'heartbeat with nothing due is silent without a key'
+rm -f "$HOME_DIR/state/.linear-cursor"
+touch "$HOME_DIR/state/$TASK.linear-dependencies"
+out=$(run env -u FM_LINEAR_API_KEY bash "$ROOT/bin/fm-linear-lib.sh" tick 2>&1)
+assert_equals 'linear: sync off (no key)' "$out" 'due heartbeat reports the missing key once'
+assert_equals 0 "$(wc -l < "$CASE/requests" | tr -d ' ')" 'missing key makes no API call'
+pass 'heartbeat reports a missing key only when a refresh is due'
+
 make_case heartbeat-lock
 fm_write_meta "$HOME_DIR/state/$TASK.meta" 'kind=ship' 'backend=tmux' 'window=fm-work' 'harness=claude' 'spawn_gen=example'
 # shellcheck disable=SC2016 # The child expands its own positional arguments.

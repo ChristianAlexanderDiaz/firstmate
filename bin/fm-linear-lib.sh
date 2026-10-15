@@ -231,9 +231,6 @@ fm_linear_event() {
      .key == "exclude_task") and
     (.value | length > 0) and (.value | explode | all(.[]; . >= 32 and . != 127))) and
     all(.[] | select(.key == "project"); (.value | split("|") | length == 2 and all(.[]; length > 0)))' >/dev/null
-  if [ -z "${FM_LINEAR_API_KEY:-}" ] && ! printf '%s' "$LINEAR_CONFIG" | jq -e 'any(.[]; .key == "key_command")' >/dev/null; then
-    exit 21
-  fi
   while IFS= read -r pattern; do
     # shellcheck disable=SC2254 # Configured shell globs deliberately match patterns.
     case "$id" in $pattern) exit 22 ;; esac
