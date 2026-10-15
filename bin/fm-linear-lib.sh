@@ -376,7 +376,7 @@ fm_linear_event() {
       # states, including custom review or waiting states, and captain-held
       # work keep their status.
       [ "$(printf '%s' "$issue" | jq -r '.state.id')" = "$(fm_linear_state "$issue_team" started)" ] || exit 0
-      [ "$(fm_linear_field "$row" hold_kind)" != captain ] || [ "$(fm_linear_field "$row" state)" = done ] || exit 0
+      [ "$(fm_linear_field "$row" hold_kind)" != captain ] || [ "$(fm_linear_field "$row" state)" = "done" ] || exit 0
       if [ "$event" = teardown ] && [ -n "${FM_LINEAR_TEARDOWN_BRANCH:-}" ]; then
         # Merged, failed or unreadable lookups are not proof that nothing landed.
         [ -n "${FM_LINEAR_TEARDOWN_REPO:-}" ] || exit 0
