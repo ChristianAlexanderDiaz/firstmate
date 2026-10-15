@@ -5911,7 +5911,7 @@ SPAWN_ACCOUNT=
 # Best-effort external sync follows the successful local dispatch commit.
 if [ "$KIND" = ship ] && [ -f "$CONFIG/linear" ]; then
   FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
-    FM_LINEAR_CONTROL_LOCK_HELD=$RELAUNCH \
+    FM_LINEAR_CONTROL_LOCK_HELD=$RELAUNCH FM_LINEAR_RELAUNCH=$RELAUNCH \
     bash "$SCRIPT_DIR/fm-linear-lib.sh" spawn "$ID" || true
 fi
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT$SPAWN_ACCOUNT"

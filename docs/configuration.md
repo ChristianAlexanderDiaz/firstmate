@@ -372,7 +372,8 @@ Scouts and secondmates never sync.
 Map only projects whose backlog titles and bodies may be sent to Linear, and exclude any private tasks within them with `exclude_task`.
 A successful ship spawn creates a ticket when no linkage exists, then selects the team's started state named `In Progress`, falling back to the first started state returned by Linear.
 Creation specifies that state explicitly, avoiding Linear's default Triage intake for teams with Triage enabled.
-A recorded PR merge, including one detected from the forge, selects the completed state named `Done`, falling back to the first completed state, and attaches the PR URL.
+A recorded PR merge, including one detected from the forge, selects the completed state named `Done`, falling back to the first completed state, and attaches the PR URL unless the issue already has an attachment for it, as Linear's own GitHub integration usually adds one first.
+That integration also moves a ticket to its review state when a PR opens, so this sync does not.
 A captain hold adds the configured label without changing workflow status; its answer, release or reconciled close removes only that label.
 `In Progress` represents a working ship, not a standing assignment.
 After a teardown of a ship with no recorded PR whose branch has no commits of its own beyond origin's copy of its base (or the local base without an origin), and whose forge lookup finds no merged PR for the branch, an issue still in the started state sync selects (normally `In Progress`) returns to the team's unstarted `Todo` state (or first unstarted state), with a reason comment.
@@ -385,8 +386,11 @@ Heartbeat checks stay quiet when nothing is due (even without a credential) and 
 A ship classified idle or dead continuously for more than a day returns to Todo the same way, with a reason comment; activity, a new worker incarnation or unknown classification resets that interval.
 This uses the existing semantic busy classifier; missing evidence is never treated as idle.
 Ships whose harness has no busy-state hooks are never returned to Todo for inactivity, because sparse samples cannot prove a continuous day.
-Ships with a recorded PR or an open captain hold, and issues in any other state, such as a custom review, waiting or blocked state, keep their status.
-A successful spawn or relaunch restores In Progress.
+Ships with a recorded PR or an open captain hold, and issues in any other state, such as a custom review, waiting or blocked state, keep their status under those two rules.
+A ship whose recorded PR the forge reports closed without merging, with no worker on it, returns its ticket to Todo the same way, with a reason comment, from whichever started state it sits in, including In Review.
+Teardown of a ship with a recorded PR makes that check once, and the existing watcher heartbeat makes it for a ship whose worker the busy classifier reports idle or dead (so a hookless harness is never judged), remembering the handled PR in a private record so later heartbeats stay quiet.
+Open or merged PRs, a failed forge read, an issue that is not in a started state, and captain-held work leave the ticket as it is; only GitHub and GitLab PRs are read.
+A successful first spawn restores In Progress, while a relaunch leaves a ticket already in a started state named for review where it is, because its PR is awaiting review.
 Backlog `block` and `unblock` commands mirror dependencies as Linear blocking relations when both tasks have eligible linked tickets.
 The heartbeat removes owned relations when a dependency clears through task completion.
 Dependency sync leaves workflow status unchanged and preserves manually created relations.
