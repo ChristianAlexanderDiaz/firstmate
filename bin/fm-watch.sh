@@ -2945,7 +2945,7 @@ EOF
           merge_authority=$FM_MERGE_AUTHORITY
           merge_authority_record_identity=$FM_MERGE_AUTHORITY_RECORD_IDENTITY
           merge_outcome_rc=0
-          fm_merge_outcome_report "$FM_HOME" "$STATE" "$id" "$url" poll \
+          FM_LINEAR_CONTROL_LOCK_HELD=1 fm_merge_outcome_report "$FM_HOME" "$STATE" "$id" "$url" poll \
             "$merge_authority" || merge_outcome_rc=$?
           if [ "$merge_outcome_rc" -ne 0 ]; then
             triage_log "merge outcome for $id could not be recorded (rc=$merge_outcome_rc)"
@@ -3352,6 +3352,8 @@ EOF
   hb=$(( HEARTBEAT * (1 << streak) ))
   [ "$hb" -gt "$HEARTBEAT_MAX" ] && hb=$HEARTBEAT_MAX
   if [ "$(age_of "$STATE/.last-heartbeat")" -ge "$hb" ]; then
+    [ ! -f "$CONFIG/linear" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG \
+      bash "$SCRIPT_DIR/fm-linear-lib.sh" tick || true
     # Triage: in always-on mode a heartbeat is benign unless the cheap fleet-scan
     # turns up a captain-relevant status the per-wake path missed. Absorb the
     # no-change case (advance the schedule and back off exactly as wake() would,

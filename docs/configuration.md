@@ -10,7 +10,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Firstmate's code, private files, or project location | [FM_HOME](#fm_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend) and [harness support](#harness-support) |
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [Claude account failover](#claude-account-failover-configclaude-failover), [Claude account pacing](#claude-account-pacing-configclaude-account-paced), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
-| Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
+| Backlog, preferences, and memory | [Linear sync](#linear-sync-configlinear), [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
@@ -337,6 +337,81 @@ The opt-out is inherited into secondmate homes: a primary that opts out also opt
 The primary-authoritative propagation contract, including removal of a mate's local opt-out when the primary has none, is owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md).
 `config/supervision-host` is local to each home and not inherited, because each home's engine and model are its own choice.
 While the home runs the host, main's lease-checked commands also take the per-task lease lock, so a claim by the host's engine cannot race a mutation main already started (`bin/fm-lease-lib.sh`).
+
+## Linear sync (`config/linear`)
+
+Linear sync is opt-in for each home and uses `curl`, `jq`, Perl with `Digest::SHA`, and the configured backlog through `tasks-axi`.
+Keep all real workspace, team, label, project and ticket values in the home's gitignored configuration and records.
+This file is not inherited by secondmate provisioning; configure each participating home explicitly.
+Lifecycle commands skip sync silently when the file is absent.
+A present file without a credential disables sync with one diagnostic and does not fail a lifecycle command.
+
+The file contains literal `key=value` lines, with blank lines and lines beginning with `#` ignored.
+Values are not shell-quoted or expanded, except for `key_command`, which is explicitly a trusted shell command.
+Do not put a literal API key in the file or in that command.
+Use `FM_LINEAR_API_KEY` in the invoking supervisor's environment, or supply a command that reads the key from a secret store and prints it.
+The environment key takes precedence over the command.
+
+```text
+# Obviously fake examples; replace locally with the intended mappings.
+key_command=security find-generic-password -s example-linear-api -w
+project=sample|00000000-0000-4000-8000-000000000001
+waiting_label=00000000-0000-4000-8000-000000000004
+exclude_task=private-*
+exclude_task=research-*
+```
+
+| Directive | Meaning |
+| --- | --- |
+| `key_command` | Optional single command executed with `bash -c` when the environment key is absent; stdout supplies the credential. |
+| `project` | Repeatable exact project basename to Linear team UUID mapping, separated by `\|`; unmapped projects never sync, so leave private projects unmapped. |
+| `waiting_label` | Optional single UUID of the waiting-for-answer label; without it, hold and release sync are skipped. |
+| `exclude_task` | Repeatable task-id shell glob, matched case-sensitively without executing it. |
+
+Scouts and secondmates never sync.
+Map only projects whose backlog titles and bodies may be sent to Linear, and exclude any private tasks within them with `exclude_task`.
+A successful ship spawn creates a ticket when no linkage exists, then selects the team's started state named `In Progress`, falling back to the first started state returned by Linear.
+Creation specifies that state explicitly, avoiding Linear's default Triage intake for teams with Triage enabled.
+A recorded PR merge, including one detected from the forge, selects the completed state named `Done`, falling back to the first completed state, and attaches the PR URL.
+A captain hold adds the configured label without changing workflow status; its answer, release or reconciled close removes only that label.
+`In Progress` represents a working ship, not a standing assignment.
+After a teardown of a ship with no recorded PR whose branch has no commits of its own beyond origin's copy of its base (or the local base without an origin), and whose forge lookup finds no merged PR for the branch, an issue still in the started state sync selects (normally `In Progress`) returns to the team's unstarted `Todo` state (or first unstarted state), with a reason comment.
+That branch lookup uses `gh-axi` within the sync's time bound, so ships on other forges, and lookups that fail or time out, keep their status.
+Local-only ships are excluded from that rule, because their landed work is a fast-forward of the base and looks the same.
+A forced teardown that discards work with no recorded PR and no local landing proof (a clean worktree, ignoring harness leftovers, whose commits are on a remote or the base branch) returns the issue to Todo the same way.
+Any other teardown, including one whose landing is merely unrecorded or unknown, or whose recorded worktree slot now belongs to another task, leaves the status unchanged.
+Each existing watcher heartbeat checks recorded ships and dependency records in rotation within one ten-second budget; a timed-out task waits for its next turn.
+Heartbeat checks stay quiet when nothing is due (even without a credential) and for excluded, unmapped, unlinked, ambiguous or Triage work, and drop a dependency record whose task no longer exists.
+A ship classified idle or dead continuously for more than a day returns to Todo the same way, with a reason comment; activity, a new worker incarnation or unknown classification resets that interval.
+This uses the existing semantic busy classifier; missing evidence is never treated as idle.
+Ships whose harness has no busy-state hooks are never returned to Todo for inactivity, because sparse samples cannot prove a continuous day.
+Ships with a recorded PR or an open captain hold, and issues in any other state, such as a custom review, waiting or blocked state, keep their status.
+A successful spawn or relaunch restores In Progress.
+Backlog `block` and `unblock` commands mirror dependencies as Linear blocking relations when both tasks have eligible linked tickets.
+The heartbeat removes owned relations when a dependency clears through task completion.
+Dependency sync leaves workflow status unchanged and preserves manually created relations.
+It never creates a ticket for a dependency.
+Sync never mutates a Triage issue, deletes an issue, or writes a cycle field.
+Linear's own cycle behavior still applies to status changes.
+
+Existing linkage is found in the task id, backlog title/body, or, on merge, an identifier following `fixes`, `closes` or `resolves` (case-insensitive) in the complete PR record from GitHub or GitLab.
+Only identifiers belonging to mapped teams are eligible, and ambiguous references are skipped.
+The saved backlog linkage takes precedence over incidental references elsewhere.
+A completed or canceled issue changes only through saved linkage; an incidental reference to one is skipped and never saved.
+Only spawn creates tickets; other events without a linked or previously created issue are skipped.
+A failed forge read never causes ticket creation.
+GitHub reads use `gh-axi`; GitLab reads use `glab`.
+Other forges can sync through task/backlog linkage but do not supply PR-body discovery.
+
+Every attempt is best effort and has a ten-second total bound covering secret lookup, backlog reads/writes, forge discovery and Linear requests.
+A failure emits one generic diagnostic and leaves the successful lifecycle action successful.
+No raw API response or credential-command error is logged, and the API key is passed to curl through header stdin rather than a command argument or temporary file.
+There is no new daemon, background queue, backfill, webhook or two-way reconciliation.
+Dependency and idle observation records stay in the owning home's private `state/` directory.
+Periodic dependency checks retry while their private tracking record exists.
+A missed sync can be retried through the event command documented by `bin/fm-linear-lib.sh --help`; its header owns linkage storage and retry identity mechanics.
+The real lifecycle producers share that implementation across harnesses and runtime backends.
+Run `bin/fm-test-run.sh tests/fm-linear.test.sh` for network-free regression coverage.
 
 ## Backlog backend (.tasks.toml / config/backlog-backend)
 

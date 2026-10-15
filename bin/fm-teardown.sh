@@ -1575,6 +1575,20 @@ pr_is_merged() {
   return 0
 }
 
+# The landing branch ref (the recorded base branch, else the default): origin's
+# copy when an origin remote exists, else the local branch. Does not fetch.
+landing_base_ref() {
+  local name=${BASE_BRANCH:-}
+  [ -n "$name" ] || name=$(default_branch) || return 1
+  if git -C "$WT" remote get-url origin >/dev/null 2>&1; then
+    printf 'refs/remotes/origin/%s\n' "$name"
+  elif git -C "$WT" rev-parse --quiet --verify "refs/heads/$name" >/dev/null 2>&1; then
+    printf 'refs/heads/%s\n' "$name"
+  else
+    return 1
+  fi
+}
+
 # Is the branch's content already present in its up-to-date landing branch
 # (the recorded base branch, else the default)? Fetches first, then 3-way merges
 # that branch with HEAD: when HEAD introduces nothing it does not already contain
@@ -1583,16 +1597,13 @@ pr_is_merged() {
 # as "added". Returns non-zero when inconclusive (no base ref, or a merge conflict),
 # so the caller refuses rather than guesses.
 content_in_default() {
-  local name=${BASE_BRANCH:-} ref default_tree merged_tree
-  [ -n "$name" ] || name=$(default_branch) || return 1
-  if git -C "$WT" remote get-url origin >/dev/null 2>&1; then
-    git -C "$WT" fetch --quiet origin "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1 || return 1
-    ref="refs/remotes/origin/$name"
-  elif git -C "$WT" rev-parse --quiet --verify "refs/heads/$name" >/dev/null 2>&1; then
-    ref="refs/heads/$name"
-  else
-    return 1
-  fi
+  local ref default_tree merged_tree
+  ref=$(landing_base_ref) || return 1
+  case "$ref" in
+    refs/remotes/origin/*)
+      git -C "$WT" fetch --quiet origin "+refs/heads/${ref#refs/remotes/origin/}:$ref" >/dev/null 2>&1 || return 1
+      ;;
+  esac
   default_tree=$(git -C "$WT" rev-parse --quiet --verify "$ref^{tree}" 2>/dev/null) || return 1
   [ -n "$default_tree" ] || return 1
   merged_tree=$(git -C "$WT" merge-tree --write-tree "$ref" HEAD 2>/dev/null) || return 1
@@ -1891,6 +1902,10 @@ report_worktree_dirt() {
   ' >&2
 }
 
+worktree_dirt() {  # <porcelain>; drops untracked harness leftovers
+  printf '%s\n' "$1" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' || true
+}
+
 validate_worktree_teardown_safety() {
   local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
   [ -d "$WT" ] || return 0
@@ -1907,7 +1922,7 @@ validate_worktree_teardown_safety() {
     echo "Restore the git index state, or get the captain's explicit OK to discard, then --force." >&2
     return 1
   fi
-  dirty=$(printf '%s\n' "$dirty_raw" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' || true)
+  dirty=$(worktree_dirt "$dirty_raw")
 
   if ! unpushed_raw=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null); then
     if worktree_safety_blocked_by_lock "commits not on a remote"; then
@@ -3544,6 +3559,34 @@ else
   fi
 fi
 
+# Capture local landing proof before cleanup removes the task artifacts.
+# This is only an external-sync hint; it never participates in teardown safety.
+# A ship with no recorded PR is known not to have landed when its branch has no
+# commits of its own beyond its landing branch (outside local-only mode, where a
+# landed fast-forward looks the same) and the Linear sync's bounded forge
+# lookup for that branch finds no merged PR, or when an explicit --force
+# discards work with no local landing proof. A reassigned slot proves nothing
+# about this task, and a merely unrecorded or unknown landing leaves the Linear
+# status unchanged.
+LINEAR_TEARDOWN_UNLANDED=0
+LINEAR_TEARDOWN_BRANCH=
+if [ -f "$CONFIG/linear" ] && [ "$KIND" = ship ] && [ -z "$PR_URL" ] && teardown_owns_worktree; then
+  LINEAR_TEARDOWN_BASE=$(landing_base_ref 2>/dev/null || true)
+  if [ -d "$WT" ] && [ "$MODE" != local-only ] && [ -n "$LINEAR_TEARDOWN_BASE" ] \
+      && [ -z "$(git -C "$WT" log --oneline HEAD --not "$LINEAR_TEARDOWN_BASE" -- 2>/dev/null || echo unreadable)" ]; then
+    LINEAR_TEARDOWN_BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+    case "$LINEAR_TEARDOWN_BRANCH" in ''|HEAD) LINEAR_TEARDOWN_BRANCH= ;; *) LINEAR_TEARDOWN_UNLANDED=1 ;; esac
+  elif [ "$FORCE" = --force ]; then
+    LINEAR_TEARDOWN_UNLANDED=1
+    if [ -d "$WT" ] && LINEAR_TEARDOWN_STATUS=$(git -C "$WT" status --porcelain 2>/dev/null) \
+        && [ -z "$(worktree_dirt "$LINEAR_TEARDOWN_STATUS")" ] \
+        && { [ -z "$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null || echo unreadable)" ] \
+          || git -C "$WT" merge-base --is-ancestor HEAD "${BASE_BRANCH:-$(default_branch)}" 2>/dev/null; }; then
+      LINEAR_TEARDOWN_UNLANDED=0
+    fi
+  fi
+fi
+
 # Every landed/discard-work refusal above has now passed (or --force skipped
 # them). Fix 1 and Fix 2 (see script header) run here, unconditionally on
 # --force, and before ANY destructive step below - a still-parked run or a
@@ -3847,6 +3890,12 @@ fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
 # Removing an ordinary worker frees its capacity place for the quota refill source.
 [ "$KIND" = secondmate ] || "$SCRIPT_DIR/fm-procevent-refill.sh" notify || true
+if [ "$LINEAR_TEARDOWN_UNLANDED" = 1 ]; then
+  FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
+    FM_LINEAR_TEARDOWN_BRANCH=$LINEAR_TEARDOWN_BRANCH FM_LINEAR_TEARDOWN_REPO=$PROJ \
+    FM_LINEAR_CONTROL_LOCK_HELD=1 bash "$SCRIPT_DIR/fm-linear-lib.sh" teardown "$ID" || true
+fi
+rm -f "$STATE/$ID.linear-idle"
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi
