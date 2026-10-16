@@ -32,7 +32,7 @@
 # State choices and additive/subtractive label updates do not write cycles.
 #
 # --run is the internal bounded child, not a lifecycle entry point. The hold,
-# relaunch and merge-poll producers set FM_LINEAR_CONTROL_LOCK_HELD=1 while
+# relaunch, teardown and merge-poll producers set FM_LINEAR_CONTROL_LOCK_HELD=1 while
 # holding the task's control lock; other callers acquire that same lock before
 # reading/updating its body.
 
@@ -212,8 +212,9 @@ fm_linear_idle_due() {  # <state> <task>; classifier owns all harness/backend fa
   . "$LINEAR_DIR/fm-busy-lib.sh"
   [ "$(fm_meta_get "$meta" kind)" = ship ] || return 1
   backend=$(fm_backend_of_meta "$meta"); target=$(fm_backend_target_of_meta "$meta"); harness=$(fm_meta_get "$meta" harness)
-  # A recorded PR awaits review, and harnesses without busy-state hooks offer
-  # only sparse samples, which cannot prove a continuous idle day.
+  # Recorded PRs use closure reconciliation instead of the inactivity rule.
+  # Harnesses without busy-state hooks offer only sparse samples, which
+  # cannot prove a continuous idle day.
   if [ -n "$(fm_meta_get "$meta" pr)" ] || [ -z "$(fm_busy_sources_for_harness "$harness")" ]; then
     rm -f "$state/$task.linear-idle"
     return 1
@@ -451,7 +452,7 @@ fm_linear_event() {
       ;;
     closed)
       # Any started state, including In Review, means the ticket still claims
-      # a ship whose PR will never land. Captain-held work keeps its status.
+      # work whose PR is no longer open. Captain-held work keeps its status.
       [ "$issue_type" = started ] || exit 0
       [ "$(fm_linear_field "$row" hold_kind)" != captain ] || [ "$(fm_linear_field "$row" state)" = "done" ] || exit 0
       fm_linear_pr_closed "$url" || exit 0
