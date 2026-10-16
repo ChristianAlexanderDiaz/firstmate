@@ -33,11 +33,15 @@ printf '%s\n' "$*" >> "$FM_TEST_LINEAR/forge-argv"
 [ ! -f "$FM_TEST_LINEAR/forge-fail" ] || exit 1
 case "$*" in
   'pr list --state merged --head '*) cat "$FM_TEST_LINEAR/pr-list" 2>/dev/null; exit 0 ;;
+  'pr view 7 --repo example/sample') cat "$FM_TEST_LINEAR/pr-state" 2>/dev/null; exit 0 ;;
   *'--repo example/sample --hostname github.com --full'*) ;;
   *) exit 1 ;;
 esac
 cat "$FM_TEST_LINEAR/pr-body"
 SH
+  # The PR state reader prefers gh; failing it routes the read to the gh-axi stub.
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$FAKEBIN/gh"
+  chmod +x "$FAKEBIN/gh"
   cat > "$FAKEBIN/curl" <<'PY'
 #!/usr/bin/env python3
 import json, os, pathlib, sys, time
@@ -71,6 +75,8 @@ todo = '00000000-0000-4000-8000-000000000005'
 relationfile = root / 'relations.json'
 relations = json.loads(relationfile.read_text()) if relationfile.exists() else []
 issuefile = root / 'issues.json'
+attachfile = root / 'attachments.json'
+attachments = json.loads(attachfile.read_text()) if attachfile.exists() else []
 issues = json.loads(issuefile.read_text())
 if q.startswith('query Teams'):
     states = [{'id': 'fallback', 'name': 'Working', 'type': 'started'},
@@ -115,12 +121,19 @@ elif q.startswith('mutation UpdateIssue'):
         issue['state'] = {'id': value['stateId'], 'type': 'completed' if value['stateId'] == done else 'unstarted' if value['stateId'] == todo else 'started'}
     issue['labels'] = sorted(set(issue.get('labels', []) + value.get('addedLabelIds', [])) - set(value.get('removedLabelIds', [])))
     data = {'issueUpdate': {'success': not (root / 'mutation-fail').exists()}}
+elif q.startswith('query Attachments'):
+    if (root / 'attachments-fail').exists():
+        sys.exit(22)
+    data = {'issue': {'attachments': {'nodes': [{'url': u} for u in attachments],
+                                      'pageInfo': {'hasNextPage': False}}}}
 elif q.startswith('mutation AttachPR'):
+    attachments.append(v['input']['url'])
     data = {'attachmentCreate': {'success': True}}
 else:
     raise AssertionError(q)
 issuefile.write_text(json.dumps(issues))
 relationfile.write_text(json.dumps(relations))
+attachfile.write_text(json.dumps(attachments))
 if (root / 'lost-create').exists() and q.startswith('mutation CreateIssue'):
     sys.exit(28)
 print(json.dumps({'data': data}))
@@ -146,6 +159,12 @@ seed_issue() {
     '[{id:"00000000-0000-4000-8000-000000000010",identifier:"ABC-42",team:{id:$team},
        state:{id:(if $type == "started" then $started else "old" end),type:$type},labels:["unrelated"]}]' > "$CASE/issues.json"
 }
+seed_review() {
+  seed_issue started
+  jq '.[0].state={id:"review",name:"In Review",type:"started"}' "$CASE/issues.json" > "$CASE/new"
+  mv "$CASE/new" "$CASE/issues.json"
+}
+count() { jq -sr --arg prefix "$1" '[.[] | select(.query | startswith($prefix))] | length' "$CASE/requests"; }
 mutations() { jq -sr '[.[] | select(.query | startswith("mutation"))] | length' "$CASE/requests"; }
 
 make_case create
@@ -452,6 +471,175 @@ for failure in no landed zero-work lookup-failed merge-commit fast-forward yes; 
   fi
 done
 pass 'real ship spawn calls sync after dispatch and survives API failure; teardown demotes only unlanded work'
+
+for attached in none other same slash; do
+  make_case "merge-attach-$attached"
+  seed_issue started
+  tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+  case "$attached" in
+    other) printf '["https://github.com/example/sample/pull/8"]\n' > "$CASE/attachments.json" ;;
+    same) printf '["%s"]\n' "$PR" > "$CASE/attachments.json" ;;
+    slash) printf '["%s/"]\n' "$PR" > "$CASE/attachments.json" ;;
+  esac
+  sync_event merge "$TASK" "$PR"
+  assert_equals "$DONE" "$(jq -r '.[0].state.id' "$CASE/issues.json")" "$attached attachment still completes the issue"
+  case "$attached" in
+    none|other) assert_equals 1 "$(count 'mutation AttachPR')" "$attached attachment attaches the PR" ;;
+    *) assert_equals 0 "$(count 'mutation AttachPR')" "$attached attachment is not attached twice" ;;
+  esac
+done
+make_case merge-attach-lookup-fails
+seed_issue started
+tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+touch "$CASE/attachments-fail"
+sync_event merge "$TASK" "$PR"
+assert_equals 1 "$(count 'mutation AttachPR')" 'a failed attachment lookup still attaches the PR'
+pass 'merge attaches the PR only when the issue does not already have it'
+
+for kind in review mixed-case preview progress todo other; do
+  make_case "relaunch-$kind"
+  seed_issue started
+  case "$kind" in
+    review) seed_review ;;
+    mixed-case) jq '.[0].state={id:"review",name:"iN rEvIeW",type:"started"}' "$CASE/issues.json" > "$CASE/new"; mv "$CASE/new" "$CASE/issues.json" ;;
+    preview) jq '.[0].state={id:"preview",name:"Preview Deployment",type:"started"}' "$CASE/issues.json" > "$CASE/new"; mv "$CASE/new" "$CASE/issues.json" ;;
+    progress) ;;
+    todo) seed_issue unstarted ;;
+    other) jq '.[0].state={id:"blocked",name:"Blocked",type:"started"}' "$CASE/issues.json" > "$CASE/new"; mv "$CASE/new" "$CASE/issues.json" ;;
+  esac
+  tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+  run env FM_LINEAR_RELAUNCH=1 bash "$ROOT/bin/fm-linear-lib.sh" spawn "$TASK"
+  if [ "$kind" = review ] || [ "$kind" = mixed-case ]; then
+    assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'relaunch leaves a ticket in review'
+    assert_equals 0 "$(mutations)" 'relaunch of a review ticket writes nothing'
+    sync_event spawn "$TASK"
+    assert_equals "$STARTED" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'a first spawn still starts a review ticket'
+  else
+    assert_equals "$STARTED" "$(jq -r '.[0].state.id' "$CASE/issues.json")" "relaunch moves a $kind ticket to In Progress"
+  fi
+done
+pass 'relaunch keeps an In Review ticket in review; other tickets and first spawns still start'
+
+for case_name in closed merged open lookup-fails completed unstarted progress held; do
+  make_case "closed-$case_name"
+  seed_review
+  tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+  printf 'pull_request:\n  state: closed\n' > "$CASE/pr-state"
+  expected=$TODO
+  case "$case_name" in
+    merged) printf 'state: merged\n' > "$CASE/pr-state"; expected=review ;;
+    open) printf 'state: open\n' > "$CASE/pr-state"; expected=review ;;
+    lookup-fails) touch "$CASE/forge-fail"; expected=review ;;
+    completed) seed_issue completed; expected=old ;;
+    unstarted) seed_issue unstarted; expected=old ;;
+    progress) seed_issue started; expected=$TODO ;;
+    held)
+      run bash "$ROOT/bin/fm-captain-hold.sh" hold "$TASK" --reason 'Choose an option' >/dev/null
+      expected=review
+      ;;
+  esac
+  before=$(count 'mutation Comment')
+  sync_event closed "$TASK" "$PR"
+  assert_equals "$expected" "$(jq -r '.[0].state.id' "$CASE/issues.json")" "closed PR with $case_name ticket"
+  if [ "$expected" = "$TODO" ]; then
+    assert_equals "$((before + 1))" "$(count 'mutation Comment')" 'closed PR comments once'
+    sync_event closed "$TASK" "$PR"
+    assert_equals "$((before + 1))" "$(count 'mutation Comment')" 'repeat does not comment again'
+  else
+    assert_equals "$before" "$(count 'mutation Comment')" "$case_name ticket gets no reason comment"
+  fi
+done
+pass 'a closed unmerged PR returns started tickets to Todo once; every other state keeps its status'
+
+make_case closed-scout-and-exclusion
+seed_review
+tasks update "$TASK" --body 'Linear issue: ABC-42' --kind scout >/dev/null
+printf 'state: closed\n' > "$CASE/pr-state"
+sync_event closed "$TASK" "$PR" 2>/dev/null
+assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'scouts never sync a closed PR'
+make_case closed-excluded
+seed_review
+tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+printf 'exclude_task=w*\n' >> "$HOME_DIR/config/linear"
+printf 'state: closed\n' > "$CASE/pr-state"
+sync_event closed "$TASK" "$PR" 2>/dev/null
+assert_equals 0 "$(wc -l < "$CASE/requests" | tr -d ' ')" 'excluded work makes no API call for a closed PR'
+pass 'closed-PR sync honors scouts and task exclusions'
+
+make_case closed-heartbeat
+seed_review
+tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+printf 'state: closed\n' > "$CASE/pr-state"
+write_ship_meta() {
+  fm_write_meta "$HOME_DIR/state/$TASK.meta" 'kind=ship' 'backend=tmux' 'window=fm-work' "harness=${1:-claude}" 'spawn_gen=example' "pr=$PR"
+}
+write_ship_meta
+printf 'example\n' > "$HOME_DIR/state/$TASK.busy-gen"
+printf 'v1 gen=example seq=1 state=busy source=claude-hook event=UserPromptSubmit ts=1\n' > "$HOME_DIR/state/$TASK.busy-state"
+sync_event tick
+assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'a busy worker keeps its ticket despite a closed PR'
+write_ship_meta grok
+printf 'v1 gen=example seq=2 state=idle source=claude-hook event=Stop ts=2\n' > "$HOME_DIR/state/$TASK.busy-state"
+sync_event tick
+assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'a live harness without busy hooks is never judged idle'
+write_ship_meta
+printf 'state: open\n' > "$CASE/pr-state"
+sync_event tick
+assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'an open PR keeps its ticket'
+printf 'state: closed\n' > "$CASE/pr-state"
+sync_event tick
+assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'idle worker with a closed PR returns the ticket to Todo'
+assert_equals 1 "$(count 'mutation Comment')" 'heartbeat comments once'
+before=$(mutations)
+rm -f "$HOME_DIR/state/.linear-cursor"
+sync_event tick
+assert_equals "$before" "$(mutations)" 'a closed PR already in Todo makes no further mutations'
+printf 'state: open\n' > "$CASE/pr-state"
+seed_review
+sync_event tick
+assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'a reopened PR stays in review'
+printf 'state: closed\n' > "$CASE/pr-state"
+sync_event tick
+assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'closing the reopened PR returns its ticket to Todo again'
+assert_equals 2 "$(count 'mutation Comment')" 'each closure comments once'
+pass 'heartbeat reconciles repeated PR closures without duplicate transitions or comments'
+
+for harness in claude grok; do
+  make_case "closed-dead-$harness"
+  seed_review
+  tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+  printf 'state: closed\n' > "$CASE/pr-state"
+  write_ship_meta "$harness"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$FAKEBIN/tmux"
+  sync_event tick
+  assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" "a dead $harness endpoint returns a closed-PR ticket to Todo"
+  assert_equals 1 "$(count 'mutation Comment')" 'a dead endpoint closure comments once'
+done
+pass 'dead endpoints reconcile closed PRs with or without harness hooks'
+
+for pr_state in closed merged; do
+  make_case "real-teardown-$pr_state"
+  fm_test_spawn_home "$HOME_DIR" claude
+  printf '%s\n' "$$" > "$HOME_DIR/state/.lock"
+  fm_test_spawn_brief "$HOME_DIR" "$TASK" 'Exercise closed-PR teardown sync.'
+  fm_git_worktree "$CASE/sample" "$CASE/wt" "fm/$TASK"
+  run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
+    HOME="$HOME_DIR/user-home" CLAUDE_CONFIG_DIR='' \
+    bash "$ROOT/bin/fm-spawn.sh" "$TASK" "$CASE/sample" --mode direct-PR --yolo off >/dev/null 2>&1 \
+    || fail 'real spawn failed'
+  jq '.[0].state={id:"review",name:"In Review",type:"started"}' "$CASE/issues.json" > "$CASE/new"
+  mv "$CASE/new" "$CASE/issues.json"
+  printf 'pr=%s\n' "$PR" >> "$HOME_DIR/state/$TASK.meta"
+  printf 'state: %s\n' "$pr_state" > "$CASE/pr-state"
+  out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
+    bash "$ROOT/bin/fm-teardown.sh" "$TASK" --force 2>&1) || fail "real teardown failed: $out"
+  if [ "$pr_state" = closed ]; then
+    assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'teardown of a closed-PR ship returns its ticket to Todo'
+  else
+    assert_equals review "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'teardown of a merged-PR ship leaves its ticket'
+  fi
+done
+pass 'real teardown syncs a closed unmerged PR and leaves a merged one alone'
 
 
 for event in idle teardown; do
