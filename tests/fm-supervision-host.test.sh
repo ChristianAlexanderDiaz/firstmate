@@ -2977,8 +2977,15 @@ test_sleep_holds_host_wakes_and_park_boundaries() {
 test_sleep_cancels_an_active_host_turn() {
   local home
   home=$(make_home sleep-engine away)
+  echo fail > "$home/stub-mode"
+  start_session "$home"
+  park_again "$home"
+  append_status "$home" 'one real engine failure'
+  wait_until 250 host_exited "$home" || fail 'sleep health fixture did not record its first failure'
+  assert_grep 'errors=1' "$home/state/.supervision-host-health" 'health fixture needs one prior engine failure'
+  main_drain_and_ack "$home"
   echo hang > "$home/stub-mode"
-  FM_SUPERVISION_ENGINE_GRACE=1 start_host "$home"
+  FM_SUPERVISION_ENGINE_GRACE=1 park_again "$home"
   append_status "$home" 'start before sleep'
   wait_until 250 test -s "$home/orphan-pid" || fail 'sleep: engine did not start'
   : > "$home/state/.sleep"
@@ -2988,8 +2995,15 @@ test_sleep_cancels_an_active_host_turn() {
   assert_grep 'demo.status' "$home/state/.wake-queue" 'sleep cancellation consumed the unhandled wake'
   wait_until 150 sh -c '[ ! -e "$1/.branch-eligible-rows" ]' _ "$home/state" \
     || fail 'sleep cancellation kept the wake claimed away from the return drain'
+  rm "$home/state/.sleep"
+  wait_until 250 host_exited "$home" || fail 'sleep cancellation did not hand its queued wake back on return'
+  assert_grep 'sleep cancelled the engine turn' "$home/host.out" 'sleep cancellation needs its own handback reason'
+  assert_no_grep 'engine turn failed' "$home/host.out" 'sleep cancellation was reported as an engine error'
+  assert_grep 'errors=1' "$home/state/.supervision-host-health" 'sleep cancellation changed the engine error streak'
+  assert_grep 'cooldown=0' "$home/state/.supervision-host-health" 'sleep cancellation tripped the error latch'
+  assert_grep 'demo.status' "$home/state/.wake-queue" 'return lost the cancelled wake'
   stop_home_processes "$home"
-  pass 'sleep: an active supervision engine is cancelled while its unhandled wake remains durable'
+  pass 'sleep: active engine cancellation preserves the wake and does not increment the engine-error latch'
 }
 
 test_sleep_holds_host_wakes_and_park_boundaries

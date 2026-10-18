@@ -306,6 +306,44 @@ test_sleep_interrupts_recorded_harnesses_without_exit() {
   pass "sleep: Claude and Codex are interrupted through the control plane without exiting or discarding work"
 }
 
+
+test_sleep_watcher_reinterrupts_busy_workers() {
+  local dir gen watcher gnhf before i
+  dir=$(new_case sleep-sweep)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1 --state idle)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  # The ordinary lifecycle fixtures skip sleeps; this one exercises real polls.
+  printf '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n' > "$dir/fakebin/sleep"
+  : > "$dir/home/state/.sleep"
+  bash -c 'exec -a gnhf sleep 90' &
+  gnhf=$!
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+    FM_CONTROL_SETTLE_WAIT=0.05 FM_CONTROL_POLL=0.01 FM_POLL=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$ROOT/bin/fm-watch.sh" > "$dir/watch.out" 2> "$dir/watch.err" &
+  watcher=$!
+  for i in $(seq 1 150); do [ ! -e "$dir/home/state/.sleep-sweep-errors" ] || break; /bin/sleep 0.1; done
+  [ -e "$dir/home/state/.sleep-sweep-errors" ] || fail 'sleep sweep never ran'
+  [ ! -s "$dir/fake/keys" ] || fail 'sleep watcher interrupted an idle worker'
+  "$ROOT/bin/fm-busy-event.sh" apply "$dir/home/state" t1 busy --gen "$gen" --source claude-hook --event turn-start >/dev/null
+  for i in $(seq 1 150); do [ "$(grep -c '^Escape$' "$dir/fake/keys")" -lt 2 ] || break; /bin/sleep 0.1; done
+  [ "$(grep -c '^Escape$' "$dir/fake/keys")" -ge 2 ] || fail 'busy worker was not re-interrupted on successive sleep polls'
+  "$ROOT/bin/fm-busy-event.sh" apply "$dir/home/state" t1 idle --gen "$gen" --source claude-hook --event turn-end >/dev/null
+  /bin/sleep 2
+  before=$(cat "$dir/fake/keys")
+  /bin/sleep 2
+  [ "$(cat "$dir/fake/keys")" = "$before" ] || fail 'sleep kept interrupting after the worker became idle'
+  kill -0 "$gnhf" || fail 'sleep watcher touched standalone gnhf'
+  [ ! -s "$dir/watch.out" ] || fail 'sleep sweep emitted a wake'
+  [ -z "$(literals "$dir")" ] || fail 'sleep sweep typed lifecycle text'
+  [ "$(cat "$dir/fake/command")" = claude ] || fail 'sleep sweep exited the worker'
+  kill "$watcher" "$gnhf"
+  wait "$watcher" "$gnhf" 2>/dev/null || true
+  pass 'sleep: watcher re-interrupts busy workers each poll while leaving idle workers and standalone gnhf alone'
+}
+
 test_exit_types_each_harness_verified_command() {
   local dir out rc harness expected key repeat clear
   for harness in $VERIFIED_HARNESSES; do
@@ -1253,3 +1291,4 @@ test_secondmate_control_command_carries_no_marker
 test_fm_send_still_marks_the_same_secondmate_task
 
 test_sleep_interrupts_recorded_harnesses_without_exit
+test_sleep_watcher_reinterrupts_busy_workers

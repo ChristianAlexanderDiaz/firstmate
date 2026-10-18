@@ -853,7 +853,7 @@ health_record() {  # <engine-error 0|1> <reports>
 # never a subshell, because it advances the host's grant and turn state.
 handle_wake() {  # <reason-lines>
   local reason=$1 first scope status corrupted rows tasks unscoped rc turn readback
-  local receipts usage result errors unacked mirror
+  local receipts usage result errors unacked mirror sleep_cancelled=0
   LAST_TURN=
   ENGINE_ERROR=0
   HEALTH_NOTE=
@@ -989,6 +989,7 @@ handle_wake() {  # <reason-lines>
   ENGINE_SUBSHELL=$!
   while fm_pid_alive "$ENGINE_SUBSHELL"; do
     if fm_sleep_active "$STATE"; then
+      sleep_cancelled=1
       stop_engine_turn
       break
     fi
@@ -1009,11 +1010,13 @@ handle_wake() {  # <reason-lines>
   usage=$(fm_supervision_engine_result "$FM_SUPERVISION_ENGINE" "$result" "${ENGINE_COST:-0}" 2>/dev/null || true)
   [ "$result" = /dev/null ] || rm -f "$result"
   TURN_RESULT=
-  if [ "$rc" -ne 0 ] || [ -z "$usage" ] || [ "${usage#error=0}" = "$usage" ]; then
-    ENGINE_ERROR=1
+  if [ "$sleep_cancelled" = 0 ]; then
+    if [ "$rc" -ne 0 ] || [ -z "$usage" ] || [ "${usage#error=0}" = "$usage" ]; then
+      ENGINE_ERROR=1
+    fi
+    health_record "$ENGINE_ERROR" "${receipts:-0}"
   fi
-  health_record "$ENGINE_ERROR" "${receipts:-0}"
-  if [ "$ENGINE_ERROR" -eq 0 ] && [ "${receipts:-0}" -gt 0 ] && [ -z "$unacked" ]; then
+  if [ "$sleep_cancelled" = 0 ] && [ "$ENGINE_ERROR" -eq 0 ] && [ "${receipts:-0}" -gt 0 ] && [ -z "$unacked" ]; then
     write_engine_record $((ENGINE_TURNS + 1)) "$(printf '%s\n' "$usage" | sed -n 's/.* conversation_cost=\([^ ]*\).*/\1/p')" \
       || rm -f "$ENGINE_RECORD"
     [ "$TURN_POSTURE" != attended ] || "$SCRIPT_DIR/fm-host-mirror.sh" commit >/dev/null 2>&1 || true
@@ -1028,7 +1031,9 @@ handle_wake() {  # <reason-lines>
   log_line "failed	turn=$turn	posture=$TURN_POSTURE	rc=$rc	reports=${receipts:-0}	unacked=${unacked:-none}	${usage:-no-result}	$(head -c 300 "$errors" 2>/dev/null | tr '\t\n' '  ')	$first"
   [ "$errors" = /dev/null ] || rm -f "$errors"
   TURN_ERRORS=
-  if fm_timed_out "$rc"; then
+  if [ "$sleep_cancelled" = 1 ]; then
+    HANDLE_WHY="sleep cancelled the engine turn; its unhandled wake remains queued"
+  elif fm_timed_out "$rc"; then
     HANDLE_WHY="the engine turn hit its ${TURN_TIMEOUT}s bound"
   elif [ "$rc" -eq 127 ]; then
     HANDLE_WHY="the $FM_SUPERVISION_ENGINE engine could not run"

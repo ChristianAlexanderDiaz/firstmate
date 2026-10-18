@@ -360,7 +360,7 @@ fm_task_inbox_ring() (  # <backend> <target> <record-path> [expected-label]
   fm_sleep_active "$inbox_state" && return 1
   # Serialize the whole submit/retry sequence with sleep entry, so a ring
   # already checking the composer cannot revive a just-interrupted worker.
-  fm_lock_try_acquire "$inbox_state/.sleep.lock" || return 1
+  fm_lock_acquire_wait_max "$inbox_state/.sleep.lock" 30 || return 1
   trap 'fm_lock_release "$inbox_state/.sleep.lock"' EXIT
   fm_sleep_active "$inbox_state" && return 1
   _fm_task_inbox_ring_awake "$@"

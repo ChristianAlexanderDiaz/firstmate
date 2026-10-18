@@ -26,8 +26,9 @@ On the first ordinary user message while either sleep record exists, run its `in
 Operational input, including firstmate routing, watcher wakes, and backed doorbells, is held rather than treated as a return.
 Do not acknowledge or act on held events until the sleep return succeeds.
 
-Present the returned normal drain output, handle its open decisions and unread statuses, and acknowledge only after handling using its printed command in the home named by that return section.
-For a remote section, use the registered route through `bin/fm-on.sh`; never run a descendant home's acknowledgement against the parent queue.
+Present this home's returned normal drain output, handle its open decisions and unread statuses, and acknowledge only after handling using its printed command.
+Descendant sections are read-only summaries: never act on or acknowledge those rows from the parent.
+Each secondmate drains, handles, and acknowledges its own queue when its watcher is released.
 The command does not resume interrupted workers; steer them normally after resolving the held queue.
 If an away record also exists on return, load [afk](../afk/SKILL.md) and complete its return procedure before ordinary work.
 Quiet mode keeps its usual explicit-off semantics.

@@ -1497,7 +1497,7 @@ inject_msg() {  # <message> [state]
   errf=$(mktemp "$state/.subsuper-inject-err.XXXXXX" 2>/dev/null) || errf=
   # Sleep entry and the terminal submit share a lock: composer inspection may
   # have started before the hold, and its delayed Enter must not wake main.
-  if ! fm_lock_try_acquire "$state/.sleep.lock"; then
+  if ! fm_lock_acquire_wait_max "$state/.sleep.lock" 30; then
     [ -z "$errf" ] || rm -f "$errf"
     INJECT_LAST_FAILURE="deferred: sleep posture change in progress"
     return 1

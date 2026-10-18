@@ -820,9 +820,9 @@ The [sleep posture](../configuration.md#sleep-posture) owns operator behavior an
 Commands run serially:
 
 ```sh
-bin/fm-test-run.sh --jobs 1 tests/fm-sleep.test.sh tests/fm-control.test.sh
-bin/fm-test-run.sh --jobs 1 tests/fm-task-inbox.test.sh
 bin/fm-test-run.sh --jobs 1 tests/fm-sleep.test.sh
+bin/fm-test-run.sh --jobs 1 tests/fm-control.test.sh
+bin/fm-test-run.sh --jobs 1 tests/fm-task-inbox.test.sh
 bin/fm-test-run.sh --jobs 1 tests/fm-spawn-dispatch-profile.test.sh
 bin/fm-test-run.sh --jobs 1 tests/fm-pi-branch-extension.test.sh
 bin/fm-test-run.sh --jobs 1 tests/fm-pi-watch-extension.test.sh
@@ -837,10 +837,12 @@ Selected passing output:
 ok - sleep: Claude and Codex are interrupted through the control plane without exiting or discarding work
 ok - sleep: durable on/off, ordinary-message return, held drain and steering, spawn refusal, and standalone gnhf exemption
 ok - sleep: an escalation already checking its composer is held before terminal submission
+ok - sleep: inbox rings, daemon injections, and posture changes wait for contention and recheck the hold
+ok - sleep: watcher re-interrupts busy workers each poll while leaving idle workers and standalone gnhf alone
 ok - sleep: live watcher holds a status without waking the model and return presents it
-ok - sleep: local and remote propagation, partial failure retains holds, and remote queue return
+ok - sleep: local and remote return summaries preserve descendant queue and status ownership
 ok - sleep: the host holds every wake and its park boundary, then handles the durable event on return
-ok - sleep: an active supervision engine is cancelled while its unhandled wake remains durable
+ok - sleep: active engine cancellation preserves the wake and does not increment the engine-error latch
 ```
 
 The harness suites use fake public extension APIs to cover held wake prompts and active Pi branch cancellation.

@@ -4,6 +4,7 @@
 # Usage: FM_HOME=<home> bin/fm-sleep.sh on|off|status
 #        FM_HOME=<home> bin/fm-sleep.sh input  # ordinary message on stdin
 # Internal propagation: on|off --depth <0..32> (fm-on preserves these argv).
+# Internal watcher sweep: sweep (re-interrupt only recorded busy endpoints).
 #
 # on atomically publishes state/.sleep before any interrupt or propagation.
 # Repeating on retries propagation and interruption without replacing entry time.
@@ -26,7 +27,13 @@
 # presents this home's queue; only a successful presentation removes that flag.
 # A repeated off with no flag prints nothing. Presentation does not acknowledge
 # work: the supervisor handles and acknowledges the drain's normal receipts.
-# Interrupted workers stay idle until normal steering resumes them.
+# Descendant returns print a read-only queue/status summary without claiming,
+# presenting, or acknowledging their rows; each home drains its own queue.
+# The parked watcher repeats interrupt for busy endpoints once per poll cycle.
+# Native self-wakes may run until that next sweep; idle endpoints are untouched.
+# .sleep-sweep-errors retains the latest sweep failures without injecting a wake.
+# In-flight no-mistakes runs are not paused and continue until their next gate.
+# Interrupted workers can be resumed through normal steering after return.
 # Away/quiet records are preserved. The /sleep return skill handles any away
 # return after the sleep queue, so a genuine return also clears away posture.
 # input ignores operational injections and /sleep itself; an ordinary message
@@ -46,6 +53,10 @@ case "${1:-}" in -h|--help) sed -n '2,/^set -eu/{ /^#/s/^# \{0,1\}//p; }' "$0"; 
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 
+residual_notice() {
+  printf 'sleep: in-flight no-mistakes runs are not paused; they continue until their next gate\n'
+}
+
 operation=${1:-status}
 shift "$(( $# > 0 ? 1 : 0 ))"
 depth=0
@@ -57,6 +68,8 @@ case "$operation" in
     if fm_sleep_active; then
       printf 'sleep: on (%s)\n' "$FM_HOME"
       [ ! -f "$STATE/.sleep-errors" ] || cat "$STATE/.sleep-errors"
+      [ ! -f "$STATE/.sleep-sweep-errors" ] || cat "$STATE/.sleep-sweep-errors"
+      residual_notice
     else printf 'sleep: off (%s)\n' "$FM_HOME"; fi
     exit 0 ;;
   input)
@@ -67,21 +80,23 @@ case "$operation" in
     kind=
     if fm_operational_input_classify "$message" kind || fm_operational_doorbell_kind "$message" "$STATE" kind; then exit 0; fi
     operation=off ;;
-  on|off) ;;
+  on|off|sweep) ;;
   *) echo 'usage: fm-sleep.sh on|off|status|input' >&2; exit 2 ;;
 esac
 fm_refuse_if_gate_agent
-fm_lock_try_acquire "$STATE/.sleep.lock" || { echo 'sleep: another posture change is running' >&2; exit 1; }
+fm_lock_acquire_wait_max "$STATE/.sleep.lock" 30 || { echo 'sleep: another posture change is running' >&2; exit 1; }
 trap 'fm_lock_release "$STATE/.sleep.lock"' EXIT
-if [ "$operation" = off ] && ! fm_sleep_active; then exit 0; fi
+if [ "$operation" != on ] && ! fm_sleep_active; then exit 0; fi
 if [ "$operation" = on ] && [ ! -e "$STATE/.sleep" ]; then
   pending=$(mktemp "$STATE/.sleep.pending.XXXXXX")
   printf 'schema=fm-sleep.v1\nentered=%s\n' "$(date +%s)" > "$pending"
   mv "$pending" "$STATE/.sleep"
 fi
-: > "$STATE/.sleep-errors"
+error_file="$STATE/.sleep-errors"
+[ "$operation" != sweep ] || error_file="$STATE/.sleep-sweep-errors"
+: > "$error_file"
 failed=0
-failure() { printf 'sleep: %s\n' "$*" | tee -a "$STATE/.sleep-errors" >&2; failed=1; }
+failure() { printf 'sleep: %s\n' "$*" | tee -a "$error_file" >&2; failed=1; }
 
 # Do not let parent state/config/queue overrides leak into a descendant home.
 child_sleep() (
@@ -89,11 +104,11 @@ child_sleep() (
   exec env FM_HOME="$1" "$SCRIPT_DIR/fm-sleep.sh" "$operation" --depth "$((depth + 1))"
 )
 registry="${FM_DATA_OVERRIDE:-$FM_HOME/data}/secondmates.md"
-if [ -f "$registry" ]; then
+if [ "$operation" != sweep ] && [ -f "$registry" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in '- '*) ;; *) continue ;; esac
     if ! secondmate_registry_parse_line "$line"; then failure 'malformed secondmate registry entry'; continue; fi
-    [ "$operation" != off ] || printf 'Sleep return through secondmate %s:\n' "$SECONDMATE_REGISTRY_ID"
+    [ "$operation" != off ] || printf 'Secondmate %s (read-only summary; handled in its own home):\n' "$SECONDMATE_REGISTRY_ID"
     if [ "$SECONDMATE_REGISTRY_REMOTE" = 1 ]; then
       "$SCRIPT_DIR/fm-on.sh" "$SECONDMATE_REGISTRY_ID" fm-sleep.sh "$operation" --depth "$((depth + 1))" \
         || failure "remote secondmate $SECONDMATE_REGISTRY_ID did not confirm $operation"
@@ -103,7 +118,9 @@ if [ -f "$registry" ]; then
   done < "$registry"
 fi
 
-if [ "$operation" = on ]; then
+if [ "$operation" = on ] || [ "$operation" = sweep ]; then
+  # shellcheck source=bin/fm-busy-lib.sh
+  . "$SCRIPT_DIR/fm-busy-lib.sh"
   # Each home owns only its direct reports. The remote parent-route is local
   # to this host and uses the same control API with that exact state directory.
   for endpoint_state in "$STATE" "$STATE/parent-route"; do
@@ -115,18 +132,41 @@ if [ "$operation" = on ]; then
       case "$(fm_backend_agent_state "$FM_BACKEND_VALIDATED_BACKEND" "$FM_BACKEND_VALIDATED_TARGET" 2>/dev/null || true)" in
         dead) continue ;;
       esac
+      if [ "$operation" = sweep ]; then
+        verdict=$(fm_busy_classify_meta "$meta" "$id" "$endpoint_state")
+        [ "${verdict%% *}" = busy ] || continue
+      fi
       if FM_STATE_OVERRIDE="$endpoint_state" "$SCRIPT_DIR/fm-control.sh" "$id" interrupt; then
         printf '%s\n' "$id" >> "$STATE/.sleep-workers"
       else failure "interrupt failed for $id; the hold remains active"; fi
     done
   done
   [ "$failed" = 0 ] || exit 1
+  [ "$operation" != sweep ] || exit 0
   printf 'sleep: on; launches and delivery held in %s\n' "$FM_HOME"
+  residual_notice
 else
   [ "$failed" = 0 ] || exit 1
   [ ! -e "$STATE/.sleep" ] || mv "$STATE/.sleep" "$STATE/.sleep-return"
   printf 'Sleep return: %s\n' "$FM_HOME"
-  if ! FM_SLEEP_PRESENT=1 "$SCRIPT_DIR/fm-wake-drain.sh"; then
+  if [ "$depth" -gt 0 ]; then
+    # Do not run the drain here: even an unacknowledged drain advances status
+    # presentation cursors and claims rows. The descendant watcher owns those.
+    fm_lock_acquire_wait_max "$FM_WAKE_QUEUE_LOCK" 30 || exit 1
+    summary_rc=0
+    if [ -f "$FM_WAKE_QUEUE" ]; then fm_wake_print_deduped "$FM_WAKE_QUEUE" || summary_rc=$?; fi
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+    [ "$summary_rc" = 0 ] || exit "$summary_rc"
+    # shellcheck source=bin/fm-classify-lib.sh
+    . "$SCRIPT_DIR/fm-classify-lib.sh"
+    for status_file in "$STATE"/*.status; do
+      [ -f "$status_file" ] || continue
+      offset=$(fm_wake_status_cursor_offset "$status_file") || continue
+      if fm_wake_unread_events "$status_file" 0 "$offset"; then
+        printf '%s (read-only unread status):\n%s\n' "${status_file##*/}" "$FM_WAKE_UNREAD_LINES"
+      fi
+    done
+  elif ! FM_SLEEP_PRESENT=1 "$SCRIPT_DIR/fm-wake-drain.sh"; then
     failure 'wake presentation failed; rerun off to finish the return'
     exit 1
   fi
@@ -134,5 +174,5 @@ else
     printf 'Interrupted workers (resume through normal steering):\n'
     sort -u "$STATE/.sleep-workers"
   fi
-  rm -f "$STATE/.sleep-return" "$STATE/.sleep-errors" "$STATE/.sleep-workers"
+  rm -f "$STATE/.sleep-return" "$STATE/.sleep-errors" "$STATE/.sleep-workers" "$STATE/.sleep-sweep-errors"
 fi

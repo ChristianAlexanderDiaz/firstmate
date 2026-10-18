@@ -33,9 +33,16 @@ fm_sleep_active() {  # [state-dir]
 # Keep the current shell wait alive instead of completing an async tool and
 # opening a model turn. Status files and the ordinary wake queue remain durable.
 fm_sleep_wait() {  # [state-dir] [watcher]
-  local state=${1:-$STATE} owner=${2:-}
+  local state=${1:-$STATE} owner=${2:-} next=0 poll=${POLL:-${FM_POLL:-5}}
+  case "$poll" in ''|*[!0-9]*|0) poll=5 ;; esac
   while fm_sleep_active "$state"; do
-    if [ "$owner" = watcher ] && [ -d "$state" ]; then touch "$state/.last-watcher-beat"; fi
+    if [ "$owner" = watcher ] && [ -d "$state" ]; then
+      touch "$state/.last-watcher-beat"
+      if [ "$SECONDS" -ge "$next" ]; then
+        FM_STATE_OVERRIDE="$state" "$FM_WAKE_LIB_DIR/fm-sleep.sh" sweep >/dev/null 2>&1 || true
+        next=$((SECONDS + poll))
+      fi
+    fi
     sleep 1
   done
 }

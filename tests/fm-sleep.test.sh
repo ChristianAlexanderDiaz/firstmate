@@ -19,6 +19,8 @@ first=$(cat "$home/state/.sleep")
 [ "$(cat "$home/state/.sleep")" = "$first" ] || fail 'repeat entry changed the durable epoch'
 "$SLEEP" status > "$home/status"
 assert_grep 'sleep: on' "$home/status" 'status must observe sleep'
+assert_grep 'in-flight no-mistakes runs are not paused' "$home/status" 'status must disclose residual validation work'
+assert_grep 'in-flight no-mistakes runs are not paused' "$home/entry" 'entry must disclose residual validation work'
 append_wake "$home/state" check sleep-test 'check: sleep-test: needs a decision'
 if "$ROOT/bin/fm-wake-drain.sh" > "$home/drain" 2>&1; then fail 'sleep allowed drain'; fi
 assert_grep 'needs a decision' "$home/state/.wake-queue" 'held queue was lost'
@@ -78,6 +80,70 @@ bash -c '
 rm "$home/state/.sleep"
 pass 'sleep: an escalation already checking its composer is held before terminal submission'
 
+
+# A live delivery lock is ordinary contention, not a reason to drop a ring.
+# Release only after proving the contender is still waiting, then test the
+# second sleep check with a hold published by the lock owner before release.
+hold_sleep_lock() {
+  rm -f "$home/lock-ready" "$home/lock-release"
+  bash -c '
+    . "$1/bin/fm-wake-lib.sh"
+    fm_lock_acquire_wait_max "$STATE/.sleep.lock" 30 || exit 1
+    trap '\''fm_lock_release "$STATE/.sleep.lock"'\'' EXIT
+    : > "$FM_HOME/lock-ready"
+    while [ ! -e "$FM_HOME/lock-release" ]; do sleep 0.1; done
+    [ "$2" != hold ] || : > "$STATE/.sleep"
+  ' _ "$ROOT" "$1" &
+  lock_pid=$!
+  for _ in $(seq 1 100); do [ ! -f "$home/lock-ready" ] || return 0; sleep 0.1; done
+  fail 'contention fixture never acquired the sleep lock'
+}
+for delivery in ring inject; do
+  for posture in awake hold; do
+    hold_sleep_lock "$posture"
+    (
+      bash -c '
+        . "$1/bin/fm-supervise-daemon.sh"
+        . "$1/bin/fm-task-inbox-lib.sh"
+        afk_active() { return 0; }
+        fm_backend_target_exists() { return 0; }
+        pane_is_busy() { return 1; }
+        fm_backend_composer_state() { printf empty; }
+        fm_daemon_primary_harness() { printf claude; }
+        fm_backend_send_text_submit() { : > "$FM_HOME/delivered"; printf empty; }
+        _fm_task_inbox_ring_awake() { : > "$FM_HOME/delivered"; }
+        if [ "$2" = ring ]; then
+          rec=$(fm_task_inbox_write "$STATE" worker "queued during contention")
+          fm_task_inbox_ring tmux fake:fm-worker "$rec"
+        else inject_msg "queued escalation" "$STATE"; fi
+      ' _ "$ROOT" "$delivery" && echo 0 > "$home/contender.rc" || echo 1 > "$home/contender.rc"
+    ) &
+    contender=$!
+    sleep 0.4
+    [ ! -e "$home/contender.rc" ] || fail "$delivery gave up instead of waiting for the sleep lock"
+    : > "$home/lock-release"
+    wait "$lock_pid" "$contender"
+    if [ "$posture" = awake ]; then
+      [ "$(cat "$home/contender.rc")" = 0 ] && [ -f "$home/delivered" ] || fail "$delivery was lost after contention"
+      rm "$home/delivered"
+    else
+      [ "$(cat "$home/contender.rc")" = 1 ] && [ ! -e "$home/delivered" ] || fail "$delivery missed sleep published while waiting"
+      rm "$home/state/.sleep"
+    fi
+    rm "$home/contender.rc"
+  done
+done
+hold_sleep_lock awake
+("$SLEEP" on > "$home/contention-entry" && echo 0 > "$home/contender.rc" || echo 1 > "$home/contender.rc") &
+contender=$!
+sleep 0.4
+[ ! -e "$home/contender.rc" ] || fail 'sleep entry gave up on an in-flight delivery lock'
+: > "$home/lock-release"
+wait "$lock_pid" "$contender"
+[ "$(cat "$home/contender.rc")" = 0 ] && [ -f "$home/state/.sleep" ] || fail 'sleep entry was lost after contention'
+"$SLEEP" off >/dev/null 2>&1
+pass 'sleep: inbox rings, daemon injections, and posture changes wait for contention and recheck the hold'
+
 # A live watcher parks without completing, even when a new status is appended.
 "$SLEEP" on >/dev/null
 FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=99999 FM_HEARTBEAT=99999 \
@@ -126,12 +192,29 @@ FM_TEST_REMOTE_FAIL=1 "$code/bin/fm-sleep.sh" on > "$parent/failure" 2>&1 && fai
 assert_grep 'remote secondmate remote did not confirm on' "$parent/state/.sleep-errors" 'partial entry must name the failed route'
 "$code/bin/fm-sleep.sh" on >/dev/null
 [ -f "$remote/state/.sleep" ] || fail 'remote entry was not propagated'
+append_wake "$parent/state" check parent-test 'check: parent-test: queued in parent'
+append_wake "$child/state" check child-test 'check: child-test: queued locally'
+printf 'note: unread child update\n' > "$child/state/job.status"
+printf 'note: unread remote update\n' > "$remote/state/job.status"
 append_wake "$remote/state" check remote-test 'check: remote-test: queued remotely'
-"$code/bin/fm-sleep.sh" off > "$parent/return" 2>/dev/null
+"$code/bin/fm-sleep.sh" off > "$parent/return" 2> "$parent/return.err"
 for state in "$parent/state" "$child/state" "$remote/state"; do
   [ ! -e "$state/.sleep" ] || fail "sleep off did not propagate to $state"
 done
 assert_grep 'queued remotely' "$parent/return" 'remote queue presentation was lost'
 assert_grep 'remote fm-sleep.sh on --depth 1' "$parent/calls" 'remote on bypassed fm-on'
 assert_grep 'remote fm-sleep.sh off --depth 1' "$parent/calls" 'remote off bypassed fm-on'
-pass 'sleep: local and remote propagation, partial failure retains holds, and remote queue return'
+assert_grep 'read-only summary; handled in its own home' "$parent/return" 'descendant sections need ownership labels'
+[ "$(grep -c '^WAKE_ACK_REQUIRED:' "$parent/return.err")" = 1 ] || fail 'parent received descendant acknowledgement commands'
+for descendant in "$child" "$remote"; do
+  assert_grep 'queued' "$descendant/state/.wake-queue" 'parent return consumed a descendant row'
+  [ ! -e "$descendant/state/.main-eligible-rows" ] || fail 'parent claimed a descendant queue'
+  FM_HOME="$descendant" FM_STATE_OVERRIDE="$descendant/state" "$code/bin/fm-wake-drain.sh" > "$descendant/drain" 2> "$descendant/receipt"
+  assert_grep 'queued' "$descendant/drain" 'descendant lost its own queue presentation'
+  assert_grep 'unread' "$descendant/drain" 'parent advanced a descendant status cursor'
+  ack=$(sed -n 's/^WAKE_ACK_REQUIRED: after handling completes run bin\/fm-wake-drain.sh //p' "$descendant/receipt")
+  # shellcheck disable=SC2086 # arguments emitted by the normal queue receipt
+  FM_HOME="$descendant" FM_STATE_OVERRIDE="$descendant/state" "$code/bin/fm-wake-drain.sh" $ack >/dev/null 2>&1
+  [ ! -s "$descendant/state/.wake-queue" ] || fail 'descendant could not acknowledge its own rows'
+done
+pass 'sleep: local and remote return summaries preserve descendant queue and status ownership'
