@@ -25,6 +25,7 @@ On `/sleep off`, run its `off` command.
 On the first ordinary user message while either sleep record exists, run its `input` command with the message verbatim on stdin before doing the requested work.
 Operational input, including firstmate routing, watcher wakes, and backed doorbells, is held rather than treated as a return.
 Do not acknowledge or act on held events until the sleep return succeeds.
+A nonzero return that names a secondmate as still held has still released this home: report that secondmate and its printed release command, then continue the return below; run `off` again later to release it.
 
 Present this home's returned normal drain output, handle its open decisions and unread statuses, and acknowledge only after handling using its printed command.
 Descendant sections are read-only summaries: never act on or acknowledge those rows from the parent.

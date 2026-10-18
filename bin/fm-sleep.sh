@@ -22,15 +22,21 @@
 # untouched: they have no state/<id>.meta here. A task name containing gnhf is
 # never an exemption. This command neither starts nor discovers gnhf processes.
 #
-# off wakes descendants before releasing this home, retaining the hold on a
-# propagation failure. .sleep-return holds delivery while the normal drain
+# off wakes descendants before releasing this home. A descendant that does not
+# confirm stays held: off names it with its release command, records it in
+# .sleep-held, still releases this home, and returns nonzero. A later off
+# retries only those recorded descendants, even after this home is awake.
+# .sleep-return holds delivery while the normal drain
 # presents this home's queue; only a successful presentation removes that flag.
 # A repeated off with no flag prints nothing. Presentation does not acknowledge
 # work: the supervisor handles and acknowledges the drain's normal receipts.
 # Descendant returns print a read-only queue/status summary without claiming,
 # presenting, or acknowledging their rows; each home drains its own queue.
-# The parked watcher repeats interrupt for busy endpoints once per poll cycle.
-# Native self-wakes may run until that next sweep; idle endpoints are untouched.
+# Only while a parked watcher is alive does it repeat interrupt for busy task
+# endpoints once per poll cycle; it never interrupts a secondmate primary.
+# Codex-primary homes park no watcher, and a Claude Stop-hook watcher ends at
+# its hook timeout (about 8 hours), so no sweep runs there or past that point.
+# Native self-wakes may run until the next sweep; idle endpoints are untouched.
 # .sleep-sweep-errors retains the latest sweep failures without injecting a wake.
 # In-flight no-mistakes runs are not paused and continue until their next gate.
 # Interrupted workers can be resumed through normal steering after return.
@@ -55,6 +61,7 @@ case "${1:-}" in -h|--help) sed -n '2,/^set -eu/{ /^#/s/^# \{0,1\}//p; }' "$0"; 
 
 residual_notice() {
   printf 'sleep: in-flight no-mistakes runs are not paused; they continue until their next gate\n'
+  printf 'sleep: busy workers are re-interrupted only while a parked watcher runs: never in Codex-primary homes, and not past the Claude Stop-hook watcher lifetime (about 8 hours)\n'
 }
 
 operation=${1:-status}
@@ -70,7 +77,10 @@ case "$operation" in
       [ ! -f "$STATE/.sleep-errors" ] || cat "$STATE/.sleep-errors"
       [ ! -f "$STATE/.sleep-sweep-errors" ] || cat "$STATE/.sleep-sweep-errors"
       residual_notice
-    else printf 'sleep: off (%s)\n' "$FM_HOME"; fi
+    else
+      printf 'sleep: off (%s)\n' "$FM_HOME"
+      [ ! -s "$STATE/.sleep-held" ] || sed 's/^/sleep: secondmate still held: /' "$STATE/.sleep-held"
+    fi
     exit 0 ;;
   input)
     fm_sleep_active || exit 0
@@ -86,7 +96,12 @@ esac
 fm_refuse_if_gate_agent
 fm_lock_acquire_wait_max "$STATE/.sleep.lock" 30 || { echo 'sleep: another posture change is running' >&2; exit 1; }
 trap 'fm_lock_release "$STATE/.sleep.lock"' EXIT
-if [ "$operation" != on ] && ! fm_sleep_active; then exit 0; fi
+held_file="$STATE/.sleep-held"
+retry_held=0
+if [ "$operation" != on ] && ! fm_sleep_active; then
+  [ "$operation" = off ] && [ -s "$held_file" ] || exit 0
+  retry_held=1
+fi
 if [ "$operation" = on ] && [ ! -e "$STATE/.sleep" ]; then
   pending=$(mktemp "$STATE/.sleep.pending.XXXXXX")
   printf 'schema=fm-sleep.v1\nentered=%s\n' "$(date +%s)" > "$pending"
@@ -97,6 +112,15 @@ error_file="$STATE/.sleep-errors"
 : > "$error_file"
 failed=0
 failure() { printf 'sleep: %s\n' "$*" | tee -a "$error_file" >&2; failed=1; }
+held=
+descendant_failed() {  # <message> [held-id]
+  [ "$operation" = off ] || { failure "$1"; return; }
+  printf 'sleep: %s\n' "$1" | tee -a "$error_file" >&2
+  [ -n "${2:-}" ] || return 0
+  held="$held$2"$'\n'
+  printf 'sleep: secondmate %s is still held; release it later with: FM_HOME=%s %s off\n' \
+    "$2" "$FM_HOME" "$SCRIPT_DIR/fm-sleep.sh" | tee -a "$error_file" >&2
+}
 
 # Do not let parent state/config/queue overrides leak into a descendant home.
 child_sleep() (
@@ -107,14 +131,16 @@ registry="${FM_DATA_OVERRIDE:-$FM_HOME/data}/secondmates.md"
 if [ "$operation" != sweep ] && [ -f "$registry" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in '- '*) ;; *) continue ;; esac
-    if ! secondmate_registry_parse_line "$line"; then failure 'malformed secondmate registry entry'; continue; fi
+    if ! secondmate_registry_parse_line "$line"; then descendant_failed 'malformed secondmate registry entry'; continue; fi
+    [ "$retry_held" = 0 ] || grep -qxF "$SECONDMATE_REGISTRY_ID" "$held_file" || continue
     [ "$operation" != off ] || printf 'Secondmate %s (read-only summary; handled in its own home):\n' "$SECONDMATE_REGISTRY_ID"
     if [ "$SECONDMATE_REGISTRY_REMOTE" = 1 ]; then
       "$SCRIPT_DIR/fm-on.sh" "$SECONDMATE_REGISTRY_ID" fm-sleep.sh "$operation" --depth "$((depth + 1))" \
-        || failure "remote secondmate $SECONDMATE_REGISTRY_ID did not confirm $operation"
+        || descendant_failed "remote secondmate $SECONDMATE_REGISTRY_ID did not confirm $operation" "$SECONDMATE_REGISTRY_ID"
     elif [ -d "$SECONDMATE_REGISTRY_HOME" ] && [ "$SECONDMATE_REGISTRY_HOME" != "$FM_HOME" ]; then
-      child_sleep "$SECONDMATE_REGISTRY_HOME" || failure "secondmate $SECONDMATE_REGISTRY_ID did not confirm $operation"
-    else failure "secondmate $SECONDMATE_REGISTRY_ID has an unavailable or cyclic home"; fi
+      child_sleep "$SECONDMATE_REGISTRY_HOME" \
+        || descendant_failed "secondmate $SECONDMATE_REGISTRY_ID did not confirm $operation" "$SECONDMATE_REGISTRY_ID"
+    else descendant_failed "secondmate $SECONDMATE_REGISTRY_ID has an unavailable or cyclic home" "$SECONDMATE_REGISTRY_ID"; fi
   done < "$registry"
 fi
 
@@ -128,6 +154,7 @@ if [ "$operation" = on ] || [ "$operation" = sweep ]; then
       [ -f "$meta" ] || continue
       id=${meta##*/}; id=${id%.meta}
       [ -z "$(fm_meta_get "$meta" remote_host)" ] || continue
+      [ "$operation" != sweep ] || [ "$(fm_meta_get "$meta" kind)" != secondmate ] || continue
       if ! fm_backend_validate_task_endpoint "$meta" "$id"; then failure "invalid endpoint for $id"; continue; fi
       case "$(fm_backend_agent_state "$FM_BACKEND_VALIDATED_BACKEND" "$FM_BACKEND_VALIDATED_TARGET" 2>/dev/null || true)" in
         dead) continue ;;
@@ -146,7 +173,8 @@ if [ "$operation" = on ] || [ "$operation" = sweep ]; then
   printf 'sleep: on; launches and delivery held in %s\n' "$FM_HOME"
   residual_notice
 else
-  [ "$failed" = 0 ] || exit 1
+  if [ -n "$held" ]; then printf '%s' "$held" > "$held_file"; else rm -f "$held_file"; fi
+  if [ "$retry_held" = 1 ]; then rm -f "$error_file"; [ -z "$held" ] || exit 1; exit 0; fi
   [ ! -e "$STATE/.sleep" ] || mv "$STATE/.sleep" "$STATE/.sleep-return"
   printf 'Sleep return: %s\n' "$FM_HOME"
   if [ "$depth" -gt 0 ]; then
@@ -175,4 +203,5 @@ else
     sort -u "$STATE/.sleep-workers"
   fi
   rm -f "$STATE/.sleep-return" "$STATE/.sleep-errors" "$STATE/.sleep-workers" "$STATE/.sleep-sweep-errors"
+  [ -z "$held" ] || exit 1
 fi

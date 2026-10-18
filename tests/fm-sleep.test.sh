@@ -218,3 +218,27 @@ for descendant in "$child" "$remote"; do
   [ ! -s "$descendant/state/.wake-queue" ] || fail 'descendant could not acknowledge its own rows'
 done
 pass 'sleep: local and remote return summaries preserve descendant queue and status ownership'
+
+# An unreachable remote secondmate at return must not strand the parent asleep.
+"$code/bin/fm-sleep.sh" on >/dev/null
+if FM_TEST_REMOTE_FAIL=1 "$code/bin/fm-sleep.sh" off > "$parent/partial" 2>&1; then
+  fail 'a return with a still-held secondmate reported success'
+fi
+[ ! -e "$parent/state/.sleep" ] && [ ! -e "$parent/state/.sleep-return" ] || fail 'an unreachable secondmate kept the parent asleep'
+[ ! -e "$child/state/.sleep" ] || fail 'partial return did not release the reachable secondmate'
+[ -f "$remote/state/.sleep" ] || fail 'fixture: the unreachable secondmate should remain held'
+assert_grep "secondmate remote is still held; release it later with: FM_HOME=$parent $code/bin/fm-sleep.sh off" \
+  "$parent/partial" 'partial return must name the held secondmate and its release command'
+"$code/bin/fm-sleep.sh" status > "$parent/partial-status"
+assert_grep 'sleep: off' "$parent/partial-status" 'status must report the parent awake'
+assert_grep 'secondmate still held: remote' "$parent/partial-status" 'status must name the held secondmate'
+: > "$parent/calls"
+"$code/bin/fm-sleep.sh" off > "$parent/retry" 2>&1 || fail "awake parent could not release its held secondmate: $(cat "$parent/retry")"
+[ ! -e "$remote/state/.sleep" ] || fail 'retry did not release the held secondmate'
+[ "$(cat "$parent/calls")" = 'remote fm-sleep.sh off --depth 1' ] || fail 'retry reached more than the held secondmate'
+assert_grep 'Sleep return: '"$remote" "$parent/retry" 'retry did not present the held secondmate return'
+if grep -q "Sleep return: $parent\$" "$parent/retry"; then fail 'retry presented the already-returned parent again'; fi
+[ ! -e "$parent/state/.sleep-held" ] || fail 'a confirmed retry left the held record'
+"$code/bin/fm-sleep.sh" off > "$parent/repeat"
+[ ! -s "$parent/repeat" ] || fail 'off with nothing held printed a return'
+pass 'sleep: an unreachable secondmate at return leaves it held while the parent wakes, and a later off releases it'

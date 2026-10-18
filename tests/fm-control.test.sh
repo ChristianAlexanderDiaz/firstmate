@@ -344,6 +344,36 @@ test_sleep_watcher_reinterrupts_busy_workers() {
   pass 'sleep: watcher re-interrupts busy workers each poll while leaving idle workers and standalone gnhf alone'
 }
 
+test_sleep_sweep_skips_secondmates_without_exported_home() {
+  local dir gen parked i
+  dir=$(new_case sleep-sweep-home)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1 --state idle)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  "$ROOT/bin/fm-busy-event.sh" apply "$dir/home/state" t1 busy --gen "$gen" --source claude-hook --event turn-start >/dev/null
+  printf '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n' > "$dir/fakebin/sleep"
+  : > "$dir/home/state/.sleep"
+  # Watchers resolve the home as an unexported shell variable.
+  # shellcheck disable=SC2016 # expanded by the child shell
+  env -u FM_HOME PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" \
+    FM_CONTROL_SETTLE_WAIT=0.05 FM_CONTROL_POLL=0.01 FM_POLL=1 \
+    bash -c 'FM_HOME=$2; . "$1/bin/fm-wake-lib.sh"; fm_sleep_wait "$STATE" watcher' _ "$ROOT" "$dir/home" &
+  parked=$!
+  for i in $(seq 1 150); do grep -q '^Escape$' "$dir/fake/keys" && break; /bin/sleep 0.1; done
+  rm "$dir/home/state/.sleep"
+  wait "$parked" 2>/dev/null || true
+  grep -q '^Escape$' "$dir/fake/keys" || fail "sleep sweep did not run without an exported FM_HOME: $(cat "$dir/home/state/.sleep-sweep-errors" 2>/dev/null)"
+  sed -i.bak 's/^kind=ship$/kind=secondmate/' "$dir/home/state/t1.meta"
+  : > "$dir/fake/keys"
+  : > "$dir/home/state/.sleep"
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+    FM_CONTROL_SETTLE_WAIT=0.05 FM_CONTROL_POLL=0.01 "$ROOT/bin/fm-sleep.sh" sweep \
+    || fail 'sleep sweep failed on a secondmate primary'
+  [ ! -s "$dir/fake/keys" ] || fail 'sleep sweep interrupted a busy secondmate primary'
+  pass 'sleep: the watcher sweep runs with an unexported home and never interrupts a secondmate primary'
+}
+
 test_exit_types_each_harness_verified_command() {
   local dir out rc harness expected key repeat clear
   for harness in $VERIFIED_HARNESSES; do
@@ -1292,3 +1322,4 @@ test_fm_send_still_marks_the_same_secondmate_task
 
 test_sleep_interrupts_recorded_harnesses_without_exit
 test_sleep_watcher_reinterrupts_busy_workers
+test_sleep_sweep_skips_secondmates_without_exported_home

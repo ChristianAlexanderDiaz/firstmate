@@ -2774,6 +2774,8 @@ The [sleep skill](../.agents/skills/sleep/SKILL.md) handles entry and return on 
 All homes must run code containing the sleep guards before fleet sleep is used; an unavailable or outdated remote home is a reported partial-entry failure.
 Sleep uses each recorded endpoint's existing [control-plane interrupt](agent-control.md), whose backend refusals and acknowledgement limits still apply.
 An explicitly started standalone gnhf process has no Firstmate task endpoint and is left running; a worker's name never grants an exemption.
-The parked watcher re-interrupts recorded busy workers each poll; a native self-wake can run until the next sweep.
+Only while a parked watcher is alive, it re-interrupts recorded busy workers each poll, never a secondmate primary; a native self-wake can run until the next sweep.
+No sweep runs in a Codex-primary home, which parks no watcher, or after a Claude primary's Stop-hook watcher reaches its hook timeout (about 8 hours).
+If a secondmate cannot confirm a return, `off` still wakes this home, names that secondmate as still held with its release command, and exits nonzero; a later `off` retries only the held secondmates.
 In-flight no-mistakes runs are not paused and can continue until their next gate; sleep holds their workers from driving further gates.
-Automatic sleep detection, overnight-work orchestration, pausing in-flight validation runs, and long-running-turn alarms remain follow-ups.
+Automatic sleep detection, overnight-work orchestration, pausing in-flight validation runs, a sleep sweep independent of harness watchers, and long-running-turn alarms remain follow-ups.

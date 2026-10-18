@@ -39,7 +39,7 @@ fm_sleep_wait() {  # [state-dir] [watcher]
     if [ "$owner" = watcher ] && [ -d "$state" ]; then
       touch "$state/.last-watcher-beat"
       if [ "$SECONDS" -ge "$next" ]; then
-        FM_STATE_OVERRIDE="$state" "$FM_WAKE_LIB_DIR/fm-sleep.sh" sweep >/dev/null 2>&1 || true
+        FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$state" "$FM_WAKE_LIB_DIR/fm-sleep.sh" sweep >/dev/null 2>&1 || true
         next=$((SECONDS + poll))
       fi
     fi
