@@ -1365,21 +1365,32 @@ ok - live Herdr submit confirm: Claude Code (2.1.283 (Claude Code)) on herdr 0.9
 
 ### Claude background-task exit picker
 
-Measured 2026-10-05 against Claude Code 2.1.289 in an isolated tmux session.
-The Herdr lab was not running, so the Herdr path is covered by the existing fakes.
+The screen structure was captured on Claude Code 2.1.289 (2026-10-05) and 2.1.302 (2026-10-18) in isolated tmux sessions.
 Typing `/exit` while a background shell is still running opens a picker whose selected row is "Exit and stop tasks" and whose footer is "Enter to confirm · Esc to cancel".
-That screen still classifies as pending, the same verdict as unsubmitted composer text.
-A second Enter would confirm the selected row.
-The picker is recognised by its recorded structure only: the heading on its own line, then the selected row alone on its row, with `Enter to confirm · Esc to cancel` as the last non-blank row.
+The picker is recognised by its recorded structure only: the heading on its own line, then the selected row alone on its row, with the footer as the last non-blank row.
 The same strings quoted above a normal composer, as a diff, this note, or a test fixture shows them, are not a picker.
-Submit retries now stop after the Enter that opened the picker and report unknown.
+The screen still classifies as pending, and ordinary submit retries stop after the Enter that opened it.
 A typed submit to a pane that already shows the picker types nothing and sends no Enter.
-Exit reports that the worker is blocked on the Claude background-task exit picker and does not type another Enter.
-A submit can return before any read sees the picker, so exit reads the screen once more when its wait for the agent to stop times out, and names the picker there too.
-Exit does not report a stopped agent whose pane still shows the picker text as blocked on a prompt.
-The watcher does not read the picker: a pane parked on it keeps the ordinary stale triage.
-No recorded screen was available for a model-downgrade confirmation, an MCP approval, or a Claude exit confirmation other than this picker, so those dialogs are not covered.
-Refusing an Enter that would confirm a dialog restores an existing safety path, so it is not gated behind a flag.
+The exit operation's confirmation policy is owned by `bin/fm-control.sh` and the harness allowlist in `bin/fm-control-lib.sh`.
+Portable coverage in `tests/fm-control.test.sh` exercises immediate and delayed rendering, a stuck picker, a different selected row, foreign harnesses, unrelated dialogs, and stale picker text after process death.
+The tmux and Herdr paths share this exit policy and the existing composer recogniser; other runtime backends still refuse exit without a recovery-grade process classifier.
+No live Herdr lifecycle was exercised for this change.
+Other Claude confirmations have no live coverage here and are not granted an exit-confirmation key.
+
+The token-free `tests/fm-control-claude-exit-live-e2e.test.sh` guard belongs to the `live-harness-optin` family and runs by default when Claude and tmux are installed.
+It backgrounds a native shell command, invokes the real control executable, records the dialog read, and verifies both process termination and endpoint preservation.
+It fails with the installed Claude version if the vendor surface drifts or a startup dialog prevents the test.
+Refresh it with `bash bin/fm-test-run.sh tests/fm-control-claude-exit-live-e2e.test.sh`.
+
+Measured 2026-10-18 with:
+
+```sh
+bash bin/fm-test-run.sh tests/fm-control-relaunch.test.sh tests/fm-control-claude-exit-live-e2e.test.sh
+```
+
+```text
+ok - Claude 2.1.302 (Claude Code): fm-control exit confirms the captured background-task picker, stops its shell, and preserves the endpoint
+```
 
 ### Prune and respawn
 

@@ -36,7 +36,9 @@
 #              otherwise reports `cancel=not-running` having sent one press.
 #   exit       Stop the agent, preserving its terminal endpoint, worktree, and
 #              every uncommitted change. Interrupts first when the task reads
-#              busy, then submits the harness's exit command. Postcondition:
+#              busy, then submits the harness's exit command. Claude's exact
+#              background-task exit picker is confirmed once if this command
+#              opens it; an already-open picker still refuses. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
 #              Already-stopped is success (idempotent). An endpoint that reads
 #              `missing` is put through the control plane's per-backend absence
@@ -187,6 +189,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
+# shellcheck source=bin/fm-composer-lib.sh
+. "$SCRIPT_DIR/fm-composer-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
@@ -670,6 +674,36 @@ retire_busy_incarnation() {
   fi
 }
 
+# Wait for exit, checking the current viewport while the agent is still alive.
+# Submit may return before a dialog renders. Never reuse its cached dialog or
+# confirm twice: a slow exit can leave the same screen visible after Enter.
+wait_agent_exit() {
+  local state screen dialog key elapsed=0 confirmed=0
+  while :; do
+    state=$(agent_state)
+    if [ "$state" = dead ]; then
+      printf '%s' "$state"
+      return 0
+    fi
+    if [ "$state" = alive ] \
+       && screen=$(fm_backend_visible_capture "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
+       && dialog=$(fm_composer_blocking_dialog "$screen"); then
+      key=$(fm_control_exit_confirmation_key "$HARNESS" "$dialog") \
+        || refuse_blocking_prompt "$dialog"
+      if [ "$confirmed" = 0 ]; then
+        fm_backend_send_key "$BACKEND" "$T" "$key" "$LABEL" \
+          || die "the exit confirmation could not be sent to task $ID on $BACKEND"
+        confirmed=1
+      fi
+    fi
+    awk -v e="$elapsed" -v t="$EXIT_WAIT" 'BEGIN{exit !(e < t)}' || break
+    sleep "$POLL"
+    elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
+  done
+  printf '%s' "$state"
+  return 1
+}
+
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
@@ -769,24 +803,7 @@ do_exit() {
     || die "the exit command could not be sent to task $ID on $BACKEND"
   [ "$verdict" != send-failed ] \
     || die "the exit command could not be sent to task $ID on $BACKEND"
-  # The submitting Enter can open the picker. The agent is still alive, and
-  # another Enter would confirm the selected row. A dead agent may leave the
-  # same text behind; that is not a prompt still waiting.
-  if [ -s "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
-    dialog=$(cat "$FM_COMPOSER_DIALOG_SINK")
-    if [ "$(agent_state)" != dead ]; then
-      refuse_blocking_prompt "$dialog"
-    fi
-  fi
-  state=$(wait_agent_state "$EXIT_WAIT" dead) || {
-    # A submit can return before any read sees the picker: a native busy
-    # verdict needs no composer read, and a cleared composer can be read
-    # before the picker renders. Read the screen once more here.
-    : > "$FM_COMPOSER_DIALOG_SINK" || true
-    fm_backend_composer_state "$BACKEND" "$T" "$LABEL" >/dev/null 2>&1 || true
-    if [ -s "$FM_COMPOSER_DIALOG_SINK" ]; then
-      refuse_blocking_prompt "$(cat "$FM_COMPOSER_DIALOG_SINK")"
-    fi
+  state=$(wait_agent_exit) || {
     die "exit-delivered $ID interrupt=$interrupt_result exit-command=delivered agent-state=$state exit=unconfirmed; the agent did not stop within ${EXIT_WAIT}s"
   }
   # The incarnation is over: retire its busy wiring so no stale record or

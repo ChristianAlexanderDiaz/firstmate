@@ -77,11 +77,12 @@ verified_adapter_contract() {  # <harness> -> exit command, interrupt key, repea
 #            last Escape was a moment ago) ->picker, and picker->idle unless
 #            FM_FAKE_DEVIN_PICKER_STUCK is set. Real sleeps apply while it
 #            exists, so key-times carry the true gap between presses.
-# Two transitions make it a lifecycle model rather than a recorder: a literal
+# These transitions make it a lifecycle model rather than a recorder: a literal
 # that is the harness's exit command flips `command` to a shell (the agent
 # stopped), and a literal carrying a launch brief flips it to the value in
 # `becomes` (a new agent came up). FM_FAKE_NEVER_DIES suppresses the first, so
-# a stubborn agent can be tested too.
+# a stubborn agent can be tested too. With confirm-exit set, the second Enter
+# stops the agent even when the literal exit command leaves it alive.
 make_tmux_stub() {  # <dir> -> echoes fakebin dir
   local dir=$1 fb="$1/fakebin"
   mkdir -p "$fb"
@@ -137,6 +138,10 @@ case "${1:-}" in
     else
       printf '%s\n' "$payload" >> "$D/keys"
       printf '%s %s\n' "$(perl -MTime::HiRes=time -e 'printf "%.3f", time')" "$payload" >> "$D/key-times"
+      if [ "$payload" = Enter ] && [ -f "$D/confirm-exit" ] \
+         && [ "$(grep -c '^Enter$' "$D/keys")" -eq 2 ]; then
+        printf 'zsh' > "$D/command"
+      fi
       if [ "$payload" = Escape ] && [ -f "$D/devin" ]; then
         case "$(cat "$D/devin")" in
           running) printf armed > "$D/devin" ;;
@@ -853,11 +858,10 @@ test_busy_agent_is_interrupted_before_the_exit_command() {
 exit_picker_screen() {
   printf '%s\n' \
     'Background work is running' \
-    '❯ 1. Exit and stop tasks' \
     'The following will stop when you exit:' \
     'shell · sleep 300' \
-    '  2. Move to background and exit' \
-    '  3. Stay' \
+    '❯ 1. Exit and stop tasks' \
+    '  2. Stay' \
     'Enter to confirm · Esc to cancel'
 }
 
@@ -877,48 +881,57 @@ test_exit_refuses_an_open_background_picker() {
   pass "fm-control exit: an already-open background-task picker is not typed into"
 }
 
-test_exit_refuses_the_confirming_enter() {
-  local dir out rc enters
-  dir=$(new_case confirm-picker)
-  add_task "$dir" t1 claude
-  alive_as "$dir" claude
-  exit_picker_screen > "$dir/fake/after-enter"
-  out=$(env FM_FAKE_NEVER_DIES=1 PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
-    FM_FAKE_DIR="$dir/fake" FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 \
-    "$CONTROL" t1 exit 2>&1); rc=$?
-  expect_code 1 "$rc" "the confirming Enter should refuse"$'\n'"$out"
-  assert_contains "$out" "blocked on a prompt: Claude background-task exit picker" \
-    "the refusal should name the dialog"
-  assert_not_contains "$out" "Esc" "the refusal must not name a dismissal key"
-  [ "$(literals "$dir")" = /exit ] || fail "the exit command should still be typed, got '$(literals "$dir")'"
-  enters=$(grep -c '^Enter$' "$dir/fake/keys" || true)
-  [ "$enters" -eq 1 ] || fail "only the submitting Enter should be sent, got $enters"
-  pass "fm-control exit: the Enter that opens the background-task picker is not followed by a confirming Enter"
+# The picker may render inside submit or only on a later postcondition poll.
+# The captured screen remains after process death, so success must use liveness.
+test_exit_confirms_its_background_picker() {
+  local dir out rc enters late
+  for late in 0 3; do
+    dir=$(new_case "confirm-picker-$late")
+    add_task "$dir" t1 claude
+    alive_as "$dir" claude
+    exit_picker_screen > "$dir/fake/after-enter"
+    printf '%s' "$late" > "$dir/fake/after-enter-late"
+    : > "$dir/fake/confirm-exit"
+    out=$(env FM_FAKE_NEVER_DIES=1 PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
+      FM_FAKE_DIR="$dir/fake" FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.1 \
+      "$CONTROL" t1 exit 2>&1); rc=$?
+    expect_code 0 "$rc" "exit should confirm its background picker (delay $late)"$'\n'"$out"
+    assert_contains "$out" 'stopped t1 harness=claude' "exit must verify the stopped agent"
+    [ "$(literals "$dir")" = /exit ] || fail "exit must type its command once"
+    enters=$(grep -c '^Enter$' "$dir/fake/keys" || true)
+    [ "$enters" -eq 2 ] || fail "expected submission plus one confirmation, got $enters"
+  done
+  pass "fm-control exit: confirms its immediate or delayed background-task picker once"
 }
 
-# The submit reads a cleared composer before the picker renders, so it reports
-# delivery and no read inside it sees the picker. Exit's own read after the
-# stop wait times out must still name the dialog.
-test_exit_names_a_picker_that_renders_after_the_submit() {
-  local dir out rc enters
-  dir=$(new_case late-picker)
-  add_task "$dir" t1 claude
-  alive_as "$dir" claude
-  exit_picker_screen > "$dir/fake/after-enter"
-  printf '1' > "$dir/fake/after-enter-late"
-  out=$(env FM_FAKE_NEVER_DIES=1 PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
-    FM_FAKE_DIR="$dir/fake" FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 \
-    "$CONTROL" t1 exit 2>&1); rc=$?
-  expect_code 1 "$rc" "a picker that renders after the submit should refuse"$'\n'"$out"
-  [ "$(cat "$dir/fake/after-enter-late")" = 0 ] \
-    || fail "the submit should have read the ordinary pane once after Enter"
-  assert_contains "$out" "blocked on a prompt: Claude background-task exit picker" \
-    "the refusal should name the dialog"
-  assert_not_contains "$out" "did not stop within" \
-    "a recognised picker must not fall back to the generic timeout message"
-  enters=$(grep -c '^Enter$' "$dir/fake/keys" || true)
-  [ "$enters" -eq 1 ] || fail "only the submitting Enter should be sent, got $enters"
-  pass "fm-control exit: a picker that renders after the submit returned is named when the stop wait times out"
+test_exit_does_not_repeat_confirmation_or_confirm_other_screens() {
+  local dir out rc enters screen expected
+  for screen in stuck foreign trust imports bypass stay; do
+    dir=$(new_case "no-confirm-$screen")
+    if [ "$screen" = foreign ]; then
+      add_task "$dir" t1 codex
+      alive_as "$dir" codex
+    else
+      add_task "$dir" t1 claude
+      alive_as "$dir" claude
+    fi
+    case "$screen" in
+      stuck|foreign) exit_picker_screen ;;
+      trust) printf '%s\n' 'Quick safety check: Is this a project you created or one you trust?' '❯ 2. No, exit' 'Enter to confirm · Esc to cancel' ;;
+      imports) printf '%s\n' 'Allow external CLAUDE.md file imports?' '❯ 2. No, disable external imports' 'Enter to confirm · Esc to cancel' ;;
+      bypass) printf '%s\n' 'Bypass Permissions mode' '❯ 2. No, exit' 'Enter to confirm · Esc to cancel' ;;
+      stay) exit_picker_screen | sed 's/❯ 1\./  1./;s/  2\. Stay/❯ 2. Stay/' ;;
+    esac > "$dir/fake/after-enter"
+    out=$(env FM_FAKE_NEVER_DIES=1 PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
+      FM_FAKE_DIR="$dir/fake" FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 \
+      FM_CONTROL_EXIT_RETRIES=1 "$CONTROL" t1 exit 2>&1); rc=$?
+    expect_code 1 "$rc" "a $screen screen must not claim a stop"$'\n'"$out"
+    expected=1
+    [ "$screen" != stuck ] || expected=2
+    enters=$(grep -c '^Enter$' "$dir/fake/keys" || true)
+    [ "$enters" -eq "$expected" ] || fail "$screen expected $expected Enter presses, got $enters"
+  done
+  pass "fm-control exit: never repeats confirmation or confirms another harness, dialog, or selection"
 }
 
 test_idle_agent_is_not_interrupted() {
@@ -1206,8 +1219,8 @@ test_busy_agent_is_interrupted_before_the_exit_command
 test_idle_agent_is_not_interrupted
 test_exit_drops_meta_busy_gen_with_the_sidecar
 test_exit_refuses_an_open_background_picker
-test_exit_refuses_the_confirming_enter
-test_exit_names_a_picker_that_renders_after_the_submit
+test_exit_confirms_its_background_picker
+test_exit_does_not_repeat_confirmation_or_confirm_other_screens
 test_interrupt_without_acknowledgement_preserves_busy_state
 test_muse_interrupt_confirms_adapter_acknowledgement
 test_interrupt_revalidates_agent_after_acknowledgement_wait
