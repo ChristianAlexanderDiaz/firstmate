@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { runCommandAsync } from "./fm-async-exec.ts";
 
@@ -41,6 +41,11 @@ export function afkPostureRecordPresent(state: string): boolean {
   } catch {
     return false;
   }
+}
+
+// Sleep overlays both attended and away routing (bin/fm-sleep.sh).
+export function sleepPosturePresent(state: string): boolean {
+  return existsSync(join(state, ".sleep")) || existsSync(join(state, ".sleep-return"));
 }
 
 // The per-wake prompt every supervision-branch host sends: the Pi branch

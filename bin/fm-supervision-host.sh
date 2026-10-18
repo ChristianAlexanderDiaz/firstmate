@@ -397,9 +397,14 @@ activate() {
 # it on and KILLs after its grace, then let the turn's own poller reap the
 # engine's descendants before giving up on it.
 stop_engine_turn() {
-  local pid='' identity='' i limit
+  local pid='' identity='' i limit cancel_ledger=''
   [ -f "$ENGINE_PID_FILE" ] && IFS="$(printf '\t')" read -r pid identity < "$ENGINE_PID_FILE"
   if [ -n "$pid" ] && fm_pid_alive "$pid" && [ "$(identity_of "$pid")" = "$identity" ]; then
+    # Cancellation can arrive before the turn poller's next descendant scan.
+    # Capture tools while their parent still exists, before TERM reparents
+    # children that started their own process groups outside the watchdog's.
+    cancel_ledger=$(mktemp "$STATE/.supervision-host-descendants.XXXXXX") || cancel_ledger=
+    [ -z "$cancel_ledger" ] || _fm_engine_snapshot_descendants "$pid" "$cancel_ledger"
     kill -TERM "$pid" 2>/dev/null || true
   fi
   limit=$(( (ENGINE_GRACE + 10) * 10 ))
@@ -409,6 +414,10 @@ stop_engine_turn() {
     i=$((i + 1))
   done
   [ -z "$ENGINE_SUBSHELL" ] || kill -KILL "$ENGINE_SUBSHELL" 2>/dev/null || true
+  if [ -n "$cancel_ledger" ]; then
+    _fm_engine_reap "$cancel_ledger"
+    rm -f "$cancel_ledger"
+  fi
 }
 
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
@@ -489,6 +498,7 @@ park_elapsed() {  # Sets PARK_ELAPSED without a production clock/helper fork.
 }
 
 boundary_reached() {
+  fm_sleep_active "$STATE" && return 1
   park_elapsed
   [ "$PARK_ELAPSED" -ge "$PARK_SECONDS" ]
 }
@@ -565,6 +575,7 @@ await_close() {
 # OUTPUT), so an owner reading a stream sees the whole exit at once.
 emit() {  # [line...]
   local text=$ARM_TEXT line
+  fm_sleep_wait "$STATE"
   for line in "$@"; do
     [ -n "$line" ] || continue
     text=${text:+$text$'\n'}$line
@@ -842,7 +853,7 @@ health_record() {  # <engine-error 0|1> <reports>
 # never a subshell, because it advances the host's grant and turn state.
 handle_wake() {  # <reason-lines>
   local reason=$1 first scope status corrupted rows tasks unscoped rc turn readback
-  local receipts usage result errors unacked mirror
+  local receipts usage result errors unacked mirror sleep_cancelled=0
   LAST_TURN=
   ENGINE_ERROR=0
   HEALTH_NOTE=
@@ -953,6 +964,12 @@ handle_wake() {  # <reason-lines>
   errors=$(mktemp "$STATE/.supervision-host-errors.XXXXXX") || errors=/dev/null
   TURN_RESULT=$result
   TURN_ERRORS=$errors
+  if fm_sleep_active "$STATE"; then
+    rm -f "$TURN_FILE"
+    "$SCRIPT_DIR/fm-wake-grant.sh" release "$GEN" >/dev/null 2>&1 || true
+    HANDLE_WHY="sleep held this wake before its engine turn"
+    return 1
+  fi
   ENGINE_RUNNING=1
   # Backgrounded and waited, so a signal to the host is handled at once
   # instead of after the whole turn; the cleanup stops the engine.
@@ -970,6 +987,14 @@ handle_wake() {  # <reason-lines>
       "$result" "$errors" "$ENGINE_PID_FILE"
   ) &
   ENGINE_SUBSHELL=$!
+  while fm_pid_alive "$ENGINE_SUBSHELL"; do
+    if fm_sleep_active "$STATE"; then
+      sleep_cancelled=1
+      stop_engine_turn
+      break
+    fi
+    sleep 0.5
+  done
   wait "$ENGINE_SUBSHELL"
   rc=$?
   ENGINE_SUBSHELL=
@@ -979,16 +1004,19 @@ handle_wake() {  # <reason-lines>
   unacked=$(fm_wake_rows_queued $rows) || unacked=$rows
   unacked=$(printf '%s\n' "$unacked" | awk 'NF { printf "%s%s", sep, $1; sep = " " }')
   "$SCRIPT_DIR/fm-wake-grant.sh" release "$GEN" >/dev/null 2>&1 || true
+  fm_sleep_wait "$STATE"
   rm -f "$TURN_FILE"
   receipts=$(awk -F '\t' -v turn="$turn" '$1 == turn { n++ } END { print n + 0 }' "$RECEIPTS" 2>/dev/null)
   usage=$(fm_supervision_engine_result "$FM_SUPERVISION_ENGINE" "$result" "${ENGINE_COST:-0}" 2>/dev/null || true)
   [ "$result" = /dev/null ] || rm -f "$result"
   TURN_RESULT=
-  if [ "$rc" -ne 0 ] || [ -z "$usage" ] || [ "${usage#error=0}" = "$usage" ]; then
-    ENGINE_ERROR=1
+  if [ "$sleep_cancelled" = 0 ]; then
+    if [ "$rc" -ne 0 ] || [ -z "$usage" ] || [ "${usage#error=0}" = "$usage" ]; then
+      ENGINE_ERROR=1
+    fi
+    health_record "$ENGINE_ERROR" "${receipts:-0}"
   fi
-  health_record "$ENGINE_ERROR" "${receipts:-0}"
-  if [ "$ENGINE_ERROR" -eq 0 ] && [ "${receipts:-0}" -gt 0 ] && [ -z "$unacked" ]; then
+  if [ "$sleep_cancelled" = 0 ] && [ "$ENGINE_ERROR" -eq 0 ] && [ "${receipts:-0}" -gt 0 ] && [ -z "$unacked" ]; then
     write_engine_record $((ENGINE_TURNS + 1)) "$(printf '%s\n' "$usage" | sed -n 's/.* conversation_cost=\([^ ]*\).*/\1/p')" \
       || rm -f "$ENGINE_RECORD"
     [ "$TURN_POSTURE" != attended ] || "$SCRIPT_DIR/fm-host-mirror.sh" commit >/dev/null 2>&1 || true
@@ -1003,7 +1031,9 @@ handle_wake() {  # <reason-lines>
   log_line "failed	turn=$turn	posture=$TURN_POSTURE	rc=$rc	reports=${receipts:-0}	unacked=${unacked:-none}	${usage:-no-result}	$(head -c 300 "$errors" 2>/dev/null | tr '\t\n' '  ')	$first"
   [ "$errors" = /dev/null ] || rm -f "$errors"
   TURN_ERRORS=
-  if fm_timed_out "$rc"; then
+  if [ "$sleep_cancelled" = 1 ]; then
+    HANDLE_WHY="sleep cancelled the engine turn; its unhandled wake remains queued"
+  elif fm_timed_out "$rc"; then
     HANDLE_WHY="the engine turn hit its ${TURN_TIMEOUT}s bound"
   elif [ "$rc" -eq 127 ]; then
     HANDLE_WHY="the $FM_SUPERVISION_ENGINE engine could not run"
@@ -1072,7 +1102,9 @@ ARM_OUT=$STARTED_ARM_OUT
 
 while :; do
   boundary_reached && boundary_exit
+  fm_sleep_wait "$STATE"
   await_close || boundary_exit
+  fm_sleep_wait "$STATE"
   REASON=$(printf '%s\n' "$ARM_TEXT" | grep -E '^(signal:|stale:|check:|heartbeat($|:))' || true)
 
   # The away daemon owns triage while its flag exists; the owner stands down.

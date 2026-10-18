@@ -34,6 +34,11 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
 
+if fm_sleep_active && [ "${FM_SLEEP_PRESENT:-0}" != 1 ]; then
+  printf 'sleep: wakes held; use fm-sleep.sh off before draining\n' >&2
+  exit 1
+fi
+
 DRAIN_TMP=
 DRAIN_VIEW_TMP=
 DRAIN_LOCK_HELD=false

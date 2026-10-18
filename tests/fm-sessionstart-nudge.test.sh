@@ -68,6 +68,9 @@ test_genuine_primary_nudges() {
   [ "$out" = "$NUDGE_LINE" ] || fail "genuine primary printed unexpected output: $out"
   prefix_hex=$(printf '%s' "$out" | head -c 3 | od -An -tx1 | tr -d ' \n')
   [ "$prefix_hex" = e281a3 ] || fail "genuine primary nudge lost its U+2063 operational marker: $prefix_hex"
+  : > "$root/state/.sleep"
+  expect_silent_zero "sleep session-open nudge" run_nudge "$root"
+  rm "$root/state/.sleep"
   pass "fm-sessionstart-nudge: a genuine primary gets one explicitly marked instruction line"
 }
 
@@ -172,7 +175,8 @@ test_opencode_plugin_delivers_exact_nudge_once() {
     "$ROOT/bin/fm-gate-refuse-lib.sh" "$ROOT/bin/fm-operational-input.sh" "$root/bin/"
   chmod +x "$root/bin/fm-sessionstart-nudge.sh"
   out=$(PLUGIN="$ROOT/.opencode/plugins/fm-primary-sessionstart-nudge.js" \
-    WORKTREE="$root" EXPECTED="$NUDGE_LINE" node --input-type=module 2>&1 <<'EOF'
+    FM_HOME="$root" WORKTREE="$root" EXPECTED="$NUDGE_LINE" node --input-type=module 2>&1 <<'EOF'
+import { writeFileSync, unlinkSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const prompts = [];
@@ -193,6 +197,10 @@ const event = {
   type: "session.created",
   properties: { sessionID: "session-nudge-test", info: { id: "session-nudge-test" } },
 };
+writeFileSync(`${process.env.WORKTREE}/state/.sleep`, "");
+await hooks.event({ event });
+if (prompts.length) throw new Error("sleep injected a session-start prompt");
+unlinkSync(`${process.env.WORKTREE}/state/.sleep`);
 await hooks.event({ event });
 await hooks.event({ event });
 if (prompts.length !== 1) throw new Error(`expected one prompt, got ${prompts.length}`);

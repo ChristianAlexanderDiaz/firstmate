@@ -18,6 +18,35 @@ FM_LOCK_STALE_AFTER="${FM_LOCK_STALE_AFTER:-2}"
 _FM_UNAME=$(uname 2>/dev/null || echo unknown)
 mkdir -p "$STATE"
 
+# Sleep is an overlay on away/quiet, owned by fm-sleep.sh. Presence fails
+# closed even for an incomplete record. Remote mate inboxes use parent-route
+# state; that route belongs to the containing home's posture as well.
+fm_sleep_active() {  # [state-dir]
+  local state=${1:-$STATE}
+  [ -e "$state/.sleep" ] || [ -e "$state/.sleep-return" ] && return 0
+  case "$state" in
+    */parent-route) fm_sleep_active "${state%/parent-route}"; return ;;
+  esac
+  return 1
+}
+
+# Keep the current shell wait alive instead of completing an async tool and
+# opening a model turn. Status files and the ordinary wake queue remain durable.
+fm_sleep_wait() {  # [state-dir] [watcher]
+  local state=${1:-$STATE} owner=${2:-} next=0 poll=${POLL:-${FM_POLL:-5}}
+  case "$poll" in ''|*[!0-9]*|0) poll=5 ;; esac
+  while fm_sleep_active "$state"; do
+    if [ "$owner" = watcher ] && [ -d "$state" ]; then
+      touch "$state/.last-watcher-beat"
+      if [ "$SECONDS" -ge "$next" ]; then
+        FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$state" "$FM_WAKE_LIB_DIR/fm-sleep.sh" sweep >/dev/null 2>&1 || true
+        next=$((SECONDS + poll))
+      fi
+    fi
+    sleep 1
+  done
+}
+
 # Most wake-library consumers need only queue and lock primitives, including
 # deliberately minimal recovery fixtures and remote installations.
 # Load the classifier only when a status presentation helper is actually used.

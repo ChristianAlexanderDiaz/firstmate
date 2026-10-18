@@ -326,6 +326,10 @@ if [ -n "$control_want_value" ]; then
   die "--$control_want_value requires a value"
 fi
 
+if [ "$VERB" = relaunch ] && fm_sleep_active; then
+  die "relaunch refused while sleep is active in $FM_HOME"
+fi
+
 if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
     && [ "$CLAUDE_ACCOUNT_SET" = 0 ] && [ "$USAGE_LIMIT" = 0 ] \

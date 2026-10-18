@@ -266,12 +266,19 @@ function observeArmOutput(hostMode, stdout, stderr, settleReadiness) {
 
 async function sendPrompt(paths, client, sessionID, text) {
   const encoded = await encodeFirstmateOperationalInput(paths.root, "watcher", text);
+  await waitForSleep(paths);
   await client.session.promptAsync({
     path: { id: sessionID },
     body: {
       parts: [{ type: "text", text: encoded }],
     },
   });
+}
+
+async function waitForSleep(paths) {
+  while (existsSync(`${paths.state}/.sleep`) || existsSync(`${paths.state}/.sleep-return`)) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
 }
 
 function confirmHandlingDelivery(paths, recovery) {
@@ -307,6 +314,7 @@ function confirmHandlingDeliveryWithRetry(paths, recovery) {
 }
 
 async function deliverActionableWake(paths, client, sessionID, message, recovery) {
+  await waitForSleep(paths);
   if (recovery) {
     const confirmed = confirmHandlingDeliveryWithRetry(paths, recovery);
     if (!confirmed.ok) {

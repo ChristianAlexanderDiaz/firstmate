@@ -565,6 +565,9 @@ export default function (pi: ExtensionAPI) {
     message: string,
     pending?: PendingActionableClose,
   ): Promise<boolean> {
+    while ((existsSync(`${state}/.sleep`) || existsSync(`${state}/.sleep-return`)) && generationIsLive(owner)) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
     if (!generationIsLive(owner)) return false;
     const content = encodeFirstmateOperationalInput(
       "watcher",
@@ -649,6 +652,9 @@ export default function (pi: ExtensionAPI) {
     pending: PendingActionableClose,
     recovery?: { generation: string; watcherPid: string },
   ): Promise<boolean> {
+    while ((existsSync(`${state}/.sleep`) || existsSync(`${state}/.sleep-return`)) && generationIsLive(owner)) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
     if (!generationIsLive(owner)) return false;
     if (recovery) {
       const confirmed = confirmHandlingDeliveryWithRetry(owner, recovery);

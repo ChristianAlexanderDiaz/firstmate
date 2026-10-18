@@ -353,7 +353,20 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # whose Enter never landed, so on an agent not reported busy it is submitted
 # rather than skipped; skipping it would block every later ring. On both paths
 # a lost first Enter gets one confirmed retry.
-fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
+fm_task_inbox_ring() (  # <backend> <target> <record-path> [expected-label]
+  local inbox_state=${3%/*}
+  inbox_state=${inbox_state%/*}
+  case "$inbox_state" in */parent-route) inbox_state=${inbox_state%/parent-route} ;; esac
+  fm_sleep_active "$inbox_state" && return 1
+  # Serialize the whole submit/retry sequence with sleep entry, so a ring
+  # already checking the composer cannot revive a just-interrupted worker.
+  fm_lock_acquire_wait_max "$inbox_state/.sleep.lock" 30 || return 1
+  trap 'fm_lock_release "$inbox_state/.sleep.lock"' EXIT
+  fm_sleep_active "$inbox_state" && return 1
+  _fm_task_inbox_ring_awake "$@"
+)
+
+_fm_task_inbox_ring_awake() {
   local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict
   case "$(fm_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in
     dead|missing) return 3 ;;
