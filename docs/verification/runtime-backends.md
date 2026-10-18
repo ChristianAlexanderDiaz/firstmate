@@ -1982,6 +1982,34 @@ The current catch-up reporting boundary is pinned by `tests/fm-afk-return.test.s
 The fixture captures submitted input through Pi's `input` extension hook, so the lab agent directory needs no provider credentials.
 The daemon injection transport into a live composer keeps its coverage in `tests/fm-afk-inject-herdr-e2e.test.sh` for the harnesses that still run the daemon, and the dedicated Herdr daemon workspace topology is covered by `tests/fm-afk-launch.test.sh` and preserves the captain tab's pane count.
 
+### No-mistakes pane lifecycle
+
+Verified on 2026-10-18 on Linux with Bash 5.2.21, jq 1.7, and Python 3.12.3, using a session-scoped stateful Herdr fake:
+
+```sh
+bash bin/fm-test-run.sh tests/fm-nm-review-pane.test.sh --jobs 1
+```
+
+Observed output:
+
+```text
+ok - attributed run opens one stacked viewer, preserving chat and focus
+ok - terminal run with a pipeline-advanced head closes; replacement and cleanup converge
+ok - wide pane chooses side by side
+ok - replacement and close refusal preserve exact viewer identity
+ok - foreign, historical and non-Herdr evidence cannot open a viewer
+ok - attach retries reuse the recorded pane; ambiguous reads preserve it
+ok - already absent viewer closes without touching chat
+ok - record corruption cannot redirect viewer cleanup onto chat
+ok - session lock serializes pane creation with teardown and concurrent sweeps
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=78687
+```
+
+The regression uses the real crew-state run attribution and pane reconciliation executable, checks the chat metadata remains identical, and refuses every fake Herdr call without an explicit session.
+The feature does not inspect harness output or introduce harness-specific state rules.
+Non-Herdr backends return before any viewer mutation.
+Live Herdr lifecycle verification was unavailable on this host because the lab helper could not establish its required running-default-session tripwire; this record makes no live-backend claim for the new pane behavior.
+
 ## Zellij
 
 The current compatibility floor and latest verification are Zellij 0.44.0 with `jq` on macOS aarch64.
