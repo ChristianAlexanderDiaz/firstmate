@@ -226,6 +226,16 @@ fm_control_interrupt_ack_source() {  # <harness>
   esac
 }
 
+# A confirmation is allowed only after this control operation submitted exit.
+# Dialog recognition stays in fm_composer_blocking_dialog; this table grants
+# only the selected stop-tasks choice, never workspace/import/permission consent.
+fm_control_exit_confirmation_key() {  # <harness> <dialog-name>
+  case "${1-}:${2-}" in
+    'claude:Claude background-task exit picker') printf 'Enter' ;;
+    *) return 1 ;;
+  esac
+}
+
 # The command that exits the agent from its own composer.
 fm_control_exit_command() {  # <harness>
   case "${1-}" in
