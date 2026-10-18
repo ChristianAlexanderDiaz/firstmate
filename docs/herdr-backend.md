@@ -54,6 +54,7 @@ A remote second-mate agent is the one case with no choice: it always runs on Her
 
 Herdr is also auto-detected when the primary runs natively under `HERDR_ENV=1` and is not inside tmux.
 A tmux pane nested inside Herdr resolves to tmux because the innermost multiplexer wins.
+[`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns the liveness rule for inherited tmux markers.
 An auto-detected Herdr spawn stays silent, matching the verified tmux default path.
 
 ### Spawn preflight and CI

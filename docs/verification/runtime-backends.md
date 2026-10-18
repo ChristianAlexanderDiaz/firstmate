@@ -107,6 +107,26 @@ A single-process harness has no descendant that adds a distinct verdict, which i
 The portable regression pins every half without any harness installed: `tests/fm-harness-precedence.test.sh` asserts that this two-process topology decides at comm strength, that the descent probe reaches a strength the top-of-session probe cannot, that a sibling branch answering a foreign harness contributes no verdict, that a foreign args-only verdict at the deepest vantage leaves the comm-strength identity intact, and that equal-depth ties choose the comm-strength leaf regardless of process ordering.
 The run did not reach `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, or `muse`, which were not installed, and stopped at the same pre-existing liveness failure for `cursor` 3.18.9, whose resolved binary on that machine is the editor rather than `cursor-agent`; those adapters are unverified by this run.
 
+## Runtime marker liveness
+
+Verified on 2026-10-18 with GNU Bash 5.2.21 and tmux 3.4:
+
+```sh
+bash bin/fm-test-run.sh --jobs 1 tests/fm-backend.test.sh tests/fm-daemon.test.sh tests/fm-backend-herdr.test.sh
+```
+
+The detection cases probe a real tmux server on a private socket.
+The AFK entry cases use fake tmux and Herdr CLIs to exercise daemon startup, foreground start, and `start-native` followed by the prepared foreground start without touching a live Herdr session.
+Observed output:
+
+```text
+ok - fm_backend_detect: $TMUX outranks HERDR_ENV=1 only for a live pane; stale or dead tmux markers under herdr fall through to herdr; plain tmux unchanged
+ok - discover_supervisor_*: TMUX_PANE outranks herdr only when live; stale tmux markers under herdr resolve to the herdr pane
+ok - AFK daemon, foreground start, and start-native target herdr under stale tmux markers and retain live nested tmux
+```
+
+[`configuration.md`](../configuration.md#runtime-backend-configbackend--fm_backend) owns the selection rule and its explicit overrides.
+
 ## tmux
 
 Foreground-process behavior was verified on 2026-07-07 with tmux 3.6a on macOS.

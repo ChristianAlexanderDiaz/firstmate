@@ -3027,8 +3027,8 @@ test_discover_supervisor_backend_precedence() {
   out=$(FM_SUPERVISOR_BACKEND=herdr TMUX_PANE='%9' HERDR_ENV=1 HERDR_PANE_ID=w1:p1 discover_supervisor_backend)
   [ "$out" = herdr ] || fail "explicit FM_SUPERVISOR_BACKEND override was not honored: $out"
 
-  out=$(FM_SUPERVISOR_BACKEND='' TMUX_PANE='%9' HERDR_ENV=1 HERDR_PANE_ID=w1:p1 discover_supervisor_backend)
-  [ "$out" = tmux ] || fail "TMUX_PANE should win over HERDR_ENV (tmux nested in herdr resolves to tmux): $out"
+  out=$(FM_SUPERVISOR_BACKEND='' TMUX_PANE='%9' HERDR_ENV='' HERDR_PANE_ID='' discover_supervisor_backend)
+  [ "$out" = tmux ] || fail "TMUX_PANE without herdr markers should resolve to tmux: $out"
 
   out=$(FM_SUPERVISOR_BACKEND='' TMUX_PANE='' HERDR_ENV=1 HERDR_PANE_ID=w1:p1 discover_supervisor_backend)
   [ "$out" = herdr ] || fail "HERDR_ENV=1 with HERDR_PANE_ID present should resolve to herdr: $out"
@@ -3046,8 +3046,8 @@ test_discover_supervisor_target_herdr() {
   out=$(FM_SUPERVISOR_TARGET=explicit:target TMUX_PANE='' HERDR_ENV=1 HERDR_PANE_ID=w1:p9 discover_supervisor_target)
   [ "$out" = "explicit:target" ] || fail "explicit FM_SUPERVISOR_TARGET override was not honored: $out"
 
-  out=$(FM_SUPERVISOR_TARGET='' TMUX_PANE='%3' HERDR_ENV=1 HERDR_PANE_ID=w1:p9 discover_supervisor_target)
-  [ "$out" = '%3' ] || fail "TMUX_PANE should win over herdr markers: $out"
+  out=$(FM_SUPERVISOR_TARGET='' TMUX_PANE='%3' HERDR_ENV='' HERDR_PANE_ID='' discover_supervisor_target)
+  [ "$out" = '%3' ] || fail "TMUX_PANE without herdr markers should be the target: $out"
 
   out=$(FM_SUPERVISOR_TARGET='' TMUX_PANE='' HERDR_ENV=1 HERDR_PANE_ID=w1:p9 HERDR_SESSION='' discover_supervisor_target)
   [ "$out" = "default:w1:p9" ] || fail "herdr target should default HERDR_SESSION to 'default': $out"
@@ -3061,6 +3061,109 @@ test_discover_supervisor_target_herdr() {
   [ "$out" = "firstmate:0" ] || fail "bare fallback should still print firstmate:0: $out"
 
   pass "discover_supervisor_target: override > TMUX_PANE > herdr '<session>:<pane-id>' composition > firstmate:0 fallback"
+}
+
+# Supervisor-pane discovery with tmux AND herdr markers follows
+# fm_backend_detect's rule: $TMUX_PANE outranks herdr only when it resolves on
+# the tmux server $TMUX names. A herdr server started from a tmux shell leaves
+# every herdr pane holding that shell's stale $TMUX/$TMUX_PANE; escalations
+# must then go to the herdr pane, not a tmux pane that does not exist. Uses a
+# REAL tmux server on a private socket so the liveness probe runs for real.
+test_discover_supervisor_tmux_liveness_under_herdr() {
+  local dir sock live live_tmux live_pane out
+  if ! command -v tmux >/dev/null 2>&1; then
+    echo "skip: tmux not found (supervisor tmux liveness under herdr)"
+    return 0
+  fi
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/fmtx.XXXXXX")
+  sock="$dir/s"
+  live=$(fm_test_tmux_live_pane "$sock") || { rm -rf "$dir"; fail "could not start a private tmux server for the liveness cases"; }
+  live_tmux=${live% *}
+  live_pane=${live#* }
+
+  # Proven path: a live tmux pane nested in herdr stays the tmux supervisor.
+  out=$(FM_SUPERVISOR_BACKEND='' TMUX="$live_tmux" TMUX_PANE="$live_pane" HERDR_ENV=1 HERDR_PANE_ID=w1:p1 discover_supervisor_backend)
+  [ "$out" = tmux ] || fail "a live TMUX_PANE nested in herdr should resolve to tmux: $out"
+  out=$(FM_SUPERVISOR_TARGET='' TMUX="$live_tmux" TMUX_PANE="$live_pane" HERDR_ENV=1 HERDR_PANE_ID=w1:p1 discover_supervisor_target)
+  [ "$out" = "$live_pane" ] || fail "a live TMUX_PANE nested in herdr should be the target: $out"
+
+  # Regression: stale inherited tmux markers under herdr fall through to herdr.
+  out=$(FM_SUPERVISOR_BACKEND='' TMUX="$live_tmux" TMUX_PANE='%999999' HERDR_ENV=1 HERDR_PANE_ID=w2:p1 discover_supervisor_backend)
+  [ "$out" = herdr ] || fail "a stale TMUX_PANE under herdr should resolve to herdr: $out"
+  out=$(FM_SUPERVISOR_TARGET='' TMUX="$live_tmux" TMUX_PANE='%999999' HERDR_ENV=1 HERDR_PANE_ID=w2:p1 HERDR_SESSION='' discover_supervisor_target)
+  [ "$out" = "default:w2:p1" ] || fail "a stale TMUX_PANE under herdr should target the herdr pane: $out"
+  out=$(FM_SUPERVISOR_TARGET='' TMUX="$dir/gone,1,0" TMUX_PANE='%1' HERDR_ENV=1 HERDR_PANE_ID=w2:p1 HERDR_SESSION='' discover_supervisor_target)
+  [ "$out" = "default:w2:p1" ] || fail "TMUX naming a dead server under herdr should target the herdr pane: $out"
+
+  # Explicit overrides still win over everything.
+  out=$(FM_SUPERVISOR_BACKEND=tmux TMUX="$live_tmux" TMUX_PANE='%999999' HERDR_ENV=1 HERDR_PANE_ID=w2:p1 discover_supervisor_backend)
+  [ "$out" = tmux ] || fail "explicit FM_SUPERVISOR_BACKEND override was not honored: $out"
+
+  tmux -S "$sock" kill-server >/dev/null 2>&1 || true
+  rm -rf "$dir"
+  pass "discover_supervisor_*: TMUX_PANE outranks herdr only when live; stale tmux markers under herdr resolve to the herdr pane"
+}
+
+# Drive the actual daemon and both foreground entry paths with fake terminals.
+# The watcher terminates its parent after startup, so this observes the real
+# backend validation and startup log without running fleet supervision.
+test_afk_entries_ignore_stale_tmux_under_herdr() {
+  local dir entry live state out expected_target expected_backend
+  dir=$(make_supercase afk-stale-tmux)
+  cp -R "$ROOT/bin" "$dir/bin"
+  mkdir -p "$dir/config"
+  : > "$dir/config/supervision-host-off"
+  cat > "$dir/bin/fm-watch.sh" <<'SH'
+#!/usr/bin/env bash
+kill -TERM "$PPID"
+SH
+  cat > "$dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+[ "${FM_FAKE_TMUX_LIVE:-0}" = 1 ] || exit 1
+case "$*" in
+  *'#{pane_id}') printf '%%11\n' ;;
+  *) exit 1 ;;
+esac
+SH
+  cat > "$dir/fakebin/herdr" <<'SH'
+#!/usr/bin/env bash
+[ "$*" = 'pane get w1:p1 --session fm-lab-fake' ]
+SH
+  chmod +x "$dir/bin/fm-watch.sh" "$dir/fakebin/tmux" "$dir/fakebin/herdr"
+  for live in 0 1; do
+    expected_backend=herdr expected_target=fm-lab-fake:w1:p1
+    if [ "$live" = 1 ]; then expected_backend=tmux expected_target=%11; fi
+    for entry in daemon start native; do
+      state="$dir/$live-$entry/state"
+      mkdir -p "$state"
+      out=$(PATH="$dir/fakebin:$PATH" FM_HOME="$dir/$live-$entry" \
+        FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_CONFIG_OVERRIDE="$dir/config" \
+        FM_TEST_SEAM=1 FM_TEST_HARNESS=claude FM_DAEMON_PRIMARY_HARNESS=claude \
+        TMUX="$dir/no-server,123,0" TMUX_PANE=%11 HERDR_ENV=1 \
+        HERDR_SESSION=fm-lab-fake HERDR_PANE_ID=w1:p1 \
+        FM_SUPERVISOR_BACKEND='' FM_SUPERVISOR_TARGET='' \
+        FM_FAKE_TMUX_LIVE="$live" \
+        bash -c '
+          case "$2" in
+            native)
+              "$1/fm-afk-launch.sh" enter --words "Exercise backend discovery" >/dev/null || exit
+              "$1/fm-afk-launch.sh" start-native || exit
+              export FM_AFK_STATE_PREPARED=1
+              exec "$1/fm-afk-start.sh" ;;
+            start) exec "$1/fm-afk-start.sh" ;;
+            daemon) exec "$1/fm-supervise-daemon.sh" ;;
+          esac
+        ' _ "$dir/bin" "$entry" 2>&1) || fail "$entry startup failed (live=$live): $out"
+      assert_grep "target=$expected_target;" \
+        "$state/.supervise-daemon.log" "$entry chose the wrong target (live=$live): $out"
+      assert_grep "backend=$expected_backend;" \
+        "$state/.supervise-daemon.log" "$entry chose the wrong supervisor (live=$live): $out"
+      assert_grep 'daemon shutting down' "$state/.supervise-daemon.log" \
+        "$entry did not finish daemon cleanup"
+      assert_absent "$state/.supervise-daemon.pid" "$entry leaked its daemon pidfile"
+    done
+  done
+  pass "AFK daemon, foreground start, and start-native target herdr under stale tmux markers and retain live nested tmux"
 }
 
 test_pane_is_busy_herdr_native_busy_state() {
@@ -3362,6 +3465,8 @@ test_fm_send_exits_nonzero_on_initial_send_failure
 test_fm_send_exits_nonzero_on_unproven_submit
 test_discover_supervisor_backend_precedence
 test_discover_supervisor_target_herdr
+test_discover_supervisor_tmux_liveness_under_herdr
+test_afk_entries_ignore_stale_tmux_under_herdr
 test_pane_is_busy_herdr_native_busy_state
 test_primary_busy_guard_is_harness_scoped
 test_pane_is_busy_defaults_to_tmux_when_backend_omitted
