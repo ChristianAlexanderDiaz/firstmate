@@ -4,7 +4,8 @@
 # (bin/fm-afk-start.sh). Two layers:
 #
 #   UNIT (always run, no backend): the session-scoped stale-artifact clear on a
-#   fresh entry vs a refresh, and the correct-ordered stop (daemon SIGTERM'd
+#   fresh entry vs a refresh, the platform-specific power-assertion launch and
+#   missing-dependency refusal, and the correct-ordered stop (daemon SIGTERM'd
 #   while state/.afk is still present, .afk cleared last).
 #
 #   E2E TOPOLOGY (per backend, skipped when its tool is absent): the anti-
