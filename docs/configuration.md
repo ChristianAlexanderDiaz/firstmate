@@ -1625,7 +1625,7 @@ The watcher remains available for this check even when the fleet is idle, using 
 No new daemon or scheduler is installed.
 
 The first eligible poll checks the most recent scheduled weekly slot, including a missed slot after downtime.
-Successful comparisons run once per slot, and proposals are separated by at least six days across daylight-saving changes; a slot that arrives sooner after a delayed proposal is skipped, so the next proposal waits for the following weekly slot.
+Successful comparisons run once per slot, and proposals are separated by at least three and a half days across daylight-saving changes; a slot that arrives sooner after a delayed proposal is skipped, so the next proposal waits for the following weekly slot, while a proposal up to three and a half days late keeps the next slot.
 It compares the fresh origin default tip with the fresh upstream default tip, independent of the current checkout branch, and fetches objects without moving any refs or `FETCH_HEAD`.
 A zero count consumes that slot; new commits then wait for the next weekly batch.
 Network failures report comparison failure once per weekly slot rather than claiming the fork is current, then retry silently every hour until a comparison succeeds or the next slot starts.

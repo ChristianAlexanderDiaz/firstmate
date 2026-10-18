@@ -8,8 +8,9 @@
 # or local no-mistakes runs cannot be proven idle (all repositories, including
 # parked gates). The slot is in the host's local timezone (TZ is respected).
 # A delayed check catches the most recent weekly slot; notifications are also
-# separated by at least six days to tolerate daylight-saving transitions, and a
-# slot reached within six days of a proposal is consumed without probing.
+# separated by at least three and a half days to tolerate daylight-saving
+# transitions, and a slot reached sooner after a proposal is consumed without
+# probing, so a proposal up to that late still keeps the next weekly slot.
 # A failed network probe is reported once per slot and retried silently after
 # each hour; successful checks, including zero drift, consume the slot.
 # FM_UPSTREAM_NOW overrides the epoch for tests.
@@ -47,7 +48,7 @@ CHECK_ID=upstream-update
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 
 fail() { printf 'upstream update: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,34{s/^# \{0,1\}//;p;}' "$0"; }
+usage() { sed -n '2,35{s/^# \{0,1\}//;p;}' "$0"; }
 
 read_config() {
   # Parse data, never source operator-controlled shell text.
@@ -133,7 +134,7 @@ check() {
     done
   fi
   [ "$last" -lt "$SLOT" ] || return 0
-  if [ $((NOW - proposal)) -lt 518400 ]; then
+  if [ $((NOW - proposal)) -lt 302400 ]; then
     write_record "$SLOT" "$attempt" "$proposal" "$reported"
     return 0
   fi

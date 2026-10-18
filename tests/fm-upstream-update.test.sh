@@ -103,6 +103,15 @@ assert_contains "$(run_check "$((NOW + 518400))")" 'upstream is 1 commits ahead'
 assert_contains "$(run_check "$((NOW + 1209600))")" 'upstream is 1 commits ahead' 'later weekly proposal'
 pass 'a delayed proposal skips the nearby weekly slot and resumes on schedule'
 
+world late
+set_status running
+[ -z "$(run_check)" ] || fail 'busy scheduled slot produced a proposal'
+set_status completed
+assert_contains "$(run_check "$((NOW + 90000))")" 'upstream is 1 commits ahead' 'Sunday catch-up after validation'
+[ -z "$(run_check "$((NOW + 604799))")" ] || fail 'late proposal repeated before the next slot'
+assert_contains "$(run_check "$((NOW + 604800))")" 'upstream is 1 commits ahead' 'next weekly slot after a late proposal'
+pass 'a proposal a day late keeps the next weekly slot'
+
 world off
 rm "$W/home/config/upstream-update.json"
 rm -rf "$W/home/state"
