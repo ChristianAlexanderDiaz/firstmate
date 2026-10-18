@@ -2375,9 +2375,20 @@ case "\${1:-} \${2:-}" in
     fi
     ;;
   "pane close")
-    : > "\${FM_FAKE_HERDR_CLOSED:?}"
+    case "\${3:-}" in
+      wG:pV) : > "\${FM_FAKE_HERDR_VIEWER_CLOSED:?}" ;;
+      *) : > "\${FM_FAKE_HERDR_CLOSED:?}" ;;
+    esac
     ;;
   "pane get")
+    if [ "\${3:-}" = wG:pV ]; then
+      if [ -z "\${FM_FAKE_HERDR_VIEWER_CLOSED:-}" ] || [ -e "\$FM_FAKE_HERDR_VIEWER_CLOSED" ]; then
+        printf '%s\n' '{"error":{"code":"pane_not_found"}}' >&2
+        exit 1
+      fi
+      printf '{"result":{"pane":{"pane_id":"wG:pV","tab_id":"%s","workspace_id":"wG"}}}\n' "\${FM_FAKE_HERDR_VIEWER_TAB:-wG:tQ}"
+      exit 0
+    fi
     if [ "\${FM_FAKE_HERDR_PANE_GET_GARBAGE:-0}" = 1 ]; then
       printf '%s\n' 'not-json'
       exit 0
@@ -2493,6 +2504,36 @@ test_herdr_flat_teardown_refuses_records_on_unparseable_presence() {
   assert_grep "ambiguous structured presence" "$case_dir/stderr" \
     "herdr-garbage-presence: the ambiguity refusal was not explained visibly"
   pass "herdr flat teardown never erases records when pane presence is unparseable"
+}
+
+# A live no-mistakes viewer recorded beside the chat, or beside an earlier chat
+# pane from before a relaunch, closes before the chat and retires its record.
+test_herdr_flat_teardown_closes_recorded_viewer() {
+  local variant case_dir log worker tab
+  for variant in current relaunched; do
+    case_dir=$(make_case "herdr-viewer-$variant")
+    write_meta "$case_dir" local-only ship
+    configure_flat_herdr_teardown_case "$case_dir"
+    log="$case_dir/herdr.log"; : > "$log"
+    worker=wG:pQ tab=wG:tQ
+    [ "$variant" = current ] || { worker=wG:pOld; tab=wG:tOld; }
+    printf '%s\n' session=default "worker=$worker" "worktree=$case_dir/wt" workspace=wG \
+      "tab=$tab" pane=wG:pV run=run-1 started=1 > "$case_dir/state/task-x1.nm-review-pane"
+    FM_FAKE_HERDR_LOG="$log" FM_FAKE_HERDR_CLOSED="$case_dir/closed" \
+      FM_FAKE_HERDR_VIEWER_CLOSED="$case_dir/viewer-closed" FM_FAKE_HERDR_VIEWER_TAB="$tab" \
+      FM_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS=1 \
+      run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" \
+      || fail "herdr-viewer-$variant: teardown failed: $(cat "$case_dir/stderr")"
+    [ -e "$case_dir/viewer-closed" ] || fail "herdr-viewer-$variant: the recorded viewer was not closed"
+    [ -e "$case_dir/closed" ] || fail "herdr-viewer-$variant: the chat pane was not closed"
+    [ ! -e "$case_dir/state/task-x1.nm-review-pane" ] \
+      || fail "herdr-viewer-$variant: teardown left the viewer record behind"
+    [ "$(grep -n '^pane close' "$log" | sed -n '1s/.*pane close //p')" = "wG:pV" ] \
+      || fail "herdr-viewer-$variant: the viewer did not close before the chat: $(grep '^pane close' "$log")"
+    grep -q "teardown task-x1 complete" "$case_dir/stdout" \
+      || fail "herdr-viewer-$variant: teardown did not report completion"
+  done
+  pass "herdr teardown closes the recorded no-mistakes viewer, including one beside an earlier chat pane"
 }
 
 assert_herdr_teardown_preflight_refuses_before_changes() {
@@ -4810,6 +4851,7 @@ test_teardown_missing_busy_sidecar_completes
 test_herdr_teardown_clears_escalation_marker
 test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes
 test_herdr_flat_teardown_refuses_records_on_unparseable_presence
+test_herdr_flat_teardown_closes_recorded_viewer
 test_herdr_flat_teardown_preflight_refuses_before_changes
 test_herdr_teardown_presentation_lock_namespace_is_per_account
 test_forced_secondmate_herdr_child_preflight_refuses_before_changes

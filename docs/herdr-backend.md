@@ -514,6 +514,7 @@ The layout is selected when the pane opens, without moving focus.
 The viewer has its own presentation record and never replaces the chat endpoint used for steering, capture, or liveness.
 Repeated observations of the same run do not open another viewer.
 A terminal run closes the viewer; a replacement run opens its own view.
+A relaunched chat closes any viewer left beside its earlier pane, and task teardown closes the remaining viewer.
 An unreadable run or pane preserves the current view until supervision can verify it again.
 Other runtime backends are unaffected.
 

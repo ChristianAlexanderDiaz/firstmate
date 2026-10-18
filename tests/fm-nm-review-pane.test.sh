@@ -23,36 +23,37 @@ args=args[:-2]
 with open(os.environ['FM_FAKE_HERDR_LOG'],'a') as f: f.write(json.dumps(args)+'\n')
 p=Path(os.environ['FM_FAKE_HERDR_STATE']); s=json.loads(p.read_text())
 a=args[:2]; result={}
+def error(code): print(json.dumps({'error':{'code':code}}),file=sys.stderr); sys.exit(1)
 if a==['session','list']:
  print(json.dumps({'sessions':[{'name':'lab','running':True,'socket_path':str(p)+'.sock'}]})); sys.exit()
 if a==['pane','get']:
  pane=s['panes'].get(args[2])
- if not pane: print(json.dumps({'error':{'code':'pane_not_found'}})); sys.exit(1)
+ if not pane: error('pane_not_found')
  if s.get('ambiguous'): print('unreadable'); sys.exit()
  result={'pane':{'pane_id':args[2],**pane}}
 elif a==['pane','layout']:
- result={'layout':{'panes':[{'pane_id':'w1:p2','rect':{'width':s.get('width',120)}}]}}
+ result={'layout':{'panes':[{'pane_id':args[3],'rect':{'width':s.get('width',120)}}]}}
 elif a==['pane','split']:
- assert args[2]=='w1:p2'
+ source=s['panes'][args[2]]
  n='w1:p'+str(s['next']); s['next']+=1
- s['panes'][n]={'workspace_id':'w1','tab_id':'w1:t2'}
+ s['panes'][n]={'workspace_id':source['workspace_id'],'tab_id':source['tab_id']}
  result={'pane':{'pane_id':n,**s['panes'][n]}}
 elif a==['pane','process-info']:
  pane=s['panes'].get(args[3],{})
  result={'process_info':{'pane_id':args[3],'shell_pid':100,'foreground_process_group_id':200 if pane.get('command') else 100}}
 elif a==['pane','run']:
- if s.get('fail_run'): print(json.dumps({'error':{'code':'failed'}})); sys.exit(1)
+ if s.get('fail_run'): error('failed')
  s['panes'][args[2]]['command']=args[3]
 elif a==['pane','close']:
- assert args[2]!='w1:p2', 'viewer lifecycle must never close chat'
- if s.get('refuse_close'): print(json.dumps({'error':{'code':'busy'}})); sys.exit(1)
+ assert args[2] not in ('w1:p2','w1:p9'), 'viewer lifecycle must never close chat'
+ if s.get('refuse_close'): error('busy')
  s['panes'].pop(args[2],None)
 elif a==['workspace','list']:
  result={'workspaces':[{'workspace_id':'w1','focused':True,'active_tab_id':'w1:t2'}]}
 elif a==['tab','list']:
  result={'tabs':[{'tab_id':'w1:t2','workspace_id':'w1','focused':True}]}
 elif a==['pane','rename']: pass
-else: print(json.dumps({'error':{'code':'unsupported'}})); sys.exit(1)
+else: error('unsupported')
 p.write_text(json.dumps(s)); print(json.dumps({'result':result}))
 FAKE
 cat > "$TMP_ROOT/fakebin/no-mistakes" <<'FAKE'
@@ -89,7 +90,8 @@ run:
 EOF
   cp "$FM_FAKE_NM_STATUS" "$FM_FAKE_NM_OVERVIEW"
 }
-call() { "$ROOT/bin/fm-nm-review-pane.sh" panes "$@"; }
+call() { "$ROOT/bin/fm-nm-review-pane.sh" panes; }
+record_pane() { sed -n 's/^pane=//p' "$RECORD"; }
 count() { python3 - "$FM_FAKE_HERDR_LOG" "$1" <<'PY'
 import json,sys
 print(sum(json.loads(l)[:2]==['pane',sys.argv[2]] for l in open(sys.argv[1])))
@@ -126,10 +128,12 @@ call
 run_status run-two running
 call
 [ "$(count split)" = 2 ] || fail 'new run must open a fresh viewer'
-call --close
-[ ! -e "$RECORD" ] || fail 'cleanup must retire viewer record'
-call --close
-pass 'terminal run with a pipeline-advanced head closes; replacement and cleanup converge'
+run_status run-two completed
+call
+call
+[ "$(count close)" = 2 ] && [ -f "$RECORD" ] && [ -z "$(record_pane)" ] \
+  || fail 'terminal replacement run must close its viewer and keep a tombstone'
+pass 'terminal run with a pipeline-advanced head closes; replacement converges'
 reset_panes
 change '{"width":300}'
 run_status wide running
@@ -145,10 +149,12 @@ run_status replacement running
 call
 [ "$(count split)" = 2 ] && [ "$(count close)" = 1 ] || fail 'replacement must close old viewer'
 change '{"refuse_close":true}'
-if call --close; then fail 'unconfirmed close must refuse'; fi
-[ -f "$RECORD" ] || fail 'unconfirmed close must retain record'
+run_status replacement completed
+call
+[ "$(record_pane)" = w1:p4 ] || fail 'unconfirmed close must retain the viewer record'
 change '{"refuse_close":false}'
-call --close
+call
+[ -z "$(record_pane)" ] || fail 'confirmed close must retire the viewer'
 pass 'replacement and close refusal preserve exact viewer identity'
 reset_panes
 run_status foreign running fm/other
@@ -180,22 +186,50 @@ change '{"ambiguous":true}'
 call
 [ "$(count split)" = 1 ] || fail 'ambiguous presence must never duplicate viewer'
 change '{"ambiguous":false}'
-call --close
 pass 'attach retries reuse the recorded pane; ambiguous reads preserve it'
 reset_panes
 run_status gone running
 call
 change '{"panes":{"w1:p2":{"workspace_id":"w1","tab_id":"w1:t2"}}}'
-call --close
-[ ! -e "$RECORD" ] || fail 'already absent viewer must be accepted by cleanup'
+call
+[ -f "$RECORD" ] && [ -z "$(record_pane)" ] && [ "$(count split)" = 1 ] \
+  || fail 'a viewer closed during its run must leave a tombstone without reopening'
+run_status gone2 running
+call
+change '{"panes":{"w1:p2":{"workspace_id":"w1","tab_id":"w1:t2"}}}'
+run_status gone2 completed
+call
+[ -f "$RECORD" ] && [ -z "$(record_pane)" ] && [ "$(count close)" = 0 ] \
+  || fail 'already absent viewer must be accepted when its run ends'
 pass 'already absent viewer closes without touching chat'
+reset_panes
+run_status rebind running
+call
+change '{"panes":{"w1:p3":{"workspace_id":"w1","tab_id":"w1:t2"},"w1:p9":{"workspace_id":"w1","tab_id":"w1:t5"}}}'
+sed -e 's/^window=.*/window=lab:w1:p9/' -e 's/^herdr_tab_id=.*/herdr_tab_id=w1:t5/' \
+  -e 's/^herdr_pane_id=.*/herdr_pane_id=w1:p9/' "$TMP_ROOT/original.meta" > "$META"
+call
+python3 - "$FM_FAKE_HERDR_LOG" "$FM_FAKE_HERDR_STATE" "$RECORD" <<'PY'
+import json,sys
+calls=[json.loads(l) for l in open(sys.argv[1])]
+assert ['pane','close','w1:p3'] in calls
+assert [c[2] for c in calls if c[:2]==['pane','split']]==['w1:p2','w1:p9']
+panes=json.load(open(sys.argv[2]))['panes']
+assert 'w1:p3' not in panes and panes['w1:p4']['tab_id']=='w1:t5'
+record=dict(l.rstrip('\n').split('=',1) for l in open(sys.argv[3]))
+assert (record['worker'],record['tab'],record['pane'])==('w1:p9','w1:t5','w1:p4')
+PY
+cp "$TMP_ROOT/original.meta" "$META"
+pass 'relaunched chat closes the earlier viewer and opens one beside the new pane'
 reset_panes
 run_status bound running
 call
 sed 's/^pane=.*/pane=w1:p2/' "$RECORD" > "$TMP_ROOT/record.tmp"
 mv "$TMP_ROOT/record.tmp" "$RECORD"
-if call --close; then fail 'a corrupt record must never close the worker'; fi
+run_status bound completed
+call
 [ "$(count close)" = 0 ] || fail 'worker close was attempted'
+[ "$(record_pane)" = w1:p2 ] || fail 'a corrupt record must be retained'
 pass 'record corruption cannot redirect viewer cleanup onto chat'
 reset_panes
 run_status contended running
@@ -222,5 +256,4 @@ touch "$TMP_ROOT/release"
 wait "$holder"
 call
 [ "$(count split)" = 1 ] || fail 'released session lock must allow next sweep'
-call --close
 pass 'session lock serializes pane creation with teardown and concurrent sweeps'
