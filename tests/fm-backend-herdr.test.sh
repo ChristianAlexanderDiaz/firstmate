@@ -4918,6 +4918,159 @@ herdr_wrapped_composer() {  # <text> <width> <drop>
   done
 }
 
+# Stateful transport fixture for the complete daemon -> backend -> CLI path.
+# Only the CLI is faked: daemon presence/busy/composer guards, operational
+# records, submit proof, and buffer acknowledgement use production code.
+# The historical suffix/paste-plus-suffix screens are fault injection, not
+# evidence about the behavior of an installed Herdr or Claude version.
+make_herdr_digest_fakebin() {  # <dir>
+  local fb="$1/fakebin"
+  mkdir -p "$fb"
+  cat > "$fb/herdr" <<'SH'
+#!/usr/bin/env bash
+set -eu
+: "${FM_HERDR_DIGEST_CASE:?}"
+args=("$@")
+n=${#args[@]}
+[ "${args[$((n - 2))]}" = --session ] && [ "${args[$((n - 1))]}" = digest-fixture ] || exit 97
+{
+  printf '%s' "$1"
+  for arg in "${args[@]:1}"; do printf '\x1f%s' "$arg"; done
+  printf '\n'
+} >> "$FM_HERDR_DIGEST_CASE/argv"
+case "$1 ${2:-}" in
+  'status --json') printf '{"client":{"version":"0.7.1","protocol":14},"server":{"running":true}}\n' ;;
+  'pane get') printf '{"result":{"pane":{"pane_id":"w1:p2"}}}\n' ;;
+  'agent get') printf '{"result":{"agent":{"agent":"claude","agent_status":"idle"}}}\n' ;;
+  'pane read') printf '  ❯ %s\n' "$(cat "$FM_HERDR_DIGEST_CASE/composer" 2>/dev/null || true)" ;;
+  'pane send-text')
+    text=$4
+    printf '%s\n' "$text" >> "$FM_HERDR_DIGEST_CASE/typed"
+    mode=$(cat "$FM_HERDR_DIGEST_CASE/mode")
+    case "$mode" in
+      long-tail) [ "${#text}" -le 300 ] || text=${text: -100} ;;
+      tail) text=${text: -100} ;;
+      paste-tail) text="[Pasted text #1]${text: -100}" ;;
+      exact) ;;
+      *) exit 98 ;;
+    esac
+    # Claude's rendered composer drops the invisible operational mark.
+    text=${text//$'\xE2\x81\xA3'/}
+    printf '%s' "$text" > "$FM_HERDR_DIGEST_CASE/composer"
+    printf '%s\n' "$text" >> "$FM_HERDR_DIGEST_CASE/observed"
+    ;;
+  'pane send-keys')
+    case "$4" in
+      enter)
+        cat "$FM_HERDR_DIGEST_CASE/composer" >> "$FM_HERDR_DIGEST_CASE/submitted"
+        printf '\n' >> "$FM_HERDR_DIGEST_CASE/submitted"
+        : > "$FM_HERDR_DIGEST_CASE/composer"
+        ;;
+      ctrl+u) : > "$FM_HERDR_DIGEST_CASE/composer" ;;
+      *) exit 98 ;;
+    esac
+    ;;
+  *) printf 'unexpected fake Herdr call: %s\n' "$*" >&2; exit 98 ;;
+esac
+SH
+  chmod +x "$fb/herdr"
+  printf '%s\n' "$fb"
+}
+
+# Unlike the adapter-only cases below, exercise the public backend dispatcher
+# and deliberately keep native agent_status idle through a landed turn.
+test_dispatch_short_and_long_operational_digests() {
+  local size dir fb text out
+  for size in 200 750 1500; do
+    dir="$TMP_ROOT/digest-dispatch-$size"
+    fb=$(make_herdr_digest_fakebin "$dir")
+    printf 'long-tail\n' > "$dir/mode"
+    text=$'\xE2\x81\xA3FIRSTMATE_OP: v1 away-supervisor: '
+    text+=$(herdr_long_payload "$size")
+    out=$(PATH="$fb:$PATH" FM_HERDR_DIGEST_CASE="$dir" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
+      bash -c '. "$0/bin/fm-backend.sh"; fm_backend_send_text_submit herdr digest-fixture:w1:p2 "$1" 2 0.01 0.01' "$ROOT" "$text")
+    [ "$(cat "$dir/typed")" = "$text" ] || fail "dispatcher changed the $size-character digest before typing"
+    if [ "$size" -eq 200 ]; then
+      [ "$out" = empty ] || fail "short digest did not confirm delivery: $out"
+      [ "$(cat "$dir/submitted")" = "${text//$'\xE2\x81\xA3'/}" ] || fail "short digest lost its operational header"
+    else
+      [ "$(cat "$dir/observed")" = "${text: -100}" ] || fail "long-digest head-loss fixture did not actually lose the head"
+      [ "$out" = send-failed ] || fail "head-lost $size-character digest was reported delivered: $out"
+      [ ! -s "$dir/submitted" ] || fail "head-lost digest received Enter"
+      [ ! -s "$dir/composer" ] || fail "refused digest was not cleared for a retry"
+    fi
+  done
+  pass "Herdr dispatcher: short operational digest lands; 750/1500-character head-lost digests fail without Enter"
+}
+
+# Twelve buffered events reproduce the pause-recheck batch size. Claude's
+# existing record carrier must keep the entire batch out of the composer;
+# a damaged doorbell must still fail without acknowledging any event.
+# "pinned" is the separate-terminal launch (bin/fm-afk-launch.sh names the
+# harness); "detected" is the Claude-native /afk start, which leaves
+# FM_DAEMON_PRIMARY_HARNESS unset and resolves the primary through
+# bin/fm-harness.sh from the CLAUDECODE=1 marker its Bash tool exports, with
+# ancestry blinded so the suite's own launching harness cannot decide.
+test_daemon_long_digest_herdr_record_delivery_and_retry() {
+  local ident mode dir fb
+  local -a identify
+  for ident in pinned detected; do
+    for mode in exact tail paste-tail; do
+      dir="$TMP_ROOT/digest-daemon-$ident-$mode"
+      fb=$(make_herdr_digest_fakebin "$dir")
+      printf '%s\n' "$mode" > "$dir/mode"
+      if [ "$ident" = pinned ]; then
+        identify=(FM_DAEMON_PRIMARY_HARNESS=claude)
+      else
+        fm_fake_blind_ancestry "$fb"
+        identify=(-u FM_DAEMON_PRIMARY_HARNESS -u FM_SUPERVISION_ACTOR -u CURSOR_AGENT -u CURSOR_INVOKED_AS
+          -u GEMINI_CLI -u ATLASSIAN_AGENT_TYPE -u ROVODEV_CLI -u FM_OMP_HARNESS -u PI_CODING_AGENT -u GROK_AGENT
+          CLAUDECODE=1)
+      fi
+      # shellcheck disable=SC2016 # the bash -c script expands in the child shell.
+      env "${identify[@]}" PATH="$fb:$PATH" FM_HERDR_DIGEST_CASE="$dir" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" \
+        FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET=digest-fixture:w1:p2 \
+        FM_INJECT_CONFIRM_SLEEP=0.01 FM_BACKEND_HERDR_SUBMIT_POLLS=1 bash -c '
+          . "$0/bin/fm-supervise-daemon.sh"
+          state="$FM_STATE_OVERRIDE"
+          afk_enter "$state"
+          for i in $(seq 1 12); do
+            escalate_add "$state" "task-$i.status: paused: waiting for validation completion; retain this event in the pause recheck digest"
+          done
+          cp "$state/.subsuper-escalations" "$FM_HOME/before"
+          mode=$(cat "$FM_HOME/mode")
+          if [ "$mode" != exact ]; then
+            if escalate_flush "$state"; then echo "damaged doorbell was reported delivered" >&2; exit 1; fi
+            cmp -s "$FM_HOME/before" "$state/.subsuper-escalations" || exit 2
+            [ -f "$state/.subsuper-escalations.since" ] || exit 3
+            [ ! -s "$FM_HOME/submitted" ] && [ ! -s "$FM_HOME/composer" ] || exit 4
+            case "$INJECT_LAST_FAILURE" in *verdict=send-failed*) ;; *) exit 5 ;; esac
+            # Read what the stub actually displayed, not just its mode switch.
+            observed=$(cat "$FM_HOME/observed")
+            case "$mode" in paste-tail) case "$observed" in "[Pasted text #1]"*) ;; *) exit 6 ;; esac ;; esac
+            should_exit_afk "$state" "$observed" || exit 7
+            printf "exact\n" > "$FM_HOME/mode"
+          fi
+          escalate_flush "$state" || exit 8
+          [ ! -s "$state/.subsuper-escalations" ] && [ ! -e "$state/.subsuper-escalations.since" ] || exit 9
+          [ "$(wc -l < "$FM_HOME/submitted")" -eq 1 ] || exit 10
+          doorbell=$(cat "$FM_HOME/submitted")
+          fm_operational_doorbell_path "$doorbell" record || exit 11
+          expected="Supervisor escalate (12 event(s)): "
+          sep=
+          while IFS= read -r item; do expected+="$sep$item"; sep=" | "; done < "$FM_HOME/before"
+          expected+=" (pre-read; re-arm not needed — watcher daemon-managed)"
+          fm_operational_input_encode away-supervisor "$expected" encoded || exit 12
+          [ "$(cat "$record")" = "$encoded" ] || exit 13
+          [ "${#encoded}" -gt 1000 ] && [ "${#doorbell}" -lt "${#encoded}" ] || exit 14
+          if should_exit_afk "$state" "$doorbell"; then exit 15; fi
+          afk_active "$state" || exit 16
+        ' "$ROOT" || fail "daemon Herdr long-digest $ident/$mode delivery/retention regression failed"
+    done
+  done
+  pass "daemon Herdr: long digest survives in a marked record; damaged doorbells retain all events until a safe retry"
+}
+
 # herdr_popup_composer_screen: a Claude Code 2.1.283-shaped screen after a
 # typed slash command, with the command popup rendered BETWEEN the composer
 # and the pane bottom. Verified live: the popup is ~19 menu rows, so the
@@ -6094,6 +6247,8 @@ test_send_text_submit_slow_transition_within_one_enter_needs_no_extra_enter
 test_send_text_submit_send_failed
 test_send_text_submit_unknown_on_capture_failure
 test_send_text_submit_unknown_on_composer_capture_failure
+test_dispatch_short_and_long_operational_digests
+test_daemon_long_digest_herdr_record_delivery_and_retry
 test_send_text_submit_long_literal_submits_when_composer_holds_every_byte
 test_send_text_submit_refuses_enter_when_composer_holds_only_the_suffix
 test_send_text_submit_refused_suffix_that_will_not_clear_is_unknown
