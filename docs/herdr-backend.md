@@ -120,7 +120,7 @@ Workspace and tab creation use `--no-focus`.
 The first workspace in a completely empty Herdr session must become focused, because no prior target exists.
 Later task creation does not intentionally steal focus.
 
-### Placement beside the launcher
+### Launcher identity and worker placement
 
 Herdr does not enforce workspace or tab label uniqueness, so a label can never decide where a worker goes.
 

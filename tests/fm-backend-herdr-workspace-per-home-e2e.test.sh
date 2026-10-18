@@ -21,7 +21,8 @@
 #   - a crewmate spawned FROM that secondmate-shaped home (the secondmate
 #     running its OWN fm-spawn.sh) getting a separate task workspace
 #   - teardown closing the right tab (and no other)
-#   - list-live recovery seeing only its own home's tabs, for both homes
+#   - legacy list-live discovery staying scoped to each home container, for
+#     both homes, without sweeping dedicated worker workspaces
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

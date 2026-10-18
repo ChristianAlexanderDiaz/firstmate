@@ -3930,8 +3930,9 @@ else
     WT_TARGET="$WID"
     ;;
   herdr)
-    # fm_backend_herdr_workspace_label resolves the target workspace from
-    # FM_HOME. For every KIND except secondmate, this process's own FM_HOME is
+    # fm_backend_herdr_workspace_label resolves the home workspace label (the
+    # projection parent, or a secondmate's own container) from FM_HOME. For
+    # every KIND except secondmate, this process's own FM_HOME is
     # already the right home (the primary spawning its own crewmate/scout, or
     # a secondmate spawning ITS OWN crewmate/scout from its own process's
     # FM_HOME - the latter needs no glue at all). A --secondmate spawn is the
