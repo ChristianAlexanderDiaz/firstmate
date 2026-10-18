@@ -679,6 +679,10 @@ fi
 . "$SCRIPT_DIR/fm-ff-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+if fm_sleep_active; then
+  echo "error: spawn refused - sleep is active in $FM_HOME; wake the fleet before launching work" >&2
+  exit 1
+fi
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 fm_backlog_directory_present "$STATE" "state directory" || {
@@ -5707,6 +5711,17 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   fi
   LAUNCH="$LAUNCH_ENV_PREFIX /bin/sh -c $(shell_quote "$LAUNCH")"
 fi
+# Recheck at launch delivery after potentially slow setup, and in the staged
+# shell command itself if a terminal buffers its Enter until after sleep entry.
+if fm_sleep_active; then
+  echo "error: spawn refused - sleep began during task setup; prepared work is preserved" >&2
+  exit 1
+fi
+LAUNCH="if [ -e $(shell_quote "$STATE/.sleep") ] || [ -e $(shell_quote "$STATE/.sleep-return") ]; then
+  printf '%s\n' 'launch held by sleep'
+else
+$LAUNCH
+fi"
 # Implement the launch-delivery contract in this script's header. The full
 # home-identity hash isolates equal task ids across homes, and the spawn token in
 # the final filename keeps a buffered source line bound to this incarnation.

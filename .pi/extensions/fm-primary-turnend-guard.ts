@@ -601,6 +601,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("agent_settled", async () => {
+    if (existsSync(`${state}/.sleep`) || existsSync(`${state}/.sleep-return`)) return;
     if (guardFollowupActive) {
       guardFollowupActive = false;
       return;
@@ -609,6 +610,7 @@ export default function (pi: ExtensionAPI) {
     const result = await runGuard();
     if (result.code !== 2) return;
 
+    if (existsSync(`${state}/.sleep`) || existsSync(`${state}/.sleep-return`)) return;
     guardFollowupActive = true;
     try {
       const content = encodeFirstmateOperationalInput(

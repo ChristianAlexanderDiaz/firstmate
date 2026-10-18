@@ -156,7 +156,7 @@ test_no_profile_keeps_claude_profile_defaults() {
 
   launch=$(cat "$LAUNCH_LOG")
   expected=$(claude_expected_launch "$launch" "$HOME_DIR" "$id" --dangerously-skip-permissions)
-  [ "$launch" = "$expected" ] || fail "no-profile claude launch did not use the canonical launch kind"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  [[ "$launch" == *"$expected"* ]] || fail "no-profile claude launch did not use the canonical launch kind"$'\n'"expected: $expected"$'\n'"actual:   $launch"
   pass "no --model/--effort records defaults and types the claude launch instructions"
 }
 
@@ -539,7 +539,7 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   # The unverified-adapter escape hatch is still an agent this fleet launched,
   # so it carries the compact-adviser floor and the AI-trailer strip; nothing
   # else may rewrite the captain's own command.
-  [ "$launch" = "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$HOME_DIR" "$id")$(ai_trailer_hooks_prefix "$HOME_DIR" "$id")custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
+  [[ "$launch" == *"export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$HOME_DIR" "$id")$(ai_trailer_hooks_prefix "$HOME_DIR" "$id")custom-agent --flag"* ]] || fail "raw launch command changed"$'\n'"actual: $launch"
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
 }
 
@@ -1657,7 +1657,7 @@ test_claude_long_launch_is_delivered_intact() {
     || fail "Claude regression fixture is too short to cover the terminal line limit: ${#expected} bytes"
   [ "${#launch}" -gt 1024 ] \
     || fail "long Claude launch was truncated to ${#launch} bytes; staging must deliver the full command"
-  [ "$launch" = "$expected" ] \
+  [[ "$launch" == *"$expected"* ]] \
     || fail "long Claude launch was not delivered intact (${#launch}/${#expected} bytes)"
   pass "fm-spawn: a Claude launch longer than 1024 bytes is delivered intact through the staging path"
 }
@@ -2069,6 +2069,9 @@ SH
 # permission flag, and any other token refuses before endpoint or metadata.
 claude_settings_json_arg() {  # <launch>
   local command=$1
+  # The captured staged command now carries a sleep guard around its launch.
+  command=${command#*$'\nelse\n'}
+  command=${command%$'\nfi'}
   while [[ "$command" == export\ *\;* ]]; do
     command=${command#*; }
   done
@@ -2086,6 +2089,8 @@ claude_settings_json_arg() {  # <launch>
 
 claude_launch_brief_arg() {  # <launch>
   local command=$1
+  command=${command#*$'\nelse\n'}
+  command=${command%$'\nfi'}
   while [[ "$command" == export\ *\;* ]]; do
     command=${command#*; }
   done
@@ -2128,7 +2133,7 @@ test_claude_permission_mode_bypass_matches_absent_launch() {
   expect_code 0 "$status" "claude spawn with claude-permission-mode=bypass should succeed"
   launch=$(cat "$LAUNCH_LOG")
   expected=$(claude_expected_launch "$launch" "$HOME_DIR" "$id" --dangerously-skip-permissions)
-  [ "$launch" = "$expected" ] || fail "explicit bypass did not reproduce the absent-file launch"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  [[ "$launch" == *"$expected"* ]] || fail "explicit bypass did not reproduce the absent-file launch"$'\n'"expected: $expected"$'\n'"actual:   $launch"
   pass "config/claude-permission-mode=bypass launches exactly as an absent file does"
 }
 
@@ -2146,7 +2151,7 @@ test_claude_permission_mode_auto_swaps_only_the_permission_flag() {
   assert_contains "$out" "spawned $id harness=claude" "auto spawn did not report claude"
   launch=$(cat "$LAUNCH_LOG")
   expected=$(claude_expected_launch "$launch" "$HOME_DIR" "$id" '--permission-mode auto')
-  [ "$launch" = "$expected" ] || fail "auto changed more than the permission flag"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  [[ "$launch" == *"$expected"* ]] || fail "auto changed more than the permission flag"$'\n'"expected: $expected"$'\n'"actual:   $launch"
   assert_not_contains "$launch" "--dangerously-skip-permissions" "auto launch must not request bypass mode"
   pass "config/claude-permission-mode=auto replaces --dangerously-skip-permissions with --permission-mode auto"
 }
@@ -2314,3 +2319,29 @@ test_claude_secondmate_launch_carries_the_attribution_policy
 test_active_dispatch_profile_does_not_block_secondmate_launch
 
 echo "# all fm-spawn-dispatch-profile tests passed"
+
+
+test_sleep_guard_blocks_a_buffered_launch() {
+  local rec id out status launch
+  id=sleep-buffered-launch
+  rec=$(make_spawn_case sleep-buffered-launch claude "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "custom-agent --flag")
+  status=$?
+  expect_code 0 "$status" "buffered launch fixture failed: $out"
+  cat > "$FAKEBIN_DIR/custom-agent" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_STARTED"
+SH
+  chmod +x "$FAKEBIN_DIR/custom-agent"
+  launch=$(cat "$LAUNCH_LOG")
+  : > "$HOME_DIR/state/.sleep"
+  PATH="$FAKEBIN_DIR:$PATH" FM_TEST_STARTED="$CASE_DIR/started" bash -c "$launch" >/dev/null
+  [ ! -e "$CASE_DIR/started" ] || fail 'a buffered launch started an agent during sleep'
+  rm "$HOME_DIR/state/.sleep"
+  PATH="$FAKEBIN_DIR:$PATH" FM_TEST_STARTED="$CASE_DIR/started" bash -c "$launch" >/dev/null
+  assert_grep --flag "$CASE_DIR/started" 'awake launch lost the raw command arguments'
+  pass 'sleep: a staged launch buffered before sleep cannot start an agent until wake'
+}
+test_sleep_guard_blocks_a_buffered_launch

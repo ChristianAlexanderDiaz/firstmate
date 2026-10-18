@@ -244,6 +244,10 @@ export async function createAgentSession(options) {
       session.ops.push({ kind: "custom", message, opts });
       (globalThis.__fmMirrors ??= []).push(message);
     },
+    async abort() {
+      session.aborted = true;
+      await globalThis.__fmOnAbort?.();
+    },
     dispose() {
       session.disposed = true;
     },
@@ -5999,3 +6003,41 @@ test_delivery_keeps_the_event_loop_live_and_ordered
 test_session_replacement_during_delivery_neither_loses_nor_duplicates
 test_store_failure_during_delivery_neither_loses_nor_duplicates
 test_mark_read_failure_keeps_routine_redelivery_and_captain_deduplication
+
+
+test_sleep_holds_and_aborts_pi_branch() {
+  local repo home status
+  repo="$TMP_ROOT/sleep-root"
+  home="$TMP_ROOT/sleep-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/sleep-output" 2>&1 <<'EOF'
+await eval(`(async () => { ${process.env.DRIVER_PRELUDE}; globalThis.__t = { fire, dispatch, settle, sentToMain, defaultSessionCtx, home }; })()`);
+const { fire, dispatch, settle, sentToMain, defaultSessionCtx, home } = globalThis.__t;
+import { writeFileSync, unlinkSync } from "node:fs";
+writeFileSync(`${home}/state/.lock`, `${process.ppid}\n`);
+await fire("session_start", {}, defaultSessionCtx);
+writeFileSync(`${home}/state/.sleep`, "");
+const offer = dispatch("signal: held sleep wake");
+if (!offer.accepted) throw new Error("sleep wake lost its branch owner");
+await new Promise((resolve) => setTimeout(resolve, 700));
+if ((globalThis.__fmPrompts ?? []).length) throw new Error("sleep started a branch prompt");
+if (sentToMain.some((row) => row.options.triggerTurn)) throw new Error("sleep triggered main");
+let finish;
+globalThis.__fmOnBranchPrompt = () => new Promise((resolve) => { finish = resolve; });
+globalThis.__fmOnAbort = () => finish();
+unlinkSync(`${home}/state/.sleep`);
+await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "resumed branch wake");
+writeFileSync(`${home}/state/.sleep`, "");
+await settle(() => globalThis.__fmSessions[0].aborted, "sleep cancellation");
+let rejected = false;
+try { await offer.settlement; } catch { rejected = true; }
+if (!rejected) throw new Error("cancelled wake was reported handled");
+await fire("session_shutdown", {}, defaultSessionCtx);
+EOF
+  status=$?
+  [ "$status" -eq 0 ] || fail "Pi sleep guard failed: $(cat "$TMP_ROOT/sleep-output")"
+  pass 'sleep: Pi holds new branch prompts and aborts an already running turn without claiming its wake'
+}
+test_sleep_holds_and_aborts_pi_branch

@@ -44,6 +44,7 @@ import { Type } from "typebox";
 import { registerFirstmateTool } from "./lib/fm-native-contract.ts";
 import {
   afkPostureRecordPresent,
+  sleepPosturePresent,
   branchOfferForWake,
   createBranchDispatchOffer,
   FM_BRANCH_DISPATCH_EVENT,
@@ -631,6 +632,9 @@ export default function (pi: ExtensionAPI) {
     message: string,
     pending?: PendingActionableClose,
   ): Promise<boolean> {
+    while (sleepPosturePresent(state) && generationIsLive(owner)) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
     if (!generationIsLive(owner)) return false;
     const content = encodeFirstmateOperationalInput(
       "watcher",
@@ -729,6 +733,9 @@ export default function (pi: ExtensionAPI) {
     pending: PendingActionableClose,
     recovery?: { generation: string; watcherPid: string },
   ): Promise<boolean> {
+    while (sleepPosturePresent(state) && generationIsLive(owner)) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
     if (!generationIsLive(owner)) return false;
     if (recovery) {
       const confirmed = confirmHandlingDeliveryWithRetry(recovery);

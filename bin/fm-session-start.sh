@@ -947,6 +947,13 @@ for status in "$STATE"/*.status; do
 done
 [ "$ORPHAN_STATUS_FOUND" -eq 1 ] || printf '(none)\n'
 
+subsection "SLEEP"
+if fm_sleep_active "$STATE"; then
+  printf 'present - load /sleep; hold operational input, or run bin/fm-sleep.sh off on ordinary user input before resuming work.\n'
+else
+  printf 'absent\n'
+fi
+
 subsection "AFK"
 # The away posture is the record (bin/fm-afk-contract.sh); the legacy flag
 # still marks a running daemon on the harnesses that launch one.

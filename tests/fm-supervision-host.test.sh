@@ -2953,6 +2953,48 @@ test_superseded_host_leaves_the_owner_untouched() {
   pass "host: a host under a superseded auto-arm generation stands down without touching the owner"
 }
 
+test_sleep_holds_host_wakes_and_park_boundaries() {
+  local home
+  home=$(make_home sleep-host away)
+  : > "$home/state/.sleep"
+  echo 0 > "$home/park-clock"
+  FM_TEST_SUPERVISION_HOST_CLOCK="$home/park-clock" FM_SUPERVISION_HOST_PARK_SECONDS=60 \
+    FM_SUPERVISION_HOST_TURN_TIMEOUT=20 FM_SUPERVISION_ENGINE_GRACE=1 start_host "$home"
+  wait_until 150 watcher_live "$home" || fail "sleep: watcher never started"
+  append_status "$home" 'sleep event'
+  echo 120 > "$home/park-clock"
+  sleep 2
+  [ ! -s "$home/host.rc" ] || fail "sleep completed the supervision park: $(cat "$home/host.out")"
+  [ ! -e "$home/engine-call.1" ] || fail 'sleep started an engine turn'
+  assert_no_grep 'signal:' "$home/host.out" 'sleep surfaced a wake to main'
+  echo 0 > "$home/park-clock"
+  rm "$home/state/.sleep"
+  wait_until 250 handled_at_least "$home" 1 || fail "wake was lost after releasing sleep: $(cat "$home/host.out" "$home/state/.supervision-host.log")"
+  stop_home_processes "$home"
+  pass 'sleep: the host holds every wake and its park boundary, then handles the durable event on return'
+}
+
+test_sleep_cancels_an_active_host_turn() {
+  local home
+  home=$(make_home sleep-engine away)
+  echo hang > "$home/stub-mode"
+  FM_SUPERVISION_ENGINE_GRACE=1 start_host "$home"
+  append_status "$home" 'start before sleep'
+  wait_until 250 test -s "$home/orphan-pid" || fail 'sleep: engine did not start'
+  : > "$home/state/.sleep"
+  wait_until 250 sh -c '! kill -0 "$(cat "$1")" 2>/dev/null' _ "$home/orphan-pid" \
+    || fail 'sleep did not cancel the existing supervision engine'
+  [ ! -s "$home/host.rc" ] || fail 'engine cancellation woke main during sleep'
+  assert_grep 'demo.status' "$home/state/.wake-queue" 'sleep cancellation consumed the unhandled wake'
+  wait_until 150 sh -c '[ ! -e "$1/.branch-eligible-rows" ]' _ "$home/state" \
+    || fail 'sleep cancellation kept the wake claimed away from the return drain'
+  stop_home_processes "$home"
+  pass 'sleep: an active supervision engine is cancelled while its unhandled wake remains durable'
+}
+
+test_sleep_holds_host_wakes_and_park_boundaries
+test_sleep_cancels_an_active_host_turn
+
 test_claude_stop_hook_restores_handoff_when_successor_closed_before_exit_to_main
 test_claude_stop_hook_restores_handoff_when_successor_closed_mid_engine_turn
 test_claude_stop_hook_notifies_when_closed_successor_downtime_restore_fails

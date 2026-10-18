@@ -512,7 +512,7 @@ SH
     FM_CLASSIFIER_DOWN="$fixture/classifier-down" \
     PI_PACKAGE_DIR="$PI_PACKAGE_DIR" \
     node --input-type=module 2>&1 <<'JS'
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const packageRoot = process.env.PI_PACKAGE_DIR;
@@ -524,7 +524,9 @@ initTheme("dark");
 const layout = await import("./lib/fm-calm-pending-operational-layout.ts");
 const visibility = await import("./lib/fm-calm-visibility.ts");
 const operationalInput = await import("./lib/fm-operational-input.ts");
-layout.installCalmPendingOperationalLayout();
+const stateDirectory = `${process.cwd()}/state`;
+mkdirSync(stateDirectory);
+layout.installCalmPendingOperationalLayout(stateDirectory);
 
 const check = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -649,6 +651,22 @@ visibility.setCalmPresentation(true);
   }
   check(JSON.stringify(host.statuses) === JSON.stringify([layout.CALM_SUPERVISION_CONTINUES_NOTICE]), `continuation notice: ${JSON.stringify(host.statuses)}`);
   assertNoOperationalText(host.statuses.join("\n"), "continuation notice");
+}
+
+// Sleep retains the interrupted operational queue without a continuation or ping.
+{
+  const session = makeSession();
+  const host = makeHost(session);
+  session.followUp.push(watcherOne);
+  host.updatePendingMessagesDisplay();
+  writeFileSync(`${stateDirectory}/.sleep`, "");
+  host.restoreQueuedMessagesToEditor({ abort: true });
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  check(session.prompts.length === 0 && host.statuses.length === 0, "sleep restarted or announced a retained wake");
+  check(JSON.stringify(session.followUp) === JSON.stringify([watcherOne]), "sleep lost the retained queue");
+  rmSync(`${stateDirectory}/.sleep`);
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  check(JSON.stringify(session.prompts) === JSON.stringify([watcherOne]), "return did not deliver the retained wake once");
 }
 
 // 2. The dequeue key restores captain text while the run keeps going: nothing restarts.
@@ -4981,6 +4999,74 @@ JS
   pass "Pi calm native E2E replaces the stock working row with a moving, resize-clamped working ship that freezes and resumes across two working periods in one Pi session, clears on abort, keeps captain turns visible, hides exact operational user rows without changing persistence, restores stock rendering Calm-off, survives restart, and preserves export plus Ctrl+O behavior"
 }
 
+test_sleep_holds_retained_queue_with_fake_pi() {
+  local fixture out status
+  fixture="$TMP_ROOT/sleep-portable"
+  mkdir -p "$fixture/lib" "$fixture/state" "$fixture/node_modules/@earendil-works/pi-coding-agent"
+  cp "$PENDING_OPERATIONAL_LAYOUT" "$VISIBILITY" "$PI_OPERATIONAL_INPUT" "$fixture/lib/"
+  printf '%s\n' '{"type":"module"}' > "$fixture/package.json"
+  printf '%s\n' '{"type":"module","exports":"./index.js"}' > "$fixture/node_modules/@earendil-works/pi-coding-agent/package.json"
+  cat > "$fixture/node_modules/@earendil-works/pi-coding-agent/index.js" <<'JS'
+export function getMarkdownTheme() { return {}; }
+export class UserMessageComponent {}
+export class InteractiveMode {
+  getAllQueuedMessages() { return { steering: [...this.session.steering], followUp: [...this.session.followUp] }; }
+  updatePendingMessagesDisplay() { this.getAllQueuedMessages(); }
+  clearAllQueues() { this.compactionQueuedMessages = []; return this.session.clearQueue(); }
+  restoreQueuedMessagesToEditor() {
+    const rows = this.clearAllQueues();
+    this.session.idle = true;
+    return rows.steering.length + rows.followUp.length;
+  }
+}
+JS
+  out=$(cd "$fixture" && FM_OPERATIONAL_INPUT_SCRIPT="$OPERATIONAL_INPUT" node --input-type=module 2>&1 <<'JS'
+import { writeFileSync, unlinkSync } from "node:fs";
+import { InteractiveMode } from "@earendil-works/pi-coding-agent";
+import { installCalmPendingOperationalLayout } from "./lib/fm-calm-pending-operational-layout.ts";
+import { setCalmPresentation } from "./lib/fm-calm-visibility.ts";
+import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.ts";
+const state = `${process.cwd()}/state`;
+installCalmPendingOperationalLayout(state);
+setCalmPresentation(true);
+const text = encodeFirstmateOperationalInput("watcher", "held operational wake");
+for (const flag of [".sleep", ".sleep-return"]) {
+  const session = {
+    steering: [], followUp: [text], prompts: [], idle: true,
+    getSteeringMessages() { return this.steering; },
+    getFollowUpMessages() { return this.followUp; },
+    clearQueue() { const rows = { steering: this.steering, followUp: this.followUp }; this.steering = []; this.followUp = []; return rows; },
+    _queueSteer(value) { this.steering.push(value); },
+    _queueFollowUp(value) { this.followUp.push(value); },
+    async waitForIdle() {},
+    async sendUserMessage(value) { this.prompts.push(value); },
+    get isIdle() { return this.idle; },
+  };
+  const host = new InteractiveMode();
+  host.session = session;
+  host.compactionQueuedMessages = [];
+  host.notices = [];
+  host.showStatus = (value) => host.notices.push(value);
+  host.updatePendingMessagesDisplay();
+  writeFileSync(`${state}/${flag}`, "");
+  try {
+    host.restoreQueuedMessagesToEditor({ abort: true });
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    if (session.prompts.length || host.notices.length) throw new Error(`${flag} allowed a continuation or ping`);
+    if (session.followUp.length !== 1 || session.followUp[0] !== text) throw new Error(`${flag} lost the retained queue`);
+  } finally {
+    unlinkSync(`${state}/${flag}`);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  if (session.prompts.length !== 1 || session.prompts[0] !== text || session.followUp.length) throw new Error("return did not deliver the retained wake exactly once");
+}
+JS
+  ); status=$?
+  [ "$status" -eq 0 ] || fail "portable sleep queue retention: $out"
+  pass "sleep: Pi Calm retains interrupted operational input without a prompt or ping and delivers it once on return (fake Pi)"
+}
+
+test_sleep_holds_retained_queue_with_fake_pi
 test_home_resolution
 test_pi_compat_no_upper_bound
 test_pi_compat_degraded_adapter

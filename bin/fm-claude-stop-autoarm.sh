@@ -461,6 +461,8 @@ while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
     run_arm "$OUT"
   fi
 
+  fm_sleep_wait "$STATE"
+
   # AFK may have appeared mid-cycle: the daemon owns triage now, so suppress
   # every subsequent classification and handoff.
   if [ -e "$STATE/.afk" ]; then

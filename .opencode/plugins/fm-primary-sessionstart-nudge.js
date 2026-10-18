@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 
 const handledSessions = new Set();
@@ -34,17 +34,20 @@ async function resolveRoot(anchor) {
 
 export const FmPrimarySessionstartNudge = async ({ client, directory, worktree }) => {
   const root = worktree ? resolvePath(worktree) : await resolveRoot(directory);
+  const state = process.env.FM_STATE_OVERRIDE || `${process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || root}/state`;
+  const sleeping = () => existsSync(`${state}/.sleep`) || existsSync(`${state}/.sleep-return`);
 
   return {
     event: async ({ event }) => {
       if (event.type !== "session.created") return;
+      if (sleeping()) return;
       const sessionID = event.properties?.info?.id ?? event.properties?.sessionID;
       if (!sessionID || handledSessions.has(sessionID) || !root) return;
       handledSessions.add(sessionID);
 
       const result = await runProcess(`${root}/bin/fm-sessionstart-nudge.sh`, []);
       const nudge = result.code === 0 ? result.stdout.trim() : "";
-      if (!nudge) return;
+      if (!nudge || sleeping()) return;
 
       try {
         await client.session.promptAsync({

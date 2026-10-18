@@ -124,9 +124,11 @@ function installCalmPresentationAdapter(name: string, install: () => void): void
 }
 
 export default function (pi: ExtensionAPI) {
+  const fmHome = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || root;
+  const stateDirectory = process.env.FM_STATE_OVERRIDE || resolve(fmHome, "state");
   installCalmPresentationAdapter("collapsed-thinking", installCalmAssistantLayout);
   installCalmPresentationAdapter("operational-user-row", installCalmOperationalUserLayout);
-  installCalmPresentationAdapter("queued-operational-row", installCalmPendingOperationalLayout);
+  installCalmPresentationAdapter("queued-operational-row", () => installCalmPendingOperationalLayout(stateDirectory));
 
   let exportRendering = false;
   let removeTerminalInputHandler: (() => void) | undefined;
@@ -173,7 +175,6 @@ export default function (pi: ExtensionAPI) {
     }
   };
 
-  const fmHome = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || root;
   const configDirectory = process.env.FM_CONFIG_OVERRIDE || resolve(fmHome, "config");
   const calmPreferencePath = resolve(configDirectory, "calm");
   // "max" is the legacy value written by the removed third presentation level, whose

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.js";
 
@@ -56,10 +56,13 @@ async function letWatchArmRun(sessionID, client) {
 
 export const FmPrimaryTurnendGuard = async ({ client, directory, worktree }) => {
   const root = worktree ? resolvePath(worktree) : await resolveRoot(directory);
+  const state = process.env.FM_STATE_OVERRIDE || `${process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || root}/state`;
+  const sleeping = () => existsSync(`${state}/.sleep`) || existsSync(`${state}/.sleep-return`);
 
   return {
     event: async ({ event }) => {
       if (event.type !== "session.idle") return;
+      if (sleeping()) return;
 
       if (skipNextIdle) {
         skipNextIdle = false;
@@ -82,6 +85,7 @@ export const FmPrimaryTurnendGuard = async ({ client, directory, worktree }) => 
             "The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.\n\n" +
             result.stderr,
         );
+        if (sleeping()) return;
         await client.session.promptAsync({
           path: { id: sessionID },
           body: {

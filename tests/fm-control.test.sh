@@ -285,6 +285,27 @@ keys_sent() {  # <case-dir>
 
 # --- 1. adapter contract across every verified harness -----------------------
 
+test_sleep_interrupts_recorded_harnesses_without_exit() {
+  local harness dir out rc
+  for harness in claude codex; do
+    dir=$(new_case "sleep-$harness")
+    add_task "$dir" t1 "$harness"
+    alive_as "$dir" "$harness"
+    out=$(PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+      FM_CONTROL_SETTLE_WAIT=0.05 FM_CONTROL_POLL=0.01 "$ROOT/bin/fm-sleep.sh" on 2>&1); rc=$?
+    expect_code 0 "$rc" "sleep should interrupt $harness: $out"
+    [ "$(keys_sent "$dir")" = Escape ] || fail "sleep must use $harness control interrupt"
+    [ -z "$(literals "$dir")" ] || fail "sleep must type no lifecycle text"
+    [ -f "$dir/home/state/.sleep" ] || fail "sleep hold missing"
+    [ -d "$dir/wt-t1" ] || fail "sleep removed the worktree"
+    [ "$(cat "$dir/fake/command")" = "$harness" ] || fail "sleep exited the agent"
+    out=$(run_control "$dir" t1 relaunch --note 'should stay asleep'); rc=$?
+    [ "$rc" != 0 ] || fail "sleep allowed relaunch"
+    assert_contains "$out" 'relaunch refused while sleep' "relaunch must refuse before lifecycle changes"
+  done
+  pass "sleep: Claude and Codex are interrupted through the control plane without exiting or discarding work"
+}
+
 test_exit_types_each_harness_verified_command() {
   local dir out rc harness expected key repeat clear
   for harness in $VERIFIED_HARNESSES; do
@@ -1230,3 +1251,5 @@ test_grok_interrupt_without_acknowledgement_reports_unconfirmed
 test_grok_idle_footer_does_not_confirm_cancellation
 test_secondmate_control_command_carries_no_marker
 test_fm_send_still_marks_the_same_secondmate_task
+
+test_sleep_interrupts_recorded_harnesses_without_exit

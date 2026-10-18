@@ -87,7 +87,7 @@ printf 'watcher: healthy pid=1 (beacon 0s)\n'
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
   out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
-import { writeFileSync } from "node:fs";
+import { writeFileSync, unlinkSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 let handler = null;
@@ -110,6 +110,7 @@ if (!handler) {
   console.error("Pi watch command was not registered");
   process.exit(1);
 }
+writeFileSync(`${process.env.FM_HOME}/state/.sleep`, "");
 const result = await handler("", {
   ui: {
     notify(message) {
@@ -125,6 +126,9 @@ if (!notification.includes("started Pi extension arm child")) {
   console.error(notification);
   process.exit(1);
 }
+await new Promise((resolve) => setTimeout(resolve, 700));
+if (prompt) throw new Error("sleep allowed a Pi wake prompt");
+unlinkSync(`${process.env.FM_HOME}/state/.sleep`);
 for (let i = 0; i < 250 && !prompt; i += 1) {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
@@ -4376,7 +4380,7 @@ while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
   out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_STOP_FILE="$stop" node 2>&1 <<'EOF'
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const mod = await import(pathToFileURL(process.env.PLUGIN).href);
@@ -4404,7 +4408,11 @@ const hooks = await mod.FmPrimaryWatchArm({
 });
 const event = { event: { type: "session.idle", properties: { sessionID: "session-test" } } };
 writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+writeFileSync(`${process.env.FM_HOME}/state/.sleep`, "");
 await hooks.event(event);
+await new Promise((resolve) => setTimeout(resolve, 700));
+if (prompts) throw new Error("sleep allowed an OpenCode wake prompt");
+unlinkSync(`${process.env.FM_HOME}/state/.sleep`);
 for (let i = 0; i < 250; i += 1) {
   const rows = existsSync(process.env.FM_ARM_LOG)
     ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n")

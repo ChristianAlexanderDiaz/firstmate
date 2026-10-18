@@ -112,6 +112,7 @@ import {
 import {
   activateEligibleRowsOwner,
   afkPostureRecordPresent,
+  sleepPosturePresent,
   awayPostureTailFor,
   branchWakePrompt,
   deactivateEligibleRowsOwner,
@@ -1066,6 +1067,7 @@ export default function (pi: ExtensionAPI) {
   // triggered budget over. Nothing here advances the processed marker: only
   // fm_branch_processed does, keyed to the sequence main acknowledges.
   async function presentUnprocessedOutcomes(expectedGeneration: number): Promise<boolean> {
+    if (sleepPosturePresent(state)) return true;
     const rows = await readUnprocessedOutcomes(expectedGeneration);
     if (rows === null) return false;
     if (rows.length === 0) {
@@ -1078,7 +1080,7 @@ export default function (pi: ExtensionAPI) {
     // the record is gone - the run boundary of the captain's return message,
     // or session start - starts with a fresh triggered budget and hands them
     // to main exactly as after any other gap.
-    if (afkPostureRecordPresent(state)) {
+    if (afkPostureRecordPresent(state) || sleepPosturePresent(state)) {
       processing = null;
       return true;
     }
@@ -1095,7 +1097,7 @@ export default function (pi: ExtensionAPI) {
     // The record is re-read immediately before the request would open: a
     // record that appeared during the encoding await cancels this request
     // rather than delivering it to a main that has just been parked.
-    if (afkPostureRecordPresent(state)) {
+    if (afkPostureRecordPresent(state) || sleepPosturePresent(state)) {
       processing = null;
       return true;
     }
@@ -1483,6 +1485,9 @@ ${context.command}
     const acceptedSelectionRevision = branchSelectionRevision;
     const delivery = branchChain
       .then(async () => {
+        while (sleepPosturePresent(state) && !shuttingDown && acceptedGeneration === generation) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
         if (shuttingDown || acceptedGeneration !== generation) {
           throw new Error("supervision session was replaced before handling the accepted wake");
         }
@@ -1553,11 +1558,21 @@ ${context.command}
         // lets this prompt proceed; the guarded scripts revalidate, and the
         // durable queue keeps every row (bin/fm-lease-lib.sh role-partition).
         const postureTail = afk ? await awayPostureTail() : "";
+        if (sleepPosturePresent(state)) throw new Error("sleep holds this wake");
+        let sleepInterrupted = false;
+        const sleepGuard = setInterval(() => {
+          if (sleepPosturePresent(state) && !sleepInterrupted) {
+            sleepInterrupted = true;
+            void session.abort();
+          }
+        }, 250);
         try {
           await session.prompt(branchWakePrompt(message, "fm_branch_report", postureTail));
         } finally {
+          clearInterval(sleepGuard);
           wakeTaskScope = null;
         }
+        if (sleepInterrupted) throw new Error("sleep interrupted this wake; its rows remain queued");
         const providerError = settledPromptProviderError(sessionManager, entryOffset);
         if (providerError) {
           const detail = `supervision branch provider failed after construction: ${providerError}`;

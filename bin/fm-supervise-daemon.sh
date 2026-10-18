@@ -175,6 +175,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 
 # shellcheck source=bin/fm-backend.sh
 . "$FM_DAEMON_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+. "$FM_DAEMON_DIR/fm-wake-lib.sh"
 
 # Canonical construction and parsing for every Firstmate operational input.
 # shellcheck source=bin/fm-operational-input.sh
@@ -1190,6 +1192,7 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 #     the block below and escalate what it finds; that block owns its file set.
 housekeeping() {  # <state>
   local state=$1 now due f key task win marker age last max_defer oldest pause_secs marker_epoch until bounded_until pause_reason
+  fm_sleep_active "$state" && return 0
   now=$(_now)
   migrate_watcher_pause_markers "$state"
 
@@ -1425,6 +1428,7 @@ inject_msg() {  # <message> [state]
   # watcher triage. Escalations buffer and survive for the next catch-up flush.
   INJECT_LAST_FAILURE=
   INJECT_SUBMIT_ATTEMPTED=0
+  if fm_sleep_active "$state"; then INJECT_LAST_FAILURE="deferred: sleep active"; return 1; fi
   afk_active "$state" || { INJECT_LAST_FAILURE="deferred: afk inactive"; log "inject $INJECT_LAST_FAILURE"; return 1; }
   # (2) Single-line digest: collapse any embedded newlines so submission via
   # send-keys + Enter is unambiguous regardless of how the TUI composer treats
@@ -1491,8 +1495,22 @@ inject_msg() {  # <message> [state]
   sleep_s=${FM_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}
   bytes=$(LC_ALL=C; printf '%s' "${#msg}")
   errf=$(mktemp "$state/.subsuper-inject-err.XXXXXX" 2>/dev/null) || errf=
+  # Sleep entry and the terminal submit share a lock: composer inspection may
+  # have started before the hold, and its delayed Enter must not wake main.
+  if ! fm_lock_try_acquire "$state/.sleep.lock"; then
+    [ -z "$errf" ] || rm -f "$errf"
+    INJECT_LAST_FAILURE="deferred: sleep posture change in progress"
+    return 1
+  fi
+  if fm_sleep_active "$state"; then
+    fm_lock_release "$state/.sleep.lock"
+    [ -z "$errf" ] || rm -f "$errf"
+    INJECT_LAST_FAILURE="deferred: sleep active"
+    return 1
+  fi
   INJECT_SUBMIT_ATTEMPTED=1
   verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s" 2>"${errf:-/dev/null}")
+  fm_lock_release "$state/.sleep.lock"
   if [ -n "$errf" ]; then
     err=$(cat "$errf" 2>/dev/null)
     rm -f "$errf"
@@ -1693,6 +1711,7 @@ handle_wake() {  # <reason> <state>
 handle_durable_wakes() {  # <watcher-reason> <state>
   local fallback_reason=$1 state=$2 out err tab epoch sequence kind key payload rest
   local handled=0 failed=0 ack_through ack_generation
+  fm_sleep_active "$state" && return 0
   out=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || return 1
   err=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || { rm -f "$out"; return 1; }
   if ! "$FM_DAEMON_DIR/fm-wake-drain.sh" > "$out" 2> "$err"; then
@@ -1916,6 +1935,7 @@ fm_super_main() {
 
   local rc reason
   while true; do
+    fm_sleep_wait "$STATE"
     # --- pane-gone guard (preserved) ---------------------------------------
     # With the #29 watcher's enqueue-before-suppress, a wake is no longer
     # swallowed by running the watcher with no injection target. We still back

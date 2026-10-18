@@ -2766,3 +2766,12 @@ A live lock, a missing `lsof`, any failed check, or any other fetch failure keep
 Every wait, retry, and removal is printed to stderr, and a successful recovery also prints one `recovered:` summary line to stdout so a session-start refresh - which discards fleet-sync stderr and relays only stdout - still surfaces it.
 
 The shared staleness proof lives in `bin/fm-lock-lib.sh`, which both `fm-teardown.sh` and `fm-fleet-sync.sh` use.
+
+## Sleep posture
+
+Use `/sleep on` to hold the fleet while asleep, `/sleep status` to inspect the posture, and `/sleep off` or an ordinary message to return.
+The [sleep skill](../.agents/skills/sleep/SKILL.md) handles entry and return on every primary harness; [bin/fm-sleep.sh](../bin/fm-sleep.sh) owns the shell interface and durable state contract.
+All homes must run code containing the sleep guards before fleet sleep is used; an unavailable or outdated remote home is a reported partial-entry failure.
+Sleep uses each recorded endpoint's existing [control-plane interrupt](agent-control.md), whose backend refusals and acknowledgement limits still apply.
+An explicitly started standalone gnhf process has no Firstmate task endpoint and is left running; a worker's name never grants an exemption.
+Automatic sleep detection, overnight-work orchestration, and long-running-turn alarms are not implemented by this posture.

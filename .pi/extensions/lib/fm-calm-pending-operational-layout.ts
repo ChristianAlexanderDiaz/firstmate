@@ -27,6 +27,7 @@
 // notification kept only in the compaction queue is flushed by Pi when compaction ends, so
 // it neither counts toward that turn nor announces one.
 import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
+import { existsSync } from "node:fs";
 import { calmPresentationHides } from "./fm-calm-visibility.ts";
 import { isFirstmateOperationalPresentationText } from "./fm-operational-input.ts";
 
@@ -66,6 +67,7 @@ type InteractiveModePendingPrototype = {
   restoreQueuedMessagesToEditor(this: PendingRowsHost, options?: RestoreOptions): number;
 };
 type CalmPendingOperationalLayoutPatch = {
+  stateDirectory?: string;
   hidesOperationalInput: () => boolean;
   isOperationalInput: (text: string) => boolean;
   refresh: () => void;
@@ -102,13 +104,14 @@ function settle(queued: unknown): void {
   void Promise.resolve(queued).catch(() => {});
 }
 
-export function installCalmPendingOperationalLayout(): void {
+export function installCalmPendingOperationalLayout(stateDirectory?: string): void {
   const registry = globalThis as typeof globalThis & {
     [key: symbol]: CalmPendingOperationalLayoutPatch | undefined;
   };
   const hidesOperationalInput = (): boolean => calmPresentationHides("synthetic-user");
   const installed = registry[CALM_PENDING_OPERATIONAL_LAYOUT_PATCH];
   if (installed) {
+    installed.stateDirectory = stateDirectory;
     installed.hidesOperationalInput = hidesOperationalInput;
     installed.isOperationalInput = isFirstmateOperationalPresentationText;
     return;
@@ -137,6 +140,7 @@ export function installCalmPendingOperationalLayout(): void {
   // The interactive mode that last drew queued rows, so a /calm toggle can redraw them.
   let lastHost: PendingRowsHost | undefined;
   const patch: CalmPendingOperationalLayoutPatch = {
+    stateDirectory,
     hidesOperationalInput,
     isOperationalInput: isFirstmateOperationalPresentationText,
     refresh: () => lastHost?.updatePendingMessagesDisplay(),
@@ -269,6 +273,9 @@ export function installCalmPendingOperationalLayout(): void {
   // turn by themselves, so the first is taken out and sent as the turn's prompt and the rest
   // are put back behind it: steering first, then follow-ups, the order Pi delivers them in.
   function continueWhenSettled(host: PendingRowsHost, session: RetainingSession): void {
+    const sleeping = (): boolean => Boolean(patch.stateDirectory && (
+      existsSync(`${patch.stateDirectory}/.sleep`) || existsSync(`${patch.stateDirectory}/.sleep-return`)
+    ));
     const settled = async (): Promise<boolean> => {
       do {
         await session.waitForIdle();
@@ -278,7 +285,10 @@ export function installCalmPendingOperationalLayout(): void {
         // the navigated branch instead of racing it on the abandoned one.
         await new Promise((resolve) => setTimeout(resolve, 0));
         if (host.session !== session) return false;
-      } while (!session.isIdle);
+        // Interrupting for sleep must not revive the retained operational queue.
+        if (sleeping()) await new Promise((resolve) => setTimeout(resolve, 500));
+        if (host.session !== session) return false;
+      } while (!session.isIdle || sleeping());
       return true;
     };
     settled()
