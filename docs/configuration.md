@@ -1605,6 +1605,41 @@ It uses the same live secondmate discovery and propagation helper as bootstrap; 
 - That live discovery starts from `state/*.meta` records with `kind=secondmate`; `data/secondmates.md` only backfills `home=` for older or incomplete meta records.
 - Skipped items, such as a destination checkout that does not yet gitignore the item, are visible warnings but not hard failures.
 
+## Upstream catch-up (config/upstream-update.json)
+
+Forks can opt in to a weekly proposal to bring upstream changes into their own default branch.
+Create the local, gitignored `config/upstream-update.json` in the owning primary home:
+
+```json
+{"upstream": "https://github.com/kunchenguid/firstmate.git", "weekday": 6, "hour": 15}
+```
+
+`upstream` is a Git remote name or repository URL; a named remote must exist in the Firstmate checkout and dispatched worktrees.
+`weekday` is ISO weekday 1 (Monday) through 7 (Sunday), default 6; `hour` is local hour 0 through 23, default 15.
+The schedule uses the host timezone (or its `TZ` environment setting), so configure it to match the desired quota reset window.
+Unknown keys and invalid values are refused.
+Absent configuration disables detection and leaves ordinary non-fork updates unchanged.
+This setting is local and is not inherited by secondmates; enable it only in the home that owns the fork catch-up decision.
+
+Startup arms the ordinary trusted watcher check; `bin/fm-upstream-update.sh arm` applies a configuration change immediately.
+Removing the configuration retires its check at the next startup, or immediately when `bin/fm-upstream-update.sh arm` runs.
+The watcher remains available for this check even when the fleet is idle, using the same mechanism on every supported primary harness and runtime backend.
+No new daemon or scheduler is installed.
+
+The first eligible poll checks the most recent scheduled weekly slot, including a missed slot after downtime.
+Successful comparisons run once per slot, and proposals are separated by at least three and a half days across daylight-saving changes; a slot that arrives sooner after a delayed proposal is skipped, so the next proposal waits for the following weekly slot, while a proposal up to three and a half days late keeps the next slot.
+It compares the fresh origin default tip with the fresh upstream default tip, independent of the current checkout branch, and fetches objects without moving any refs or `FETCH_HEAD`.
+A zero count consumes that slot; new commits then wait for the next weekly batch.
+Network failures report comparison failure once per weekly slot rather than claiming the fork is current, then retry silently every hour until a comparison succeeds or the next slot starts.
+Before proposing, the check must prove there are no active local no-mistakes runs across repositories, including parked gates and CI waits.
+It uses the installed no-mistakes SQLite state read-only; missing or unreadable state, unavailable Python 3, and unknown statuses defer the proposal.
+Validation on another machine is outside this local gate; the supervising firstmate should also defer a proposal if it knows a remote review is active.
+The owning home retains cadence under `state/`; the helper's header owns the record format and bounded probes.
+
+The notification only proposes work.
+The [`updatefirstmate` skill](../.agents/skills/updatefirstmate/SKILL.md#upstream-catch-up-for-a-fork) owns explicit approval, isolated ship dispatch, conflict reporting, and delivery of the upstream merge as a PR against the fork.
+Ordinary `/updatefirstmate` continues to fast-forward the fleet from origin.
+
 ## Watched tool updates (config/watched-tools.json)
 
 `config/watched-tools.json` is an optional local, gitignored list of the tools this home depends on.

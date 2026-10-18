@@ -2,7 +2,7 @@
 name: updatefirstmate
 description: >-
   Self-update a running firstmate and its secondmates to the latest from origin.
-  Use when the captain invokes /updatefirstmate (e.g. "/updatefirstmate", "update firstmate", "pull the latest firstmate").
+  Use when the captain invokes /updatefirstmate (e.g. "/updatefirstmate", "update firstmate", "pull the latest firstmate"), requests upstream catch-up, or an upstream-update check wake arrives.
   Updates this firstmate repo's default branch and every local or remote secondmate through its guarded convergence path (never forced, never disruptive), then re-reads AGENTS.md and restarts every live second mate through the persist-gated restart, with a fallback re-read nudge only where a restart cannot be proven.
 user-invocable: true
 metadata:
@@ -29,13 +29,36 @@ The only live mates that do not restart are the ones whose home the update pass 
 
 The primary update is fast-forward only, while each secondmate uses the same guarded convergence path plus one narrow recovery for squash-merged local history.
 For a remote route, it updates the configured Firstmate code root on that host from its own origin, then guardedly fast-forwards the persistent home to that code-root commit.
-It never forces, never creates a merge commit, and never stashes.
+The ordinary fleet update never forces, never creates a merge commit, and never stashes.
 A clean secondmate divergence advances with `reset --keep` only when a three-way tree proof shows its complete local result is already present at the target, which recognizes squash-merged contributions without discarding unique content.
 Every other dirty, diverged, offline, or wrong-branch target is skipped and reported, and a genuine divergence leaves a durable `state/.secondmate-update-reconcile/<id>.pending` record that future bootstrap and update passes surface until convergence clears it.
 A tracked-files fast-forward leaves the gitignored operational dirs (data/, state/, config/, projects/, .no-mistakes/) untouched, so a secondmate's in-flight work is never disrupted.
 This touches only the firstmate repo and its own worktrees, never anything under `projects/`.
 
 ## What it does
+
+### Upstream catch-up for a fork
+
+The opt-in configuration and proposal schedule live in [configuration.md](../../../docs/configuration.md#upstream-catch-up-configupstream-updatejson).
+An `upstream-update` check wake reports commits upstream has that the fork's default branch lacks.
+Relay the count and propose a batched catch-up PR; the notification itself grants no authority to merge upstream or launch that work.
+An ordinary `/updatefirstmate` still means the origin-only fleet update below, even when upstream catch-up is configured.
+`/updatefirstmate upstream`, or an explicit go on the catch-up proposal, authorizes the following ship task.
+
+1. Dispatch a ship through the normal task lifecycle in an isolated worktree of this Firstmate fork, based on origin's current default branch.
+   Resolve its configured delivery mode and merge posture normally, and specify that its PR targets the fork's origin default branch, not the parent repository.
+   Use the normal ship branch; the merge helper refuses the operating home and default branches.
+2. In the brief, require the worker to run `FM_HOME=<owning-home> bin/fm-update.sh --upstream-merge` from that task worktree.
+   Unset any inherited `FM_ROOT_OVERRIDE` or set it to the task worktree so the merge cannot target the operating checkout.
+   The helper owns the clean-base checks, remote-default discovery, object-only fetch, and merge mechanics; see its `--help`.
+   If the fork moved since dispatch, preserve the task and redispatch or reconcile its base through the normal delivery path rather than forcing it forward.
+3. On conflicts, stop and report the conflicting paths with the preserved worktree.
+   Do not resolve or abort them automatically; request a scoped decision for the conflict work.
+4. Ship the successful merge through the selected delivery path and report the PR URL.
+   Never push to the default branch or infer approval to merge the PR from approval to prepare it.
+   After authorized landing, the ordinary update below distributes the fork's new default tip.
+
+### Origin-only fleet update
 
 1. **Run the updater:**
    ```sh

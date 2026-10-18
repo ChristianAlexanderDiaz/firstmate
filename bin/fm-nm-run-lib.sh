@@ -79,6 +79,28 @@ fm_nm_state_db() {  # <worktree>
   printf '%s/state.sqlite\n' "$root"
 }
 
+# Prove the local no-mistakes installation has no active runs, across repos.
+# Parked gates and CI monitoring count as active. Missing/unreadable state,
+# unknown statuses, and unavailable Python fail closed (return nonzero).
+# Used by optional maintenance proposals, never to decide run ownership.
+fm_nm_all_runs_idle() {  # <worktree>
+  fm_nm_bounded "$1" 3 python3 - "$(fm_nm_state_db "$1")" 2>/dev/null <<'PY'
+import sqlite3
+import sys
+from contextlib import closing
+from pathlib import Path
+
+try:
+    with closing(sqlite3.connect(Path(sys.argv[1]).resolve().as_uri() + "?mode=ro",
+                                uri=True, timeout=1)) as db:
+        busy = db.execute("SELECT 1 FROM runs WHERE status IS NULL OR "
+                          "status NOT IN ('completed', 'failed', 'cancelled') LIMIT 1").fetchone()
+    sys.exit(1 if busy else 0)
+except (OSError, sqlite3.Error):
+    sys.exit(1)
+PY
+}
+
 # Scalar value of a TOON key in captured `axi status` output $1.
 fm_nm_field() {  # <toon-output> <key>
   printf '%s\n' "$1" | sed -n "s/^[[:space:]]*$2:[[:space:]]*\(.*\)/\1/p" | head -1

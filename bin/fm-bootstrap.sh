@@ -1624,6 +1624,13 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
   fi
   # x_mode_setup writes local Relay artifacts only and never leaves the machine.
   local_phase && x_mode_setup
+  # Opt-in upstream proposals use the ordinary trusted watcher check, including
+  # on an otherwise idle fleet. Removing config retires a previously armed shim.
+  if local_phase && { [ -f "$CONFIG/upstream-update.json" ] \
+    || [ -e "$STATE/upstream-update.check.sh" ]; }; then
+    "$SCRIPT_DIR/fm-upstream-update.sh" arm >/dev/null \
+      || echo "MISSING: upstream update proposal check could not be armed"
+  fi
   # Adopt existing durable contribution links without making a network call.
   # Detection-only startup must never publish a check registration.
   if local_phase && command -v jq >/dev/null 2>&1 \
