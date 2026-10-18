@@ -38,7 +38,7 @@ PY
 
 run_check() {
   FM_HOME="$W/home" FM_ROOT_OVERRIDE="$W/checkout" NM_HOME="$W/nm" \
-    FM_UPSTREAM_NOW="${1:-$NOW}" "$UPDATE" --upstream-check
+    FM_UPSTREAM_NOW="${1:-$NOW}" "$CHECK" check
 }
 
 set_status() {
@@ -98,8 +98,10 @@ set_status running
 set_status completed
 assert_contains "$(run_check "$((NOW + 518400))")" 'upstream is 1 commits ahead' 'Friday catch-up after validation'
 [ -z "$(run_check "$((NOW + 604800))")" ] || fail 'delayed Friday proposal repeated Saturday'
+[ -z "$(run_check "$((NOW + 1036800))")" ] || fail 'spacing-blocked slot proposed mid-week'
+[ -z "$(run_check "$((NOW + 1209599))")" ] || fail 'spacing-blocked slot proposed before the next slot'
 assert_contains "$(run_check "$((NOW + 1209600))")" 'upstream is 1 commits ahead' 'later weekly proposal'
-pass 'a delayed proposal cannot repeat at a nearby weekly boundary'
+pass 'a delayed proposal skips the nearby weekly slot and resumes on schedule'
 
 world off
 rm "$W/home/config/upstream-update.json"
@@ -121,10 +123,13 @@ pass 'current fork waits until the next batch'
 world failed_probe
 git -C "$W/checkout" remote set-url upstream "$W/missing.git"
 assert_contains "$(run_check)" 'comparison unavailable' 'network failure is not current'
-[ -z "$(run_check "$((NOW + 3599))")" ] || fail 'failure retried too soon'
+[ -z "$(run_check "$((NOW + 3600))")" ] || fail 'repeated failure in one slot woke firstmate again'
 git -C "$W/checkout" remote set-url upstream "$W/upstream.git"
-assert_contains "$(run_check "$((NOW + 3600))")" 'upstream is 1 commits ahead' 'network retry'
-pass 'comparison failure retries without consuming the weekly slot'
+[ -z "$(run_check "$((NOW + 7199))")" ] || fail 'failure retried too soon'
+assert_contains "$(run_check "$((NOW + 7200))")" 'upstream is 1 commits ahead' 'silent hourly retry'
+git -C "$W/checkout" remote set-url upstream "$W/missing.git"
+assert_contains "$(run_check "$((NOW + 604800))")" 'comparison unavailable' 'next slot reports a lasting failure'
+pass 'comparison failure is reported once per slot and retried silently'
 
 world registration
 FM_HOME="$W/home" FM_ROOT_OVERRIDE="$W/checkout" "$CHECK" arm

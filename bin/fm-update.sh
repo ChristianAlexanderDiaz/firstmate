@@ -62,10 +62,9 @@
 # fm-procevent-when.sh rebind-all to republish those bindings against the new
 # bytes; a failure there is swallowed rather than failing the update.
 #
-# Usage: fm-update.sh [--help|--upstream-check|--upstream-merge]
-# --upstream-check runs the opt-in weekly proposal gate.
+# Usage: fm-update.sh [--help|--upstream-merge]
 # --upstream-merge prepares an explicitly authorized catch-up in a ship worktree.
-# Both delegate to fm-upstream-update.sh; neither updates the running fleet.
+# It delegates to fm-upstream-update.sh and does not update the running fleet.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -74,9 +73,9 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 SECONDMATES_MD="$FM_HOME/data/secondmates.md"
 case "${1:-}" in
-  --upstream-check|--upstream-merge)
+  --upstream-merge)
     [ $# -eq 1 ] || { echo 'error: upstream mode accepts no other arguments' >&2; exit 2; }
-    exec "$SCRIPT_DIR/fm-upstream-update.sh" "${1#--upstream-}"
+    exec "$SCRIPT_DIR/fm-upstream-update.sh" merge
     ;;
 esac
 
@@ -87,7 +86,7 @@ esac
 
 "$SCRIPT_DIR/fm-guard.sh" || true
 
-usage() { echo "usage: fm-update.sh [--help|--upstream-check|--upstream-merge]" >&2; }
+usage() { echo "usage: fm-update.sh [--help|--upstream-merge]" >&2; }
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   usage

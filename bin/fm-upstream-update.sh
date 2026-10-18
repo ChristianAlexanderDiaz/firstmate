@@ -1,27 +1,30 @@
 #!/usr/bin/env bash
 # Opt-in upstream-to-fork catch-up mechanics for /updatefirstmate.
-# Usage: fm-upstream-update.sh check|arm|disarm|merge|--help
-# Public update entrypoints: fm-update.sh --upstream-check|--upstream-merge.
+# Usage: fm-upstream-update.sh check|arm|merge|--help
+# Public update entrypoint: fm-update.sh --upstream-merge.
 # config/upstream-update.json schema is owned by docs/configuration.md.
 #
 # check is silent when off, before the weekly slot, already checked this slot,
 # or local no-mistakes runs cannot be proven idle (all repositories, including
 # parked gates). The slot is in the host's local timezone (TZ is respected).
 # A delayed check catches the most recent weekly slot; notifications are also
-# separated by at least six days to tolerate daylight-saving transitions.
-# A failed network probe retries after an hour; successful checks, including
-# zero drift, consume the slot. FM_UPSTREAM_NOW overrides the epoch for tests.
+# separated by at least six days to tolerate daylight-saving transitions, and a
+# slot reached within six days of a proposal is consumed without probing.
+# A failed network probe is reported once per slot and retried silently after
+# each hour; successful checks, including zero drift, consume the slot.
+# FM_UPSTREAM_NOW overrides the epoch for tests.
 # Four bounded git probes plus the idle read fit inside the default 30s check
 # budget. Fetches download objects only: no refs, tags, or FETCH_HEAD are moved.
 # No credentials, URL, subjects, or branch text are printed in notifications.
-# state/.upstream-update holds three space-separated epochs: last successful
-# slot, last probe attempt, and last proposal. The proposal epoch prevents a
-# delayed Friday proposal from being repeated at the next Saturday slot.
+# state/.upstream-update holds four space-separated epochs: last successful
+# slot, last probe attempt, last proposal, and last slot whose failure was
+# reported. The proposal epoch prevents a delayed Friday proposal from being
+# repeated at the next Saturday slot.
 # It is serialized by .upstream-update.lock; interrupted checks retry safely.
 #
 # arm registers state/upstream-update.check.sh with the normal watcher; startup
-# calls it only for an opted-in home or an existing shim. Removing the config
-# retires that shim at startup. disarm retains the cadence record.
+# calls it only for an opted-in home or an existing shim. Without the config,
+# arm (and therefore startup) retires that shim and retains the cadence record.
 #
 # merge must run in a clean isolated linked task worktree, on its already
 # created ship branch at exactly the freshly fetched origin default tip.
@@ -44,7 +47,7 @@ CHECK_ID=upstream-update
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 
 fail() { printf 'upstream update: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,30{s/^# \{0,1\}//;p;}' "$0"; }
+usage() { sed -n '2,34{s/^# \{0,1\}//;p;}' "$0"; }
 
 read_config() {
   # Parse data, never source operator-controlled shell text.
@@ -106,10 +109,10 @@ compare_tips() {
   COUNT=$(git -C "$FM_ROOT" rev-list --count "$FORK_TIP..$UPSTREAM_TIP")
 }
 
-write_record() {  # <successful-slot> <attempt-epoch> <proposal-epoch>
+write_record() {  # <successful-slot> <attempt-epoch> <proposal-epoch> <reported-slot>
   local tmp
   tmp=$(mktemp "$RECORD.XXXXXX") || return 1
-  printf '%s %s %s\n' "$1" "$2" "$3" > "$tmp"
+  printf '%s %s %s %s\n' "$1" "$2" "$3" "$4" > "$tmp"
   mv -f -- "$tmp" "$RECORD"
 }
 
@@ -122,20 +125,25 @@ check() {
   mkdir -p "$STATE"
   fm_lock_try_acquire "$STATE/.upstream-update.lock" || return 0
   trap 'fm_lock_release "$STATE/.upstream-update.lock"' EXIT
-  local last=0 attempt=0 proposal=0 value
+  local last=0 attempt=0 proposal=0 reported=0 value
   if [ -f "$RECORD" ]; then
-    read -r last attempt proposal < "$RECORD" || return 1
-    for value in "$last" "$attempt" "$proposal"; do
+    read -r last attempt proposal reported < "$RECORD" || return 1
+    for value in "$last" "$attempt" "$proposal" "$reported"; do
       case "$value" in ''|*[!0-9]*) fail 'invalid cadence record' ;; esac
     done
   fi
   [ "$last" -lt "$SLOT" ] || return 0
-  [ $((NOW - proposal)) -ge 518400 ] || return 0
+  if [ $((NOW - proposal)) -lt 518400 ]; then
+    write_record "$SLOT" "$attempt" "$proposal" "$reported"
+    return 0
+  fi
   [ $((NOW - attempt)) -ge 3600 ] || return 0
   fm_nm_all_runs_idle "$FM_ROOT" || return 0
-  write_record "$last" "$NOW" "$proposal"
+  write_record "$last" "$NOW" "$proposal" "$reported"
   if ! compare_tips >/dev/null 2>&1; then
-    printf 'upstream update: comparison unavailable; will retry after an hour\n'
+    [ "$reported" -lt "$SLOT" ] || return 0
+    printf 'upstream update: comparison unavailable; will retry silently each hour until it succeeds or the next weekly slot\n'
+    write_record "$last" "$NOW" "$proposal" "$SLOT"
     return 0
   fi
   # A validation may have started during the fetch; defer the proposal without
@@ -145,7 +153,7 @@ check() {
     printf 'upstream update: upstream is %s commits ahead of the fork; propose /updatefirstmate upstream and wait for explicit approval\n' "$COUNT"
     proposal=$NOW
   fi
-  write_record "$SLOT" "$NOW" "$proposal"
+  write_record "$SLOT" "$NOW" "$proposal" "$reported"
 }
 
 arm() {
@@ -204,7 +212,6 @@ merge() {
 case "${1:-check}" in
   check) check ;;
   arm) arm ;;
-  disarm) FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-check-unregister.sh" "$CHECK_ID" ;;
   merge) merge ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;

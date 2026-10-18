@@ -1620,15 +1620,15 @@ Absent configuration disables detection and leaves ordinary non-fork updates unc
 This setting is local and is not inherited by secondmates; enable it only in the home that owns the fork catch-up decision.
 
 Startup arms the ordinary trusted watcher check; `bin/fm-upstream-update.sh arm` applies a configuration change immediately.
-Removing the configuration retires its check at the next startup; `bin/fm-upstream-update.sh disarm` retires it immediately.
+Removing the configuration retires its check at the next startup, or immediately when `bin/fm-upstream-update.sh arm` runs.
 The watcher remains available for this check even when the fleet is idle, using the same mechanism on every supported primary harness and runtime backend.
 No new daemon or scheduler is installed.
 
 The first eligible poll checks the most recent scheduled weekly slot, including a missed slot after downtime.
-Successful comparisons run once per slot, and proposals are separated by at least six days across daylight-saving changes.
+Successful comparisons run once per slot, and proposals are separated by at least six days across daylight-saving changes; a slot that arrives sooner after a delayed proposal is skipped, so the next proposal waits for the following weekly slot.
 It compares the fresh origin default tip with the fresh upstream default tip, independent of the current checkout branch, and fetches objects without moving any refs or `FETCH_HEAD`.
 A zero count consumes that slot; new commits then wait for the next weekly batch.
-Network failures retry after an hour and report comparison failure rather than claiming the fork is current.
+Network failures report comparison failure once per weekly slot rather than claiming the fork is current, then retry silently every hour until a comparison succeeds or the next slot starts.
 Before proposing, the check must prove there are no active local no-mistakes runs across repositories, including parked gates and CI waits.
 It uses the installed no-mistakes SQLite state read-only; missing or unreadable state, unavailable Python 3, and unknown statuses defer the proposal.
 Validation on another machine is outside this local gate; the supervising firstmate should also defer a proposal if it knows a remote review is active.
