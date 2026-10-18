@@ -5027,6 +5027,7 @@ test_daemon_long_digest_herdr_record_delivery_and_retry() {
           -u GEMINI_CLI -u ATLASSIAN_AGENT_TYPE -u ROVODEV_CLI -u FM_OMP_HARNESS -u PI_CODING_AGENT -u GROK_AGENT
           CLAUDECODE=1)
       fi
+      # shellcheck disable=SC2016 # the bash -c script expands in the child shell.
       env "${identify[@]}" PATH="$fb:$PATH" FM_HERDR_DIGEST_CASE="$dir" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" \
         FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET=digest-fixture:w1:p2 \
         FM_INJECT_CONFIRM_SLEEP=0.01 FM_BACKEND_HERDR_SUBMIT_POLLS=1 bash -c '
