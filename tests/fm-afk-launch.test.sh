@@ -4,7 +4,8 @@
 # (bin/fm-afk-start.sh). Two layers:
 #
 #   UNIT (always run, no backend): the session-scoped stale-artifact clear on a
-#   fresh entry vs a refresh, and the correct-ordered stop (daemon SIGTERM'd
+#   fresh entry vs a refresh, the platform-specific power-assertion launch and
+#   missing-dependency refusal, and the correct-ordered stop (daemon SIGTERM'd
 #   while state/.afk is still present, .afk cleared last).
 #
 #   E2E TOPOLOGY (per backend, skipped when its tool is absent): the anti-
@@ -1721,6 +1722,64 @@ e2e_tmux() {
   rm -rf "$home_tmp" 2>/dev/null || true
 }
 
+unit_daemon_power_assertion() {
+  local st platform out rc
+  st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-power.XXXXXX")
+  mkdir -p "$st/bin" "$st/state"
+  cat > "$st/bin/uname" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$POWER_PLATFORM"
+SH
+  cat > "$st/bin/caffeinate" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$FM_HOME/power-args"
+[ "$1" = -is ] || exit 9
+shift
+exec "$@"
+SH
+  cat > "$st/bin/daemon" <<'SH'
+#!/usr/bin/env bash
+printf 'ran\n' > "$FM_HOME/daemon-ran"
+exit 7
+SH
+  chmod +x "$st/bin/"*
+  for platform in Darwin Linux; do
+    rm -f "$st/power-args" "$st/daemon-ran"
+    out=$(PATH="$st/bin:$PATH" POWER_PLATFORM="$platform" FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" bash -c '
+      . "$1"
+      FM_AFK_DAEMON="$FM_HOME/bin/daemon"
+      fm_afk_start_main
+    ' _ "$START" 2>&1)
+    rc=$?
+    if [ "$rc" -eq 7 ] && [ -e "$st/daemon-ran" ] \
+      && { [ "$platform" != Darwin ] || [ "$(cat "$st/power-args" 2>/dev/null)" = "$(printf '%s\n%s' -is "$st/bin/daemon")" ]; } \
+      && { [ "$platform" != Linux ] || [ ! -e "$st/power-args" ]; }; then
+      pass "daemon power: $platform starts the daemon with the appropriate lifetime assertion and preserves its exit status"
+    else
+      fail "daemon power: $platform assertion or daemon execution wrong (rc=$rc): $out"
+    fi
+  done
+  rm -f "$st/power-args" "$st/daemon-ran"
+  out=$(PATH="$st/bin:$PATH" POWER_PLATFORM=Darwin FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" bash -c '
+    . "$1"
+    FM_AFK_DAEMON="$FM_HOME/bin/daemon"
+    command() {
+      [ "$*" != "-v caffeinate" ] || return 1
+      builtin command "$@"
+    }
+    fm_afk_start_main
+  ' _ "$START" 2>&1)
+  rc=$?
+  if [ "$rc" -eq 1 ] && [ ! -e "$st/daemon-ran" ] \
+    && printf '%s' "$out" | grep -F 'caffeinate is required on macOS' >/dev/null; then
+    pass "daemon power: missing caffeinate refuses unprotected macOS supervision"
+  else
+    fail "daemon power: missing caffeinate did not fail clearly (rc=$rc): $out"
+  fi
+  rm -rf "$st"
+}
+
+unit_daemon_power_assertion
 unit_clear_stale
 unit_enter_records_the_posture_in_one_step_without_a_daemon
 unit_retired_two_step_entry_is_refused

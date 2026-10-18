@@ -9,8 +9,12 @@
 #       lock is held by a live daemon (a REFRESH: no stale-artifact clear);
 #     - otherwise clears any prior away session's stale escalation artifacts
 #       (fm_afk_clear_stale_artifacts) for a direct, non-prepared start, then
-#       execs bin/fm-supervise-daemon.sh in the foreground. A prepared start was
+#       runs bin/fm-supervise-daemon.sh in the foreground. A prepared start was
 #       already cleared transactionally by bin/fm-afk-launch.sh.
+#   On macOS, execs caffeinate -is with the daemon as its utility: idle sleep is
+#   inhibited, and system sleep is inhibited on AC, for the daemon's lifetime.
+#   Stopping the daemon releases both assertions; other platforms exec it directly.
+#   A fresh macOS daemon start fails if caffeinate is unavailable.
 #
 # This file is sourceable: its BASH_SOURCE guard keeps main from running, while
 # exposing the daemon-lock helpers and fm_afk_clear_stale_artifacts. Sourcing it
@@ -22,7 +26,7 @@
 #   - Harnesses with a native in-pane tracked-background tool (e.g. claude, grok)
 #     run this directly via that tool, so the daemon inherits the captain pane's
 #     env and auto-discovers it.
-#   - Harnesses with NO native background mechanism (e.g. pi) run this THROUGH
+#   - Harnesses with NO native background mechanism (e.g. codex) run this THROUGH
 #     bin/fm-afk-launch.sh, which creates a non-visible tracked terminal per
 #     backend (herdr tab/workspace, tmux detached session) and passes the
 #     captain pane in as FM_SUPERVISOR_TARGET so injection targets it, not the
@@ -43,7 +47,7 @@ FM_AFK_DAEMON="$FM_AFK_START_DIR/fm-supervise-daemon.sh"
 . "$FM_AFK_START_DIR/fm-wake-lib.sh"
 
 fm_afk_start_usage() {
-  sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '/^# Enter away mode/,/^# This file is sourceable:/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
 }
 
 # fm_afk_clear_stale_artifacts: on a FRESH away-session entry (the daemon is not
@@ -175,6 +179,13 @@ fm_afk_start_main() {
   fi
 
   echo "afk: starting supervise daemon in foreground; keep this command as a tracked background session"
+  if [ "$(uname -s)" = Darwin ]; then
+    command -v caffeinate >/dev/null 2>&1 || {
+      echo 'afk: caffeinate is required on macOS to prevent sleep during away supervision' >&2
+      return 1
+    }
+    exec caffeinate -is "$FM_AFK_DAEMON"
+  fi
   exec "$FM_AFK_DAEMON"
 }
 

@@ -29,6 +29,8 @@
 # is fleet work and so waits for the gate rather than holding it), then what
 # the away session handled, then cost. The health snapshot is taken BEFORE the
 # daemon shutdown so the shutdown itself cannot read as a gap.
+# On macOS that snapshot includes pmset -g log Sleep events between entry and
+# return, with their timestamps and reasons, or names unavailable sleep history.
 #
 # THE GATE. `blocked:` is the crewmate protocol's firstmate-actionable verb. A
 # live task's open blocked event must be remediated and closed with
@@ -327,8 +329,36 @@ return_guard() {
 
 # --- supervisor health, snapshotted before anything is shut down ------------
 
-health_snapshot() {  # <evidence-file>
-  local evidence=$1 beat_age state lines="" note=""
+sleep_history() {  # <since-epoch>  macOS Sleep events, not DarkWakes or assertions.
+  local since=$1 until events row stamp epoch first_day
+  [ "$(uname -s)" = Darwin ] || return 0
+  case "$since" in
+    ''|*[!0-9]*) printf 'sleep history unavailable: away entry time is unknown\n'; return 0 ;;
+  esac
+  until=$(date +%s)
+  # Drop older calendar days before per-event conversion; one day's margin
+  # preserves every timezone offset at the entry boundary.
+  first_day=$(date -u -r "$((since - 86400))" +%Y-%m-%d 2>/dev/null || true)
+  if ! events=$(set -o pipefail; pmset -g log 2>/dev/null | awk -v first="$first_day" '$4 == "Sleep" && $1 >= first'); then
+    printf 'sleep history unavailable: pmset -g log failed\n'
+    return 0
+  fi
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    stamp=$(printf '%s\n' "$row" | awk '{ print $1 " " $2 " " $3 }')
+    epoch=$(date -j -f '%Y-%m-%d %H:%M:%S %z' "$stamp" +%s 2>/dev/null) || {
+      printf 'sleep history unavailable: could not parse Sleep timestamp %s\n' "$stamp"
+      continue
+    }
+    [ "$epoch" -ge "$since" ] && [ "$epoch" -le "$until" ] || continue
+    printf 'GAP: system sleep during the away window: %s\n' "$row"
+  done <<EOF
+$events
+EOF
+}
+
+health_snapshot() {  # <evidence-file> <since-epoch>
+  local evidence=$1 since=$2 beat_age state lines="" note="" sleeps
   beat_age=$(fm_path_age "$STATE/.last-watcher-beat")
   if [ -e "$STATE/.watcher-down" ]; then
     # The marker survives past its episode in an acked:* state
@@ -348,6 +378,9 @@ health_snapshot() {  # <evidence-file>
       lines="GAP: watcher downtime was detected during the away window (recovery marker present)"
     fi
   fi
+  sleeps=$(sleep_history "$since")
+  [ -z "$sleeps" ] || lines="$lines
+$sleeps"
   if [ -e "$STATE/.afk" ] && ! fm_afk_daemon_owns_supervision "$STATE"; then
     lines="$lines
 GAP: the away daemon was not running at return (the away flag stood with no live daemon)"
@@ -713,7 +746,7 @@ return_reconcile() {
   # Health is read before the shutdown below so the shutdown cannot read as a gap;
   # a repeated begin/check keeps the first snapshot.
   if ! grep -q "^evidence$(printf '\t')health$(printf '\t')" "$evidence" 2>/dev/null; then
-    health_snapshot "$evidence"
+    health_snapshot "$evidence" "$since"
     engine_snapshot "$evidence" "$since"
   fi
 

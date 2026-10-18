@@ -40,6 +40,13 @@ install_runner() {  # <case-dir>
   # The merge-notification marker reader behind the brief's landed section.
   cp "$ROOT/bin/fm-pr-lib.sh" "$dir/bin/"
   cp "$ROOT/.tasks.toml" "$dir/home/.tasks.toml"
+  # Keep host sleep history out of every fixture; individual cases supply it.
+  cat > "$dir/bin/pmset" <<'SH'
+#!/usr/bin/env bash
+[ "$*" = '-g log' ] || exit 2
+[ ! -e "$FM_HOME/power-failed" ] || exit 1
+cat "$FM_HOME/power-log" 2>/dev/null || true
+SH
   printf '## In flight\n\n## Queued\n\n## Done\n' > "$dir/home/data/backlog.md"
   # The fake stop mirrors the real one's ordering: the away flag goes, then the
   # posture record is archived through its owner.
@@ -70,12 +77,12 @@ if [ -s "$file" ]; then
   printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through %s --recovery-generation fixture-generation\n' "$sequence" >&2
 fi
 SH
-  chmod +x "$dir/bin/"*.sh
+  chmod +x "$dir/bin/"*.sh "$dir/bin/pmset"
 }
 
 run_return() {  # <case-dir> <mode>
   local dir=$1 mode=$2
-  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$dir/bin/fm-afk-return.sh" "$mode" 2>&1
+  PATH="$dir/bin:$PATH" FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$dir/bin/fm-afk-return.sh" "$mode" 2>&1
 }
 
 ack_return() {  # <case-dir> <return-output>
@@ -1413,8 +1420,60 @@ test_missing_final_archive_keeps_retained_contract_gated() {
   pass "the retained contract epoch requires its final archive on every check"
 }
 
+test_return_reports_sleep_in_the_away_window() {
+  local dir out epoch
+  dir="$TMP_ROOT/brief-sleep"
+  install_runner "$dir"
+  cat > "$dir/bin/uname" <<'SH'
+#!/usr/bin/env bash
+printf 'Darwin\n'
+SH
+  # Supply macOS date parsing on portable runners without replacing other date calls.
+  cat > "$dir/bin/date" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = -j ] && [ "$(/usr/bin/uname -s)" != Darwin ]; then
+  exec /usr/bin/date -d "$4" "$5"
+fi
+exec /bin/date "$@"
+SH
+  chmod +x "$dir/bin/uname" "$dir/bin/date"
+  # A known historical window makes before/inside/after boundaries deterministic.
+  printf 'away\n1790660700\n' > "$dir/home/state/.afk"
+  epoch=$(date +%s)
+  cat > "$dir/home/power-log" <<EOF
+2026-09-29 05:44:59 +0000 Sleep Entering Sleep state due to 'old sleep'
+2026-09-29 05:45:00 +0000 Sleep Entering Sleep state due to 'Maintenance Sleep'
+2026-09-29 05:46:00 +0000 DarkWake DarkWake from Normal Sleep
+2099-01-01 00:00:00 +0000 Sleep Entering Sleep state due to 'future sleep'
+EOF
+  seed_live_blocker "$dir" tmux sleep-proof
+  touch "$dir/home/state/.last-watcher-beat"
+  out=$(run_return "$dir" begin)
+  assert_contains "$out" "GAP: system sleep during the away window: 2026-09-29 05:45:00 +0000 Sleep" "the return missed sleep despite a fresh watcher beat"
+  assert_not_contains "$out" 'old sleep' "sleep before entry leaked into the return"
+  assert_not_contains "$out" 'future sleep' "sleep after return leaked into the return"
+  assert_not_contains "$out" 'DarkWake from' "a wake was misreported as sleep"
+  assert_not_contains "$out" 'no detected gap' "sleep was reported alongside uninterrupted supervision"
+  : > "$dir/home/power-log"
+  out=$(run_return "$dir" check)
+  assert_contains "$out" 'Maintenance Sleep' "a repeat check lost the first sleep snapshot"
+  [ "$epoch" -gt 1790660700 ] || fail "fixture sleep must precede the current return"
+  pass "return health retains only actual sleep inside the away window, even with a fresh beacon"
+
+  dir="$TMP_ROOT/brief-sleep-unavailable"
+  install_runner "$dir"
+  cp "$TMP_ROOT/brief-sleep/bin/uname" "$dir/bin/uname"
+  printf 'away\n1790660700\n' > "$dir/home/state/.afk"
+  : > "$dir/home/power-failed"
+  touch "$dir/home/state/.last-watcher-beat"
+  out=$(run_return "$dir" begin)
+  assert_contains "$out" 'sleep history unavailable: pmset -g log failed' "unreadable sleep history was silently treated as no sleep"
+  pass "return health discloses unavailable macOS sleep history"
+}
+
 test_bearings_keeps_quiet_mode_active
 test_return_guard_keeps_away_flags_and_records_gated
+test_return_reports_sleep_in_the_away_window
 test_return_gate_owns_remediation_and_reports_catchup_to_bearings
 test_explicit_reclassification_requires_durable_reason
 test_captain_decision_does_not_masquerade_as_firstmate_blocker
