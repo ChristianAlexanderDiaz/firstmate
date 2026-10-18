@@ -1994,20 +1994,22 @@ Observed output:
 
 ```text
 ok - attributed run opens one stacked viewer, preserving chat and focus
-ok - terminal run with a pipeline-advanced head closes; replacement and cleanup converge
+ok - terminal run with a pipeline-advanced head closes; replacement converges
 ok - wide pane chooses side by side
 ok - replacement and close refusal preserve exact viewer identity
 ok - foreign, historical and non-Herdr evidence cannot open a viewer
 ok - attach retries reuse the recorded pane; ambiguous reads preserve it
 ok - already absent viewer closes without touching chat
+ok - relaunched chat closes the earlier viewer and opens one beside the new pane
 ok - record corruption cannot redirect viewer cleanup onto chat
 ok - session lock serializes pane creation with teardown and concurrent sweeps
-FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=78687
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=77801
 ```
 
 The regression uses the real crew-state run attribution and pane reconciliation executable, checks the chat metadata remains identical, and refuses every fake Herdr call without an explicit session.
 The feature does not inspect harness output or introduce harness-specific state rules.
 Non-Herdr backends return before any viewer mutation.
+Task teardown cleanup of a recorded viewer, including one beside a chat pane from before a relaunch, is covered through the real `bin/fm-teardown.sh` by `test_herdr_flat_teardown_closes_recorded_viewer` in `tests/fm-teardown.test.sh`; this record does not include an observed run of that case.
 Live Herdr lifecycle verification was unavailable on this host because the lab helper could not establish its required running-default-session tripwire; this record makes no live-backend claim for the new pane behavior.
 
 ## Zellij
