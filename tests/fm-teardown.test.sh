@@ -2528,7 +2528,7 @@ test_herdr_flat_teardown_closes_recorded_viewer() {
     [ -e "$case_dir/closed" ] || fail "herdr-viewer-$variant: the chat pane was not closed"
     [ ! -e "$case_dir/state/task-x1.nm-review-pane" ] \
       || fail "herdr-viewer-$variant: teardown left the viewer record behind"
-    [ "$(grep -n '^pane close' "$log" | sed -n '1s/.*pane close //p')" = "wG:pV" ] \
+    [ "$(awk '$1 == "pane" && $2 == "close" { print $3; exit }' "$log")" = "wG:pV" ] \
       || fail "herdr-viewer-$variant: the viewer did not close before the chat: $(grep '^pane close' "$log")"
     grep -q "teardown task-x1 complete" "$case_dir/stdout" \
       || fail "herdr-viewer-$variant: teardown did not report completion"
