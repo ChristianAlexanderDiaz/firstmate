@@ -50,10 +50,11 @@
 # clears state/.afk last, and archives the record under state/afk-contracts/.
 #
 # Why the terminal lifecycle exists (docs/herdr-backend.md "Away-mode daemon terminal launch"):
-# bin/fm-afk-start.sh execs the supervise daemon in the FOREGROUND of whatever
-# terminal it is already in. Harnesses with a native in-pane tracked-background
+# bin/fm-afk-start.sh runs the supervise daemon in the FOREGROUND of whatever
+# terminal it is already in; its header owns platform-specific sleep prevention.
+# Harnesses with a native in-pane tracked-background
 # tool (claude, grok) run it there directly and it is fine. A harness with NO
-# native background mechanism (pi) has to manufacture a terminal, and doing that
+# native background mechanism (codex) has to manufacture a terminal, and doing that
 # by SPLITTING the captain's active pane visibly shrinks it - the regression this
 # script fixes. Instead this creates a non-visible tracked terminal (a herdr tab/
 # workspace with --no-focus, or a detached tmux session) that never touches the
