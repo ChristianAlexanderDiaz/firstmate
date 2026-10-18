@@ -50,9 +50,8 @@
 # and is cut down to the watcher's own per-check bound (FM_CHECK_TIMEOUT,
 # default 30, read from the poll's environment because the watcher runs it as
 # a direct child) with a three-second margin. Every read, including one retry,
-# is capped at five seconds. Transient HTTP, connection, DNS and TLS failures
-# are retried once with a 0.2-second backoff when time remains in that bound.
-# Other failures, including HTTP 404, are reported immediately. A first attempt
+# is capped at five seconds. Every non-timeout failure is retried once with a
+# 0.2-second backoff when time remains in that bound. A first attempt
 # killed at the bound or deadline is budget refusal; a killed retry retains the
 # genuine failure that caused it. A pull observation has three
 # dependent waves: core, six independent reads, then the closing head read;
@@ -217,39 +216,6 @@ write_record() { # task record-json-file
   mv -f -- "$staged" "$file"
 }
 
-forge_http_status() { # stderr-file
-  sed -nE 's/^gh: HTTP ([0-9]{3})$/\1/p; s/^HTTP ([0-9]{3})[: ].*/\1/p; s/.*\(HTTP ([0-9]{3})\).*/\1/p' "$1" | head -n 1
-}
-
-forge_error_summary() { # stderr-file
-  local err=$1 status
-  status=$(forge_http_status "$err")
-  if [ -n "$status" ]; then
-    printf 'HTTP %s\n' "$status"
-  elif grep -q '^GraphQL:' "$err"; then
-    printf 'request failed\n'
-  elif grep -Fqi 'error connecting to' "$err" \
-    && grep -Fqi 'check your internet connection or https://githubstatus.com' "$err"; then
-    printf 'DNS error\n'
-  elif grep -Eqi '^Could not resolve host:|name resolution|no such host|dial (tcp|udp): lookup|lookup [^:]+:' "$err"; then
-    printf 'DNS error\n'
-  elif grep -Eqi 'tls: |x509: |TLS handshake|certificate (verify|signed)' "$err"; then
-    printf 'TLS error\n'
-  elif grep -Eqi 'connection (reset|refused|closed|failed|error)|could not connect|failed to connect|error connecting|broken pipe|network is unreachable|dial (tcp|udp)|unexpected EOF' "$err"; then
-    printf 'connection error\n'
-  else
-    printf 'request failed\n'
-  fi
-}
-
-forge_transient_error() { # stderr-file summary
-  case "$2" in
-    'HTTP 5'[0-9][0-9]|'HTTP 429'|'connection error'|'DNS error'|'TLS error') return 0 ;;
-    'HTTP 403') grep -Eqi 'secondary[- ]rate[- ]limit' "$1" && return 0 ;;
-  esac
-  return 1
-}
-
 forge_bound_result() { # failed-rc fallback-rc
   FORGE_BOUND_RC=$2
   if [ "$1" -ne 0 ]; then
@@ -263,7 +229,7 @@ forge_bound_result() { # failed-rc fallback-rc
 
 forge() {
   local remaining rc=0 failed_rc=0 now read_deadline
-  local forge_err=${FORGE_ERR:-$TMP/forge.err} out summary
+  local forge_err=${FORGE_ERR:-$TMP/forge.err} out
   out=$(mktemp "$TMP/forge-output.XXXXXX")
   now=$(date +%s)
   read_deadline=$((now + 5))
@@ -291,8 +257,7 @@ forge() {
       rm -f -- "$out"
       return "$FORGE_BOUND_RC"
     fi
-    summary=$(forge_error_summary "$forge_err")
-    if [ "$failed_rc" -ne 0 ] || ! forge_transient_error "$forge_err" "$summary"; then
+    if [ "$failed_rc" -ne 0 ]; then
       : > "$TMP/forge-unavailable"
       rm -f -- "$out"
       return "$rc"
