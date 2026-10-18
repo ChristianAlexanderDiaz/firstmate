@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fm-linear-lib.sh - best-effort, one-way Linear lifecycle sync.
-# Usage: fm-linear-lib.sh spawn|merge|hold|release|idle|teardown|dependencies|refresh <task-id> [pr-url]
+# Usage: fm-linear-lib.sh spawn|merge|closed|hold|release|idle|teardown|dependencies|refresh <task-id> [pr-url]
 #        fm-linear-lib.sh tick
 # FM_HOME and FM_{STATE,DATA,CONFIG}_OVERRIDE address the owning home.
 # FM_LINEAR_TEARDOWN_{BRANCH,REPO} name a zero-work teardown's branch and clone;
@@ -17,6 +17,12 @@
 # A deterministic client issue UUID, derived from the data root, task and team,
 # prevents duplicate creation after an ambiguous timeout or failed link write.
 # Only spawn creates; all other events require an existing issue.
+# `closed` returns a started issue (In Progress or a review state) to Todo when
+# its recorded PR is closed without merging and no worker is on it. Teardown
+# produces it with the recorded PR URL; the heartbeat produces it for a ship
+# whose worker the busy classifier reports idle or dead.
+# A relaunch (FM_LINEAR_RELAUNCH=1) preserves a started In Review issue.
+# `merge` skips an attachment the issue already has for that PR URL.
 # Private runtime records: <id>.linear-idle stores observation signature and
 # epoch, <id>.linear-dependencies keeps dependency clearing eligible after the
 # worker ends, and .linear-cursor rotates the existing heartbeat over tasks.
@@ -26,7 +32,7 @@
 # State choices and additive/subtractive label updates do not write cycles.
 #
 # --run is the internal bounded child, not a lifecycle entry point. The hold,
-# relaunch and merge-poll producers set FM_LINEAR_CONTROL_LOCK_HELD=1 while
+# relaunch, teardown and merge-poll producers set FM_LINEAR_CONTROL_LOCK_HELD=1 while
 # holding the task's control lock; other callers acquire that same lock before
 # reading/updating its body.
 
@@ -124,7 +130,7 @@ fm_linear_dependencies() {  # <data> <state> <task> <row> <issue-id>
     [ -n "$candidates" ] || candidates=$(fm_linear_candidates "$dep"$'\n'"$(fm_linear_field "$other" title)"$'\n'"$text")
     case "$candidates" in ''|*$'\n'*) continue ;; esac
     [ "$(fm_linear_candidates "$candidates")" = "$candidates" ] || continue
-    fm_linear_api 'query Issue($id:String!){issue(id:$id){id identifier team{id} state{id type}}}' \
+    fm_linear_api 'query Issue($id:String!){issue(id:$id){id identifier team{id} state{id name type}}}' \
       "$(jq -cn --arg id "$candidates" '{id:$id}')"
     printf '%s' "$LINEAR_RESPONSE" | jq -e --argjson teams "$LINEAR_TEAMS" \
       '.data.issue.team.id as $id | any($teams[]; .id == $id)' >/dev/null
@@ -150,6 +156,53 @@ fm_linear_dependencies() {  # <data> <state> <task> <row> <issue-id>
   [ -n "$active" ] || rm -f "$state/$task.linear-dependencies"
 }
 
+fm_linear_review_state() {  # <issue-json>
+  printf '%s' "$1" | jq -e '.state.type == "started" and ((.state.name // "") | ascii_downcase) == "in review"' >/dev/null
+}
+
+fm_linear_pr_closed() {  # <url>; succeeds only for a PR the forge reports closed and unmerged
+  fm_pr_url_parse "$1" || return 1
+  case "$FM_PR_PROVIDER" in
+    github) fm_pr_github_read_record "$FM_PR_OWNER" "$FM_PR_REPO" "$FM_PR_NUMBER" || return 1 ;;
+    gitlab) fm_pr_gitlab_read_record "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER" || return 1 ;;
+    *) return 1 ;;
+  esac
+  [ "$FM_PR_RECORD_MERGED" = false ] || return 1
+  case "$FM_PR_RECORD_STATE" in CLOSED|closed) ;; *) return 1 ;; esac
+}
+
+# A ship nobody is working on: a dead endpoint or hook-backed idle verdict.
+# Missing evidence is never treated as absence of a worker.
+fm_linear_worker_gone() {  # <state> <task>; sets LINEAR_VERDICT
+  local state=$1 task=$2 meta="$1/$2.meta" backend target harness
+  [ -f "$meta" ] || return 1
+  # shellcheck source=bin/fm-backend.sh
+  . "$LINEAR_DIR/fm-backend.sh"
+  # shellcheck source=bin/fm-busy-lib.sh
+  . "$LINEAR_DIR/fm-busy-lib.sh"
+  [ "$(fm_meta_get "$meta" kind)" = ship ] || return 1
+  backend=$(fm_backend_of_meta "$meta"); target=$(fm_backend_target_of_meta "$meta"); harness=$(fm_meta_get "$meta" harness)
+  LINEAR_VERDICT=$(fm_busy_classify_live "$backend" "$target" "$harness" "$task" "$state")
+  case "$LINEAR_VERDICT" in
+    dead\ *) return 0 ;;
+    idle\ *) [ -n "$(fm_busy_sources_for_harness "$harness")" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# A ship whose recorded PR was closed without merging while no worker is on it.
+# The cheap local checks run before the forge read.
+fm_linear_closed_due() {  # <state> <task>; sets LINEAR_CLOSED_URL
+  local state=$1 task=$2 meta="$1/$2.meta"
+  [ -f "$meta" ] || return 1
+  # shellcheck source=bin/fm-backend.sh
+  . "$LINEAR_DIR/fm-backend.sh"
+  LINEAR_CLOSED_URL=$(fm_meta_get "$meta" pr)
+  [ -n "$LINEAR_CLOSED_URL" ] || return 1
+  fm_linear_worker_gone "$state" "$task" || return 1
+  fm_linear_pr_closed "$LINEAR_CLOSED_URL"
+}
+
 fm_linear_idle_due() {  # <state> <task>; classifier owns all harness/backend facts
   local state=$1 task=$2 meta="$1/$2.meta" verdict signature old since now backend target harness
   [ -f "$meta" ] || return 1
@@ -159,8 +212,9 @@ fm_linear_idle_due() {  # <state> <task>; classifier owns all harness/backend fa
   . "$LINEAR_DIR/fm-busy-lib.sh"
   [ "$(fm_meta_get "$meta" kind)" = ship ] || return 1
   backend=$(fm_backend_of_meta "$meta"); target=$(fm_backend_target_of_meta "$meta"); harness=$(fm_meta_get "$meta" harness)
-  # A recorded PR awaits review, and harnesses without busy-state hooks offer
-  # only sparse samples, which cannot prove a continuous idle day.
+  # Recorded PRs use closure reconciliation instead of the inactivity rule.
+  # Harnesses without busy-state hooks offer only sparse samples, which
+  # cannot prove a continuous idle day.
   if [ -n "$(fm_meta_get "$meta" pr)" ] || [ -z "$(fm_busy_sources_for_harness "$harness")" ]; then
     rm -f "$state/$task.linear-idle"
     return 1
@@ -213,13 +267,13 @@ fm_linear_tick() {
 fm_linear_event() {
   local event=$1 id=$2 url=${3:-} home state data config row project kind team ids
   local key_command key_count pattern label title body linked candidates issue issue_id issue_team state_id input
-  local idle_due=0
+  local idle_due=0 closed_due=0 attached
   local identifier marker pr_body create_id lock='' metadata meta_kind meta_project issue_type merged
   home=${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$LINEAR_DIR/.." && pwd)}}
   state=${FM_STATE_OVERRIDE:-$home/state}
   data=${FM_DATA_OVERRIDE:-$home/data}
   config=${FM_CONFIG_OVERRIDE:-$home/config}/linear
-  case "$event" in spawn|merge|hold|release|idle|teardown|dependencies|refresh) ;; *) exit 1 ;; esac
+  case "$event" in spawn|merge|closed|hold|release|idle|teardown|dependencies|refresh) ;; *) exit 1 ;; esac
   case "$id" in ''|*[!A-Za-z0-9._-]*) exit 1 ;; esac
   [ -f "$config" ] || exit 20
   command -v jq >/dev/null
@@ -246,7 +300,8 @@ fm_linear_event() {
   # A heartbeat with nothing due must not contend for the lifecycle lock.
   if [ "$event" = refresh ]; then
     if fm_linear_idle_due "$state" "$id"; then idle_due=1; fi
-    [ "$idle_due" = 1 ] || [ -f "$state/$id.linear-dependencies" ] || exit 0
+    if [ "$idle_due" = 0 ] && fm_linear_closed_due "$state" "$id"; then closed_due=1; fi
+    [ "$idle_due" = 1 ] || [ "$closed_due" = 1 ] || [ -f "$state/$id.linear-dependencies" ] || exit 0
   fi
   if [ "${FM_LINEAR_CONTROL_LOCK_HELD:-0}" != 1 ]; then
     lock="$state/.control-$id.lock"
@@ -256,9 +311,15 @@ fm_linear_event() {
   fi
   if [ "$idle_due" = 1 ]; then
     fm_linear_idle_due "$state" "$id" || idle_due=0
-    [ "$idle_due" = 1 ] || [ -f "$state/$id.linear-dependencies" ] || exit 0
   fi
-  if [ "$event" = merge ]; then fm_pr_url_parse "$url"; else url=''; fi
+  if [ "$closed_due" = 1 ]; then
+    fm_linear_closed_due "$state" "$id" || closed_due=0
+  fi
+  if [ "$event" = refresh ]; then
+    [ "$idle_due" = 1 ] || [ "$closed_due" = 1 ] || [ -f "$state/$id.linear-dependencies" ] || exit 0
+  fi
+  if [ "$closed_due" = 1 ]; then url=$LINEAR_CLOSED_URL; fi
+  case "$event" in merge|closed) fm_pr_url_parse "$url" ;; *) [ "$closed_due" = 1 ] || url='' ;; esac
   row=$(fm_backlog_row_show "$data" "$id" --full) || {
     # An archived or removed task has no dependencies left to clear.
     [ "$event" = refresh ] && printf '%s\n' "$row" | grep -q '^code: NOT_FOUND$' || exit 1
@@ -323,7 +384,7 @@ fm_linear_event() {
   case "$candidates" in *$'\n'*) exit 23 ;; esac
   linked=$candidates
   if [ -n "$linked" ]; then
-    fm_linear_api 'query Issue($id:String!){issue(id:$id){id identifier team{id} state{id type}}}' \
+    fm_linear_api 'query Issue($id:String!){issue(id:$id){id identifier team{id} state{id name type}}}' \
       "$(jq -cn --arg id "$linked" '{id:$id}')"
     issue=$(printf '%s' "$LINEAR_RESPONSE" | jq -ec '.data.issue | select(.id != null)')
   else
@@ -331,7 +392,7 @@ fm_linear_event() {
     # response or the backlog write was lost. No local credential/state cache.
     create_id=$(printf '%s\n%s\n%s' "$(cd "$data" && pwd -P)" "$id" "$team" |
       perl -MDigest::SHA=sha256_hex -e 'local $/; my $h=sha256_hex(<STDIN>); printf "%s-%s-4%s-8%s-%s", substr($h,0,8),substr($h,8,4),substr($h,13,3),substr($h,17,3),substr($h,20,12)')
-    fm_linear_api 'query CreatedIssue($id:ID!){issues(filter:{id:{eq:$id}},first:1){nodes{id identifier team{id} state{id type}}}}' \
+    fm_linear_api 'query CreatedIssue($id:ID!){issues(filter:{id:{eq:$id}},first:1){nodes{id identifier team{id} state{id name type}}}}' \
       "$(jq -cn --arg id "$create_id" '{id:$id}')"
     printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.issues.nodes | type == "array"' >/dev/null
     issue=$(printf '%s' "$LINEAR_RESPONSE" | jq -c '.data.issues.nodes[0] // empty')
@@ -341,7 +402,7 @@ fm_linear_event() {
       state_id=$(fm_linear_state "$team" started)
       input=$(jq -cn --arg id "$create_id" --arg team "$team" --arg title "$title" --arg body "$body" --arg state "$state_id" \
         '{input:{id:$id,teamId:$team,title:$title,description:$body,stateId:$state}}')
-      fm_linear_api 'mutation CreateIssue($input:IssueCreateInput!){issueCreate(input:$input){success issue{id identifier team{id} state{id type}}}}' "$input"
+      fm_linear_api 'mutation CreateIssue($input:IssueCreateInput!){issueCreate(input:$input){success issue{id identifier team{id} state{id name type}}}}' "$input"
       printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.issueCreate.success == true' >/dev/null
       issue=$(printf '%s' "$LINEAR_RESPONSE" | jq -ec '.data.issueCreate.issue | select(.id != null)')
     fi
@@ -364,8 +425,13 @@ fm_linear_event() {
   fi
   case "$event" in dependencies|refresh)
     fm_linear_dependencies "$data" "$state" "$id" "$row" "$issue_id"
-    [ "$event" = refresh ] && [ "$idle_due" = 1 ] || exit 0
-    event=idle
+    if [ "$event" = refresh ] && [ "$closed_due" = 1 ]; then
+      event=closed
+    elif [ "$event" = refresh ] && [ "$idle_due" = 1 ]; then
+      event=idle
+    else
+      exit 0
+    fi
     ;; esac
   case "$event" in
     idle|teardown)
@@ -384,19 +450,41 @@ fm_linear_event() {
       state_id=$(fm_linear_state "$issue_team" unstarted)
       input=$(jq -cn --arg id "$issue_id" --arg state "$state_id" '{id:$id,input:{stateId:$state}}')
       ;;
-    spawn|merge)
-      if [ "$event" = spawn ]; then kind=started; else kind=completed; fi
-      state_id=$(fm_linear_state "$issue_team" "$kind")
+    closed)
+      # Any started state, including In Review, means the ticket still claims
+      # work whose PR is no longer open. Captain-held work keeps its status.
+      [ "$issue_type" = started ] || exit 0
+      [ "$(fm_linear_field "$row" hold_kind)" != captain ] || [ "$(fm_linear_field "$row" state)" = "done" ] || exit 0
+      fm_linear_pr_closed "$url" || exit 0
+      state_id=$(fm_linear_state "$issue_team" unstarted)
       input=$(jq -cn --arg id "$issue_id" --arg state "$state_id" '{id:$id,input:{stateId:$state}}')
+      ;;
+    spawn|merge)
+      if [ "$event" = spawn ]; then
+        kind=started
+        # A relaunch resumes work on a ticket whose PR is already up for review.
+        if [ "${FM_LINEAR_RELAUNCH:-0}" = 1 ] && fm_linear_review_state "$issue"; then kind=''; fi
+      else
+        kind=completed
+      fi
+      if [ -n "$kind" ]; then
+        state_id=$(fm_linear_state "$issue_team" "$kind")
+        input=$(jq -cn --arg id "$issue_id" --arg state "$state_id" '{id:$id,input:{stateId:$state}}')
+      else
+        input=''
+      fi
       ;;
     hold) input=$(jq -cn --arg id "$issue_id" --arg label "$label" '{id:$id,input:{addedLabelIds:[$label]}}') ;;
     release) input=$(jq -cn --arg id "$issue_id" --arg label "$label" '{id:$id,input:{removedLabelIds:[$label]}}') ;;
   esac
-  fm_linear_api 'mutation UpdateIssue($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}' "$input"
-  printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.issueUpdate.success == true' >/dev/null
-  case "$event" in idle|teardown)
+  if [ -n "$input" ]; then
+    fm_linear_api 'mutation UpdateIssue($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}' "$input"
+    printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.issueUpdate.success == true' >/dev/null
+  fi
+  case "$event" in idle|teardown|closed)
     local reason='Worker has been idle or gone for more than a day; returned to Todo.'
     [ "$event" != teardown ] || reason='Worker was torn down without landed work; returned to Todo.'
+    [ "$event" != closed ] || reason='Pull request was closed without merging and no worker is on it; returned to Todo.'
     fm_linear_api 'mutation Comment($input:CommentCreateInput!){commentCreate(input:$input){success}}' \
       "$(jq -cn --arg id "$issue_id" --arg body "$reason" '{input:{issueId:$id,body:$body}}')"
     printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.commentCreate.success == true' >/dev/null
@@ -406,6 +494,15 @@ fm_linear_event() {
   fi
   if [ "$event" = merge ]; then
     [ -n "$url" ]
+    # Linear's own GitHub integration usually attaches the PR first.
+    attached=0
+    if fm_linear_api 'query Attachments($id:String!){issue(id:$id){attachments(first:250){nodes{url} pageInfo{hasNextPage}}}}' \
+        "$(jq -cn --arg id "$issue_id" '{id:$id}')" &&
+        printf '%s' "$LINEAR_RESPONSE" | jq -e --arg url "${url%/}" \
+          'any(.data.issue.attachments.nodes[]?; (.url | rtrimstr("/")) == $url)' >/dev/null; then
+      attached=1
+    fi
+    [ "$attached" = 0 ] || return 0
     fm_linear_api 'mutation AttachPR($input:AttachmentCreateInput!){attachmentCreate(input:$input){success}}' \
       "$(jq -cn --arg id "$issue_id" --arg url "$url" '{input:{issueId:$id,url:$url,title:"Merged pull request"}}')"
     printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.attachmentCreate.success == true' >/dev/null

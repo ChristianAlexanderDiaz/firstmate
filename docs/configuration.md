@@ -372,21 +372,26 @@ Scouts and secondmates never sync.
 Map only projects whose backlog titles and bodies may be sent to Linear, and exclude any private tasks within them with `exclude_task`.
 A successful ship spawn creates a ticket when no linkage exists, then selects the team's started state named `In Progress`, falling back to the first started state returned by Linear.
 Creation specifies that state explicitly, avoiding Linear's default Triage intake for teams with Triage enabled.
-A recorded PR merge, including one detected from the forge, selects the completed state named `Done`, falling back to the first completed state, and attaches the PR URL.
+A recorded PR merge, including one detected from the forge, selects the completed state named `Done`, falling back to the first completed state, and attaches the PR URL unless the issue already has an attachment for it, as Linear's own GitHub integration usually adds one first.
+That integration also moves a ticket to its review state when a PR opens, so this sync does not.
 A captain hold adds the configured label without changing workflow status; its answer, release or reconciled close removes only that label.
 `In Progress` represents a working ship, not a standing assignment.
 After a teardown of a ship with no recorded PR whose branch has no commits of its own beyond origin's copy of its base (or the local base without an origin), and whose forge lookup finds no merged PR for the branch, an issue still in the started state sync selects (normally `In Progress`) returns to the team's unstarted `Todo` state (or first unstarted state), with a reason comment.
 That branch lookup uses `gh-axi` within the sync's time bound, so ships on other forges, and lookups that fail or time out, keep their status.
 Local-only ships are excluded from that rule, because their landed work is a fast-forward of the base and looks the same.
 A forced teardown that discards work with no recorded PR and no local landing proof (a clean worktree, ignoring harness leftovers, whose commits are on a remote or the base branch) returns the issue to Todo the same way.
-Any other teardown, including one whose landing is merely unrecorded or unknown, or whose recorded worktree slot now belongs to another task, leaves the status unchanged.
+Other teardowns without a recorded PR, including one whose landing is merely unrecorded or unknown, or whose recorded worktree slot now belongs to another task, leave the status unchanged.
 Each existing watcher heartbeat checks recorded ships and dependency records in rotation within one ten-second budget; a timed-out task waits for its next turn.
 Heartbeat checks stay quiet when nothing is due (even without a credential) and for excluded, unmapped, unlinked, ambiguous or Triage work, and drop a dependency record whose task no longer exists.
 A ship classified idle or dead continuously for more than a day returns to Todo the same way, with a reason comment; activity, a new worker incarnation or unknown classification resets that interval.
 This uses the existing semantic busy classifier; missing evidence is never treated as idle.
 Ships whose harness has no busy-state hooks are never returned to Todo for inactivity, because sparse samples cannot prove a continuous day.
-Ships with a recorded PR or an open captain hold, and issues in any other state, such as a custom review, waiting or blocked state, keep their status.
-A successful spawn or relaunch restores In Progress.
+Ships with a recorded PR or an open captain hold, and issues in any other state, such as a custom review, waiting or blocked state, keep their status under those two rules.
+A ship whose recorded PR the forge reports closed without merging, with no worker on it, returns its ticket to Todo the same way, with a reason comment, from whichever started state it sits in, including In Review.
+Teardown of a ship with a recorded PR makes that check once, and the existing watcher heartbeat repeats it for a ship whose worker the busy classifier reports idle with hooks or whose endpoint is dead, including harnesses without hooks.
+Later heartbeats make no further state changes or reason comments while the ticket remains outside a started state, but can reconcile the same PR again after it is reopened and closed again.
+Open or merged PRs, a failed forge read, an issue that is not in a started state, and captain-held work leave the ticket as it is; only GitHub and GitLab PRs are read.
+A successful spawn or relaunch restores In Progress, except that a relaunch preserves a ticket in a started state named exactly `In Review` (case-insensitive), because its PR is awaiting review.
 Backlog `block` and `unblock` commands mirror dependencies as Linear blocking relations when both tasks have eligible linked tickets.
 The heartbeat removes owned relations when a dependency clears through task completion.
 Dependency sync leaves workflow status unchanged and preserves manually created relations.
@@ -394,13 +399,14 @@ It never creates a ticket for a dependency.
 Sync never mutates a Triage issue, deletes an issue, or writes a cycle field.
 Linear's own cycle behavior still applies to status changes.
 
-Existing linkage is found in the task id, backlog title/body, or, on merge, an identifier following `fixes`, `closes` or `resolves` (case-insensitive) in the complete PR record from GitHub or GitLab.
+Existing linkage is found in the task id, backlog title/body, or, on merge or closed-PR reconciliation, an identifier following `fixes`, `closes` or `resolves` (case-insensitive) in the complete PR record from GitHub or GitLab.
 Only identifiers belonging to mapped teams are eligible, and ambiguous references are skipped.
 The saved backlog linkage takes precedence over incidental references elsewhere.
 A completed or canceled issue changes only through saved linkage; an incidental reference to one is skipped and never saved.
 Only spawn creates tickets; other events without a linked or previously created issue are skipped.
 A failed forge read never causes ticket creation.
-GitHub reads use `gh-axi`; GitLab reads use `glab`.
+GitHub PR-body and branch-merge reads use `gh-axi`; closure checks use the shared PR reader, which prefers `gh` and falls back to `gh-axi`.
+GitLab reads use `glab`.
 Other forges can sync through task/backlog linkage but do not supply PR-body discovery.
 
 Every attempt is best effort and has a ten-second total bound covering secret lookup, backlog reads/writes, forge discovery and Linear requests.
