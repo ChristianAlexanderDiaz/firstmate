@@ -316,7 +316,7 @@ test_away_reentry_refuses_pending_return_gate() {
 test_return_is_mode_agnostic_for_quiet_mode() {
   # kunchenguid/firstmate#2356's /quiet off calls this exact script, unchanged
   # - it must behave identically whether state/.afk declares "away" or
-  # "quiet", since return_guard/return_reconcile only ever test presence.
+  # "quiet": explicit return still stops the daemon regardless of posture.
   local dir out
   dir="$TMP_ROOT/quiet-mode-return"
   install_runner "$dir"
@@ -878,6 +878,66 @@ test_statusful_leftover_record_lets_catchup_clear() {
   pass "a leftover record with a readable status file lets return catch-up clear"
 }
 
+test_bearings_keeps_quiet_mode_active() {
+  local variant dir out
+  for variant in flag record both; do
+    dir="$TMP_ROOT/bearings-quiet-$variant"
+    install_runner "$dir"
+    if [ "$variant" != flag ]; then
+      FM_AFK_MODE=quiet contract_in "$dir" enter >/dev/null 2>&1 \
+        || fail "could not write the quiet-posture record"
+      cp "$dir/home/state/.afk-contract" "$dir/record-before"
+    fi
+    if [ "$variant" != record ]; then
+      printf 'quiet\n%s\n' "$(date +%s)" > "$dir/home/state/.afk"
+      cp "$dir/home/state/.afk" "$dir/flag-before"
+    fi
+    out=$(run_return "$dir" guard) || fail "$variant: guard refused quiet mode: $out"
+    [ -z "$out" ] || fail "$variant: quiet guard should be silent: $out"
+    out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" \
+      "$ROOT/bin/fm-bearings-snapshot.sh" --json 2>&1) \
+      || fail "$variant: Bearings refused quiet mode: $out"
+    printf '%s' "$out" | jq -e '.schema == "fm-bearings.v1"' >/dev/null \
+      || fail "$variant: Bearings did not render its snapshot: $out"
+    [ ! -e "$dir/home/stop.log" ] && [ ! -e "$dir/home/state/.afk-return-catchup" ] \
+      || fail "$variant: reading Bearings started the return lifecycle"
+    if [ "$variant" != flag ]; then
+      cmp -s "$dir/record-before" "$dir/home/state/.afk-contract" \
+        || fail "$variant: reading Bearings changed the quiet record"
+    fi
+    if [ "$variant" != record ]; then
+      cmp -s "$dir/flag-before" "$dir/home/state/.afk" \
+        || fail "$variant: reading Bearings changed the quiet flag"
+    fi
+  done
+  pass "Bearings renders with a quiet flag, record, or both and preserves quiet mode"
+}
+
+test_return_guard_keeps_away_flags_and_records_gated() {
+  local variant dir out rc
+  for variant in legacy away unknown away-record-with-quiet-flag quiet-record-with-away-flag; do
+    dir="$TMP_ROOT/guard-away-$variant"
+    install_runner "$dir"
+    case "$variant" in
+      legacy) date +%s > "$dir/home/state/.afk" ;;
+      away|unknown) printf '%s\n' "$variant" > "$dir/home/state/.afk" ;;
+      away-record-with-quiet-flag)
+        contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away record"
+        printf 'quiet\n' > "$dir/home/state/.afk"
+        ;;
+      quiet-record-with-away-flag)
+        FM_AFK_MODE=quiet contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the quiet record"
+        printf 'away\n' > "$dir/home/state/.afk"
+        ;;
+    esac
+    rc=0
+    out=$(run_return "$dir" guard) || rc=$?
+    [ "$rc" -eq 3 ] || fail "$variant: guard should refuse away state (rc=$rc): $out"
+    assert_contains "$out" 'away mode is still active' "$variant: guard did not name away mode"
+  done
+  pass "legacy, explicit, unknown, and conflicting away state still refuses ordinary work"
+}
+
 test_return_guard_refuses_while_the_record_exists() {
   local dir out rc
   dir="$TMP_ROOT/guard-record"
@@ -1353,6 +1413,8 @@ test_missing_final_archive_keeps_retained_contract_gated() {
   pass "the retained contract epoch requires its final archive on every check"
 }
 
+test_bearings_keeps_quiet_mode_active
+test_return_guard_keeps_away_flags_and_records_gated
 test_return_gate_owns_remediation_and_reports_catchup_to_bearings
 test_explicit_reclassification_requires_durable_reason
 test_captain_decision_does_not_masquerade_as_firstmate_blocker
