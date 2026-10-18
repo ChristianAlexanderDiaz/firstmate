@@ -226,4 +226,190 @@ test_already_settled_pane_costs_one_confirm_read
 test_transient_primary_checkout_is_not_accepted
 test_primary_checkout_that_never_settles_fails_at_the_deadline
 
+# The Herdr CLI is entirely fake, with shells on a private tmux socket so the
+# acquisition command really executes. No real Herdr session is inspected or
+# changed. Unlike a canned cwd response, this catches an exited Treehouse
+# command that leaves the outer shell sitting in the project.
+#
+# treehouse_failure_setup <case> <presentation-mode> builds the case's home,
+# project and fakebin, exports the fixture environment, and starts the private
+# tmux server. The caller writes "$fakebin/treehouse" afterwards.
+treehouse_failure_setup() {
+  local mode=$2
+  case_dir="$TMP_ROOT/treehouse-failure-$1"
+  home="$case_dir/home"
+  proj="$case_dir/project"
+  fakebin="$case_dir/fakebin"
+  fm_test_spawn_home "$home" codex
+  fm_git_init_commit "$proj"
+  fm_test_spawn_brief "$home" "fail-$1"
+  mkdir -p "$fakebin" "$case_dir/herdr" "$case_dir/user"
+  cp "$ROOT/tests/herdr-spawn-fixture.py" "$fakebin/herdr"
+  chmod +x "$fakebin/herdr"
+  export FM_HERDR_FIXTURE="$case_dir/herdr" FM_FIXTURE_TMUX
+  FM_FIXTURE_TMUX=$(command -v tmux)
+  export FM_FIXTURE_SOCKET="fm-acquire-$1-$$"
+  trap '"$FM_FIXTURE_TMUX" -L "$FM_FIXTURE_SOCKET" kill-server >/dev/null 2>&1 || true' EXIT
+  unset TMUX TMUX_PANE HERDR_PANE_ID HERDR_SOCKET_PATH HERDR_WORKSPACE_ID HERDR_TAB_ID FM_BACKEND_HERDR_BIN FM_BACKEND_HERDR_CLIENT_SESSION TREEHOUSE_DIR
+  export HOME="$case_dir/user" SHELL=/bin/bash HERDR_SESSION=fixture PATH="$fakebin:$PATH"
+  "$FM_FIXTURE_TMUX" -L "$FM_FIXTURE_SOCKET" -f /dev/null new-session -d -s fixture -c "$proj" 'bash --noprofile --norc'
+  cat > "$FM_HERDR_FIXTURE/state.json" <<'EOF'
+{"next":2,"workspaces":[{"workspace_id":"w1","label":"firstmate","active_tab_id":"w1:t1","focused":true}],"tabs":[{"tab_id":"w1:t1","pane_id":"w1:p1","workspace_id":"w1","label":"terminal","target":"%0","focused":true}]}
+EOF
+  printf 'herdr\n' > "$home/config/backend"
+  if [ "$mode" = off ]; then
+    printf 'off\n' > "$home/config/herdr-presentation-spaces"
+  else
+    printf 'on\n' > "$home/config/herdr-presentation-spaces"
+  fi
+  if [ "$mode" = stale ]; then
+    printf 'version=1\ntask_id=fail-%s\nprojection_id=AbCdEfGhIjKlMnOpQrStUv\n' "$1" > "$home/state/fail-$1.herdr-presentation"
+  fi
+}
+
+treehouse_failure_spawn() { # <case>
+  FM_HOME="$home" FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE="$home/state" \
+    FM_CONFIG_OVERRIDE="$home/config" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_SPAWN_NO_GUARD=1 \
+    "$SPAWN" "fail-$1" "$proj" --mode no-mistakes --yolo off 2>&1
+}
+
+# treehouse_failure_pane <case> prints the worker's tmux target, failing when
+# the spawn closed it or did not keep it in its own workspace.
+treehouse_failure_pane() {
+  local target
+  jq -e '[.tabs[] | select(.workspace_id == "w1")] | length == 1' "$FM_HERDR_FIXTURE/state.json" >/dev/null \
+    || fail "fallback put a worker tab in the launcher workspace"
+  target=$(jq -r --arg label "fm-fail-$1" '.tabs[] | select(.label == $label) | .target' "$FM_HERDR_FIXTURE/state.json")
+  if [ -z "$target" ] || ! "$FM_FIXTURE_TMUX" -L "$FM_FIXTURE_SOCKET" list-panes -t "$target" >/dev/null 2>&1; then
+    fail "failed acquisition closed its diagnostic pane"
+  fi
+  printf '%s\n' "$target"
+}
+
+# Treehouse can refuse an available-looking slot it cannot safely reuse.
+# Its refusal controls the label; status only adds context about those slots.
+# The "wrapped" pool pads the refusal so the space after "in use," is the last
+# screen column; the pane capture trims it, joining the rows with no space.
+test_treehouse_failure_preserves_own_workspace() (
+  local mode=$1 pool=${2:-full} case_dir home proj fakebin out status target reads slot_status=in-use refusal
+  treehouse_failure_setup "$mode-$pool" "$mode"
+  refusal='all 1 worktrees are in use or dirty (max_trees = 1). Run treehouse status'
+  if [ "$pool" != full ]; then
+    refusal="all 1 worktrees are in use, dirty, or not provably this clone's (max_trees = 1). Run treehouse status"
+  fi
+  [ "$pool" != free ] || slot_status=available
+  cat > "$fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = status ]; then
+  printf '[{"name":"1","status":"$slot_status"}]\n'
+  exit 0
+fi
+pad=0 prefix='all 1 worktrees are in use,'
+if [ "$pool" = wrapped ]; then
+  pad=\$(( \$(stty size < /dev/tty | cut -d' ' -f2) - 1 - \${#prefix} ))
+fi
+printf '%*s%s\n' "\$pad" '' "$refusal" >&2
+exit 17
+EOF
+  chmod +x "$fakebin/treehouse"
+  fm_test_fake_sleep_noop "$fakebin"
+  out=$(treehouse_failure_spawn "$mode-$pool")
+  status=$?
+  [ "$status" -ne 0 ] || fail "a failed allocation must refuse the spawn"
+  assert_contains "$out" 'pool exhausted' "allocation error was hidden by a cwd timeout or status listing"$'\n'"$out"
+  if [ "$pool" != free ]; then
+    assert_not_contains "$out" 'would not reuse' "full pool should not report available slots"$'\n'"$out"
+  else
+    assert_contains "$out" 'status lists 1 available slot(s) Treehouse would not reuse' "available-looking slots must add context without hiding exhaustion"$'\n'"$out"
+  fi
+  assert_contains "$out" 'status 17' "spawn must report the actual Treehouse exit status"$'\n'"$out"
+  [ ! -e "$home/state/fail-$mode-$pool.meta" ] || fail "failed acquisition published metadata"
+  reads=$(jq -s '[.[] | select(.[0:2] == ["pane", "get"])] | length' "$FM_HERDR_FIXTURE/calls.jsonl")
+  [ "$reads" -lt 60 ] || fail "an exited allocation waited for the entire cwd deadline ($reads reads)"
+  target=$(treehouse_failure_pane "$mode-$pool") || exit 1
+  assert_contains "$("$FM_FIXTURE_TMUX" -L "$FM_FIXTURE_SOCKET" capture-pane -p -t "$target" -S -100)" 'max_trees = 1' 'allocation output must remain readable'
+  assert_contains "$(cat "$home/data/fail-$mode-$pool"/treehouse.*/pane.log)" 'max_trees = 1' 'allocation output must be saved durably'
+  if [ "$pool" = wrapped ]; then
+    assert_not_contains "$(cat "$home/data/fail-$mode-$pool"/treehouse.*/pane.log)" 'in use, dirty' 'the refusal must be split by a screen wrap'
+  fi
+  pass "Treehouse failure ($mode, $pool pool): prompt error, separate workspace, retained pane and log"
+)
+
+# At the deadline the allocation is interrupted rather than left to finish in
+# an orphan pane. "allocating" never returns from allocation; "entered" opens
+# its subshell (outside any git worktree, so never accepted) and holds the slot
+# until that subshell exits. Either way no slot stays held, and the pane stays.
+# The fake sleep returns at once, but only after the stub reached that point.
+test_treehouse_deadline_interrupts_allocation() (
+  local stage=$1 case_dir home proj fakebin out status target pane real_sleep
+  real_sleep=$(command -v sleep)
+  export FM_TEST_TH_CASE="$TMP_ROOT/treehouse-failure-deadline-$stage" FM_TEST_TH_SLEEP="$real_sleep"
+  treehouse_failure_setup "deadline-$stage" projected
+  cat > "$fakebin/sleep" <<'EOF'
+#!/usr/bin/env bash
+if compgen -G "$FM_TEST_TH_CASE/home/data/*/treehouse.*/get.sh" >/dev/null; then
+  for _ in $(seq 1 200); do
+    [ -e "$FM_TEST_TH_CASE/ready" ] && exit 0
+    "$FM_TEST_TH_SLEEP" 0.05
+  done
+fi
+exit 0
+EOF
+  if [ "$stage" = allocating ]; then
+    cat > "$fakebin/treehouse" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$$" > "$FM_TEST_TH_CASE/slot"
+: > "$FM_TEST_TH_CASE/ready"
+exec "$FM_TEST_TH_SLEEP" 600
+EOF
+  else
+    cat > "$fakebin/treehouse" <<'EOF'
+#!/usr/bin/env bash
+mkdir -p "$FM_TEST_TH_CASE/slot.d"
+printf '%s\n' "$$" > "$FM_TEST_TH_CASE/slot"
+(cd "$FM_TEST_TH_CASE/slot.d" && TREEHOUSE_DIR="$PWD" PROMPT_COMMAND=": > '$FM_TEST_TH_CASE/ready'" exec bash --noprofile --norc -i)
+rm -f "$FM_TEST_TH_CASE/slot"
+EOF
+  fi
+  chmod +x "$fakebin/sleep" "$fakebin/treehouse"
+  out=$(treehouse_failure_spawn "deadline-$stage")
+  status=$?
+  [ "$status" -ne 0 ] || fail "an allocation that never settled must refuse the spawn"
+  assert_contains "$out" 'within 60s' "spawn must report the deadline"$'\n'"$out"
+  [ ! -e "$home/state/fail-deadline-$stage.meta" ] || fail "timed-out acquisition published metadata"
+  pane=$(jq -r '.tabs[] | select(.label == "fm-fail-deadline-'"$stage"'") | .pane_id' "$FM_HERDR_FIXTURE/state.json")
+  jq -e --arg pane "$pane" 'select(.[0:3] == ["pane", "send-keys", $pane] and any(.[]; . == "ctrl+c"))' \
+    "$FM_HERDR_FIXTURE/calls.jsonl" >/dev/null || fail "the kept pane was not sent Ctrl-C at the deadline"
+  if [ "$stage" = allocating ]; then
+    for _ in $(seq 1 100); do
+      kill -0 "$(cat "$case_dir/slot")" 2>/dev/null || break
+      "$real_sleep" 0.1
+    done
+    ! kill -0 "$(cat "$case_dir/slot")" 2>/dev/null || fail "the interrupted allocation is still running"
+  else
+    for _ in $(seq 1 100); do
+      [ -e "$case_dir/slot" ] || break
+      "$real_sleep" 0.1
+    done
+    [ ! -e "$case_dir/slot" ] || fail "the opened Treehouse subshell still holds its slot"
+  fi
+  target=$(treehouse_failure_pane "deadline-$stage") || exit 1
+  [ "$("$FM_FIXTURE_TMUX" -L "$FM_FIXTURE_SOCKET" display-message -p -t "$target" '#{pane_current_path}')" = "$proj" ] \
+    || fail "the kept pane did not return to its own shell"
+  pass "Treehouse deadline ($stage): allocation interrupted, no slot held, pane retained"
+)
+
+if command -v tmux >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  test_treehouse_failure_preserves_own_workspace off || exit 1
+  test_treehouse_failure_preserves_own_workspace stale || exit 1
+  test_treehouse_failure_preserves_own_workspace projected || exit 1
+  test_treehouse_failure_preserves_own_workspace projected free || exit 1
+  test_treehouse_failure_preserves_own_workspace projected wrapped || exit 1
+  test_treehouse_deadline_interrupts_allocation allocating || exit 1
+  test_treehouse_deadline_interrupts_allocation entered || exit 1
+else
+  echo '# skip: real-shell acquisition regressions need tmux, python3, and jq'
+fi
+
 echo "# all fm-spawn-worktree-settle tests passed"

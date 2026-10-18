@@ -97,8 +97,10 @@ Removing or upgrading the shadowing client is the durable fix.
 
 ## Watching and task containers
 
-The ordinary topology puts one task tab per endpoint in the exact workspace of the Firstmate or secondmate that launches it.
-When the launcher has no Herdr workspace to inherit, the adapter maintains one durable home-labeled workspace instead.
+Every worker gets its own sidebar workspace, with one task tab per endpoint.
+Presentation fallback and the `off` setting retain this isolation; they create a fresh `fm-<id>` workspace without projection bindings.
+If workspace creation fails, the spawn stops with an error.
+Supervisors retain their persistent home workspaces:
 
 | Home | Workspace label |
 | --- | --- |
@@ -109,7 +111,7 @@ A secondmate launched by the primary receives a narrowly scoped home override du
 
 ### Watching tasks
 
-Attach to the selected named Herdr session and switch to the relevant home workspace to watch its task tabs.
+Attach to the selected named Herdr session and switch to the worker workspace to watch its task tab.
 Routine supervision uses `bin/fm-peek.sh <id>` and `FM_HOME=<home> bin/fm-send.sh <id> '<text>'` without attaching.
 
 ### Focus
@@ -126,10 +128,10 @@ Herdr 0.7.5 exports `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_SESSION`, `HERDR_SOCKET
 A Firstmate or secondmate agent's own commands inherit them.
 Older injection shapes are unverified, so a claimed launcher pane without the injected socket identity cannot be trusted.
 
-With presentation spaces disabled, a crewmate or scout is created in the exact workspace that identity currently resolves to.
-That workspace is read live from Herdr rather than from the injected snapshot, so the worker always appears beside the agent that launched it.
-Duplicate labels elsewhere in the session are irrelevant, and the globally focused workspace is never the target.
-A `--secondmate` launch is the deliberate exception: it stands up that secondmate home's own workspace instead of joining the launcher's.
+With presentation spaces disabled, a crewmate or scout still receives a new workspace.
+Claimed launcher identity is validated live before creation; it never authorizes placing a worker tab in the launcher workspace.
+Duplicate task labels elsewhere in the session are irrelevant, and the globally focused workspace is never the target.
+A `--secondmate` launch stands up that secondmate home's own persistent workspace.
 
 ### Unresolvable launcher identity
 
@@ -144,31 +146,28 @@ That covers:
 
 ### Firstmate running outside Herdr
 
-Firstmate running outside Herdr entirely has no launcher workspace to inherit, so its workers use this home's own labeled workspace, created on first use.
-That path needs the home label to identify exactly one workspace.
-Two workspaces sharing it are an unresolvable placement and refuse rather than adopting either.
-
-Avoid naming a personal workspace `firstmate` or `2ndmate-<id>` for that reason.
-Also avoid it because the adapter cannot distinguish that label collision from its own container.
+Firstmate running outside Herdr creates a new workspace for each worker without adopting any home-label match.
+Persistent home-container resolution, used for secondmate launches, still requires an unambiguous home label.
+Avoid naming personal workspaces `firstmate` or `2ndmate-<id>` because the adapter cannot distinguish those collisions from a home container.
 
 An older secondmate workspace using `firstmate-<id>` is not migrated automatically.
-Rename it manually before expecting new tasks or recovery to use it.
+Rename it manually before expecting home-container resolution to use it.
 
 ### Recovery and existing tasks
 
-Recovery and list-live still scan the first workspace matching the home label, because they address panes they already recorded rather than choosing where new work goes.
+Legacy list-live orphan discovery scans only the first workspace matching the home label.
+It does not discover worker workspaces by their mutable labels; recorded tasks use their exact endpoint metadata.
 The one recovery that does place new work is the control plane's reclaim of a destroyed endpoint.
-It mints a replacement tab through this section's ordinary placement rules while pinning the herdr session the task's record names ([`agent-control.md`](agent-control.md) "Reclaiming a task whose endpoint is gone").
+It mints a replacement workspace and tab through this section's ordinary placement rules while pinning the herdr session the task's record names ([`agent-control.md`](agent-control.md) "Reclaiming a task whose endpoint is gone").
 
 Existing task operations use recorded endpoint ids and do not move a live task when labels change.
-The per-home workspace is reused while it has task tabs.
-Closing its last tab can remove the workspace, and the next spawn recreates it.
+Closing a worker's last tab can remove its workspace.
 
 ## Presentation spaces
 
-Each new crewmate or scout is placed in a disposable one-task workspace by default, on Herdr 0.8.0 and newer.
-This section calls that one-task workspace the projection.
-Without the projection, tasks use the ordinary flat layout described under [Watching and task containers](#watching-and-task-containers).
+On Herdr 0.8.0 and newer, each new crewmate or scout receives presentation grouping and a restart binding by default.
+This section calls that presentation workspace the projection.
+Without the projection, tasks still receive separate workspaces as described under [Watching and task containers](#watching-and-task-containers).
 
 ### Setting values
 
@@ -194,17 +193,18 @@ It reaches only the Herdr backend, because no other runtime backend has a projec
 
 ### Why the default needs Herdr 0.8.0
 
-Projecting each task into its own workspace makes every task cleanup a workspace-emptying removal.
+Each worker has its own workspace, so task cleanup can empty a workspace even without projection.
 That is the only removal shape Herdr's pre-0.8.0 focus defect touches.
 The focus-safe removal plan below can only avoid the defect while the closing pane's shell can be proved lone, childless, and idle.
 
 A persistent child of that shell - a `gitstatusd`, a `zsh-async` worker, or `direnv` - fails that proof permanently and forces the plain explicit close.
 On those releases, that close moves the active workspace for roughly a seventh of a second before the restore backstop pulls it back, once per task cleanup.
 
-An unconfigured home is therefore projected only on a release at or above the 0.8.0 floor.
+The projection default retains its 0.8.0 floor.
 On those releases every workspace-removal primitive preserves focus, and that proof stops being load-bearing.
 
-Below the floor, an unconfigured home uses the ordinary flat per-home layout instead.
+Below the floor, an unconfigured home creates separate worker workspaces without projection bindings.
+Workspace-emptying cleanup on those old releases can still move focus; disabling presentation does not remove that upstream limitation.
 It warns once per home per detected release, naming the running release and the upgrade that restores the projection.
 That one-warning-per-release record is a `state/.herdr-presentation-floor-<release>` marker.
 Deleting it only makes the same warning appear again.
@@ -230,7 +230,7 @@ The floor has a single owner, the spawn-time gate.
 So cleanup for a projection that already exists always runs and never strands a workspace, whatever release the home is on now.
 
 Upgrading Herdr to 0.8.0 or newer is the fix.
-Writing `off` is the immediate mitigation for a home that cannot upgrade yet.
+The `off` setting disables projection bindings and grouping, while preserving worker workspace isolation.
 
 ### Secondmate homes
 
@@ -262,7 +262,7 @@ Neither token, title, nor journal authorizes send, capture, task ownership, Tree
 
 ### Owning parent and tabs
 
-The owning parent is the launcher's own exact workspace, resolved from the same identity the flat path uses.
+The owning parent is the launcher's own exact workspace, resolved from the same launcher identity the fallback path validates.
 It falls back to a unique home-label lookup only for a Firstmate outside Herdr.
 Projected children are never collapsed back into that parent.
 The parent is the workspace the projection is bound under; its sidebar position follows [Ordering](#ordering).
@@ -482,12 +482,13 @@ Any of these preserves the candidate and lets session startup continue with at m
 - Recovery of an existing presentation journal refuses by default when the shared presentation lock stays busy through the bounded wait, rather than falling back flat.
   [`bin/fm-spawn.sh`'s header](../bin/fm-spawn.sh) owns the `--herdr-resume-lock-wait` opt-in, its applicability, and the default retry budget, which includes lock-probe and scheduling time rather than a wall-clock deadline.
 - Existing spaces are never renamed; the presentation order rearranges them only by verified moves.
-- Missing or ambiguous restart bindings fall back to the ordinary home workspace while the old projection remains untouched.
+- Missing or ambiguous restart bindings create a fresh ungrouped worker workspace while the old projection remains untouched.
+- Treehouse acquisition failures retain the worker pane and save its output; [`bin/fm-spawn.sh`](../bin/fm-spawn.sh) owns the failure diagnostics and attempt paths.
 - Crashes, lost responses, failed exact-pane cleanup, or human renames can leave quarantined spaces.
   Session start removes only the exact home-local, uniquely journal-correlated, childless idle-shell shape above.
 - Spaces have no cross-home cleanup path, and a secondmate child can clean up only from its exact home.
 - Every stale-looking space outside that narrow startup proof still requires manual cleanup in Herdr's UI after human inspection.
-- Regaining a dedicated space after degradation requires stopping the flat task, manually checking the stale projection, and clearing its journal before a genuinely fresh launch.
+- Regaining a projection binding after degradation requires stopping the flat task, manually checking the stale projection, and clearing its journal before a genuinely fresh launch.
 - The visible token is only a restart-stable correlator and never substitutes for the exact binding.
 
 ### Presentation tests
@@ -868,7 +869,7 @@ Tests use thin compatibility wrappers in `tests/herdr-test-safety.sh` and never 
 
 - Presentation ordering is best-effort; [Ordering](#ordering) owns its prerequisites and grouping rules, and remote second mates' task records are not read.
 - Mutable labels can collide; they are never placement or destructive authority.
-- A Firstmate outside Herdr cannot resolve a launcher workspace, so a colliding home label refuses new spawns until the collision is cleared.
+- A colliding home label can prevent persistent home-container resolution; worker fallback always creates a new workspace.
 - Ghost and placeholder recognition uses ANSI de-emphasis when available; an unstyled glyph row carrying trailing non-idle text fails safely to `unknown`.
 - Only tmux and Herdr can host the away-mode supervisor terminal.
 

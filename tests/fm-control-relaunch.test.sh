@@ -1440,14 +1440,16 @@ test_prepublication_failure_keeps_concurrent_durable_metadata() {
     run_control "$dir" rl30 relaunch --harness codex --note "preserve concurrent metadata" \
       > "$dir/control.out" &
   control_pid=$!
-  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 200 ]; do
+  # Startup is not the race under test: allow a loaded host to reach the
+  # synchronization point, while still bounding a stalled or exited control.
+  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 3000 ] && kill -0 "$control_pid" 2>/dev/null; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
   [ -e "$dir/cwd-race-ready" ] || {
     kill "$control_pid" 2>/dev/null || true
     wait "$control_pid" 2>/dev/null || true
-    fail "relaunch did not reach its pre-publication endpoint check"
+    fail "relaunch did not reach its pre-publication endpoint check"$'\n'"$(cat "$dir/control.out")"
   }
   link_out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
     "$X_LINK" rl30 request-30 --carry-count 2 --carry-ts 1700000000 \
@@ -2366,6 +2368,9 @@ test_herdr_rebind_stays_in_the_recorded_session() {
   expect_code 0 "$rc" "a herdr pane that did not survive its server should be rebound"$'\n'"$out"$'\n'"$log"
 
   assert_contains "$log" "tab create" "a destroyed pane must be replaced by a fresh tab"
+  assert_contains "$log" "tab create --workspace wsnew" "a replacement worker must use its newly created workspace"
+  [ "$(meta_field "$dir" rl73 herdr_workspace_id)" = wsnew ] \
+    || fail "the rebound worker must record its own new workspace"
   [ -z "$(grep -v -- '--session fmlab$' <<<"$log" | grep -v '^status --json$' || true)" ] \
     || fail "the rebind used a herdr session the record does not name: $log"
   [ "$(meta_field "$dir" rl73 herdr_session)" = fmlab ] \
@@ -2501,8 +2506,8 @@ test_herdr_rebind_failure_from_a_plain_shell_names_the_real_cause() {
   # No HERDR_* env at all, which is how an operator reclaims from ssh or cron.
   # The adapter's ambient session then reads `default` while the record names
   # `fmlab`, but the cross-session launcher guard was never consulted - this
-  # seat claims no launcher pane, so placement fell back to the recorded
-  # session's labeled container and the container failed for its own reason.
+  # seat claims no launcher pane, so placement tried a new task workspace in
+  # the recorded session and the create failed for its own reason.
   herdr_case_or_skip gone-herdr-plain rl77 fmlab '%none' || {
     echo "skip - herdr reclaim needs jq (the herdr adapter parses JSON with it)"
     return 0

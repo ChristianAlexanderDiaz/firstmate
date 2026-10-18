@@ -4,27 +4,23 @@
 # Design: data/fm-backend-design-d7/herdr-addendum.md ("Interface mapping",
 # decisions D1-D6) and the empirical verification recorded in
 # data/fm-backend-design-d7/herdr-verification-p2.md (real herdr v0.7.1,
-# protocol 14, macOS aarch64), refined by docs/herdr-backend.md's
-# "workspace-per-home" pass (AGENTS.md task herdr-sm-spaces-k4). Herdr is a
+# protocol 14, macOS aarch64). docs/herdr-backend.md owns current placement. Herdr is a
 # session provider ONLY (D3): the worktree provider stays treehouse, exactly
 # like tmux. Sourced only through bin/fm-backend.sh's fm_backend_source in
 # normal operation; the unit tests source it directly, so the FM_HOME fallback
 # below keeps that path sane without fm-backend.sh's preamble.
 #
-# Default container shape (D4, decided empirically - see
-# herdr-verification-p2.md "Task container shape", refined by
-# docs/herdr-backend.md "Default task container shape"): ONE herdr workspace PER
-# FIRSTMATE HOME (the primary, and each secondmate, gets its own), ONE herdr TAB
-# per task inside its home's workspace. The default-on presentation projection
-# creates a disposable workspace for a clean fresh task instead unless the home
-# opts out. That
+# Default container shape (docs/herdr-backend.md): ONE herdr workspace PER
+# FIRSTMATE HOME for its supervisor, and a separate workspace for EVERY worker.
+# The default-on presentation projection adds grouping and restart bindings
+# to a clean fresh task's disposable workspace. That
 # workspace is a non-authoritative visual projection containing only the normal
 # task pane. Its random token and mutable label never authorize lookup,
 # adoption, reuse, closure, deletion, task ownership, or endpoint selection.
 # A version 2 journal can participate in replacing only its exact same-identity
 # endpoint after metadata, home, session, workspace, tab, pane, parent, shape,
 # focus, and agent-absence checks all agree under the session lock.
-# Every ambiguous recovered launch uses the default flat home workspace when
+# Every ambiguous recovered launch creates a separate ungrouped workspace when
 # duplicate-agent risk is independently absent.
 # Target resolution stays parallel to the tmux adapter in both layouts.
 # Projected create, move, and cleanup operations capture the named session's
@@ -1883,8 +1879,7 @@ fm_backend_herdr_workspace_find() {  # <session>
 # Returns:
 #   0 - one exact, self-consistent launcher pane/tab/workspace in <session>.
 #   2 - this process is NOT running in a herdr pane (no HERDR_PANE_ID at all),
-#       so there is no launcher workspace to inherit and the caller falls back
-#       to its per-home container. HERDR_ENV=1 on its own is only a backend
+#       so there is no launcher workspace to bind. HERDR_ENV=1 is only a backend
 #       SELECTION marker (bin/fm-backend.sh's fm_backend_detect), never a
 #       parent binding - herdr always injects the pane id alongside it.
 #   1 - a launcher pane IS claimed but its binding is missing, stale,
@@ -2043,10 +2038,9 @@ fm_backend_herdr_workspace_prune_seeded_default_tab() {  # <session> <workspace_
   fi
 }
 
-# fm_backend_herdr_workspace_ensure: the workspace this spawn's task tab
-# belongs in inside <session> - the launching agent's own exact workspace when
-# it has one, otherwise this HOME's persistent workspace, created in <cwd> if
-# absent. Must be called as a PLAIN STATEMENT, never through command
+# fm_backend_herdr_workspace_ensure: resolve a home container or create a fresh
+# task workspace inside <session>, according to <launcher-relationship> below.
+# Must be called as a PLAIN STATEMENT, never through command
 # substitution ($(...)) - it communicates through these globals, not solely
 # through stdout, and a command substitution forks a subshell that would
 # discard them:
@@ -2086,53 +2080,63 @@ fm_backend_herdr_workspace_prune_seeded_default_tab() {  # <session> <workspace_
 # attach to). --no-focus is passed unconditionally anyway, for defense in
 # depth and because it is a no-op in the already-safe case.
 #
-# <launcher-relationship> (3rd arg, default "launcher-home") says whether the
-# container being ensured belongs to the SAME firstmate home as the process
-# calling this:
-#   launcher-home - a crewmate or scout for the caller's own home. When the
-#                   caller is itself running in a herdr pane, the worker MUST
-#                   land in that exact workspace
-#                   (fm_backend_herdr_launcher_identity), never in whichever
-#                   same-labeled workspace happens to sort first.
+# <launcher-relationship> (3rd arg, default "launcher-home") selects placement:
+#   task          - a crewmate or scout gets a NEW workspace, labeled by the
+#                   required 4th arg <task-label>. Claimed launcher identity is
+#                   validated but never adopted, and labels never select an
+#                   existing workspace. A create failure refuses the spawn.
+#   launcher-home - resolve the caller's exact home workspace, for callers
+#                   explicitly requesting a shared home container.
 #   other-home    - a --secondmate launch, which stands up a DIFFERENT home's
 #                   own per-home workspace by design. The launcher's workspace
 #                   is deliberately not inherited here.
-# With no herdr ancestry at all there is no launcher workspace to inherit, so
-# the per-home label lookup below stays the resolver - but it must then resolve
+# For a home container without herdr ancestry, the per-home label lookup must resolve
 # to exactly ONE workspace. Two same-labeled home workspaces with no launcher
 # identity to disambiguate them is an unresolvable placement, and adopting
 # either one is the very defect this refuses.
 #
 # Returns 0 on success, 3 for a refusal whose exact reason is already on
 # stderr, and 1 for a failed or unparseable herdr call.
-fm_backend_herdr_workspace_ensure() {  # <session> <cwd> [<launcher-relationship>]
-  local session=$1 cwd=$2 relationship=${3:-launcher-home} wsid out label matches count status
+fm_backend_herdr_workspace_ensure() {  # <session> <cwd> [<launcher-relationship>] [<task-label>]
+  local session=$1 cwd=$2 relationship=${3:-launcher-home} task_label=${4:-} wsid out label matches count status
   FM_BACKEND_HERDR_WS_ID=""
   FM_BACKEND_HERDR_WS_SEEDED_TAB_ID=""
-  if [ "$relationship" = launcher-home ]; then
+  if [ "$relationship" = launcher-home ] || [ "$relationship" = task ]; then
     fm_backend_herdr_launcher_identity "$session" && status=0 || status=$?
     case "$status" in
       0)
-        FM_BACKEND_HERDR_WS_ID=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID
-        printf '%s' "$FM_BACKEND_HERDR_WS_ID"
-        return 0
+        if [ "$relationship" = launcher-home ]; then
+          FM_BACKEND_HERDR_WS_ID=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID
+          printf '%s' "$FM_BACKEND_HERDR_WS_ID"
+          return 0
+        fi
         ;;
       2) ;;
       *) return 3 ;;
     esac
   fi
-  label=$(fm_backend_herdr_workspace_label)
-  matches=$(fm_backend_herdr_workspace_find_all "$session")
-  count=$(printf '%s' "$matches" | grep -c '[^[:space:]]' || true)
-  if [ "$count" -gt 1 ]; then
-    echo "error: ${count} herdr workspaces in session '$session' are labeled '$label' (${matches//$'\n'/ }) and this spawn has no herdr parent pane to identify which one is its own; rename or close the extras, or run firstmate inside the workspace its workers belong in" >&2
-    return 3
-  fi
-  wsid=${matches%%$'\n'*}
-  if [ -n "$wsid" ]; then
-    FM_BACKEND_HERDR_WS_ID=$wsid
-    printf '%s' "$wsid"
-    return 0
+  if [ "$relationship" = task ]; then
+    # A fallback loses presentation grouping, never workspace isolation.
+    # Labels cannot authorize adoption, even when an old task has this label.
+    label=$task_label
+    if [ -z "$label" ]; then
+      echo "error: a separate herdr task workspace requires a task label" >&2
+      return 3
+    fi
+  else
+    label=$(fm_backend_herdr_workspace_label)
+    matches=$(fm_backend_herdr_workspace_find_all "$session")
+    count=$(printf '%s' "$matches" | grep -c '[^[:space:]]' || true)
+    if [ "$count" -gt 1 ]; then
+      echo "error: ${count} herdr workspaces in session '$session' are labeled '$label' (${matches//$'\n'/ }) and this spawn has no herdr parent pane to identify which one is its own; rename or close the extras, or run firstmate inside the workspace its workers belong in" >&2
+      return 3
+    fi
+    wsid=${matches%%$'\n'*}
+    if [ -n "$wsid" ]; then
+      FM_BACKEND_HERDR_WS_ID=$wsid
+      printf '%s' "$wsid"
+      return 0
+    fi
   fi
   out=$(fm_backend_herdr_cli "$session" workspace create --cwd "$cwd" --label "$label" --no-focus 2>/dev/null) || return 1
   wsid=$(printf '%s' "$out" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null)
@@ -2157,7 +2161,7 @@ fm_backend_herdr_workspace_ensure() {  # <session> <cwd> [<launcher-relationship
 # CONTAINER=${RAW%%$'\t'*}; SEEDED_TAB_ID=${RAW#*$'\t'}. The seeded tab id
 # must be threaded through to fm_backend_herdr_create_task, which is the only
 # function allowed to prune it (fm_backend_herdr_workspace_prune_seeded_default_tab).
-# <launcher-relationship> is passed straight through to
+# <launcher-relationship> and <task-label> are passed straight through to
 # fm_backend_herdr_workspace_ensure, which owns its meaning.
 #
 # <session> is optional and DEFAULTS to fm_backend_herdr_session, so every
@@ -2168,17 +2172,17 @@ fm_backend_herdr_workspace_ensure() {  # <session> <cwd> [<launcher-relationship
 # fm_backend_herdr_launcher_identity compares the launcher's own ambient session
 # against this one, and shadowing would make that half of its cross-session
 # guard compare the pinned value with itself and pass vacuously.
-fm_backend_herdr_container_ensure() {  # <cwd-for-a-fresh-workspace> [<launcher-relationship>] [<session>]
-  local cwd=${1:-$PWD} relationship=${2:-launcher-home} session=${3:-} label status
+fm_backend_herdr_container_ensure() {  # <cwd-for-a-fresh-workspace> [<launcher-relationship>] [<session>] [<task-label>]
+  local cwd=${1:-$PWD} relationship=${2:-launcher-home} session=${3:-} task_label=${4:-} label status
   fm_backend_herdr_version_check || return 1
   [ -n "$session" ] || session=$(fm_backend_herdr_session)
   fm_backend_herdr_server_ensure "$session" || return 1
-  fm_backend_herdr_workspace_ensure "$session" "$cwd" "$relationship" >/dev/null && status=0 || status=$?
+  fm_backend_herdr_workspace_ensure "$session" "$cwd" "$relationship" "$task_label" >/dev/null && status=0 || status=$?
   # A 3 already reported the exact placement it refused to guess at; adding the
   # generic message here would bury it.
   [ "$status" -ne 3 ] || return 1
   if [ "$status" -ne 0 ] || [ -z "$FM_BACKEND_HERDR_WS_ID" ]; then
-    label=$(fm_backend_herdr_workspace_label)
+    if [ "$relationship" = task ]; then label=$task_label; else label=$(fm_backend_herdr_workspace_label); fi
     echo "error: failed to ensure herdr workspace '$label' in session '$session'" >&2
     return 1
   fi

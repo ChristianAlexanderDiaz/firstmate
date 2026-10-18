@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Isolated real-Herdr E2E coverage for the default-on disposable single-task
-# presentation projection, its explicit opt-out, and the best-effort
+# presentation projection, its separate-workspace fallback, and the best-effort
 # presentation order across primary and secondmate homes.
 # The test drives the real spawn and teardown scripts, a real Treehouse pool,
 # and the guarded named-session lab helper.
@@ -566,14 +566,16 @@ write_ship_brief "$HOME_DIR" default-on 'Projection default-on fixture.'
 make_project "$PROJECT_DIR"
 make_project "$RECOVERY_PROJECT_DIR"
 
-# Keep one ordinary primary task live so the durable firstmate workspace is
-# first and remains present while disposable workers are projected around it.
+# Keep an explicit primary workspace and one ordinary task live while other
+# workers are projected around them. An opted-out task also owns its workspace.
+FIRSTMATE_WSID=$(lab workspace create --cwd "$PROJECT_DIR" --label firstmate --no-focus | jq -r '.result.workspace.workspace_id')
+[ -n "$FIRSTMATE_WSID" ] || fail "could not create primary workspace"
 spawn_task anchor "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/anchor.out" 2> "$TMP_ROOT/anchor.err" \
   || fail "opted-out anchor spawn failed: $(cat "$TMP_ROOT/anchor.err")"
 ANCHOR_META="$HOME_DIR/state/anchor.meta"
 remember_meta_worktree "$ANCHOR_META" >/dev/null
-FIRSTMATE_WSID=$(grep '^herdr_workspace_id=' "$ANCHOR_META" | cut -d= -f2-)
-[ -n "$FIRSTMATE_WSID" ] || fail "anchor metadata did not record the firstmate workspace"
+ANCHOR_WSID=$(grep '^herdr_workspace_id=' "$ANCHOR_META" | cut -d= -f2-)
+[ -n "$ANCHOR_WSID" ] && [ "$ANCHOR_WSID" != "$FIRSTMATE_WSID" ] || fail "opted-out anchor adopted the primary workspace"
 
 # The same task id and project run once opted out and once projected, so
 # Treehouse commands and metadata can be compared after normalizing endpoint
@@ -594,7 +596,7 @@ OFF_HERDR_CALLS=$(sed -n "$((OFF_HERDR_START + 1)),${OFF_HERDR_END}p" "$HERDR_CA
 if printf '%s\n' "$OFF_HERDR_CALLS" | grep -E $'^(api\tschema|session\tlist)' >/dev/null 2>&1; then
   fail "opted-out spawn added presentation-ordering capability or socket calls"
 fi
-pass "real Herdr lab: an opted-out spawn retains the Stage 1 Herdr command sequence with zero ordering calls"
+pass "real Herdr lab: an opted-out spawn creates a separate workspace with zero ordering calls"
 teardown_task shape "$HOME_DIR" > "$TMP_ROOT/off-teardown.out" 2> "$TMP_ROOT/off-teardown.err" \
   || fail "opted-out teardown failed: $(cat "$TMP_ROOT/off-teardown.err")"
 
@@ -634,11 +636,11 @@ if [ "$FLOOR_VERDICT" = 0 ]; then
 else
   [ ! -e "$DEFAULT_ON_JOURNAL" ] \
     || fail "an unconfigured home published a presentation journal on below-floor herdr $FLOOR_VERSION"
-  [ "$DEFAULT_ON_WSID" = "$FIRSTMATE_WSID" ] \
-    || fail "an unconfigured home did not land in the flat firstmate workspace on below-floor herdr $FLOOR_VERSION (got '${DEFAULT_ON_WSID:-<empty>}')"
+  [ -n "$DEFAULT_ON_WSID" ] && [ "$DEFAULT_ON_WSID" != "$FIRSTMATE_WSID" ] \
+    || fail "a below-floor worker must still own its workspace"
   grep -q "$FLOOR_VERSION" "$TMP_ROOT/default-on.err" \
     || fail "the below-floor fallback did not name herdr $FLOOR_VERSION: $(cat "$TMP_ROOT/default-on.err")"
-  pass "real Herdr lab: a home that configured nothing falls back flat on below-floor herdr $FLOOR_VERSION with one naming warning"
+  pass "real Herdr lab: a home that configured nothing uses a separate fallback workspace on below-floor herdr $FLOOR_VERSION"
 fi
 teardown_task default-on "$HOME_DIR" > "$TMP_ROOT/default-on-teardown.out" 2> "$TMP_ROOT/default-on-teardown.err" \
   || fail "default-on teardown failed: $(cat "$TMP_ROOT/default-on-teardown.err")"
@@ -872,12 +874,11 @@ if wait "$ABORT_A_PID"; then ABORT_A_STATUS=0; else ABORT_A_STATUS=$?; fi
 if wait "$ABORT_B_PID"; then ABORT_B_STATUS=0; else ABORT_B_STATUS=$?; fi
 finish_concurrent_expected_abort abort-a "$ABORT_A_STATUS" "$TMP_ROOT/abort-a.out" "$TMP_ROOT/abort-a.err"
 finish_concurrent_expected_abort abort-b "$ABORT_B_STATUS" "$TMP_ROOT/abort-b.out" "$TMP_ROOT/abort-b.err"
-# The forced foreground_cwd is a plain non-git directory, which the discovery
-# poll now screens out on every read rather than adopting, so the armed failure
-# arrives as the poll's own deadline refusal naming that path.
-grep -F "did not enter an isolated worktree" "$TMP_ROOT/abort-a.err" >/dev/null 2>&1 \
+# The fixture returns successfully without entering a worktree. Completion
+# itself must refuse promptly, even with exit status zero, and retain the pane.
+grep -F "treehouse get exited with status 0 before entering an isolated worktree" "$TMP_ROOT/abort-a.err" >/dev/null 2>&1 \
   || fail "post-create abort fixture A did not reach the armed validation failure"
-grep -F "did not enter an isolated worktree" "$TMP_ROOT/abort-b.err" >/dev/null 2>&1 \
+grep -F "treehouse get exited with status 0 before entering an isolated worktree" "$TMP_ROOT/abort-b.err" >/dev/null 2>&1 \
   || fail "post-create abort fixture B did not reach the armed validation failure"
 ABORT_A_PANE=$(cat "$POST_CREATE_ABORT_CONTROL/abort-a/task-pane")
 ABORT_B_PANE=$(cat "$POST_CREATE_ABORT_CONTROL/abort-b/task-pane")
@@ -888,8 +889,8 @@ ABORT_SEQUENCE=$(sed -n "$((ABORT_FOCUS_START + 1)),\$p" "$FOCUS_AUDIT_LOG" | aw
   $1 == "pane-close" && $4 == b { print "close-b" }
 ')
 case "$ABORT_SEQUENCE" in
-  $'create-a\nclose-a\ncreate-b\nclose-b'|$'create-b\nclose-b\ncreate-a\nclose-a') ;;
-  *) fail "concurrent post-create abort cleanup interleaved outside the presentation lock: $ABORT_SEQUENCE" ;;
+  $'create-a\ncreate-b'|$'create-b\ncreate-a') ;;
+  *) fail "acquisition failure closed a diagnostic pane or interleaved creates: $ABORT_SEQUENCE" ;;
 esac
 ABORT_UNRESTORED=$(sed -n "$((ABORT_FOCUS_START + 1)),\$p" "$FOCUS_AUDIT_LOG" | awk -F '\t' -v a="$ABORT_A_PANE" -v b="$ABORT_B_PANE" '
   ($1 == "workspace-create" || $1 == "tab-create" || $1 == "workspace-move" || ($1 == "pane-close" && $4 != a && $4 != b)) && $2 != $3 { print }
@@ -897,19 +898,18 @@ ABORT_UNRESTORED=$(sed -n "$((ABORT_FOCUS_START + 1)),\$p" "$FOCUS_AUDIT_LOG" | 
 [ -z "$ABORT_UNRESTORED" ] \
   || fail "post-create abort create, prune, or move changed exact focus: $ABORT_UNRESTORED"
 assert_focus_is "$CAPTAIN_FOCUS" "concurrent post-create abort cleanup"
-assert_cleanup_focus_preserved "$ABORT_FOCUS_START" "$ABORT_A_PANE" "$CAPTAIN_FOCUS"
-assert_cleanup_focus_preserved "$ABORT_FOCUS_START" "$ABORT_B_PANE" "$CAPTAIN_FOCUS"
 assert_no_ordering_lifecycle_calls_since "$ABORT_START" "concurrent post-create abort cleanup"
 for ABORT_PANE in "$ABORT_A_PANE" "$ABORT_B_PANE"; do
-  if lab pane get "$ABORT_PANE" >/dev/null 2>&1; then
-    fail "serialized post-create abort cleanup left exact task pane $ABORT_PANE alive"
-  fi
+  lab pane get "$ABORT_PANE" >/dev/null 2>&1 \
+    || fail "acquisition failure closed diagnostic pane $ABORT_PANE"
+  lab pane close "$ABORT_PANE" >/dev/null || fail "fixture could not close its retained diagnostic pane"
 done
 [ ! -e "$HOME_DIR/state/abort-a.meta" ] && [ ! -e "$HOME_DIR/state/abort-b.meta" ] \
   || fail "post-create abort fixtures published task metadata before launch"
 rm -rf "$POST_CREATE_ABORT_CONTROL"
 rm -f "$HOME_DIR/state/abort-a.herdr-presentation" "$HOME_DIR/state/abort-b.herdr-presentation"
-pass "real Herdr lab: concurrent post-create abort cleanup stays serialized with exact focus restoration"
+lab tab focus "$SECOND_TWO_TAB" >/dev/null || fail "could not restore focus after diagnostic fixture cleanup"
+pass "real Herdr lab: acquisition failures preserve both diagnostic panes without changing focus"
 
 SHAPE_CLEANUP_AUDIT_START=$(focus_audit_line_count)
 teardown_task shape "$HOME_DIR" > "$TMP_ROOT/on-teardown.out" 2> "$TMP_ROOT/on-teardown.err" \
