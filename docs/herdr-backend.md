@@ -505,6 +505,23 @@ Any of these preserves the candidate and lets session startup continue with at m
 [`verification/runtime-backends.md`](verification/runtime-backends.md#workspace-removal-focus-safety) owns the active versioned evidence for the focus-flash test.
 [`verification/runtime-backends.md`](verification/runtime-backends.md#attached-foreground-viewer) owns the active versioned evidence and the re-run trigger for the attached-viewer test.
 
+## Live no-mistakes pane
+
+While a ship has an attributed no-mistakes run, the existing watcher opens its live attach view in the same task tab as the chat.
+The view is named `no-mistakes` and runs in the task worktree.
+The default places chat above the view; a sufficiently wide pane can place it to the right.
+The layout is selected when the pane opens, without moving focus.
+
+The viewer has its own presentation record and never replaces the chat endpoint used for steering, capture, or liveness.
+Repeated observations of the same run do not open another viewer.
+A terminal run closes the viewer; a replacement run opens its own view.
+A relaunched chat closes any viewer left beside its earlier pane, and task teardown closes the remaining viewer.
+An unreadable run or pane preserves the current view until supervision can verify it again.
+Other runtime backends are unaffected.
+
+[`bin/fm-nm-review-pane.sh`](../bin/fm-nm-review-pane.sh) owns the record, exact layout threshold, reconciliation entry points, and cleanup mechanics.
+[`Runtime verification`](verification/runtime-backends.md#no-mistakes-pane-lifecycle) records the portable regression and live verification limits.
+
 ## Default-tab prune safety
 
 `herdr workspace create` seeds one default tab.

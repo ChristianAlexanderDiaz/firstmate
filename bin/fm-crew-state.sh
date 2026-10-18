@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # fm-crew-state.sh - deterministic read of a crew's CURRENT state.
+# Usage: fm-crew-state.sh <id> [--sync-review-pane]
 #
 # Why this exists: state/<id>.status is an append-only, best-effort EVENT LOG.
 # Crews append only wake-worthy transitions (done/needs-decision/blocked/paused/failed)
@@ -158,7 +159,8 @@
 #      classified by step 4. Backends with no classifier keep reading a failed
 #      capture as gone. The fallback's own comment owns the per-verdict rules.
 #
-# Read-only and side-effect free. Always exits 0 on a successful read regardless
+# Read-only unless --sync-review-pane explicitly requests Herdr presentation
+# reconciliation through bin/fm-nm-review-pane.sh. Always exits 0 on a read regardless
 # of state; exit 2 only on a usage error (no id).
 set -u
 
@@ -185,6 +187,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-dod-lib.sh"
 
 ID=${1:-}
+SYNC_REVIEW_PANE=${2:-}
+case "$SYNC_REVIEW_PANE" in ''|--sync-review-pane) ;; *) echo "usage: fm-crew-state.sh <id> [--sync-review-pane]" >&2; exit 2 ;; esac
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
 
 # Fleet snapshot composition supplies its captured metadata path here so every
@@ -207,8 +211,37 @@ SEP=' · '
 emit() {  # <state> <source> [detail]
   local line="state: $1${SEP}source: $2"
   [ -n "${3:-}" ] && line="$line${SEP}$3"
+  # Presentation is explicitly requested by the watcher, never by normal
+  # snapshots. Its failure must not change the authoritative state verdict.
+  if [ "$SYNC_REVIEW_PANE" = --sync-review-pane ] && [ "${TASK_BACKEND:-}" = herdr ]; then
+    reconcile_review_pane || echo "warning: no-mistakes pane reconciliation for $ID failed; supervision will retry" >&2
+  fi
   printf '%s\n' "$line"
   exit 0
+}
+
+reconcile_review_pane() {
+  local run phase=terminal status outcome
+  [ -n "${RUN_OUT:-}" ] || return 0
+  run=$(fm_nm_strip_quotes "$(fm_nm_field "$RUN_OUT" id)")
+  [ -n "$run" ] || return 0
+  if [ "${HAVE_RUN:-0}" = 1 ] && [ "${RUN_SOURCE:-}" = full ] && [ -z "${RUN_DEAD_DAEMON:-}" ]; then
+    fm_nm_run_is_active "$RUN_OUT" && phase=active
+  else
+    # The pipeline may have advanced the code beyond this checkout. A run
+    # previously displayed here can still be closed by its exact terminal
+    # identity; head mismatch must not strand that viewer after completion.
+    [ "$(fm_meta_get "$STATE/$ID.nm-review-pane" run)" = "$run" ] || return 0
+    status=$(fm_nm_strip_quotes "$(fm_nm_field "$RUN_OUT" status)")
+    outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$RUN_OUT" outcome)")
+    case "$status:$outcome" in
+      completed:*|failed:*|cancelled:*|*:passed|*:passed-with-override|*:passed-with-skips|*:checks-passed|*:failed|*:cancelled) ;;
+      *) return 0 ;;
+    esac
+  fi
+  # shellcheck source=bin/fm-nm-review-pane.sh
+  . "$SCRIPT_DIR/fm-nm-review-pane.sh"
+  fm_nm_review_pane_sync "$META" "$STATE" "$ID" "$run" "$phase"
 }
 
 # --- meta resolution --------------------------------------------------------

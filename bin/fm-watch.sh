@@ -2602,6 +2602,36 @@ home_summary_refresh_detached() {
   HOME_SUMMARY_PID=$!
 }
 
+# Port of the upstream review-pane tick. The existing watcher owns this bounded
+# child sweep; crew-state owns run attribution and the pane helper owns mutation.
+NM_REVIEW_PANE_PID=
+nm_review_pane_tick() {
+  local meta id
+  local metas=()
+  [ "$(age_of "$STATE/.last-nm-review-pane")" -ge 20 ] || return 0
+  if [ -n "$NM_REVIEW_PANE_PID" ]; then
+    kill -0 "$NM_REVIEW_PANE_PID" 2>/dev/null && return 0
+    wait "$NM_REVIEW_PANE_PID" 2>/dev/null || true
+    NM_REVIEW_PANE_PID=
+  fi
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    grep -q '^backend=herdr$' "$meta" || continue
+    grep -q '^kind=ship$' "$meta" || continue
+    metas+=("$meta")
+  done
+  [ "${#metas[@]}" -gt 0 ] || return 0
+  touch "$STATE/.last-nm-review-pane"
+  (
+    for meta in "${metas[@]}"; do
+      id=$(basename "$meta" .meta)
+      FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+        "$SCRIPT_DIR/fm-nm-review-pane.sh" "$id" || true
+    done
+  ) </dev/null >/dev/null 2>"$STATE/.nm-review-pane.log" &
+  NM_REVIEW_PANE_PID=$!
+}
+
 RECONCILE_REQUEST_PID=
 reconcile_requests_pending() {
   local request
@@ -2787,6 +2817,8 @@ while :; do
   if [ "$(age_of "$STATE/home-summary.json")" -ge "$HOME_SUMMARY_INTERVAL" ]; then
     home_summary_refresh_detached
   fi
+
+  nm_review_pane_tick
 
   # Bearings publishes reconcile asks as local one-shot request files and
   # returns before any mate delivery. Supervision owns their later delivery;
