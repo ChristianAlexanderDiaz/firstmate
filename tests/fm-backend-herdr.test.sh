@@ -5006,50 +5006,66 @@ test_dispatch_short_and_long_operational_digests() {
 # Twelve buffered events reproduce the pause-recheck batch size. Claude's
 # existing record carrier must keep the entire batch out of the composer;
 # a damaged doorbell must still fail without acknowledging any event.
+# "pinned" is the separate-terminal launch (bin/fm-afk-launch.sh names the
+# harness); "detected" is the Claude-native /afk start, which leaves
+# FM_DAEMON_PRIMARY_HARNESS unset and resolves the primary through
+# bin/fm-harness.sh from the CLAUDECODE=1 marker its Bash tool exports, with
+# ancestry blinded so the suite's own launching harness cannot decide.
 test_daemon_long_digest_herdr_record_delivery_and_retry() {
-  local mode dir fb
-  for mode in exact tail paste-tail; do
-    dir="$TMP_ROOT/digest-daemon-$mode"
-    fb=$(make_herdr_digest_fakebin "$dir")
-    printf '%s\n' "$mode" > "$dir/mode"
-    PATH="$fb:$PATH" FM_HERDR_DIGEST_CASE="$dir" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" \
-      FM_DAEMON_PRIMARY_HARNESS=claude FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET=digest-fixture:w1:p2 \
-      FM_INJECT_CONFIRM_SLEEP=0.01 FM_BACKEND_HERDR_SUBMIT_POLLS=1 bash -c '
-        . "$0/bin/fm-supervise-daemon.sh"
-        state="$FM_STATE_OVERRIDE"
-        afk_enter "$state"
-        for i in $(seq 1 12); do
-          escalate_add "$state" "task-$i.status: paused: waiting for validation completion; retain this event in the pause recheck digest"
-        done
-        cp "$state/.subsuper-escalations" "$FM_HOME/before"
-        mode=$(cat "$FM_HOME/mode")
-        if [ "$mode" != exact ]; then
-          if escalate_flush "$state"; then echo "damaged doorbell was reported delivered" >&2; exit 1; fi
-          cmp -s "$FM_HOME/before" "$state/.subsuper-escalations" || exit 2
-          [ -f "$state/.subsuper-escalations.since" ] || exit 3
-          [ ! -s "$FM_HOME/submitted" ] && [ ! -s "$FM_HOME/composer" ] || exit 4
-          case "$INJECT_LAST_FAILURE" in *verdict=send-failed*) ;; *) exit 5 ;; esac
-          # Read what the stub actually displayed, not just its mode switch.
-          observed=$(cat "$FM_HOME/observed")
-          case "$mode" in paste-tail) case "$observed" in "[Pasted text #1]"*) ;; *) exit 6 ;; esac ;; esac
-          should_exit_afk "$state" "$observed" || exit 7
-          printf "exact\n" > "$FM_HOME/mode"
-        fi
-        escalate_flush "$state" || exit 8
-        [ ! -s "$state/.subsuper-escalations" ] && [ ! -e "$state/.subsuper-escalations.since" ] || exit 9
-        [ "$(wc -l < "$FM_HOME/submitted")" -eq 1 ] || exit 10
-        doorbell=$(cat "$FM_HOME/submitted")
-        fm_operational_doorbell_path "$doorbell" record || exit 11
-        expected="Supervisor escalate (12 event(s)): "
-        sep=
-        while IFS= read -r item; do expected+="$sep$item"; sep=" | "; done < "$FM_HOME/before"
-        expected+=" (pre-read; re-arm not needed — watcher daemon-managed)"
-        fm_operational_input_encode away-supervisor "$expected" encoded || exit 12
-        [ "$(cat "$record")" = "$encoded" ] || exit 13
-        [ "${#encoded}" -gt 1000 ] && [ "${#doorbell}" -lt "${#encoded}" ] || exit 14
-        if should_exit_afk "$state" "$doorbell"; then exit 15; fi
-        afk_active "$state" || exit 16
-      ' "$ROOT" || fail "daemon Herdr long-digest $mode delivery/retention regression failed"
+  local ident mode dir fb
+  local -a identify
+  for ident in pinned detected; do
+    for mode in exact tail paste-tail; do
+      dir="$TMP_ROOT/digest-daemon-$ident-$mode"
+      fb=$(make_herdr_digest_fakebin "$dir")
+      printf '%s\n' "$mode" > "$dir/mode"
+      if [ "$ident" = pinned ]; then
+        identify=(FM_DAEMON_PRIMARY_HARNESS=claude)
+      else
+        fm_fake_blind_ancestry "$fb"
+        identify=(-u FM_DAEMON_PRIMARY_HARNESS -u FM_SUPERVISION_ACTOR -u CURSOR_AGENT -u CURSOR_INVOKED_AS
+          -u GEMINI_CLI -u ATLASSIAN_AGENT_TYPE -u ROVODEV_CLI -u FM_OMP_HARNESS -u PI_CODING_AGENT -u GROK_AGENT
+          CLAUDECODE=1)
+      fi
+      env "${identify[@]}" PATH="$fb:$PATH" FM_HERDR_DIGEST_CASE="$dir" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" \
+        FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET=digest-fixture:w1:p2 \
+        FM_INJECT_CONFIRM_SLEEP=0.01 FM_BACKEND_HERDR_SUBMIT_POLLS=1 bash -c '
+          . "$0/bin/fm-supervise-daemon.sh"
+          state="$FM_STATE_OVERRIDE"
+          afk_enter "$state"
+          for i in $(seq 1 12); do
+            escalate_add "$state" "task-$i.status: paused: waiting for validation completion; retain this event in the pause recheck digest"
+          done
+          cp "$state/.subsuper-escalations" "$FM_HOME/before"
+          mode=$(cat "$FM_HOME/mode")
+          if [ "$mode" != exact ]; then
+            if escalate_flush "$state"; then echo "damaged doorbell was reported delivered" >&2; exit 1; fi
+            cmp -s "$FM_HOME/before" "$state/.subsuper-escalations" || exit 2
+            [ -f "$state/.subsuper-escalations.since" ] || exit 3
+            [ ! -s "$FM_HOME/submitted" ] && [ ! -s "$FM_HOME/composer" ] || exit 4
+            case "$INJECT_LAST_FAILURE" in *verdict=send-failed*) ;; *) exit 5 ;; esac
+            # Read what the stub actually displayed, not just its mode switch.
+            observed=$(cat "$FM_HOME/observed")
+            case "$mode" in paste-tail) case "$observed" in "[Pasted text #1]"*) ;; *) exit 6 ;; esac ;; esac
+            should_exit_afk "$state" "$observed" || exit 7
+            printf "exact\n" > "$FM_HOME/mode"
+          fi
+          escalate_flush "$state" || exit 8
+          [ ! -s "$state/.subsuper-escalations" ] && [ ! -e "$state/.subsuper-escalations.since" ] || exit 9
+          [ "$(wc -l < "$FM_HOME/submitted")" -eq 1 ] || exit 10
+          doorbell=$(cat "$FM_HOME/submitted")
+          fm_operational_doorbell_path "$doorbell" record || exit 11
+          expected="Supervisor escalate (12 event(s)): "
+          sep=
+          while IFS= read -r item; do expected+="$sep$item"; sep=" | "; done < "$FM_HOME/before"
+          expected+=" (pre-read; re-arm not needed — watcher daemon-managed)"
+          fm_operational_input_encode away-supervisor "$expected" encoded || exit 12
+          [ "$(cat "$record")" = "$encoded" ] || exit 13
+          [ "${#encoded}" -gt 1000 ] && [ "${#doorbell}" -lt "${#encoded}" ] || exit 14
+          if should_exit_afk "$state" "$doorbell"; then exit 15; fi
+          afk_active "$state" || exit 16
+        ' "$ROOT" || fail "daemon Herdr long-digest $ident/$mode delivery/retention regression failed"
+    done
   done
   pass "daemon Herdr: long digest survives in a marked record; damaged doorbells retain all events until a safe retry"
 }
