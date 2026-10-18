@@ -90,7 +90,8 @@
 #                                   override; otherwise auto-discovered the same
 #                                   way bin/fm-backend.sh's fm_backend_detect
 #                                   resolves the runtime firstmate itself is
-#                                   executing inside - $TMUX_PANE selects tmux,
+#                                   executing inside - $TMUX_PANE selects tmux
+#                                   unless it is stale under herdr,
 #                                   $HERDR_ENV=1 selects herdr - falling back to
 #                                   tmux). zellij, orca, and cmux are not yet
 #                                   supported as supervisor backends; the daemon
@@ -1789,7 +1790,7 @@ fm_super_main() {
   fi
 
   # --- auto-discover the supervisor BACKEND (tmux vs herdr) first -----------
-  # Priority: FM_SUPERVISOR_BACKEND override > $TMUX_PANE (tmux) > $HERDR_ENV=1
+  # Priority: FM_SUPERVISOR_BACKEND override > live $TMUX_PANE (tmux) > $HERDR_ENV=1
   # (herdr) > tmux fallback. Resolved before the target below, since target
   # discovery composes a herdr "<session>:<pane-id>" string using the same
   # $HERDR_PANE_ID/$HERDR_SESSION markers this checks. Exporting the result
@@ -1799,7 +1800,7 @@ fm_super_main() {
   local discovered_backend backend_source
   backend_source="FM_SUPERVISOR_BACKEND"
   if [ -z "${FM_SUPERVISOR_BACKEND:-}" ]; then
-    if [ -n "${TMUX_PANE:-}" ]; then
+    if [ -n "${TMUX_PANE:-}" ] && ! fm_backend_tmux_env_masked_by_herdr; then
       backend_source="TMUX_PANE"
     elif [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
       backend_source="HERDR_ENV"
@@ -1825,7 +1826,7 @@ fm_super_main() {
   fi
 
   # --- auto-discover the supervisor target (the pane running firstmate) -----
-  # Priority: FM_SUPERVISOR_TARGET override > $TMUX_PANE (tmux; inherited from
+  # Priority: FM_SUPERVISOR_TARGET override > live $TMUX_PANE (tmux; inherited from
   # the pane that launched the daemon, normally firstmate's own) >
   # $HERDR_PANE_ID (herdr, composed into "<session>:<pane-id>") > firstmate:0
   # fallback. Exporting the result into FM_SUPERVISOR_TARGET makes inject_msg
@@ -1833,7 +1834,7 @@ fm_super_main() {
   local discovered target_source
   target_source="FM_SUPERVISOR_TARGET"
   if [ -z "${FM_SUPERVISOR_TARGET:-}" ]; then
-    if [ -n "${TMUX_PANE:-}" ]; then
+    if [ -n "${TMUX_PANE:-}" ] && ! fm_backend_tmux_env_masked_by_herdr; then
       target_source="TMUX_PANE"
     elif [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
       target_source="HERDR_ENV(HERDR_PANE_ID)"
