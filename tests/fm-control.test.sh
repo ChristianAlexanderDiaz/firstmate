@@ -77,11 +77,12 @@ verified_adapter_contract() {  # <harness> -> exit command, interrupt key, repea
 #            last Escape was a moment ago) ->picker, and picker->idle unless
 #            FM_FAKE_DEVIN_PICKER_STUCK is set. Real sleeps apply while it
 #            exists, so key-times carry the true gap between presses.
-# Two transitions make it a lifecycle model rather than a recorder: a literal
+# These transitions make it a lifecycle model rather than a recorder: a literal
 # that is the harness's exit command flips `command` to a shell (the agent
 # stopped), and a literal carrying a launch brief flips it to the value in
 # `becomes` (a new agent came up). FM_FAKE_NEVER_DIES suppresses the first, so
-# a stubborn agent can be tested too.
+# a stubborn agent can be tested too. With confirm-exit set, the second Enter
+# stops the agent even when the literal exit command leaves it alive.
 make_tmux_stub() {  # <dir> -> echoes fakebin dir
   local dir=$1 fb="$1/fakebin"
   mkdir -p "$fb"
