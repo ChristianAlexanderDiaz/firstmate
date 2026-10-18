@@ -8,9 +8,10 @@
 #
 # on atomically publishes state/.sleep before any interrupt or propagation.
 # Repeating on retries propagation and interruption without replacing entry time.
-# Every registered secondmate receives the same operation: local homes run this
-# executable with isolated home paths; remote homes use fm-on.sh. Failures retain
-# the local hold and return nonzero with named errors, never a success claim.
+# Every registered secondmate receives the same on/off operation: local homes run
+# this executable with isolated home paths; remote homes use fm-on.sh. Entry
+# failures retain the local hold and return nonzero with named errors, never a
+# success claim.
 # Every recorded live endpoint is interrupted through fm-control.sh, including
 # local secondmates and a remote home's own state/parent-route endpoint. No
 # process-name sweep, teardown, exit, worktree operation, or session deletion runs.
