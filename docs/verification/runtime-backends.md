@@ -1470,24 +1470,51 @@ HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
   tests/fm-backend-herdr-launcher-workspace-e2e.test.sh
 ```
 
-Observed guarantees on 2026-07-30 against Herdr 0.7.5 protocol 17:
-
-```text
-ok - real herdr E2E: with one 'firstmate' workspace and no herdr parent, a crewmate still lands in this home's own workspace without stealing focus
-ok - real herdr E2E: the normal unique-label path is unchanged when the launcher's own pane identifies the workspace
-ok - real herdr E2E: presentation spaces still create the isolated child workspace and bind it under the launcher's exact parent, without stealing focus
-ok - real herdr E2E: with two 'firstmate' workspaces, a worker spawned from inside the second one lands in that exact workspace
-ok - real herdr E2E: the duplicate-labeled sibling workspace is left entirely untouched and focus is preserved
-ok - real herdr E2E: with a duplicated home label, a projected worker still hangs off the launcher's exact workspace and the sibling stays untouched
-ok - real herdr E2E: an ambiguous home label with no launcher identity refuses before any worker endpoint exists
-ok - real herdr E2E: a launcher pane that no longer exists refuses before any worker endpoint exists
-ok - real herdr E2E: a secondmate launching its own worker gets the same exact-workspace guarantee, and its same-labeled sibling is untouched
-ok - real herdr E2E: a --secondmate launch still stands up that secondmate's own workspace instead of inheriting the launcher's
-ok - real herdr E2E: teardown closes only the worker's own pane and leaves the launcher, its workspace, and the same-labeled sibling intact
-```
+The suite requires each worker, including one launched without presentation, to occupy a separate workspace while preserving the launcher's tabs and focus.
+The injection observations above establish parent identity; they do not verify the current fallback placement against a live Herdr server.
+The portable fallback checks below cover the changed placement protocol without starting a server.
 
 That suite's headline case runs `bin/fm-spawn.sh` inside a real Herdr pane, so the parent identity comes from Herdr's own injection rather than a composed environment.
 Cross-session and contradictory bindings are covered deterministically in `tests/fm-backend-herdr.test.sh`, which can script a second server's socket without provisioning one.
+
+### Allocation errors and unprojected worker workspaces
+
+Verified on 2026-10-18 with Bash 5.2.21, tmux 3.4, Python 3.12.3, and jq 1.7 on Linux.
+The portable allocation cases run real shell commands on a private tmux socket behind a recording Herdr protocol stub.
+They exercise projection disabled, stale journal fallback, and projected creation followed by an allocation failure.
+Two more projected cases reach the 60-second deadline, one with allocation still running and one with a Treehouse subshell already open; both require the kept pane to receive Ctrl-C and no slot to stay held.
+The stub never starts or inspects a real Herdr session.
+
+The targeted invocation, with `PROOF` naming a caller-owned evidence directory, is:
+
+```sh
+bash bin/fm-test-run.sh --jobs 1 --json "$PROOF/targeted-tests.json" \
+  tests/fm-spawn-worktree-settle.test.sh \
+  tests/fm-backend-herdr.test.sh \
+  tests/fm-spawn-pool-base-freshen.test.sh \
+  tests/fm-control-relaunch.test.sh \
+  tests/fm-tangle-guard.test.sh \
+  tests/fm-backlog-atomicity.test.sh
+```
+
+Observed output for the new regressions:
+
+```text
+ok - Treehouse failure (off, full pool): prompt error, separate workspace, retained pane and log
+ok - Treehouse failure (stale, full pool): prompt error, separate workspace, retained pane and log
+ok - Treehouse failure (projected, full pool): prompt error, separate workspace, retained pane and log
+ok - Treehouse failure (projected, free pool): prompt error, separate workspace, retained pane and log
+ok - Treehouse deadline (allocating): allocation interrupted, no slot held, pane retained
+ok - Treehouse deadline (entered): allocation interrupted, no slot held, pane retained
+ok - non-projected worker creates a fresh sidebar workspace despite matching existing labels
+ok - worker workspace create failure refuses without falling back to a shared tab
+```
+
+Pool exhaustion is named when a non-zero allocation exit accompanies Treehouse's `in use or dirty (max_trees = N)` refusal or its `in use, dirty, or not provably this clone's` variant.
+`treehouse status --json` only adds the count of available-looking slots Treehouse would not reuse; it never vetoes the label.
+That status output and refusal wording were read in the Treehouse v3.1.0 and v3.1.4 sources (`cmd/status.go`, `internal/pool/pool.go`), not probed locally.
+A separate throwaway-repository probe against Treehouse v2.3.0, below the supported 3.1.0 floor, showed that exhaustion returns status 1 immediately, while raising only pool capacity permits a stacked spawn whose base branch is checked out in another slot.
+The tests establish Firstmate's placement calls and failure handling; live Herdr focus and rendering still require the guarded lab suites above.
 
 ### Per-home and presentation topology
 
@@ -1498,7 +1525,8 @@ HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
   tests/fm-backend-herdr-workspace-per-home-e2e.test.sh
 ```
 
-Observed guarantee: the primary and secondmate used distinct home workspaces, a child launched by the secondmate stayed in that secondmate workspace, list-live remained home-scoped, and exact cleanup did not affect sibling homes.
+The suite checks distinct supervisor containers, separate worker workspaces, home-scoped legacy orphan discovery, and exact cleanup without affecting sibling homes.
+Refresh the placement suites in a guarded Herdr lab before claiming live-server verification of fallback placement.
 
 The complete projection suite ran on 2026-07-21 against Herdr 0.7.4 protocol 16:
 

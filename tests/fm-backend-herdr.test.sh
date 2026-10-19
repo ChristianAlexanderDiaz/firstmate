@@ -1183,6 +1183,43 @@ test_container_ensure_refuses_an_ambiguous_home_label() {
   pass "fm_backend_herdr_container_ensure: surfaces the exact ambiguous-placement refusal instead of a generic failure"
 }
 
+# A non-projected worker still needs a fresh sidebar workspace. Existing home
+# and same-task labels are not authority to put a new worker into their tabs.
+test_task_container_always_creates_own_workspace() {
+  local dir fb out first second
+  dir="$TMP_ROOT/task-container"; mkdir -p "$dir"
+  fb=$(make_herdr_statefake "$dir")
+  export FM_HERDR_LOG="$dir/log" FM_FAKE_HERDR_STATE="$dir/state.json"
+  first=$(PATH="$fb:$PATH" herdr workspace create --label firstmate | jq -r '.result.workspace.workspace_id')
+  second=$(PATH="$fb:$PATH" herdr workspace create --label fm-task | jq -r '.result.workspace.workspace_id')
+  out=$(PATH="$fb:$PATH" HERDR_SESSION=fmtest bash -c '
+    . "$0/bin/backends/herdr.sh"
+    fm_backend_herdr_container_ensure /tmp task fmtest fm-task
+  ' "$ROOT") || fail "dedicated task workspace create failed"
+  assert_not_contains "$out" "fmtest:$first" "worker adopted the home workspace"
+  assert_not_contains "$out" "fmtest:$second" "worker adopted an existing task workspace by label"
+  assert_equals 3 "$(jq '.workspaces | length' "$dir/state.json")" "worker did not create a separate workspace"
+  assert_grep $'workspace\x1fcreate\x1f--cwd\x1f/tmp\x1f--label\x1ffm-task\x1f--no-focus' "$dir/log" "worker create must not take focus"
+  pass "non-projected worker creates a fresh sidebar workspace despite matching existing labels"
+}
+
+test_task_container_create_failure_refuses() {
+  local dir fb out status
+  dir="$TMP_ROOT/task-container-failure"; mkdir -p "$dir/responses"
+  printf '1\n' > "$dir/responses/1.exit"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$(PATH="$fb:$PATH" HERDR_SESSION=fmtest FM_HERDR_LOG="$dir/log" \
+    FM_HERDR_RESPONSES="$dir/responses" bash -c '
+      . "$0/bin/backends/herdr.sh"
+      fm_backend_herdr_container_ensure /tmp task fmtest fm-task
+    ' "$ROOT" 2>&1); status=$?
+  [ "$status" -ne 0 ] || fail "worker workspace creation failure must refuse"
+  assert_contains "$out" "failed to ensure herdr workspace 'fm-task'" "create failure must identify the refused task workspace"
+  assert_no_grep $'workspace\x1flist' "$dir/log" "create failure must not seek a shared workspace fallback"
+  assert_no_grep $'tab\x1fcreate' "$dir/log" "create failure must not place a worker tab elsewhere"
+  pass "worker workspace create failure refuses without falling back to a shared tab"
+}
+
 # --- container_ensure / create_task ------------------------------------------
 
 test_container_ensure_starts_server_and_workspace() {
@@ -6102,6 +6139,8 @@ test_workspace_ensure_prefers_the_launcher_over_the_first_label_match
 test_workspace_ensure_refuses_an_ambiguous_label_with_no_launcher
 test_workspace_ensure_other_home_ignores_the_launcher_identity
 test_container_ensure_refuses_an_ambiguous_home_label
+test_task_container_always_creates_own_workspace
+test_task_container_create_failure_refuses
 test_container_ensure_starts_server_and_workspace
 test_server_ensure_scrubs_home_and_harness_identity
 test_container_ensure_reuses_existing_workspace

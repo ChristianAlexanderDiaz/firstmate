@@ -118,15 +118,12 @@
 #   A backend spawn refusal (missing dependency, version gate, unauthenticated
 #   socket, or unsupported secondmate mode) is terminal for that selected backend;
 #   callers must surface it instead of silently retrying another backend.
-#   A herdr crewmate or scout is placed in the exact workspace of the firstmate
-#   or secondmate process launching it, resolved from that process's own herdr
-#   pane rather than from a workspace label (herdr enforces no label uniqueness,
-#   so a label cannot tell two "firstmate" workspaces apart). A claimed parent
+#   Every herdr crewmate or scout gets its own workspace, including when
+#   presentation grouping is disabled or unavailable. No fallback adopts the
+#   launcher's workspace or a same-labeled workspace. A claimed parent
 #   identity that is unreadable, contradictory, stale, or from another herdr
-#   session stops the spawn before any worker endpoint exists. A launcher
-#   outside herdr has no workspace to inherit and uses this home's own labeled
-#   workspace, which must then match exactly one. --secondmate is the deliberate
-#   exception: it stands up that secondmate home's own workspace.
+#   session stops the spawn before any worker endpoint exists. --secondmate
+#   stands up that secondmate home's own persistent workspace.
 #   Herdr additionally uses a presentation-only layout by default when the
 #   selected client and running server meet the Herdr 0.8.0 floor. The local
 #   config/herdr-presentation-spaces file can say off to disable it or on to
@@ -280,7 +277,15 @@
 #   out as a transient rather than adopted and then refused, so a home that is
 #   itself a linked worktree of the project repository still launches. A pane
 #   that never reaches an isolated worktree refuses at the end of that wait,
-#   naming the last path seen and why it was rejected.
+#   naming the last path seen and why it was rejected. A returned treehouse
+#   command refuses immediately with its exit status, naming pool exhaustion
+#   when a non-zero exit accompanies Treehouse's exhaustion refusal; status
+#   JSON only adds context about slots it would not reuse. At the deadline the
+#   pane is interrupted, and a Treehouse subshell already opened there is exited
+#   so its slot returns to the pool.
+#   Each attempt stages its command and atomic exit-status record under
+#   data/<id>/treehouse.<random>/; failure saves pane.log there and retains the
+#   pane, including a projected pane, so the allocation output stays readable.
 #   That placement is proven only at launch. Every ship or scout pane therefore
 #   also receives `export FM_TASK_ID=<task-id>` before the launch command, on
 #   the same channel as GOTMPDIR, and bin/fm-test-run.sh refuses to execute the
@@ -3500,10 +3505,8 @@ real_path_or_raw() { # <path>
 
 # Session-provider container-ensure + task creation. tmux stays exactly as P1
 # left it (same session-name / new-window sequence, see bin/backends/tmux.sh);
-# a herdr spawn goes through the version-gated, workspace-per-HOME,
-# tab-per-task sequence in bin/backends/herdr.sh instead (D4/D5 as refined by
-# docs/herdr-backend.md's "workspace-per-home" pass, AGENTS.md task
-# herdr-sm-spaces-k4). Both branches converge on the same $T ("target") string
+# a herdr worker gets a fresh workspace and tab through bin/backends/herdr.sh.
+# Both branches converge on the same $T ("target") string
 # that every downstream operation (send/capture/kill) already treats as opaque
 # per-backend routing (fm_backend_resolve_selector).
 
@@ -3869,7 +3872,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # docs/agent-control.md rather than fixed here, because the remedy is
     # machinery the ordinary flat spawn path does not have either.
     #
-    # Re-create the tab under the RECORDED herdr session. Without the explicit
+    # Create a separate workspace and tab in the RECORDED herdr session. Without the explicit
     # session the container would resolve from the AMBIENT one
     # (${HERDR_SESSION:-default}), so reclaiming a task recorded on a named
     # session from a seat that is not in it would silently relocate the task
@@ -3877,17 +3880,17 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # self-consistent but wrong record.
     HERDR_REBIND_SES=${RELAUNCH_TARGET%%:*}
     HERDR_CONTAINER_RAW=$(HERDR_PANE_ID="$RELAUNCH_LAUNCHER_PANE_ID" \
-      fm_backend_herdr_container_ensure "$PROJ_ABS" launcher-home "$HERDR_REBIND_SES") || {
+      fm_backend_herdr_container_ensure "$PROJ_ABS" task "$HERDR_REBIND_SES" "$W") || {
       # container_ensure returns 1 for several unrelated reasons - a failed
-      # version check, a server that will not start, an ambiguous workspace
-      # label, a cross-session launcher identity, a failed workspace create -
+      # version check, a server that will not start, a cross-session launcher
+      # identity, a failed workspace create -
       # and each already printed its own accurate message. Add only what this
       # layer actually knows, and name the session mismatch solely when there
       # IS one, rather than asserting a cause this condition cannot establish.
       #
       # A seat with NO herdr pane never reaches the cross-session guard at all:
       # fm_backend_herdr_launcher_identity returns 2 for it and the placement
-      # falls back to the recorded session's labeled container, which is what
+      # creates a task workspace in the recorded session, which is what
       # makes a plain ssh or cron reclaim work. Its ambient session still reads
       # `default` (fm_backend_herdr_session's fallback), so the inequality alone
       # would fire for EVERY named-session task reclaimed from a plain shell and
@@ -3931,8 +3934,9 @@ else
     WT_TARGET="$WID"
     ;;
   herdr)
-    # fm_backend_herdr_workspace_label resolves the target workspace from
-    # FM_HOME. For every KIND except secondmate, this process's own FM_HOME is
+    # fm_backend_herdr_workspace_label resolves the home workspace label (the
+    # projection parent, or a secondmate's own container) from FM_HOME. For
+    # every KIND except secondmate, this process's own FM_HOME is
     # already the right home (the primary spawning its own crewmate/scout, or
     # a secondmate spawning ITS OWN crewmate/scout from its own process's
     # FM_HOME - the latter needs no glue at all). A --secondmate spawn is the
@@ -3943,14 +3947,11 @@ else
     # after each prefixed simple-command call) so the secondmate's tab lands
     # in the secondmate's own workspace, not the primary's "firstmate" one.
     #
-    # Placement, separately from labeling: a crewmate/scout belongs in the
-    # EXACT herdr workspace this launching process is itself running in, which
-    # only its own herdr pane identity can name (a same-labeled sibling
-    # workspace must never be adopted). A --secondmate launch is the exception -
-    # it stands up a DIFFERENT home's own workspace by design - so it asks for
-    # the per-home container instead of inheriting this launcher's.
+    # Workers always get a separate workspace, including fallback. Claimed
+    # launcher ancestry is validated but never adopted as the worker container.
+    # A secondmate instead uses its own persistent home container.
     HERDR_LABEL_HOME=$FM_HOME
-    HERDR_LAUNCHER_RELATIONSHIP=launcher-home
+    HERDR_LAUNCHER_RELATIONSHIP=task
     if [ "$KIND" = secondmate ]; then
       HERDR_LABEL_HOME=$PROJ_ABS
       HERDR_LAUNCHER_RELATIONSHIP=other-home
@@ -4087,7 +4088,7 @@ else
       fi
     fi
     if [ "$HERDR_PROJECTED" -ne 1 ]; then
-      HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_container_ensure "$PROJ_ABS" "$HERDR_LAUNCHER_RELATIONSHIP") || exit 1
+      HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_container_ensure "$PROJ_ABS" "$HERDR_LAUNCHER_RELATIONSHIP" "" "$W") || exit 1
       # fm_backend_herdr_container_ensure echoes "<session>:<workspace_id>\t<seeded_default_tab_id>"
       # (the second field empty when this call ADOPTED a pre-existing workspace
       # rather than creating a fresh one). Split on the guaranteed single tab
@@ -4572,7 +4573,56 @@ elif [ "$RELAUNCH" -eq 1 ]; then
   fi
   [ "$KIND" = secondmate ] || validate_spawn_worktree "relaunch" "$T"
 elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
-  spawn_send_text_line "$WT_TARGET" 'treehouse get'
+  # Record command completion independently of cwd. An exhausted pool (or a
+  # failed fetch) exits immediately and leaves the pane in the project, which
+  # is indistinguishable from a still-running allocation by cwd alone.
+  # Each attempt owns a private directory so delayed shell completion cannot
+  # overwrite a retry's result. Source the script in the pane's shell, as for
+  # the launch command, preserving Treehouse's terminal and job control.
+  SPAWN_TREEHOUSE_ATTEMPT=$(mktemp -d "$DATA/$ID/treehouse.XXXXXX") || exit 1
+  SPAWN_TREEHOUSE_RESULT="$SPAWN_TREEHOUSE_ATTEMPT/exit-status"
+  # The attempt marker stays set in the pane's own shell and is never exported,
+  # so the deadline can tell that shell from a Treehouse subshell.
+  # shellcheck disable=SC2016 # Status variables expand in the pane's shell.
+  {
+    printf '_fm_treehouse_attempt=%s\n' "$(shell_quote "$SPAWN_TREEHOUSE_ATTEMPT")"
+    printf '_fm_treehouse_status=0\n'
+    printf 'treehouse get || _fm_treehouse_status=$?\n'
+    printf 'printf '\''%%s\\n'\'' "$_fm_treehouse_status" > %s\n' "$(shell_quote "$SPAWN_TREEHOUSE_RESULT.tmp")"
+    printf 'mv -- %s %s\n' "$(shell_quote "$SPAWN_TREEHOUSE_RESULT.tmp")" "$(shell_quote "$SPAWN_TREEHOUSE_RESULT")"
+    printf 'unset _fm_treehouse_status\n'
+  } > "$SPAWN_TREEHOUSE_ATTEMPT/get.sh"
+
+  spawn_treehouse_failure() {
+    local reason=$1 output exit_status available
+    # The exact pane is the operator's diagnostic surface. Do not close it on EXIT.
+    HERDR_PROJECTION_ABORT_CLEANUP=0
+    fm_backend_capture "$BACKEND" "$T" 200 "$W" > "$SPAWN_TREEHOUSE_ATTEMPT/pane.log" 2>/dev/null || true
+    output=$(cat "$SPAWN_TREEHOUSE_ATTEMPT/pane.log")
+    # Treehouse 3.1.x can list slots as available but refuse to reuse them.
+    # Its non-zero exit and verified refusal identify exhaustion; status only
+    # adds context. Terminal captures may wrap the diagnostic across rows and
+    # drop the space at the wrap, so match with all whitespace removed.
+    exit_status=$(cat "$SPAWN_TREEHOUSE_RESULT" 2>/dev/null || true)
+    if [ "${exit_status:-0}" -ne 0 ] 2>/dev/null; then
+      case "${output//[[:space:]]/}" in
+        *"worktreesareinuseordirty(max_trees="*|*"worktreesareinuse,dirty,ornotprovablythisclone's"*)
+          reason="Treehouse pool exhausted: $reason"
+          available=$( (cd "$PROJ_ABS" && treehouse status --json) 2>/dev/null \
+            | jq -r '[.[] | select(.status == "available")] | length' 2>/dev/null) || available=0
+          if [ "${available:-0}" -gt 0 ] 2>/dev/null; then
+            reason="$reason; treehouse status lists $available available slot(s) Treehouse would not reuse"
+          fi
+          ;;
+      esac
+    fi
+    echo "error: $reason; pane $T retained; output: $SPAWN_TREEHOUSE_ATTEMPT/pane.log" >&2
+    cat "$SPAWN_TREEHOUSE_ATTEMPT/pane.log" >&2
+  }
+  if ! spawn_send_text_line "$WT_TARGET" ". $(shell_quote "$SPAWN_TREEHOUSE_ATTEMPT/get.sh")"; then
+    spawn_treehouse_failure "could not deliver treehouse get"
+    exit 1
+  fi
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
   # Target the stable window id, not the name: if the name is ever lost (e.g. an
@@ -4600,16 +4650,17 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # read of the project itself or of the repository primary checkout is treated
   # as the transient it is and the wait continues, instead of being adopted and
   # then refused by the guard.
-  # A candidate the screen rejects is never adopted, so a host where the pane
-  # never reaches an isolated worktree spends the whole window before refusing.
-  # That wait is deliberate - telling a transient apart from a terminal
-  # misconfiguration would need machinery this path does not want - so the
-  # refusal has to be self-explaining instead: carry the last path seen and the
-  # reason it was rejected, and report both at the deadline.
+  # An exited command fails immediately with its own output. Only a command
+  # still running gets the full settle window; the deadline names the last
+  # path seen and the reason it was rejected.
   candidate=""
   last_seen=""
   last_reason="the pane reported no path"
   for _ in $(seq 1 60); do
+    if [ -f "$SPAWN_TREEHOUSE_RESULT" ]; then
+      spawn_treehouse_failure "treehouse get exited with status $(cat "$SPAWN_TREEHOUSE_RESULT") before entering an isolated worktree"
+      exit 1
+    fi
     p=$(spawn_current_path "$WT_TARGET" || true)
     [ -z "$p" ] || last_seen="$p"
     if [ -n "$p" ] && spawn_worktree_isolated "$p"; then
@@ -4627,7 +4678,12 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     sleep 1
   done
   if [ -z "$WT" ]; then
-    echo "error: treehouse get did not enter an isolated worktree within 60s (last seen '${last_seen:-none}': $last_reason; spawning project '$PROJ_ABS'); inspect window $T" >&2
+    # Stop a still-running allocation, and leave a Treehouse subshell that has
+    # just opened so Treehouse returns its slot, before keeping the pane.
+    spawn_send_key "$WT_TARGET" C-c || true
+    # shellcheck disable=SC2016 # The guard expands in the pane's shell.
+    spawn_send_text_line "$WT_TARGET" '[ -z "${TREEHOUSE_DIR-}" ] || [ "${_fm_treehouse_attempt-}" = '"$(shell_quote "$SPAWN_TREEHOUSE_ATTEMPT")"' ] || exit' || true
+    spawn_treehouse_failure "treehouse get did not enter an isolated worktree within 60s (last seen '${last_seen:-none}': $last_reason; spawning project '$PROJ_ABS')"
     exit 1
   fi
 
