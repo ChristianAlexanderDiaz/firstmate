@@ -84,6 +84,7 @@ run_captain() {  # <home> <command args...>
   local home=$1
   shift
   PATH="$home/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" \
+    FM_TEST_RUN_PID="$$" FM_TEST_CAPTAIN_SCRIPT="$ROOT/bin/fm-captain-hold.sh" \
     FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/fm-captain-hold.sh" "$@"
 }
@@ -880,6 +881,89 @@ test_answer_records_and_closes() {
       and (.landed | any(.id == "sample-guard-call") | not)
   ' >/dev/null || fail "an answered captain call still renders somewhere it should not: $json"
   pass "answer records the captain's words, closes idempotently, and releases routed work"
+}
+
+# Done retention must preserve a reviewed scout's recorded resolutions without
+# treating an archived, unanswered hold as a durable captain call.
+test_verify_accepts_archived_resolutions() {
+  local home id call mode before after rc archive
+  for mode in answered released unresolved; do
+    home=$(make_home "archived-$mode")
+    id=sample-archived-review
+    call=sample-archived-call
+    archive="$home/data/done-archive.md"
+    if [ "$mode" = released ]; then
+      archive="$home/data/retained # calls.md"
+      printf '%s\n' 'backend = "markdown"' '[markdown]' \
+        'path = "data/backlog.md"' 'archive = "data/retained # calls.md" # custom path' \
+        'done_keep = 10' > "$home/.tasks.toml"
+    fi
+    mkdir -p "$home/data/$id"
+    printf '# Completed review\n' > "$home/data/$id/report.md"
+    tasks_in "$home" add "$id" "Review archived calls" --kind scout --repo sample --start >/dev/null
+    write_origin_meta "$home" "$id"
+    printf 'done: report complete\n' > "$home/state/$id.status"
+    run_captain "$home" hold "$call" --title "Choose a route" --reason "choose a route" --origin "$id" >/dev/null \
+      || fail "could not hold the archived call"
+    run_captain "$home" complete "$id" "$call" >/dev/null \
+      || fail "could not attest the call before archival"
+    printf 'Use the north route.\n' > "$home/decision.txt"
+    case "$mode" in
+      answered)
+        run_captain "$home" answer "$call" --decision-file "$home/decision.txt" >/dev/null \
+          || fail "could not answer the archived call"
+        ;;
+      released)
+        run_captain "$home" answer "$call" --release --decision-file "$home/decision.txt" >/dev/null \
+          || fail "could not release the archived call"
+        tasks_in "$home" "done" "$call" >/dev/null || fail "could not complete released work"
+        ;;
+      unresolved)
+        tasks_in "$home" "done" "$call" >/dev/null || fail "could not close the unanswered call out of band"
+        ;;
+    esac
+    rc=0
+    run_captain "$home" verify "$id" > "$home/before.out" 2> "$home/before.err" || rc=$?
+    if [ "$mode" != unresolved ]; then
+      [ "$rc" -eq 0 ] || fail "the active $mode call did not verify"
+    fi
+    tasks_in "$home" prune --keep 0 >/dev/null || fail "could not archive the call"
+    assert_no_grep "$call" "$home/data/backlog.md" "the call remained active"
+    assert_grep "$call" "$archive" "the call was not archived"
+    before=$(shasum -a 256 "$home/data/backlog.md" "$archive")
+    rc=0
+    run_captain "$home" verify "$id" > "$home/verify.out" 2> "$home/verify.err" || rc=$?
+    after=$(shasum -a 256 "$home/data/backlog.md" "$archive")
+    [ "$before" = "$after" ] || fail "verification mutated the backlog or archive"
+    if [ "$mode" = unresolved ]; then
+      [ "$rc" -ne 0 ] || fail "verification accepted an archived call without a resolution"
+      assert_present "$home/state/$id.meta" "verification removed the unresolved scout"
+    else
+      [ "$rc" -eq 0 ] || fail "the archived $mode resolution blocked verification: $(cat "$home/verify.err")"
+      # An active namesake and an origin mismatch must still refuse even when
+      # the archive carries an otherwise valid resolution for the same id.
+      tasks_in "$home" add "$call" "A new unanswered call" >/dev/null
+      if run_captain "$home" verify "$id" > "$home/shadow.out" 2> "$home/shadow.err"; then
+        fail "an archived answer overrode an active unresolved namesake"
+      fi
+      tasks_in "$home" rm "$call" >/dev/null || fail "could not remove the fixture namesake"
+      write_origin_meta "$home" other-review
+      printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$call" >> "$home/state/other-review.meta"
+      if run_captain "$home" verify other-review > "$home/origin.out" 2> "$home/origin.err"; then
+        fail "an archived answer certified a different origin"
+      fi
+      assert_grep "was held for origin $id, not other-review" "$home/origin.err" \
+        "the archived resolution bypassed the origin check"
+      if run_captain "$home" answer "$call" --decision-file "$home/decision.txt" \
+          > "$home/mutation.out" 2> "$home/mutation.err"; then
+        fail "answer unexpectedly mutated an archived call"
+      fi
+      run_teardown "$home" "$id" > "$home/teardown.out" 2> "$home/teardown.err" \
+        || fail "the archived $mode resolution blocked cleanup: $(cat "$home/teardown.err")"
+      assert_absent "$home/state/$id.meta" "cleanup retained the resolved scout"
+    fi
+  done
+  pass "archived answered and released calls permit verification and cleanup; unresolved calls refuse"
 }
 
 # --release lifts the hold instead of closing, preserving the work item's own
@@ -4288,9 +4372,12 @@ if [ "${1:-}" = hold ] && [ "${2:-}" != --help ]; then
     : > "$FM_HOME/crash-refused"
     holders=''
     pid=$PPID
-    while [ "${pid:-0}" -gt 1 ]; do
+    # Never walk above the test process, and match the script as bash's
+    # argument rather than text embedded in an agent's launch prompt.
+    while [ "${pid:-0}" -gt 1 ] && [ "$pid" != "${FM_TEST_RUN_PID:?}" ]; do
       case "$(ps -o args= -p "$pid")" in
-        *bin/fm-captain-hold.sh*) holders="$holders $pid" ;;
+        "bash ${FM_TEST_CAPTAIN_SCRIPT:?} "*|"/bin/bash ${FM_TEST_CAPTAIN_SCRIPT:?} "*|"/usr/bin/bash ${FM_TEST_CAPTAIN_SCRIPT:?} "*)
+          holders="$holders $pid" ;;
       esac
       pid=$(ps -o ppid= -p "$pid" | tr -d ' ')
     done
@@ -4726,6 +4813,7 @@ SH
   pass "marked hold reasons round-trip through public reads, fleet, startup, and return without changing other fields"
 }
 
+test_verify_accepts_archived_resolutions
 test_hold_reason_round_trips_awkward_characters
 test_hold_origin_is_atomic_with_backend_hold
 test_inventory_check_waits_for_an_in_flight_hold

@@ -153,7 +153,9 @@
 # `verify` is read-only and is called by scout teardown, so teardown cannot
 # erase a source before this gate has succeeded: every recorded inventory
 # entry must still satisfy the same durability and origin checks as `complete`,
-# and no keyed status decision may be open.
+# and no keyed status decision may be open. An absent markdown row may be
+# read from the configured Done archive only when it carries a recorded
+# resolution; an active row always wins, and mutation commands never fall back.
 # Metadata compatibility: the attestation keeps the historical
 # `decisions_reviewed=1` and `decision_keys=` keys, and an inventory entry that
 # names no existing task resolves through the legacy `<origin>-decision-<entry>`
@@ -411,6 +413,7 @@ require_tasks_axi() {
 # inside a command substitution can still tell a wedged backend from a
 # genuinely unknown id.
 TASK_SHOW_OUTPUT=
+VERIFY_ARCHIVE=0
 task_show() {  # <id>; sets TASK_SHOW_OUTPUT
   local data status=0 reason
   data=$(fm_backlog_data_absolute "$DATA") || fail "data directory cannot be resolved: $DATA"
@@ -421,7 +424,49 @@ task_show() {  # <id>; sets TASK_SHOW_OUTPUT
       "${reason:-tasks-axi show $1 exceeded its backlog read bound}" >&2
     exit 124
   fi
+  if [ "$status" -ne 0 ] && [ "$VERIFY_ARCHIVE" = 1 ] \
+      && printf '%s\n' "$TASK_SHOW_OUTPUT" | grep -q '^code: NOT_FOUND$'; then
+    task_show_archived "$data" "$1" && return 0
+  fi
   return "$status"
+}
+
+# Verification alone can read a retained resolution. Feed the archive through
+# stdin so tasks-axi parses its normal row format without addressing the archive
+# as its own active backlog (which its archive-path safety guard refuses).
+task_show_archived() {  # <resolved-data-dir> <id>; sets TASK_SHOW_OUTPUT
+  local data=$1 id=$2 root archive shown status=0 secs=${FM_BACKLOG_ROW_TIMEOUT_SECS:-10}
+  root=$(fm_backlog_root "$data") || return 1
+  [ "$(fm_tasks_axi_backend "$root")" = markdown ] || return 1
+  archive=$(perl -e '
+    my ($root, $data, $home) = @ARGV;
+    for my $file ("$root/.tasks.toml", "$home/.tasks-axi/config.toml") {
+      next unless -f $file;
+      open my $fh, "<", $file or die "$file: $!";
+      my ($markdown, $archive);
+      while (<$fh>) {
+        if (/^\s*\[([^]]+)\]\s*(?:#.*)?$/) { $markdown = $1 eq "markdown"; next }
+        if ($markdown && /^\s*archive\s*=\s*(["\x27])(.*?)\1\s*(?:#.*)?$/) { $archive = $2 }
+      }
+      if (defined $archive) { print $archive =~ m{^/} ? $archive : "$root/$archive"; exit }
+    }
+    print "$data/done-archive.md";
+  ' "$root" "$data" "$HOME") || return 1
+  [ -f "$archive" ] || return 1
+  case "$secs" in ''|*[!0-9]*) secs=10 ;; esac
+  [ "$secs" -gt 0 ] 2>/dev/null || secs=10
+  # shellcheck disable=SC2016  # Expansion belongs to the timed child shell.
+  shown=$(fm_run_timed "$secs" bash -c \
+    'cd "$1" || exit 1; set -o pipefail; sed "s/^## Archived .*/## Done/" "$3" | tasks-axi show "$2" --full --backend markdown --file /dev/stdin' \
+    _ "$root" "$id" "$archive" 2>&1) || status=$?
+  if [ "$status" -eq 124 ]; then
+    printf 'fm-captain-hold: archived task %s exceeded its %ss backlog read bound\n' "$id" "$secs" >&2
+    exit 124
+  fi
+  [ "$status" -eq 0 ] || return "$status"
+  [ "$(show_field "$shown" state)" = "done" ] || return 1
+  body_has_resolution_record "$(show_field "$shown" body)" || return 1
+  TASK_SHOW_OUTPUT=$shown
 }
 
 # Read one row into `show`, failing with <absence-message> only when the read
@@ -1867,6 +1912,7 @@ EOF
 }
 
 command_verify() {
+  VERIFY_ARCHIVE=1
   local origin=${1:-} meta reviewed keys entry key open resolved
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   validate_slug origin-id "$origin"
