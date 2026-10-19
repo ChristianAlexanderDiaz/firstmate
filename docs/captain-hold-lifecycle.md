@@ -127,8 +127,12 @@ Scout teardown calls the read-only `verify` subcommand after checking for the re
 `verify` checks three things:
 
 - The recorded attestation exists.
-- Every recorded inventory entry still passes the [completion inventory checks](#recording-a-reviewed-inventory-complete).
+- Every recorded inventory entry still passes the [completion inventory checks](#recording-a-reviewed-inventory-complete), allowing the archive lookup described below.
 - No keyed status decision opened after the last `complete`.
+
+On the markdown backend, an entry absent from the active backlog can verify through a Done row in the configured archive only if its body carries a recorded resolution.
+The same origin checks still apply, and an active row takes precedence over an archived namesake.
+This read-only fallback preserves verification after Done retention; `complete` and mutation commands do not use it.
 
 A keyed status decision opened after the last `complete` makes `verify` fail, and re-running `complete` is the repair.
 The `--force` path remains the explicit captain-approved discard escape hatch.
