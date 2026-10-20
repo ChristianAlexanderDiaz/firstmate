@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/fm-backend-herdr-launcher-workspace-e2e.test.sh - mandatory ISOLATED
-# end-to-end real-Herdr test for worker PLACEMENT with presentation spaces
-# disabled.
+# end-to-end real-Herdr test for worker placement with presentation spaces
+# enabled and disabled, including custom-label publication and restart reclaim.
 #
 # Every worker gets its own workspace even with presentation spaces disabled.
 # Launcher identity is still checked, but never authorizes a task tab in the
@@ -188,7 +188,7 @@ Verify the worker is placed in the correct workspace.
 EOF
 }
 
-for id in uniqA uniqB dupC dupD staleF smE presU presD; do
+for id in uniqA uniqB dupC dupD staleF smE presU presD presCustom; do
   mkdir -p "$PRIMARY_HOME/data/$id" "$SM_HOME/data/$id" "$PRES_HOME/data/$id"
   write_ship_brief "$PRIMARY_HOME/data/$id/brief.md" "$id"
   write_ship_brief "$SM_HOME/data/$id/brief.md" "$id"
@@ -434,6 +434,65 @@ lab pane get "$LAUNCH_DUP_PANE" >/dev/null 2>&1 || fail "teardown closed the lau
 lab pane get "$UNIQB_PANE" >/dev/null 2>&1 || fail "teardown closed an unrelated worker's pane in the other same-labeled workspace"
 [ "$(label_of_workspace "$WS_PRIMARY_DUP")" = firstmate ] || fail "teardown removed or renamed the launcher's workspace"
 pass "real herdr E2E: teardown closes only the worker's own pane and leaves the launcher, its workspace, and the same-labeled sibling intact"
+
+# --- 9. a custom parent label binds and survives a real session restart -----
+# Run last: stopping the isolated session also stops its earlier fixtures.
+# Reclaim the exact recorded husk directly so the restart test needs no new
+# worktree allocation and cannot select a slot owned by an earlier fixture.
+CUSTOM_LABEL='launcher = custom'
+read -r CUSTOM_DECOY _ CUSTOM_DECOY_PANE <<EOF
+$(make_workspace "$CUSTOM_LABEL")
+EOF
+read -r CUSTOM_PARENT _ CUSTOM_LAUNCHER <<EOF
+$(make_workspace "$CUSTOM_LABEL")
+EOF
+[ -n "$CUSTOM_PARENT" ] && [ -n "$CUSTOM_DECOY" ] || fail "could not create custom parent fixtures"
+spawn_from_launcher "$CUSTOM_LAUNCHER" "$PRES_HOME" presCustom "$PROJ" --mode no-mistakes --yolo off
+[ "$SPAWN_RC" -eq 0 ] || fail "custom-label projection failed: $(cat "$SPAWN_ERR")"
+CUSTOM_META="$PRES_HOME/state/presCustom.meta"
+record_worktree "$CUSTOM_META"
+CUSTOM_JOURNAL="$PRES_HOME/state/presCustom.herdr-presentation"
+CUSTOM_WS=$(grep '^herdr_workspace_id=' "$CUSTOM_META" | cut -d= -f2-)
+CUSTOM_TAB=$(grep '^herdr_tab_id=' "$CUSTOM_META" | cut -d= -f2-)
+CUSTOM_PANE=$(grep '^herdr_pane_id=' "$CUSTOM_META" | cut -d= -f2-)
+[ "$(journal_field "$CUSTOM_JOURNAL" version)" = 2 ] || fail "custom parent did not publish version 2"
+[ "$(journal_field "$CUSTOM_JOURNAL" parent_workspace_id)" = "$CUSTOM_PARENT" ] || fail "custom parent bound a same-labeled sibling"
+[ "$(journal_field "$CUSTOM_JOURNAL" parent_label)" = "$CUSTOM_LABEL" ] || fail "custom parent was replaced by the canonical home label"
+if grep -F 'could not publish an exact restart binding' "$SPAWN_ERR" >/dev/null; then
+  fail "custom parent still warns that restart binding could not publish"
+fi
+[ "$(focused_workspace)" = "$WS_OTHER" ] || fail "custom-label projection stole focus"
+"$HERDR_LAB_HELPER" stop "$HERDR_LAB_SESSION" >/dev/null || fail "could not stop isolated custom-label lab"
+"$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION" || fail "could not restart isolated custom-label lab"
+lab tab focus "$WS_OTHER_TAB" >/dev/null || fail "could not restore non-target focus after restart"
+CUSTOM_NEW_IDS=$(FM_HOME="$PRES_HOME" FM_STATE_OVERRIDE="$PRES_HOME/state" bash -c '
+  . "$1/bin/backends/herdr.sh"
+  . "$1/bin/fm-wake-lib.sh"
+  helper=$2; session=$3
+  fm_backend_herdr_cli() {
+    [ "$1" = "$session" ] || return 1
+    shift
+    "$helper" run "$session" "$@"
+  }
+  lock=$(fm_backend_herdr_presentation_session_lock_path "$session") || exit 1
+  fm_lock_acquire_wait "$lock" || exit 1
+  trap '\''fm_lock_release "$lock"'\'' EXIT
+  fm_backend_herdr_projection_reclaim_task \
+    "$session" "$4" presCustom "$FM_HOME" "$5" "$6" "$7" fm-presCustom "$8" || exit 1
+  printf "%s %s" "$FM_BACKEND_HERDR_PROJECTION_TAB_ID" "$FM_BACKEND_HERDR_PROJECTION_PANE_ID"
+' _ "$ROOT" "$HERDR_LAB_HELPER" "$HERDR_LAB_SESSION" "$CUSTOM_JOURNAL" \
+  "$CUSTOM_WS" "$CUSTOM_TAB" "$CUSTOM_PANE" "$PROJ") || fail "custom-label restart reclaim failed"
+read -r CUSTOM_NEW_TAB CUSTOM_NEW_PANE <<EOF
+$CUSTOM_NEW_IDS
+EOF
+[ "$CUSTOM_NEW_PANE" != "$CUSTOM_PANE" ] && [ -n "$CUSTOM_NEW_PANE" ] || fail "reclaim reused the old husk"
+[ "$(workspace_of_pane "$CUSTOM_NEW_PANE")" = "$CUSTOM_WS" ] || fail "custom-label restart fell back to another workspace"
+[ "$(journal_field "$CUSTOM_JOURNAL" tab_id)" = "$CUSTOM_NEW_TAB" ] || fail "reclaim did not advance the journal"
+[ "$(journal_field "$CUSTOM_JOURNAL" parent_label)" = "$CUSTOM_LABEL" ] || fail "reclaim changed the recorded parent label"
+lab pane get "$CUSTOM_LAUNCHER" >/dev/null || fail "reclaim touched the exact parent"
+lab pane get "$CUSTOM_DECOY_PANE" >/dev/null || fail "reclaim touched the same-labeled sibling"
+[ "$(focused_workspace)" = "$WS_OTHER" ] || fail "custom-label reclaim stole focus"
+pass "real herdr E2E: custom launcher label publishes version 2 and reclaims the same workspace after restart"
 
 if ! cleanup_all; then
   trap - EXIT

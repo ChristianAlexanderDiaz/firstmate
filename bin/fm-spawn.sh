@@ -3989,7 +3989,7 @@ else
           FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_projection_reclaim_task \
             "$HERDR_SES" "$HERDR_PRESENTATION_JOURNAL" "$ID" "$HERDR_LABEL_HOME" \
             "$HERDR_RECOVERY_WORKSPACE_ID" "$HERDR_RECOVERY_TAB_ID" "$HERDR_RECOVERY_PANE_ID" \
-            "$HERDR_PARENT_LABEL" "$W" "$PROJ_ABS"
+            "$W" "$PROJ_ABS"
           HERDR_RECLAIM_STATUS=$?
           set -e
           case "$HERDR_RECLAIM_STATUS" in
@@ -4032,7 +4032,10 @@ else
           HERDR_LAUNCHER_STATUS=$?
           set -e
           case "$HERDR_LAUNCHER_STATUS" in
-          0) HERDR_PARENT_WORKSPACE_ID=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID ;;
+          0)
+            HERDR_PARENT_WORKSPACE_ID=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID
+            HERDR_PARENT_LABEL=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_LABEL
+            ;;
           2) HERDR_PARENT_WORKSPACE_ID=$(fm_backend_herdr_projection_parent_workspace_exact \
             "$HERDR_SES" "$HERDR_PARENT_LABEL" 2>/dev/null || true) ;;
           *)
@@ -4040,8 +4043,8 @@ else
             exit 1
             ;;
           esac
-          if [ -z "$HERDR_PARENT_WORKSPACE_ID" ]; then
-            echo "warning: herdr presentation parent is absent or ambiguous; using the ordinary flat layout without projection" >&2
+          if [ -z "$HERDR_PARENT_WORKSPACE_ID" ] || [ -z "$HERDR_PARENT_LABEL" ]; then
+            echo "warning: herdr presentation parent is absent, ambiguous, or has no journalable label; using the ordinary flat layout without projection" >&2
             spawn_herdr_presentation_order_lock_release
           else
             HERDR_PROJECTION_ID=$(fm_backend_herdr_projection_journal_create "$STATE" "$ID") || exit 1
