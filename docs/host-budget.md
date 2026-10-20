@@ -76,13 +76,14 @@ Package-script Vitest runs inherit `VITEST_MAX_WORKERS` and the older thread/for
 Prepared launches and direct leased package-test runs install a Node PATH adapter that caps `node --test` before file arguments at two workers on desk power or one on portable power, including npm, pnpm and yarn package scripts.
 Explicit Node concurrency limits at or below the cap are preserved, and other Node invocations pass through unchanged.
 For npm, pnpm and yarn `run <script>` or `test`, simple package scripts invoking `playwright test` receive one worker, while simple Node test scripts use the prepared Node adapter.
-Scripts containing `playwright test` or `node --test` tokens anywhere are refused unless they are a supported simple runner command; this includes shell compounds with setup or cleanup commands and script-level `--` terminators.
+Scripts containing `playwright test` or `node --test` tokens anywhere are refused unless they are recognized as a simple runner command; this includes shell compounds with setup or cleanup commands and script-level `--` terminators.
 Package directory and single workspace selectors are resolved before inspecting the script; workspace selections that cannot be resolved to one package are refused.
 Playwright forwarding is refused if npm receives a runner-level `--` after its forwarding separator, or if pnpm or yarn receives a forwarded `--`.
 Worker-cap detection is limited to the supported explicit `run <script>` and `test` forms and recognized option operands.
 It does not resolve package selection from npm configuration files or environment variables, npm option abbreviations or combined short flags, or indirect runners such as `bash tests.sh`.
 Separate operands for unrecognized options, such as `npm --fetch-retry-mintimeout 10 run test` or `node --dns-result-order ipv4first --test`, are outside this containment; use the full `--option=value` form instead.
 Package scripts invoking Node by an absolute path or shadowing `node` with a project-local executable bypass the PATH adapter; invoke that runner directly through `run` for a worker cap.
+`playwright test # smoke` is an unsupported npm, pnpm and yarn package-script shape: a trailing shell comment can swallow the appended `--workers=1`, leaving the original Playwright concurrency unchanged.
 These package scripts still reserve exclusive global capacity.
 Project configuration still needs to consume the exported values for custom runners and Next compiler settings.
 Neither a generic Node heap limit nor these worker defaults is a process-tree memory ceiling.
