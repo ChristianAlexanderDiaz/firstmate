@@ -139,8 +139,9 @@
 # It attests, in the origin task's metadata, the reviewed inventory of
 # captain-held tasks that carry the origin's unresolved captain calls.
 # `--none` is an explicit semantic attestation that the just-reviewed surface
-# has no unresolved captain call, and is refused while the origin still has an
-# open keyed status decision. With a non-empty inventory, every listed task is
+# has no new unresolved captain call; it preserves any prior inventory and is
+# refused if that inventory is empty while a keyed status decision is open.
+# With a non-empty inventory, every listed task is
 # verified durable (captain-held, or carrying a recorded resolution),
 # is never the origin itself, and, when `hold --origin` recorded one, was held
 # for this origin; a hold with no recorded origin is accepted on durability
@@ -1861,7 +1862,7 @@ command_complete() {
     while IFS= read -r entry; do
       [ -n "$entry" ] || continue
       # Only entries attested before this pass may read retained resolutions.
-      # Scope the fallback to this verification so newly supplied entries and
+      # Scope the fallback to this verification so newly added inventory entries and
       # every mutation keep using the active backlog alone.
       archive_recheck=0
       if list_has_key "$previous" "$entry"; then archive_recheck=1; fi

@@ -110,7 +110,7 @@ While originating task metadata is live, the `complete` subcommand unions the re
 A post-teardown visual review can complete against the surviving report and durable tasks without recreating volatile task metadata.
 
 `complete` accepts `--none` as an explicit semantic inventory result.
-`--none` is refused while the origin still has a lifecycle-open keyed status decision.
+`--none` preserves any previously recorded inventory and is refused when that inventory is empty while the origin has a lifecycle-open keyed status decision.
 Before recording completion, `complete` verifies every listed task against tasks-axi.
 The origin is never its own inventory entry, so a hold that failed cannot be vouched for by the origin row.
 For a historical inventory that names its own origin, hold a separate captain task with `--origin`, replace only the invalid entry in the final `decision_keys=` line of the origin metadata with that task id while preserving all other entries, and re-run `complete`.
