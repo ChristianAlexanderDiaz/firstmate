@@ -152,7 +152,7 @@ fm_handoff_retirement_clear() { # <target-home> <parent-home> <id> [parent-state
     while IFS= read -r key; do
       [ -n "$key" ] || continue
       show=$(unset TASKS_AXI_BACKEND; fm_backlog_row_show "$home/data" "$key") || return 1
-      if [ "$(fm_handoff_field "$show" state)" != done ] || [ "$(fm_handoff_field "$show" held)" != no ]; then
+      if [ "$(fm_handoff_field "$show" state)" != "done" ] || [ "$(fm_handoff_field "$show" held)" != no ]; then
         fm_handoff_error "secondmate $id still has open backlog task $key"; return 1
       fi
     done <<< "$keys"
