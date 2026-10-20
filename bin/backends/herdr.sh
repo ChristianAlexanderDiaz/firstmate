@@ -1804,7 +1804,7 @@ fm_backend_herdr_server_ensure() {  # <session>
   (
     unset FM_HOME FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE \
       CURSOR_AGENT CURSOR_INVOKED_AS CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT FM_SUPERVISION_MODEL
-    fm_backend_herdr_cli "$session" server >/dev/null 2>&1 &
+    fm_backend_herdr_cli "$session" server </dev/null >/dev/null 2>&1 &
   ) || return 1
   for i in $(seq 1 20); do
     running=$(fm_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null)
@@ -3172,6 +3172,15 @@ fm_backend_herdr_parse_target() {  # <target>
   [ -n "$FM_BACKEND_HERDR_SESSION" ] && [ -n "$FM_BACKEND_HERDR_PANE" ] && [ "$FM_BACKEND_HERDR_PANE" != "$target" ]
 }
 
+# fm_backend_herdr_target_observable: verify <target> is well-formed and its
+# recorded session server is currently running, WITHOUT autostarting the server.
+# Passive read-only probes (e.g. composer inspection) must stay observable-only
+# and fail fast on inactive or bad targets without starting a new server.
+fm_backend_herdr_target_observable() {  # <target>
+  fm_backend_herdr_parse_target "$1" || return 1
+  [ "$(fm_backend_herdr_server_running_state "$FM_BACKEND_HERDR_SESSION")" = running ]
+}
+
 fm_backend_herdr_target_ready() {  # <target>
   fm_backend_herdr_parse_target "$1" || return 1
   fm_backend_herdr_server_ensure "$FM_BACKEND_HERDR_SESSION" || return 1
@@ -3275,12 +3284,12 @@ fm_backend_herdr_capture() {  # <target> <lines>
 # workaround above - the bound is the pane itself, and asking for a line count
 # is what triggers the empty-read bug.
 fm_backend_herdr_visible_capture() {  # <target>
-  fm_backend_herdr_target_ready "$1" || return 1
+  fm_backend_herdr_target_observable "$1" || return 1
   fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" pane read "$FM_BACKEND_HERDR_PANE" --source visible 2>/dev/null
 }
 
 fm_backend_herdr_visible_capture_ansi() {  # <target>
-  fm_backend_herdr_target_ready "$1" || return 1
+  fm_backend_herdr_target_observable "$1" || return 1
   fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" pane read "$FM_BACKEND_HERDR_PANE" --source visible --format ansi 2>/dev/null
 }
 
@@ -3357,8 +3366,9 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|pending-unprove
 # agent-state (fm_backend_herdr_busy_state) stays the semantic owner, and this
 # read exists only so the submit core below can confirm a delivery for a
 # harness whose native state never transitions. Without a harness argument the
-# shared matcher uses its union of verified tokens, which is what the submit
-# core wants: it has no recorded harness for the pane.
+# shared matcher uses its union of verified tokens; the submit core passes
+# polytoken only when the pane's native identity names polytoken, whose
+# `Running for` row is outside that union.
 fm_backend_herdr_rendered_busy_state() {  # <target> [harness] -> busy|idle|unknown
   local target=$1 harness=${2:-} cap visible
   cap=$(fm_backend_herdr_capture "$target" 40) || { printf 'unknown'; return 0; }
@@ -3460,14 +3470,14 @@ fm_backend_herdr_rendered_busy_state() {  # <target> [harness] -> busy|idle|unkn
 # mid-turn). When <allow-rendered> is 1, an idle native baseline may also take
 # the pane's rendered busy footer, because live Claude keeps agent_status idle
 # through a whole turn.
-fm_backend_herdr_queued_enter_busy() {  # <target> <allow-rendered>
-  local target=$1 allow_rendered=${2:-0} raw
+fm_backend_herdr_queued_enter_busy() {  # <target> <allow-rendered> [busy-harness]
+  local target=$1 allow_rendered=${2:-0} busy_harness=${3:-} raw
   raw=$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")
   case "$raw" in
     working) printf 'busy'; return 0 ;;
   esac
   if [ "$allow_rendered" = 1 ]; then
-    fm_backend_herdr_rendered_busy_state "$target"
+    fm_backend_herdr_rendered_busy_state "$target" "$busy_harness"
   else
     printf 'idle'
   fi
@@ -3567,13 +3577,14 @@ fm_backend_herdr_composer_clear() {  # <target> <text>
 
 fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep> <settle>
   local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 i=0 verdict baseline confirm_sleep
-  local raw_status footer_baseline='' allow_rendered=0 enter_sent=0 identity proof=0 content
+  local raw_status footer_baseline='' allow_rendered=0 enter_sent=0 identity proof=0 content busy_harness=''
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
   # Claude on Herdr is the live-verified truncation shape: Enter is withheld
   # unless the composer, empty before the send, shows this payload. A suffix
   # that then starts a turn must not report empty. Other harnesses keep the
   # unproven type-then-Enter path.
   identity=$(fm_backend_herdr_agent_identity_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE") || identity=
+  [ "${identity%%$'\t'*}" != polytoken ] || busy_harness=polytoken
   if [ "${identity%%$'\t'*}" = claude ]; then
     proof=1
     content=$(fm_backend_herdr_composer_content "$target") \
@@ -3601,7 +3612,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
   if [ "$baseline" = idle ]; then
     allow_rendered=1
   else
-    footer_baseline=$(fm_backend_herdr_rendered_busy_state "$target")
+    footer_baseline=$(fm_backend_herdr_rendered_busy_state "$target" "$busy_harness")
   fi
   while :; do
     if fm_backend_herdr_send_key "$target" Enter; then
@@ -3644,7 +3655,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
       fi
       if [ "$verdict" = pending ] && [ "$raw_status" != working ] \
         && [ "$footer_baseline" = idle ] \
-        && [ "$(fm_backend_herdr_rendered_busy_state "$target")" = busy ]; then
+        && [ "$(fm_backend_herdr_rendered_busy_state "$target" "$busy_harness")" = busy ]; then
         verdict=busy
       fi
       case "$verdict" in
@@ -3659,7 +3670,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
         printf 'send-failed'
       else
         fm_composer_queued_enter_verdict "$verdict" \
-          "$(fm_backend_herdr_queued_enter_busy "$target" "$allow_rendered")"
+          "$(fm_backend_herdr_queued_enter_busy "$target" "$allow_rendered" "$busy_harness")"
       fi
       return 0
     fi
@@ -4211,4 +4222,215 @@ fm_backend_herdr_wait_transition() {  # <session> <timeout_secs> <state_dir> <pa
   [ "$rc" -eq 2 ] && return 2
   [ "$reader_rc" -eq 0 ] && return 1
   return 2
+}
+
+# fm_backend_herdr_projection_order_best_effort: place the exact workspace id
+# returned by THIS projected create immediately after its owning parent's
+# contiguous child block and before the next parent.
+#
+# <parent-label> is the owning FM_HOME label (firstmate or 2ndmate-<id>).
+# Optional <parent-workspace-id> is that parent's EXACT id, which the caller
+# already resolved from the launching agent's own herdr identity. When given it
+# anchors the owning parent by id, so two workspaces sharing the home label no
+# longer make the whole layout ambiguous; when omitted the parent is located by
+# label exactly as before. With a unique label the two select the same
+# workspace, so ordering behavior is unchanged in the ordinary case.
+# New-format └ ... · p:<token> children and, for compatibility only, already
+# adjacent old-format firstmate/... or 2ndmate-<id>/... projections may extend
+# the block read-only; they are never renamed or moved.
+#
+# Optional <group-order-key> is the opt-in project-group key that
+# bin/fm-herdr-groups.sh order-key prints for the new task. When given, the
+# new workspace lands inside the block right after the last child whose
+# fm_group_order workspace token is absent or sorts at or before that key,
+# else at the block start; existing children are still never moved. When
+# omitted the target stays the block end exactly as before.
+#
+# This is presentation-only and always returns success.
+# Every unavailable, ambiguous, failed, or unverifiable ordering step prints a
+# warning and leaves the safely-created worker running in Herdr's current
+# order.
+# It never looks up a task endpoint, adopts or reuses a workspace, retries an
+# ambiguous move, or calls any close/delete/rename primitive.
+# The sole move target is <created-workspace-id>, captured directly from the
+# current workspace-create response.
+# After a successful move, every pre-existing workspace id sequence excluding
+# the new id must be byte-identical to the pre-move sequence.
+fm_backend_herdr_projection_order_best_effort() {  # <session> <created-workspace-id> <parent-label> [<parent-workspace-id>] [<group-order-key>]
+  local session=$1 created=$2 parent=$3 parent_ws=${4:-} group_key=${5:-} list analysis current desired socket mover response move_status focus_before move_capable
+  local before_existing after_existing
+  [ -n "$parent" ] || {
+    echo "warning: herdr presentation ordering missing owning parent label; leaving worker in Herdr's current order" >&2
+    return 0
+  }
+  list=$(fm_backend_herdr_cli "$session" workspace list 2>/dev/null) || {
+    echo "warning: herdr presentation ordering could not list workspaces; leaving worker in Herdr's current order" >&2
+    return 0
+  }
+  analysis=$(printf '%s' "$list" | jq -c --arg created "$created" --arg parent "$parent" --arg parent_ws "$parent_ws" --arg group_key "$group_key" '
+    def is_parent:
+      if ($parent_ws | length) > 0
+      then .workspace_id == $parent_ws
+      else (.label | type) == "string" and .label == $parent
+      end;
+    def is_top_level_parent:
+      (.label | type) == "string"
+      and ((.label == "firstmate") or (.label | test("^2ndmate-[^/]+$")));
+    def is_new_child:
+      (.label | type) == "string"
+      and (.label | test("^└ .+ · p:[A-Za-z0-9_-]{22}$"));
+    def is_legacy_child:
+      (.label | type) == "string"
+      and (.label | test("^(firstmate|2ndmate-[^/]+)/.+ · p:[A-Za-z0-9_-]{22}$"));
+    def is_legacy_child_for($owner):
+      is_legacy_child and (.label | startswith($owner + "/"));
+    def is_child_for($owner):
+      is_new_child or is_legacy_child_for($owner);
+    (.result.workspaces // null) as $spaces
+    | select(($spaces | type) == "array" and ($spaces | length) > 0)
+    | ([range(0; $spaces | length) | select($spaces[.].workspace_id == $created)]) as $matches
+    | select(($matches | length) == 1)
+    | ($matches[0]) as $current
+    | select($current == (($spaces | length) - 1))
+    | ([range(0; $spaces | length) | select($spaces[.] | is_parent)]) as $parents
+    | select(($parents | length) == 1)
+    | ($parents[0]) as $pidx
+    | select($pidx < $current)
+    | (
+        reduce range($pidx + 1; $current) as $i (
+          0;
+          if ($spaces[$i] | is_child_for($parent)) and (. == ($i - $pidx - 1))
+          then . + 1
+          else .
+          end
+        )
+      ) as $block
+    | (reduce range($pidx + 1 + $block; $current) as $i (
+        {valid: true, active_parent: null};
+        if .valid == false then .
+        elif ($spaces[$i] | is_top_level_parent) then
+          .active_parent = $spaces[$i].label
+        elif ($spaces[$i] | is_new_child) then
+          if .active_parent == null then .valid = false else . end
+        elif ($spaces[$i] | is_legacy_child) then
+          .active_parent as $owner
+          | if $owner == null then
+              .valid = false
+            elif (($spaces[$i] | is_legacy_child_for($owner)) | not) then
+              .valid = false
+            else
+              .
+            end
+        else
+          .active_parent = null
+        end
+      )) as $remainder
+    | select($remainder.valid == true)
+    | (
+        if ($group_key | length) > 0 then
+          [range(0; $block)
+            | select(
+                ($spaces[$pidx + 1 + .].tokens.fm_group_order // null) as $key
+                | (($key | type) != "string") or ($key <= $group_key)
+              )]
+          | if length > 0 then (max + 1) else 0 end
+        else
+          $block
+        end
+      ) as $offset
+    | {
+        current: $current,
+        desired: ($pidx + 1 + $offset),
+        parent_index: $pidx,
+        existing: [$spaces[] | select(.workspace_id != $created) | .workspace_id]
+      }
+  ' 2>/dev/null) || analysis=
+  [ -n "$analysis" ] || {
+    echo "warning: herdr presentation ordering found an ambiguous workspace layout; leaving worker in Herdr's current order" >&2
+    return 0
+  }
+  current=$(printf '%s' "$analysis" | jq -r '.current // empty' 2>/dev/null)
+  desired=$(printf '%s' "$analysis" | jq -r '.desired // empty' 2>/dev/null)
+  case "$current:$desired" in
+    *[!0-9:]*)
+      echo "warning: herdr presentation ordering could not parse the target position; leaving worker in Herdr's current order" >&2
+      return 0
+      ;;
+  esac
+  [ "$current" != "$desired" ] || return 0
+
+  if fm_backend_herdr_workspace_move_capable "$session"; then
+    move_capable=0
+  else
+    move_capable=$?
+  fi
+  case "$move_capable" in
+    0) ;;
+    1)
+      echo "warning: herdr presentation ordering requires python3; leaving worker in Herdr's current order" >&2
+      return 0
+      ;;
+    2)
+      echo "warning: herdr presentation ordering could not verify the client protocol; leaving worker in Herdr's current order" >&2
+      return 0
+      ;;
+    3)
+      echo "warning: herdr presentation ordering needs protocol $FM_BACKEND_HERDR_MIN_WORKSPACE_MOVE_PROTOCOL or newer; leaving worker in Herdr's current order" >&2
+      return 0
+      ;;
+    4)
+      echo "warning: herdr presentation ordering could not read the API schema; leaving worker in Herdr's current order" >&2
+      return 0
+      ;;
+    *)
+      echo "warning: herdr presentation ordering API support is unavailable or ambiguous; leaving worker in Herdr's current order" >&2
+      return 0
+      ;;
+  esac
+  socket=$(fm_backend_herdr_presentation_session_socket_path "$session") || {
+    echo "warning: herdr presentation ordering found an ambiguous named session socket; leaving worker in Herdr's current order" >&2
+    return 0
+  }
+
+  mover=${FM_BACKEND_HERDR_WORKSPACE_MOVER:-$FM_BACKEND_HERDR_ROOT/bin/backends/herdr-workspace-move.py}
+  focus_before=$(fm_backend_herdr_projection_focus_snapshot "$session") || {
+    echo "warning: herdr presentation ordering could not capture exact active workspace and tab; leaving worker in Herdr's current order" >&2
+    return 0
+  }
+  if response=$("$mover" "$socket" "$created" "$desired" 2>/dev/null); then
+    move_status=0
+  else
+    move_status=$?
+  fi
+  fm_backend_herdr_projection_focus_restore "$session" "$focus_before" "workspace move" || true
+  if [ "$move_status" -ne 0 ]; then
+    echo "warning: herdr presentation workspace move failed or had an ambiguous response; leaving worker running without cleanup" >&2
+    return 0
+  fi
+  if ! printf '%s' "$response" | jq -e --arg created "$created" --arg parent "$parent" --arg parent_ws "$parent_ws" --argjson desired "$desired" '
+    def is_parent:
+      if ($parent_ws | length) > 0
+      then .workspace_id == $parent_ws
+      else (.label | type) == "string" and .label == $parent
+      end;
+    .result.type == "workspace_list"
+    and (.result.workspaces | type) == "array"
+    and .result.workspaces[$desired].workspace_id == $created
+    and ([.result.workspaces[] | select(is_parent)] | length) == 1
+    and (
+      [range(0; .result.workspaces | length) as $i
+        | select(.result.workspaces[$i] | is_parent)
+        | $i][0] < $desired
+    )
+  ' >/dev/null 2>&1; then
+    echo "warning: herdr presentation workspace move returned an unverifiable order; leaving worker running without cleanup" >&2
+    return 0
+  fi
+
+  before_existing=$(printf '%s' "$analysis" | jq -c '.existing' 2>/dev/null)
+  after_existing=$(printf '%s' "$response" | jq -c --arg created "$created" '[.result.workspaces[] | select(.workspace_id != $created) | .workspace_id]' 2>/dev/null)
+  if [ "$after_existing" != "$before_existing" ]; then
+    echo "warning: herdr presentation workspace move did not preserve relative order; leaving worker running without cleanup" >&2
+  fi
+  return 0
 }

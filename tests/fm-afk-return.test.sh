@@ -39,7 +39,7 @@ install_runner() {  # <case-dir>
   cp "$ROOT/bin/fm-backlog-transition-lib.sh" "$dir/bin/"
   # The merge-notification marker reader behind the brief's landed section.
   cp "$ROOT/bin/fm-pr-lib.sh" "$dir/bin/"
-  cp "$ROOT/.tasks.toml" "$dir/home/.tasks.toml"
+  fm_test_tasks_toml "$dir/home/.tasks.toml"
   # Keep host sleep history out of every fixture; individual cases supply it.
   cat > "$dir/bin/pmset" <<'SH'
 #!/usr/bin/env bash
