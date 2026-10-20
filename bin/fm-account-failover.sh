@@ -43,7 +43,8 @@
 #      account of the map through `choose`.
 #   4. With no qualifying account, leaves the worker stopped and
 #      appends one home-wide `blocked:` outcome naming each account's quota
-#      and reset time, once until a fresh watcher snapshot finds room again.
+#      and reset time, once until a fresh watcher snapshot finds room for the
+#      recorded model again.
 #   5. For a ship whose own no-mistakes run is still active, aborts that run
 #      through `no-mistakes axi abort --run <id>` and proves it terminal before
 #      anything moves; a run it cannot read or stop blocks the move instead.
@@ -238,7 +239,7 @@ skipped() {
 }
 
 # One notice per launching home and exhaustion episode, shared by every task.
-# A qualifying account clears the episode, including quota restored early.
+# The watcher clears the episode when an account qualifies for its recorded model.
 status_exhausted() {
   local reason=$1 lock="$STATE/.claude-exhausted.lock"
   fm_account_failover_require_current_turn
@@ -435,9 +436,6 @@ fm_account_failover_recover() {
   if ! pick=$(choose_print "$choice"); then
     status_exhausted "Claude usage limit reached ($limit_text); no other Claude account has room (${pick#none$'\t'}), so the worker was left stopped"
   fi
-  fm_lock_acquire_wait "$STATE/.claude-exhausted.lock"
-  rm -f "$STATE/.claude-exhausted"
-  fm_lock_release "$STATE/.claude-exhausted.lock"
   to=$(printf '%s' "$pick" | cut -f2)
 
   run_id=
@@ -480,28 +478,32 @@ fm_account_failover_recover() {
 # --- tick -------------------------------------------------------------------
 
 cmd_tick() {
-  local state marker id snapshot model
+  local state marker id snapshot model lock
   [ -n "${FM_HOME:-}" ] || return 0
   state="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
   [ -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/$FM_WORKER_ACCOUNT_FAILOVER_FILE" ] || return 0
-  # Re-arm the one home-wide notice when a fresh reading proves an account
-  # usable again, even when no stopped task has submitted another turn.
+  # Re-arm the one home-wide notice for its recorded model, checking at most
+  # every five minutes with a two-second maintenance budget, even without a turn.
   if [ -f "$state/.claude-exhausted" ]; then
-    model=$(cat "$state/.claude-exhausted")
-    snapshot="$state/.account-failover-rearm.$$.json"
-    if fm_run_timed "${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}" env -u QUOTA_AXI_MAX_AGE \
-      quota-axi --all-accounts --json > "$snapshot" 2>/dev/null </dev/null \
-      && cmd_choose --map "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/$FM_WORKER_ACCOUNT_FAILOVER_FILE" \
-        --snapshot "$snapshot" --model "$model" >/dev/null 2>&1; then
-      # tick runs standalone, while run is sourced by control; share the
-      # existing lock implementation without acquiring any fleet authority.
-      # shellcheck source=bin/fm-wake-lib.sh
-      . "$SCRIPT_DIR/fm-wake-lib.sh"
-      fm_lock_acquire_wait "$state/.claude-exhausted.lock"
-      rm -f "$state/.claude-exhausted"
-      fm_lock_release "$state/.claude-exhausted.lock"
+    # shellcheck source=bin/fm-wake-lib.sh
+    . "$SCRIPT_DIR/fm-wake-lib.sh"
+    lock="$state/.claude-exhausted.lock"
+    if fm_lock_try_acquire "$lock"; then
+      if [ -f "$state/.claude-exhausted" ] && [ "$(fm_path_age "$state/.claude-exhausted")" -ge 300 ]; then
+        model=$(cat "$state/.claude-exhausted")
+        snapshot="$state/.account-failover-rearm.$$.json"
+        if touch "$state/.claude-exhausted" && fm_run_timed 2 bash -c '
+          . "$1"
+          env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json > "$2" </dev/null &&
+            cmd_choose --map "$3" --snapshot "$2" --model "$4"
+        ' _ "$SCRIPT_DIR/fm-account-failover.sh" "$snapshot" \
+          "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/$FM_WORKER_ACCOUNT_FAILOVER_FILE" "$model" >/dev/null 2>&1; then
+          rm -f "$state/.claude-exhausted"
+        fi
+        rm -f "$snapshot"
+      fi
+      fm_lock_release "$lock"
     fi
-    rm -f "$snapshot"
   fi
   for marker in "$state"/*.usage-limit; do
     [ -f "$marker" ] || continue

@@ -1312,6 +1312,7 @@ test_exhaustion_episode_is_shared() {
   assert_contains "$(status_of sm36)" 'resets 2026-10-06T22:59Z' "the notice names the other reset"
   # A reset observed by the watcher re-arms the notice, with no task record.
   quota_snapshot 0 81 > "$CASE/fake/quota.json"
+  touch -t 200001010000 "$CASE/home/state/.claude-exhausted"
   case_env "$FAILOVER" tick >/dev/null
   quota_snapshot 0 0 > "$CASE/fake/quota.json"
   record_limit sm36
@@ -1321,8 +1322,116 @@ test_exhaustion_episode_is_shared() {
   pass "secondmate: all-exhausted emits one home-wide outcome with resets per episode"
 }
 
+test_unrelated_model_moves_preserve_exhaustion() {
+  local kind out
+  for kind in ship scout secondmate; do
+    new_case "model-episode-$kind" t38 "$kind"
+    printf 'model=opus\n' >> "$CASE/home/state/t38.meta"
+    printf 'claude opus\n' > "$CASE/home/config/secondmate-harness"
+    represented_scope_snapshot seven_day_opus > "$CASE/fake/quota.json"
+    record_limit t38
+    out=$(case_env "$FAILOVER" run t38 2>&1)
+    assert_contains "$out" 'blocked t38' "Opus exhaustion is reported: $out"
+    assert_equals opus "$(cat "$CASE/home/state/.claude-exhausted")" "the marker owns the exhausted model"
+    printf 'model=sonnet\n' >> "$CASE/home/state/t38.meta"
+    printf 'claude sonnet\n' > "$CASE/home/config/secondmate-harness"
+    record_limit t38
+    out=$(case_env "$FAILOVER" run t38 2>&1)
+    assert_contains "$out" 'moved t38 limited spare' "Sonnet still moves: $out"
+    assert_equals opus "$(cat "$CASE/home/state/.claude-exhausted")" "a $kind move cannot rearm Opus"
+    touch -t 200001010000 "$CASE/home/state/.claude-exhausted"
+    case_env "$FAILOVER" tick >/dev/null
+    assert_equals opus "$(cat "$CASE/home/state/.claude-exhausted")" "Sonnet room cannot rearm Opus in maintenance"
+    printf 'model=opus\n' >> "$CASE/home/state/t38.meta"
+    printf 'claude opus\n' > "$CASE/home/config/secondmate-harness"
+    record_limit t38
+    out=$(case_env "$FAILOVER" run t38 2>&1)
+    assert_contains "$out" 'already reported' "another Opus limit stays deduplicated: $out"
+    assert_equals 1 "$(grep -c '^blocked:' "$CASE/home/state/t38.status")" "one notice persists across the unrelated move"
+    quota_snapshot 0 81 > "$CASE/fake/quota.json"
+    touch -t 200001010000 "$CASE/home/state/.claude-exhausted"
+    case_env "$FAILOVER" tick >/dev/null
+    [ ! -e "$CASE/home/state/.claude-exhausted" ] || fail "recovered Opus rearms the notice"
+    quota_snapshot 0 0 > "$CASE/fake/quota.json"
+    record_limit t38
+    out=$(case_env "$FAILOVER" run t38 2>&1)
+    assert_contains "$out" 'blocked t38' "new exhaustion after recovery emits a notice: $out"
+    assert_equals 2 "$(grep -c '^blocked:' "$CASE/home/state/t38.status")" "recovery starts a new episode"
+  done
+  pass "exhaustion: unrelated model moves and maintenance preserve the recorded episode"
+}
+
+test_maintenance_rechecks_are_bounded_and_throttled() {
+  local mode out
+  for mode in failed hung malformed auth-hung; do
+    new_case "maintenance-$mode" t39 secondmate
+    quota_snapshot 0 0 > "$CASE/fake/quota.json"
+    record_limit t39
+    case_env "$FAILOVER" run t39 >/dev/null
+    : > "$CASE/fake/quota-calls"
+    case_env "$FAILOVER" tick >/dev/null
+    [ ! -s "$CASE/fake/quota-calls" ] || fail "a new episode waits for its cooldown"
+    touch -t 200001010000 "$CASE/home/state/.claude-exhausted"
+    mv "$CASE/fakebin/quota-axi" "$CASE/fakebin/quota-base"
+    cat > "$CASE/fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+case "$FM_MAINTENANCE_FAILURE" in
+  hung) printf 'hung\n' >> "$FM_FAKE_DIR/quota-calls"; exec python3 -c 'import time; time.sleep(30)' ;;
+  *) exec "$(dirname "$0")/quota-base" "$@" ;;
+esac
+SH
+    chmod +x "$CASE/fakebin/quota-axi"
+    case "$mode" in
+      failed) rm "$CASE/fake/quota.json" ;;
+      malformed) printf 'invalid\n' > "$CASE/fake/quota.json" ;;
+      auth-hung)
+        quota_snapshot 0 81 > "$CASE/fake/quota.json"
+        mv "$CASE/fakebin/claude" "$CASE/fakebin/claude-base"
+        cat > "$CASE/fakebin/claude" <<'SH'
+#!/usr/bin/env bash
+exec python3 -c 'import time; time.sleep(30)'
+SH
+        chmod +x "$CASE/fakebin/claude"
+        ;;
+    esac
+    printf 'v1\ngen=stale\n' > "$CASE/home/state/t39.usage-limit"
+    out=$(case_env FM_MAINTENANCE_FAILURE="$mode" python3 - "$FAILOVER" <<'PYTEST'
+import os, signal, subprocess, sys
+p = subprocess.Popen([sys.argv[1], 'tick'], stdout=subprocess.PIPE,
+                     stderr=subprocess.PIPE, text=True, start_new_session=True)
+try:
+    out, err = p.communicate(timeout=8)
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL)
+    p.communicate()
+    sys.exit('maintenance stalled ordinary tick processing')
+print(out, end='')
+sys.exit(p.returncode)
+PYTEST
+    ) || fail "$mode maintenance exceeded its responsiveness budget"
+    assert_contains "$out" 'skipped t39' "pending events are processed after $mode maintenance: $out"
+    [ ! -e "$CASE/home/state/t39.usage-limit" ] || fail "pending stale event is consumed"
+    case_env FM_MAINTENANCE_FAILURE="$mode" "$FAILOVER" tick >/dev/null
+    assert_equals 1 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "$mode attempts are throttled"
+    [ -f "$CASE/home/state/.claude-exhausted" ] || fail "$mode cannot rearm exhaustion"
+    mv "$CASE/fakebin/quota-base" "$CASE/fakebin/quota-axi"
+    if [ "$mode" = auth-hung ]; then
+      mv "$CASE/fakebin/claude-base" "$CASE/fakebin/claude"
+    fi
+    quota_snapshot 0 81 > "$CASE/fake/quota.json"
+    case_env "$FAILOVER" tick >/dev/null
+    assert_equals 1 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "restoration still respects the cooldown"
+    touch -t 200001010000 "$CASE/home/state/.claude-exhausted"
+    case_env "$FAILOVER" tick >/dev/null
+    [ ! -e "$CASE/home/state/.claude-exhausted" ] || fail "a later successful check rearms exhaustion"
+  done
+  pass "maintenance: failures, hung quota and hung authentication stay bounded and throttled"
+}
+
 test_secondmate_failover
 test_exhaustion_episode_is_shared
+test_unrelated_model_moves_preserve_exhaustion
+test_maintenance_rechecks_are_bounded_and_throttled
 
 test_record_writes_a_usage_limit_record_only_for_a_rate_limit_with_the_map
 test_absent_map_is_a_no_op
