@@ -110,7 +110,7 @@ While originating task metadata is live, the `complete` subcommand unions the re
 A post-teardown visual review can complete against the surviving report and durable tasks without recreating volatile task metadata.
 
 `complete` accepts `--none` as an explicit semantic inventory result.
-`--none` is refused while the origin still has a lifecycle-open keyed status decision.
+`--none` preserves any previously recorded inventory and is refused when that inventory is empty while the origin has a lifecycle-open keyed status decision.
 Before recording completion, `complete` verifies every listed task against tasks-axi.
 The origin is never its own inventory entry, so a hold that failed cannot be vouched for by the origin row.
 For a historical inventory that names its own origin, hold a separate captain task with `--origin`, replace only the invalid entry in the final `decision_keys=` line of the origin metadata with that task id while preserving all other entries, and re-run `complete`.
@@ -132,7 +132,8 @@ Scout teardown calls the read-only `verify` subcommand after checking for the re
 
 On the markdown backend, an entry absent from the active backlog can verify through a Done row in the configured archive only if its body carries a recorded resolution.
 The same origin checks still apply, and an active row takes precedence over an archived namesake.
-This read-only fallback preserves verification after Done retention; `complete` and mutation commands do not use it.
+This read-only fallback also applies when `complete` re-checks an entry already recorded in that origin's inventory.
+Newly added entries require an active backlog row; hold, answer, and reconcile mutations never use the archive.
 
 A keyed status decision opened after the last `complete` makes `verify` fail, and re-running `complete` is the repair.
 The `--force` path remains the explicit captain-approved discard escape hatch.
@@ -532,6 +533,7 @@ The suite does not test the accepted merge-to-cleanup re-hold window or asynchro
 ### Completion and verification
 
 - A report-only unresolved captain call refuses `--none` completion before teardown can erase the source.
+- Re-recording an inventory after Done retention accepts its previously recorded resolved entries, transfers later keyed decisions, and refuses newly added archived or unknown keys and archived entries without a recorded resolution.
 - Non-forced scout teardown always requires the durable inventory verification.
 - The recorded-answer guard holds: a bare `tasks-axi done` close fails `verify` until `answer` records the captain's word, and an ordinary finished task cannot be dressed up as an answered call.
 

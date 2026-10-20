@@ -885,8 +885,8 @@ test_answer_records_and_closes() {
 
 # Done retention must preserve a reviewed scout's recorded resolutions without
 # treating an archived, unanswered hold as a durable captain call.
-test_verify_accepts_archived_resolutions() {
-  local home id call mode before after rc archive
+test_inventory_accepts_archived_resolutions() {
+  local home id call mode before after rc archive inventory status_before
   for mode in answered released unresolved; do
     home=$(make_home "archived-$mode")
     id=sample-archived-review
@@ -938,8 +938,54 @@ test_verify_accepts_archived_resolutions() {
     if [ "$mode" = unresolved ]; then
       [ "$rc" -ne 0 ] || fail "verification accepted an archived call without a resolution"
       assert_present "$home/state/$id.meta" "verification removed the unresolved scout"
+      run_captain "$home" hold later-call --title "Choose a later route" \
+        --reason "choose a later route" --origin "$id" >/dev/null \
+        || fail "could not hold the later call"
+      printf 'needs-decision [key=later-choice]: choose a later route\n' >> "$home/state/$id.status"
+      inventory=$(cat "$home/state/$id.meta")
+      status_before=$(cat "$home/state/$id.status")
+      if run_captain "$home" complete "$id" later-call > "$home/complete.out" 2> "$home/complete.err"; then
+        fail "completion accepted an archived earlier entry without a resolution"
+      fi
+      [ "$inventory" = "$(cat "$home/state/$id.meta")" ] || fail "a refused unresolved entry changed the inventory"
+      [ "$status_before" = "$(cat "$home/state/$id.status")" ] || fail "a refused unresolved entry transferred the later decision"
     else
       [ "$rc" -eq 0 ] || fail "the archived $mode resolution blocked verification: $(cat "$home/verify.err")"
+      # A later keyed decision must be repairable without dropping the earlier
+      # inventory entry just because Done retention moved it into the archive.
+      run_captain "$home" hold later-call --title "Choose a later route" \
+        --reason "choose a later route" --origin "$id" >/dev/null \
+        || fail "could not hold the later call"
+      printf 'needs-decision [key=later-choice]: choose a later route\n' >> "$home/state/$id.status"
+      run_captain "$home" complete "$id" later-call > "$home/complete.out" 2> "$home/complete.err" \
+        || fail "the archived $mode resolution blocked re-recording: $(cat "$home/complete.err")"
+      assert_grep "decision_keys=later-call,$call" "$home/state/$id.meta" \
+        "re-recording lost the earlier archived entry or the later call"
+      run_captain "$home" verify "$id" >/dev/null \
+        || fail "re-recording did not transfer the later keyed decision"
+      # Explicitly supplying an already recorded id is still a re-check.
+      run_captain "$home" complete "$id" "$call" >/dev/null \
+        || fail "explicitly re-supplying the archived entry was refused"
+      run_captain "$home" complete "$id" --none >/dev/null \
+        || fail "an empty later pass could not re-check its archived inventory"
+      inventory=$(cat "$home/state/$id.meta")
+      if run_captain "$home" complete "$id" unknown-call > "$home/unknown.out" 2> "$home/unknown.err"; then
+        fail "completion accepted a newly supplied unknown key"
+      fi
+      [ "$inventory" = "$(cat "$home/state/$id.meta")" ] || fail "a refused unknown key changed the inventory"
+      # This archived answer has the correct origin but was never attested.
+      run_captain "$home" hold unrecorded-call --title "An unrecorded call" \
+        --reason "choose another route" --origin "$id" >/dev/null \
+        || fail "could not hold the unrecorded call"
+      run_captain "$home" answer unrecorded-call --decision-file "$home/decision.txt" >/dev/null \
+        || fail "could not answer the unrecorded call"
+      tasks_in "$home" prune --keep 0 >/dev/null || fail "could not archive the unrecorded call"
+      assert_grep unrecorded-call "$archive" "the unrecorded call was not archived"
+      assert_no_grep unrecorded-call "$home/data/backlog.md" "the unrecorded call remained active"
+      if run_captain "$home" complete "$id" unrecorded-call > "$home/new-archive.out" 2> "$home/new-archive.err"; then
+        fail "completion accepted a newly supplied archived key"
+      fi
+      [ "$inventory" = "$(cat "$home/state/$id.meta")" ] || fail "a refused archived key changed the inventory"
       # An active namesake and an origin mismatch must still refuse even when
       # the archive carries an otherwise valid resolution for the same id.
       tasks_in "$home" add "$call" "A new unanswered call" >/dev/null
@@ -963,7 +1009,7 @@ test_verify_accepts_archived_resolutions() {
       assert_absent "$home/state/$id.meta" "cleanup retained the resolved scout"
     fi
   done
-  pass "archived answered and released calls permit verification and cleanup; unresolved calls refuse"
+  pass "archived resolutions permit inventory re-checks and cleanup; new archived keys and unresolved entries refuse"
 }
 
 # --release lifts the hold instead of closing, preserving the work item's own
@@ -4813,7 +4859,7 @@ SH
   pass "marked hold reasons round-trip through public reads, fleet, startup, and return without changing other fields"
 }
 
-test_verify_accepts_archived_resolutions
+test_inventory_accepts_archived_resolutions
 test_hold_reason_round_trips_awkward_characters
 test_hold_origin_is_atomic_with_backend_hold
 test_inventory_check_waits_for_an_in_flight_hold
