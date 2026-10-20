@@ -23,6 +23,54 @@ assert_present "$CI_WORKFLOW" ".github/workflows/ci.yml is missing"
 command -v ruby >/dev/null 2>&1 \
   || fail "ruby is required to parse .github/workflows/ci.yml as YAML"
 
+# Resolve repository-dependent job configuration before applying the existing
+# upstream contract, then exercise the fork shell steps with recording tools.
+WORKFLOW_TMP=$(fm_test_tmproot fm-ci-workflow)
+ORIGINAL_CI_WORKFLOW=$CI_WORKFLOW
+cat > "$WORKFLOW_TMP/resolve.rb" <<'RUBY'
+require "yaml"
+require "json"
+def repository_value(raw, repo, context = {})
+  return raw unless raw.is_a?(String)
+  expression = raw.sub(/\A\$\{\{\s*/, "").sub(/\s*\}\}\z/, "").strip
+  json = expression.start_with?("fromJSON(")
+  expression = expression[9...-1] if json
+  expression = expression.gsub(/github\.repository\s*(==|!=)\s*'([^']+)'/) do
+    equal = repo == Regexp.last_match(2)
+    (Regexp.last_match(1) == "==" ? equal : !equal).to_s
+  end
+  expression = expression.gsub("!cancelled()", "true").gsub("always()", "true")
+  atom = lambda do |token|
+    token = token.strip
+    next true if token == "true"
+    next false if token == "false"
+    next token.to_i if token.match?(/\A[0-9]+\z/)
+    next token[1...-1] if token.start_with?("'") && token.end_with?("'")
+    context.fetch(token) { raise "unsupported expression #{token}" }
+  end
+  value = expression.split("||").map do |part|
+    part.split("&&").reduce(true) { |result, token| result && atom.call(token) }
+  end.find { |part| part != false && part != nil }
+  value = false if value.nil?
+  json ? JSON.parse(value) : value
+end
+
+def repository_workflow(path, repo)
+  doc = YAML.load_file(path)
+  doc.fetch("jobs").each_value do |job|
+    job["timeout-minutes"] = repository_value(job.fetch("timeout-minutes"), repo)
+    if job.key?("strategy")
+      job.fetch("strategy").fetch("matrix").transform_values! { |v| repository_value(v, repo) }
+    end
+  end
+  doc
+end
+RUBY
+ruby -r"$WORKFLOW_TMP/resolve.rb" -e '
+puts YAML.dump(repository_workflow(ARGV[0], "kunchenguid/firstmate"))
+' "$ORIGINAL_CI_WORKFLOW" > "$WORKFLOW_TMP/upstream.yml" || fail "resolve upstream CI"
+CI_WORKFLOW="$WORKFLOW_TMP/upstream.yml"
+
 # Resolve the workflow's concurrency contract under one simulated event and
 # print "<group><TAB><cancel-in-progress>". Only the two expression constructs
 # this workflow uses are resolved: an `a || b` fallback and an `==` comparison.
@@ -249,6 +297,60 @@ RUBY
   pass "CI matrices cover every executable serial lane and canonical lint root exactly once"
 }
 
+test_fork_groups_execute_every_canonical_partition() {
+  ruby -r"$WORKFLOW_TMP/resolve.rb" -ropen3 -rfileutils - "$ORIGINAL_CI_WORKFLOW" "$ROOT" "$WORKFLOW_TMP" <<'RUBY' || fail "fork CI execution contract"
+path, root, tmp = ARGV
+["ChristianAlexanderDiaz/firstmate", "kunchenguid/firstmate", "other/firstmate"].each do |repo|
+  fork = repo == "ChristianAlexanderDiaz/firstmate"
+  jobs = repository_workflow(path, repo).fetch("jobs")
+  enabled = jobs.reject { |_, job| job["if"] && repository_value(job["if"], repo) == false }
+  count = enabled.values.sum do |job|
+    job.key?("strategy") ? job.fetch("strategy").fetch("matrix").values.map(&:length).reduce(:*) : 1
+  end
+  raise "unexpected CI job count #{repo}: #{count}" unless count == (fork ? 11 : 18)
+  records = []
+  ["lint", "tests-portable-serial"].each do |id|
+    job = jobs.fetch(id)
+    dimension, members = job.fetch("strategy").fetch("matrix").first
+    members.each do |member|
+      context = {"matrix.#{dimension}" => member, "strategy.job-total" => members.length}
+      work = File.join(tmp, repo.tr("/", "-"), id, member.to_s)
+      FileUtils.mkdir_p(File.join(work, "bin"))
+      tool = id == "lint" ? "fm-lint.sh" : "fm-test-run.sh"
+      # Record the executable workflow's real arguments; never run broad suites
+      # or install tools while proving the matrix composition.
+      File.write(File.join(work, "bin", tool), "#!/bin/bash\nprintf '%s\\n' \"$@\" >> \"$CI_ARGUMENTS\"\n")
+      FileUtils.chmod(0755, File.join(work, "bin", tool))
+      job.fetch("steps").select { |step| step["run"] && step["timeout-minutes"] == 30 }.each do |step|
+        next if step["if"] && repository_value(step["if"], repo, context) == false
+        env = step.fetch("env").transform_values do |v|
+          v.to_s.include?("${{") ? repository_value(v, repo, context).to_s : v.to_s
+        end
+        env["RUNNER_TEMP"] = work
+        env["CI_ARGUMENTS"] = File.join(work, "arguments")
+        command = step.fetch("run").gsub(/\$\{\{(.+?)\}\}/) { repository_value(Regexp.last_match(1), repo, context).to_s }
+        output, status = Open3.capture2e(env, "bash", "-c", command, chdir: work)
+        raise "workflow step failed: #{output}" unless status.success?
+      end
+      records.concat(File.readlines(File.join(work, "arguments"), chomp: true))
+    end
+  end
+  lanes, status = Open3.capture2(File.join(root, "bin/fm-test-run.sh"), "--list-lanes")
+  expected = lanes.lines.map(&:strip).select { |lane| lane.match?(/\Aportable-serial-\d+of\d+\z/) }
+  actual = records.select { |arg| arg.start_with?("portable-serial-") }
+  raise "lost or duplicated serial shard #{repo}" unless status.success? && actual.sort == expected.sort
+  raise "lost lint partition #{repo}" unless records.grep(/\A\d+of2\z/).sort == ["1of2", "2of2"]
+  timing = records.grep(/fm-test-timing-portable-serial-\d+\.json\z/).map { |arg| File.basename(arg) }
+  raise "lost or overwritten shard timing #{repo}" unless timing.sort == (1..9).map { |i| "fm-test-timing-portable-serial-#{i}.json" }.sort
+  if fork
+    raise "grouped lint job needs setup headroom" unless jobs.fetch("lint").fetch("timeout-minutes") == 75
+    raise "grouped serial job needs setup headroom" unless jobs.fetch("tests-portable-serial").fetch("timeout-minutes") == 100
+  end
+end
+RUBY
+  pass "fork starts 11 CI jobs while upstream keeps 18, executing every lint partition and serial shard with unique timing"
+}
+
 test_ci_matrices_match_executable_partitions
 test_pr_pushes_supersede_within_one_pr
 test_separate_prs_do_not_cancel_each_other
@@ -258,3 +360,5 @@ test_every_job_belongs_to_exactly_one_timeout_tier
 test_fast_tier_shares_one_short_tripwire
 test_normal_tier_shares_one_budget
 test_heavy_tier_keeps_a_step_tripwire_under_a_job_backstop
+
+test_fork_groups_execute_every_canonical_partition

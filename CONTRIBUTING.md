@@ -40,7 +40,8 @@ Add required status checks with `strict_required_status_checks_policy: false`; a
 Bind the checks to the GitHub Actions app already producing them, rather than accepting the same context from any integration.
 No new app installation or manual runner setup is needed for that setting.
 
-Require the actual job contexts: `Lint 1`, `Lint 2`, `Test coverage guard`, `Repo invariants`, `Stock macOS Bash snapshot compatibility`, `Behavior portable parallel 1`, `Behavior portable parallel 2`, `Behavior portable serial 1` through `Behavior portable serial 9`, `Behavior tests (Herdr)`, `Behavior timing aggregate`, and `PR must be raised via no-mistakes`.
+For upstream, require the actual job contexts: `Lint 1`, `Lint 2`, `Test coverage guard`, `Repo invariants`, `Stock macOS Bash snapshot compatibility`, `Behavior portable parallel 1`, `Behavior portable parallel 2`, `Behavior portable serial 1` through `Behavior portable serial 9`, `Behavior tests (Herdr)`, `Behavior timing aggregate`, and `PR must be raised via no-mistakes`.
+The fork-specific consolidated job layout is documented in [portable test shards](docs/fm-test-portable-shards.md#fork-runner-consolidation); use its emitted contexts when configuring checks on that fork.
 The last name is the compliance job context, not its workflow title; its existing automation exceptions remain unchanged.
 The timing aggregate is not a substitute for individual jobs because it can succeed while collecting evidence from a failed run.
 

@@ -25,17 +25,19 @@ concurrency:
 # Timeout policy: docs/fm-test-portable-shards.md "Timeouts" owns the three
 # tiers and their rationale; tests/fm-ci-workflow.test.sh guards this workflow.
 # Each job comment identifies the tier implemented by its executable value.
+# This fork groups canonical partitions into fewer runners; upstream is unchanged.
+# Grouped jobs retain a 30-minute tripwire on each constituent step.
 
 jobs:
   lint:
     name: Lint ${{ matrix.partition }}
     runs-on: ubuntu-latest
-    # Normal tier (see the timeout policy above).
-    timeout-minutes: 30
+    # Normal tier per constituent; grouped fork backstop (see timeout policy).
+    timeout-minutes: ${{ github.repository == 'ChristianAlexanderDiaz/firstmate' && 75 || 30 }}
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2]
+        partition: ${{ fromJSON(github.repository == 'ChristianAlexanderDiaz/firstmate' && '[1]' || '[1,2]') }}
     steps:
       - uses: actions/checkout@v6
       - name: Install pinned ShellCheck
@@ -53,6 +55,7 @@ jobs:
       # and the pre-push gate on this script so a self-broken ci.yml still
       # fails locally before merge.
       - name: Lint canonical partition
+        timeout-minutes: 30
         env:
           # Fail closed rather than lint uncapped when a configured per-root
           # bound (wall deadline or memory rlimit) cannot be enforced here.
@@ -61,16 +64,28 @@ jobs:
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-lint"
-          bin/fm-lint.sh --partition "${{ matrix.partition }}of${{ strategy.job-total }}" \
+          bin/fm-lint.sh --partition "${{ matrix.partition }}of2" \
             --telemetry "$RUNNER_TEMP/fm-lint/partition-${{ matrix.partition }}.tsv"
+      - name: Lint second canonical partition on fork
+        if: ${{ !cancelled() && github.repository == 'ChristianAlexanderDiaz/firstmate' }}
+        timeout-minutes: 30
+        env:
+          # Fail closed rather than lint uncapped when a configured per-root
+          # bound (wall deadline or memory rlimit) cannot be enforced here.
+          FM_LINT_REQUIRE_BOUNDS: '1'
+          FM_LINT_JOBS: '1'
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/fm-lint"
+          bin/fm-lint.sh --partition "2of2" \
+            --telemetry "$RUNNER_TEMP/fm-lint/partition-2.tsv"
       - name: Upload lint telemetry
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fm-lint-telemetry-${{ matrix.partition }}
           path: |
-            ${{ runner.temp }}/fm-lint/partition-${{ matrix.partition }}.tsv
-            ${{ runner.temp }}/fm-lint/partition-${{ matrix.partition }}.roots.tsv
+            ${{ runner.temp }}/fm-lint/partition-*.tsv
           if-no-files-found: warn
 
   # Deterministic proof that portable parallel shards + portable serial + Herdr
@@ -173,19 +188,19 @@ jobs:
   # Required portable serial remainder: watcher, lock, AFK, tmux, daemon,
   # ambiguous, and other stateful tests. Real Herdr stays in tests-herdr.
   # Split across separate runners so no two of these stateful scripts ever share
-  # a machine: each shard is still strictly serial in itself. Shard membership
-  # and the shard count both belong to bin/fm-test-run.sh, which refuses a lane
+  # a machine concurrently: this fork runs three shards sequentially per runner.
+  # Shard membership and count belong to bin/fm-test-run.sh, which refuses a lane
   # whose "ofN" disagrees with it (docs/fm-test-portable-shards.md).
   tests-portable-serial:
     name: Behavior portable serial ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # Normal tier (see the timeout policy above).
-    timeout-minutes: 30
+    # Normal tier per constituent; grouped fork backstop (see timeout policy).
+    timeout-minutes: ${{ github.repository == 'ChristianAlexanderDiaz/firstmate' && 100 || 30 }}
     strategy:
       # Every shard reports so one failure never hides another shard's result.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        shard: ${{ fromJSON(github.repository == 'ChristianAlexanderDiaz/firstmate' && '[1,2,3]' || '[1,2,3,4,5,6,7,8,9]') }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -229,15 +244,49 @@ jobs:
           npm install -g @earendil-works/pi-coding-agent
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable serial shard ${{ matrix.shard }}
+        timeout-minutes: 30
         env:
-          # job-total rather than a literal, so shrinking or growing the matrix
-          # without matching bin/fm-test-run.sh is refused instead of quietly
-          # leaving a shard of the required lane unrun.
-          FM_SERIAL_LANE: portable-serial-${{ matrix.shard }}of${{ strategy.job-total }}
+          # Preserve all nine canonical shards when the fork groups three per runner.
+          FM_SERIAL_COUNT: ${{ github.repository == 'ChristianAlexanderDiaz/firstmate' && 9 || strategy.job-total }}
           FM_SERIAL_SHARD: ${{ matrix.shard }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
+          FM_SERIAL_LANE="portable-serial-${FM_SERIAL_SHARD}of${FM_SERIAL_COUNT}"
+          # The Pi package is installed above and CI provides npm and tsc, so
+          # any missing typecheck prerequisite is a broken lane, not a valid skip.
+          bin/fm-test-run.sh --lane "$FM_SERIAL_LANE" \
+            --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \
+            --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-serial-${FM_SERIAL_SHARD}.json"
+      - name: Run grouped serial shard (offset 3) on fork
+        if: ${{ !cancelled() && github.repository == 'ChristianAlexanderDiaz/firstmate' }}
+        timeout-minutes: 30
+        env:
+          # Preserve all nine canonical shards when the fork groups three per runner.
+          FM_SERIAL_COUNT: ${{ github.repository == 'ChristianAlexanderDiaz/firstmate' && 9 || strategy.job-total }}
+          FM_SERIAL_SHARD: ${{ matrix.shard }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/fm-test"
+          FM_SERIAL_SHARD=$((FM_SERIAL_SHARD + 3))
+          FM_SERIAL_LANE="portable-serial-${FM_SERIAL_SHARD}of${FM_SERIAL_COUNT}"
+          # The Pi package is installed above and CI provides npm and tsc, so
+          # any missing typecheck prerequisite is a broken lane, not a valid skip.
+          bin/fm-test-run.sh --lane "$FM_SERIAL_LANE" \
+            --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \
+            --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-serial-${FM_SERIAL_SHARD}.json"
+      - name: Run grouped serial shard (offset 6) on fork
+        if: ${{ !cancelled() && github.repository == 'ChristianAlexanderDiaz/firstmate' }}
+        timeout-minutes: 30
+        env:
+          # Preserve all nine canonical shards when the fork groups three per runner.
+          FM_SERIAL_COUNT: ${{ github.repository == 'ChristianAlexanderDiaz/firstmate' && 9 || strategy.job-total }}
+          FM_SERIAL_SHARD: ${{ matrix.shard }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/fm-test"
+          FM_SERIAL_SHARD=$((FM_SERIAL_SHARD + 6))
+          FM_SERIAL_LANE="portable-serial-${FM_SERIAL_SHARD}of${FM_SERIAL_COUNT}"
           # The Pi package is installed above and CI provides npm and tsc, so
           # any missing typecheck prerequisite is a broken lane, not a valid skip.
           bin/fm-test-run.sh --lane "$FM_SERIAL_LANE" \
@@ -248,7 +297,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fm-test-timing-portable-serial-${{ matrix.shard }}
-          path: ${{ runner.temp }}/fm-test/fm-test-timing-portable-serial-${{ matrix.shard }}.json
+          path: ${{ runner.temp }}/fm-test/fm-test-timing-portable-serial-*.json
           if-no-files-found: warn
 
   # Required real-Herdr lane: pinned install, serial real-herdr-gated family,
