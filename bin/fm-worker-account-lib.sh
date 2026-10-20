@@ -294,7 +294,7 @@ fm_worker_account_claude_shed() {
 # --- Claude account failover map (config/claude-failover) --------------------
 #
 # Opt-in; an absent file is no failover. The file names the Claude accounts a
-# worker may be moved between, each by the account name `quota-axi
+# ship, scout, or local secondmate may be moved between, each by the account name `quota-axi
 # --all-accounts` reports for it:
 #   account <name> <ordinary | absolute CLAUDE_CONFIG_DIR>
 # Blank lines and lines starting with # are ignored. `ordinary` means
