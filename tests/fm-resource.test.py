@@ -548,9 +548,11 @@ sys.exit(subprocess.call(command + " " + shlex.join(args), shell=True))
             for runner, script, expected in (
                     ("node", "node --test --test-concurrency=99 sample.test.js",
                         ["--test", f"--test-concurrency={workers}", "sample.test.js"]),
+                    ("node-options", "node --env-file .env --test --test-name-pattern --test-concurrency=99 sample.test.js",
+                        ["--env-file", ".env", "--test", f"--test-concurrency={workers}", "--test-name-pattern", "--test-concurrency=99", "sample.test.js"]),
                     ("playwright", "playwright test --workers=99 sample.spec.js",
                         ["test", "--workers=99", "sample.spec.js", "--workers=1"]),
-                    ("other", "probe node --test playwright test", ["node", "--test", "playwright", "test"])):
+                    ("other", "probe sample.js", ["sample.js"])):
                 self.write("package.json", {"scripts": {"test": script, "check": script}})
                 for name in ("npm", "pnpm", "yarn"):
                     for argv in (["run", "check"], ["test"]):
@@ -571,7 +573,9 @@ sys.exit(subprocess.call(command + " " + shlex.join(args), shell=True))
         fake = self.root / "npm"
         fake.write_text('#!/bin/sh\necho UNCAPPED\n')
         fake.chmod(0o700)
-        for script in ("playwright test && echo finished", "playwright test; echo finished", "playwright test -- sample.js"):
+        for script in ("playwright test && echo finished", "playwright test; echo finished", "playwright test -- sample.js",
+                "echo preparing && playwright test", "echo preparing && node --test",
+                "node --test && echo finished", "probe node --test playwright test"):
             with self.subTest(script=script):
                 self.write("package.json", {"scripts": {"test": script}})
                 result = self.call("run", "--class", "exclusive", "--", str(fake), "test", cwd=self.root)
@@ -579,6 +583,78 @@ sys.exit(subprocess.call(command + " " + shlex.join(args), shell=True))
                 self.assertNotIn("UNCAPPED", result.stdout)
                 self.assertIn("simple runner command", result.stderr)
                 self.assertFalse(self.status()["leases"])
+
+    @unittest.skipUnless(shutil.which("npm") and shutil.which("node"), "npm and node required")
+    def test_real_npm_package_selection_caps_only_selected_runner(self):
+        ui = self.root / "ui"
+        ui.mkdir()
+        for directory in (self.root, ui):
+            local = directory / "node_modules" / ".bin"
+            local.mkdir(parents=True)
+            tool = local / "playwright"
+            tool.write_text("#!" + sys.executable + "\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n")
+            tool.chmod(0o700)
+            (directory / "probe.cjs").write_text("console.log(JSON.stringify(process.argv.slice(2)))")
+        for root_runner, selected_runner in (("node probe.cjs", "playwright test"), ("playwright test", "node probe.cjs")):
+            self.write("package.json", {"private": True, "workspaces": ["ui"], "scripts": {"test": root_runner}})
+            self.write("ui/package.json", {"name": "playwright", "version": "1.0.0", "scripts": {"test": selected_runner}})
+            for argv in (["--prefix", "ui", "run", "test"], ["run", "test", "--prefix=ui"],
+                    ["run", "test", "--workspace", "ui"], ["--workspace=playwright", "run", "test"],
+                    ["run", "--workspace", "playwright", "test"], ["run", "test", "-w", "ui"]):
+                with self.subTest(root_runner=root_runner, argv=argv):
+                    result = self.call("run", "--class", "exclusive", "--", shutil.which("npm"), *argv, cwd=self.root)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(json.loads(result.stdout.splitlines()[-1]),
+                        ["test", "--workers=1"] if selected_runner == "playwright test" else [])
+
+    def test_package_directory_and_workspace_selection_through_adapters(self):
+        ui = self.root / "ui"
+        ui.mkdir()
+        fake = self.root / "selection-bin"
+        fake.mkdir()
+        for name in ("pnpm", "yarn"):
+            tool = fake / name
+            tool.write_text("#!" + sys.executable + '''
+import json, os, shlex, subprocess, sys
+args = sys.argv[1:]
+while args[0] in ("--dir", "-C", "--cwd", "--filter", "-F", "workspace") or "=" in args[0]:
+    option, equals, target = args.pop(0).partition("=")
+    if not equals:
+        target = args.pop(0)
+    os.chdir("ui" if option in ("--filter", "-F", "workspace") else target)
+script = args.pop(0)
+if script == "run":
+    script = args.pop(0)
+command = json.load(open("package.json"))["scripts"][script]
+sys.exit(subprocess.call(command + " " + shlex.join(args), shell=True))
+''')
+            tool.chmod(0o700)
+        local = ui / "node_modules" / ".bin"
+        local.mkdir(parents=True)
+        for name in ("playwright", "probe"):
+            tool = local / name
+            tool.write_text("#!" + sys.executable + "\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n")
+            tool.chmod(0o700)
+        env = dict(os.environ, PATH=os.pathsep.join((str(local), str(fake), os.environ["PATH"])))
+        adapters = self.root / "selection-adapters"
+        result = self.call("prepare", "--directory", str(adapters), "--worktree", str(ROOT),
+            "--task", "selection", "--account-label", "default", "--", "true", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for selected_runner in ("playwright test", "probe"):
+            self.write("package.json", {"workspaces": ["ui"], "scripts": {"test": "playwright test"}})
+            self.write("ui/package.json", {"name": "budget-ui", "scripts": {"test": selected_runner}})
+            for name, argv in (("pnpm", ["--dir", "ui", "run", "test"]),
+                    ("pnpm", ["-C", "ui", "test"]), ("pnpm", ["--filter=budget-ui", "run", "test"]),
+                    ("yarn", ["--cwd", "ui", "run", "test"]), ("yarn", ["workspace", "budget-ui", "run", "test"])):
+                with self.subTest(runner=selected_runner, name=name, argv=argv):
+                    result = self.call("run", "--class", "exclusive", "--", "/bin/sh", "-c", 'exec "$@"',
+                        "adapter", str(adapters / "bin" / name), *argv, cwd=self.root, env=env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(json.loads(result.stdout), ["test", "--workers=1"] if selected_runner == "playwright test" else [])
+        result = self.call("run", "--class", "exclusive", "--", str(adapters / "bin/pnpm"),
+            "--filter", "missing", "run", "test", cwd=self.root, env=env)
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertFalse(result.stdout)
 
     def test_node_adapter_preserves_lower_limits_and_executes_real_node(self):
         fake = self.root / "node-bin"
@@ -610,12 +686,22 @@ for argv in json.loads(sys.argv[2]):
             clock.write_text(str(int(clock.read_text()) + 121))
             wait_for(lambda: self.status()["reason"] == "ready")
             cases = [
+                (["--env-file", ".env", "--test", "file.js"],
+                    ["--env-file", ".env", "--test", f"--test-concurrency={cap}", "file.js"]),
+                (["--test", "--test-name-pattern", "--test-concurrency=99", "file.js"],
+                    ["--test", f"--test-concurrency={cap}", "--test-name-pattern", "--test-concurrency=99", "file.js"]),
+                (["--test", "--test-reporter", "spec", "--test-concurrency=1", "file.js"],
+                    ["--test", "--test-reporter", "spec", "--test-concurrency=1", "file.js"]),
+                (["--test", "--", "--test-concurrency=99"],
+                    ["--test", f"--test-concurrency={cap}", "--", "--test-concurrency=99"]),
+                (["--require", "--test", "script.js"], ["--require", "--test", "script.js"]),
+                (["--eval=process.exit(0)", "--test"], ["--eval=process.exit(0)", "--test"]),
                 (["--test", "file.js"], ["--test", f"--test-concurrency={cap}", "file.js"]),
                 (["--test", "--test-concurrency=1", "file.js"], ["--test", "--test-concurrency=1", "file.js"]),
                 (["--test-concurrency=99", "--test", "file.js"], [f"--test-concurrency={cap}", "--test", "file.js"]),
                 (["--test-concurrency", "1", "--test", "file.js"], ["--test-concurrency", "1", "--test", "file.js"]),
                 (["--test", "--test-concurrency", "2", "file.js"], ["--test", "--test-concurrency", str(cap), "file.js"]),
-                (["--test", "file.js", "--test-concurrency=99"], ["--test", f"--test-concurrency={cap}", "file.js", f"--test-concurrency={cap}"]),
+                (["--test", "file.js", "--test-concurrency=99"], ["--test", f"--test-concurrency={cap}", "file.js", "--test-concurrency=99"]),
                 (["script.js", "--test"], ["script.js", "--test"]),
                 (["-e", "console.log('hello')", "--test"], ["-e", "console.log('hello')", "--test"]),
                 (["-r", "setup.js", "--test", "file.js"], ["-r", "setup.js", "--test", f"--test-concurrency={cap}", "file.js"])]
@@ -623,6 +709,10 @@ for argv in json.loads(sys.argv[2]):
                 adapter, json.dumps([argv for argv, _ in cases]))
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual([json.loads(line) for line in result.stdout.splitlines()], [expected for _, expected in cases])
+            for argv, expected in cases[:2]:
+                result = self.call("run", "--class", "test", "--", str(node), *argv)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)[0], expected)
 
     def test_plain_node_passthrough_preserves_exit_and_signal_without_owner(self):
         fake = self.root / "plain-node-bin"

@@ -75,7 +75,9 @@ The wrapper exports `FM_RESOURCE_CPU_WORKERS` and `FM_RESOURCE_BROWSER_WORKERS` 
 Package-script Vitest runs inherit `VITEST_MAX_WORKERS` and the older thread/fork environment limits, with minimum workers set to one; see [Vitest's environment variable migration](https://vitest.dev/guide/migration.html).
 The prepared PATH includes a Node adapter that caps `node --test` before file arguments at two workers on desk power or one on portable power, including npm, pnpm and yarn package scripts.
 Explicit Node concurrency limits at or below the cap are preserved, and other Node invocations pass through unchanged.
-For npm, pnpm and yarn `run <script>` or `test`, simple package scripts invoking `playwright test` receive one worker; shell compounds and script-level `--` terminators are refused when appended arguments cannot safely reach Playwright.
+For npm, pnpm and yarn `run <script>` or `test`, simple package scripts invoking `playwright test` receive one worker, while simple Node test scripts use the prepared Node adapter.
+Scripts containing `playwright test` or `node --test` tokens anywhere are refused unless they are a supported simple runner command; this includes shell compounds with setup or cleanup commands and script-level `--` terminators.
+Package directory and single workspace selectors are resolved before inspecting the script; workspace selections that cannot be resolved to one package are refused.
 These package scripts still reserve exclusive global capacity.
 Project configuration still needs to consume the exported values for custom runners and Next compiler settings.
 Neither a generic Node heap limit nor these worker defaults is a process-tree memory ceiling.
