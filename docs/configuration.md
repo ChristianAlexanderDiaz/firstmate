@@ -1124,7 +1124,7 @@ A worker that later reaches a usage limit still moves through [Claude account fa
 The optional local, gitignored `config/lavish-axi-host` contains one non-empty address without whitespace for the per-machine Lavish server.
 `fm-spawn.sh` exports that address into every new worker and relaunch for opening boards, and the file is inherited into secondmate homes through the primary-authoritative configuration contract.
 
-Once a board exists, the process-event adapter derives the polling address from that board's own saved Lavish session instead; its header owns the lookup contract.
+Once a board exists, the process-event adapter uses that board's own saved Lavish session instead; its [header](../bin/fm-procevent-lavish.sh) owns the routing contract.
 When the file is absent, worker launches do not add a board address and retain the existing ambient-environment behavior.
 
 Malformed or unreadable values refuse the launch before the worker starts.
@@ -2174,7 +2174,8 @@ A long-polling external process is registered as a *source* through its adapter,
 
 **Open the Lavish artifact first**
 
-Before arming any Lavish source, open its artifact with `lavish-axi` so the saved session identifies the board's server; reply and poll attempts derive their host and port from that session and refuse missing or invalid session evidence before posting or consuming a staged worker reply.
+Before arming any Lavish source, open its artifact with `lavish-axi` so Lavish records the board's session.
+The adapter's [header](../bin/fm-procevent-lavish.sh) owns reply and poll routing and the refusal boundary for missing or invalid session evidence.
 
 **Retry interrupted Lavish polls**
 
