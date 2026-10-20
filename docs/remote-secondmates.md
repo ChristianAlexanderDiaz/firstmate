@@ -654,7 +654,21 @@ For a remote route, the handoff takes these steps:
 
 The [`bin/fm-backlog-handoff.sh`](../bin/fm-backlog-handoff.sh) header owns remote outbox release after receipt and stable wake-correlation retry behavior.
 Bootstrap retries pending outboxes and wakes, and emits `SECONDMATE_HANDOFF:` only when an outbox remains.
-There is no two-phase journal and no additional tasks-axi release requirement.
+The existing main-to-mate form remains compatible with historical key-presence retries.
+
+The parent can also select reconciled queued work from a registered local secondmate and hand it to an existing local/remote successor or return it to itself; the additive forms and exact mechanics are owned by the [handoff script header](../bin/fm-backlog-handoff.sh).
+The source must use a markdown backlog with automatic tasks-axi dispatch gating enabled.
+Remote sources, live migration, in-place renaming, and reseeding an existing destination are unsupported.
+These transfers probe strict-receipt support before source removal and refuse unknown duplicate IDs as a whole batch.
+An accepted receipt allows retry after the destination edits or completes the work.
+If a move committed before acceptance was recorded, preserve the source and parent transfer records and reconcile the destination's task bodies/history; there is no automatic acceptance or restoration.
+Payload and original source/route identity remain pinned across a parent restart or transport retry.
+This is bounded work handoff, not an exactly-once whole-home migration.
+
+Each actual move and retirement requires separate authorization.
+Follow [successor drainage and preservation](../.agents/skills/secondmate-provisioning/SKILL.md#successor-drainage-and-preservation) before cutover: active decisions, workers and live review boards finish with their owner, reviewed context accompanies transferred work, and a verified private Mac archive precedes retirement.
+An empty queue does not establish that ignored project data is disposable.
+Non-forced retirement inspects the actual target home for stranded records and unfinished source transfers, including on the remote host; the synthetic parent route is not the domain backlog.
 
 ## Sync, update, and retirement
 

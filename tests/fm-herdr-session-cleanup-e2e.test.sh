@@ -24,7 +24,7 @@ mkdir -p "$FAKEBIN" "$HOME_DIR/state" "$HOME_DIR/config"
 touch "$HOME_DIR/config/herdr-presentation-spaces"
 printf '%s\n' herdr > "$HOME_DIR/config/backend"
 
-HERDR_LAB_SESSION=$("$HERDR_LAB_HELPER" name fm-herdr-session-start-stale-projection-cleanup-r1)
+HERDR_LAB_SESSION=$("$HERDR_LAB_HELPER" name "${HERDR_LAB_LABEL:-fm-herdr-session-start-stale-projection-cleanup-r1}")
 export HERDR_LAB_HELPER HERDR_LAB_SESSION REAL_HERDR HERDR_ORIGINAL_PATH
 cleanup() {
   local status=$?
@@ -144,3 +144,36 @@ pass 'real named lab cleanup is idempotent and leaves the default fleet session 
 printf 'evidence: herdr=%s protocol=%s default-session-tripwire=armed\n' \
   "$(printf '%s' "$STATUS" | jq -r '.client.version')" \
   "$(printf '%s' "$STATUS" | jq -r '.server.protocol')"
+
+# Retirement record guards must protect a real endpoint before any close, then
+# the drained path must still close that exact pane and retain the focus anchor.
+SUB_HOME="$TMP_ROOT/retiring-home"
+mkdir -p "$HOME_DIR/data" "$SUB_HOME"/{bin,data,state,config,projects}
+printf 'fixture\n' > "$SUB_HOME/AGENTS.md"
+printf 'retire-fixture\n' > "$SUB_HOME/.fm-secondmate-home"
+printf 'backend = "markdown"\n' > "$SUB_HOME/.tasks.toml"
+printf '## Queued\n- [ ] preserve-intent - Pending work\n\n## Done\n' > "$SUB_HOME/data/backlog.md"
+printf -- '- retire-fixture - fixture (home: %s; scope: test; projects: ; added 2026-10-20)\n' "$SUB_HOME" > "$HOME_DIR/data/secondmates.md"
+RETIRING=$(lab workspace create --cwd "$SUB_HOME" --label 2ndmate-retire-fixture --no-focus) || fail 'could not create retirement endpoint'
+RETIRING_PANE=$(printf '%s' "$RETIRING" | jq -er '.result.root_pane.pane_id') || fail 'retirement pane missing'
+printf 'kind=secondmate\nendpoint_task_id=retire-fixture\nharness=echo\nbackend=herdr\nwindow=%s:%s\nhome=%s\nworktree=%s\nproject=%s\nherdr_session=%s\nherdr_pane_id=%s\n' \
+  "$HERDR_LAB_SESSION" "$RETIRING_PANE" "$SUB_HOME" "$SUB_HOME" "$SUB_HOME" "$HERDR_LAB_SESSION" "$RETIRING_PANE" \
+  > "$HOME_DIR/state/retire-fixture.meta"
+printf 'herdr_workspace_id=%s\nherdr_tab_id=%s\n' \
+  "$(printf '%s' "$RETIRING" | jq -er '.result.workspace.workspace_id')" \
+  "$(printf '%s' "$RETIRING" | jq -er '.result.tab.tab_id')" >> "$HOME_DIR/state/retire-fixture.meta"
+retire_fixture() {
+  FM_GATE_REFUSE_BYPASS=1 FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" FM_BACKEND=herdr \
+    FM_PROCEVENT_CLAIM_ROOT="$TMP_ROOT/claims" HERDR_SESSION="$HERDR_LAB_SESSION" \
+    PATH="$FAKEBIN:$HERDR_ORIGINAL_PATH" bash "$ROOT/bin/fm-teardown.sh" retire-fixture
+}
+if retire_fixture > "$TMP_ROOT/retire-refused.out" 2>&1; then fail 'real Herdr retirement discarded queued intent'; fi
+grep -q 'open backlog task preserve-intent' "$TMP_ROOT/retire-refused.out" || fail "unexpected retirement refusal: $(cat "$TMP_ROOT/retire-refused.out")"
+lab pane get "$RETIRING_PANE" >/dev/null || fail 'record refusal closed the real endpoint'
+[ -d "$SUB_HOME" ] && [ -f "$HOME_DIR/state/retire-fixture.meta" ] || fail 'record refusal removed retirement evidence'
+printf '## Queued\n\n## Done\n' > "$SUB_HOME/data/backlog.md"
+retire_fixture > "$TMP_ROOT/retire-drained.out" 2>&1 || fail "drained real Herdr retirement failed: $(cat "$TMP_ROOT/retire-drained.out")"
+[ ! -e "$SUB_HOME" ] && [ ! -e "$HOME_DIR/state/retire-fixture.meta" ] || fail 'drained retirement retained home or endpoint record'
+if lab pane get "$RETIRING_PANE" >/dev/null 2>&1; then fail 'drained retirement left its exact pane live'; fi
+lab pane get "$(printf '%s' "$ANCHOR" | jq -r '.result.root_pane.pane_id')" >/dev/null || fail 'retirement touched the anchor pane'
+pass 'real named lab retirement refuses open records before close and removes a drained home through endpoint guards'

@@ -1344,6 +1344,143 @@ EOF
   pass "registry entry without (home: ...) fails cleanly with has no home"
 }
 
+strict_fixture() {
+  local base=$1 home="$1/parent" source="$1/source" dest="$1/dest"
+  setup_homes "$home" "$dest" design
+  seed_secondmate_home_marker "$source" source
+  for file in "$home" "$source" "$dest"; do
+    mkdir -p "$file/data" "$file/state" "$file/config" "$file/projects"
+    printf 'backend = "markdown"\n' > "$file/.tasks.toml"
+    printf -- '- alpha [direct-PR] - product (added 2026-10-20)\n' > "$file/data/projects.md"
+    printf '## In flight\n\n## Queued\n\n## Done\n' > "$file/data/backlog.md"
+  done
+  for file in "$source" "$dest"; do
+    printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$home" > "$file/.fm-secondmate-parent"
+  done
+  printf -- '- source - source (home: %s; scope: alpha; projects: alpha; added 2026-10-20)\n' "$source" >> "$home/data/secondmates.md"
+  printf '## In flight\n\n## Queued\n- [ ] move-a - Preserve intent (repo: alpha)\n  ## Intent\n  Keep this detail.\n- [ ] move-b - Dependent (repo: alpha)\n\n## Done\n' > "$source/data/backlog.md"
+  tasks-axi block move-b --by move-a --file "$source/data/backlog.md" >/dev/null || fail 'dependency fixture failed'
+  printf '## Queued\n- [ ] parent-own - Parent stays untouched (repo: alpha)\n\n## Done\n' > "$home/data/backlog.md"
+}
+
+strict_run() {
+  local base=$1
+  shift
+  FM_HOME="$base/parent" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-backlog-handoff.sh" --from-secondmate source "$@"
+}
+
+test_strict_source_routes_and_retries() {
+  local base target original
+  for target in design --to-parent; do
+    base="$TMP_ROOT/strict-${target#--}"
+    strict_fixture "$base"
+    original=$(cat "$base/parent/data/backlog.md")
+    strict_run "$base" "$target" move-a move-b > "$base/out" 2>&1 || fail "strict move failed: $(cat "$base/out")"
+    if [ "$target" = design ]; then
+      [ "$(cat "$base/parent/data/backlog.md")" = "$original" ] || fail 'parent queue changed on sibling handoff'
+      assert_grep 'Keep this detail' "$base/dest/data/backlog.md" 'source body lost'
+      tasks-axi start move-a --file "$base/dest/data/backlog.md" >/dev/null || fail 'destination progress failed'
+    else
+      assert_grep 'parent-own' "$base/parent/data/backlog.md" 'parent existing task lost'
+      [ ! -d "$base/parent/state/parent.inbox" ] || fail 'to-parent created a wake'
+    fi
+    strict_run "$base" "$target" move-b move-a > "$base/retry" 2>&1 || fail "accepted retry failed: $(cat "$base/retry")"
+    ! grep -q 'move-a' "$base/source/data/backlog.md" || fail 'source retained moved task'
+    # Exercise fresh spawn itself after source removal. The missing-row guard
+    # must stop before the fake endpoint or copy allocator can create anything.
+    fm_git_init_commit "$base/source/projects/alpha"
+    fm_git_add_origin "$base/source/projects/alpha" "$base/alpha-origin.git"
+    mkdir -p "$base/source/data/move-a" "$base/user-home"
+    printf '# Task\n## Captain\x27s intent\nExercise a missing source task.\n\n## Firstmate spec\nRefuse dispatch.\n\n# Definition of done\nDelivery contract: mode=direct-PR\n' > "$base/source/data/move-a/brief.md"
+    if FM_HOME="$base/source" FM_ROOT_OVERRIDE="$ROOT" HOME="$base/user-home" FM_SPAWN_NO_GUARD=1 \
+      "$ROOT/bin/fm-spawn.sh" move-a "$base/source/projects/alpha" --mode direct-PR --yolo off 'echo fixture' > "$base/dispatch" 2>&1; then
+      fail 'source spawn accepted removed task'
+    fi
+    assert_grep 'no backlog item in this home' "$base/dispatch" "fresh source spawn refused for an unrelated reason: $(cat "$base/dispatch")"
+    assert_absent "$base/source/state/move-a.meta" 'source spawn published a second owner'
+
+  done
+  pass 'strict source routes preserve parent/body/dependencies and accepted retry survives progress'
+}
+
+test_strict_source_refusals() {
+  local base mode before
+  for mode in collision meta decision inbox reconcile manual backend marker binding alias remote local-only missing flight completed held expired-hold malformed dependency unregistered project-alias; do
+    base="$TMP_ROOT/strict-refuse-$mode"
+    strict_fixture "$base"
+    case "$mode" in
+      collision) printf '## Queued\n- [ ] move-b - Different intent (repo: alpha)\n' > "$base/dest/data/backlog.md" ;;
+      meta) printf 'kind=ship\n' > "$base/source/state/move-a.meta" ;;
+      decision) printf 'needs-decision [at=1] [key=open]: answer needed\n' > "$base/source/state/move-a.status" ;;
+      inbox) mkdir "$base/source/state/move-a.inbox"; printf 'pending\n' > "$base/source/state/move-a.inbox/001.msg" ;;
+      reconcile) mkdir "$base/source/state/reconcile-requests"; printf 'pending\n' > "$base/source/state/reconcile-requests/move-a.request" ;;
+      manual) printf 'manual\n' > "$base/source/config/backlog-backend" ;;
+      backend) printf 'backend = "beads"\n' > "$base/source/.tasks.toml" ;;
+      marker) printf 'wrong\n' > "$base/source/.fm-secondmate-home" ;;
+      binding) printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=/wrong\n' > "$base/source/.fm-secondmate-parent" ;;
+      alias) sed "s|$base/dest|$base/source|g" "$base/parent/data/secondmates.md" > "$base/reg"; mv "$base/reg" "$base/parent/data/secondmates.md" ;;
+      remote) printf -- '- source - remote (host: never-call; root: /code; home: /source; scope: alpha; projects: alpha; added 2026-10-20)\n' > "$base/parent/data/secondmates.md" ;;
+      local-only) printf -- '- alpha [local-only] - local (added 2026-10-20)\n' > "$base/source/data/projects.md" ;;
+      missing) sed '/move-a/d' "$base/source/data/backlog.md" > "$base/a"; mv "$base/a" "$base/source/data/backlog.md" ;;
+      flight) tasks-axi start move-a --file "$base/source/data/backlog.md" >/dev/null ;;
+      completed) tasks-axi "done" move-a --file "$base/source/data/backlog.md" >/dev/null ;;
+      held) tasks-axi hold move-a --reason pending --kind captain --file "$base/source/data/backlog.md" >/dev/null ;;
+      expired-hold) tasks-axi hold move-a --reason pending --kind captain --until 2000-01-01 --file "$base/source/data/backlog.md" >/dev/null ;;
+      malformed) sed 's/  Keep this detail./ single-space orphan/' "$base/source/data/backlog.md" > "$base/a"; mv "$base/a" "$base/source/data/backlog.md" ;;
+      unregistered) rm "$base/source/data/projects.md" ;;
+      project-alias)
+        sed 's/repo: alpha/repo: alpha.fake/g' "$base/source/data/backlog.md" > "$base/a"; mv "$base/a" "$base/source/data/backlog.md"
+        for file in "$base/source" "$base/parent" "$base/dest"; do printf -- '- alphaXfake [direct-PR] - different project (added 2026-10-20)\n' > "$file/data/projects.md"; done
+        ;;
+      dependency) ;;
+    esac
+    before=$(cat "$base/source/data/backlog.md")
+    if [ "$mode" = dependency ]; then
+      if strict_run "$base" design move-a > "$base/out" 2>&1; then fail "strict source accepted $mode"; fi
+    elif strict_run "$base" design move-a move-b > "$base/out" 2>&1; then fail "strict source accepted $mode"; fi
+    [ "$(cat "$base/source/data/backlog.md")" = "$before" ] || fail "source mutated on $mode refusal"
+  done
+  pass 'strict source invalid routes, records, collisions and dependency split refuse without mutation'
+}
+
+test_strict_source_task_set_contention() {
+  local base="$TMP_ROOT/strict-contention" pid n=0
+  strict_fixture "$base"
+  bash -c '. "$1/bin/fm-wake-lib.sh"; fm_lock_acquire_wait "$2/source/state/.task-set.lock"; touch "$2/locked"; while [ ! -f "$2/release" ]; do sleep .02; done; fm_lock_release "$2/source/state/.task-set.lock"' _ "$ROOT" "$base" &
+  pid=$!
+  while [ ! -f "$base/locked" ]; do n=$((n+1)); [ "$n" -lt 200 ] || fail 'task lock not acquired'; sleep .02; done
+  strict_run "$base" --to-parent move-a move-b > "$base/out" 2>&1 &
+  local handoff_pid=$!
+  sleep .2
+  assert_grep 'move-a' "$base/source/data/backlog.md" 'handoff bypassed task-set lock'
+  touch "$base/release"
+  wait "$pid" || fail 'lock holder failed'
+  wait "$handoff_pid" || fail "handoff after lock release failed: $(cat "$base/out")"
+  pass 'source handoff serializes with task publication lock'
+}
+
+test_strict_source_preserves_an_earlier_failed_wake() {
+  local base="$TMP_ROOT/strict-previous-wake" before count
+  strict_fixture "$base"
+  rm "$base/parent/state/design.meta"
+  if strict_run "$base" design move-a move-b > "$base/first.out" 2>&1; then fail 'missing receiver unexpectedly woke'; fi
+  assert_grep move-a "$base/dest/data/backlog.md" 'first failed wake lost durable work'
+  count=$(find "$base/parent/data/handoff/transfers" -name '*.record' | wc -l | tr -d ' ')
+  tasks-axi add fresh-batch 'Later work' --repo alpha --file "$base/source/data/backlog.md" >/dev/null || fail 'later batch fixture failed'
+  before=$(cat "$base/source/data/backlog.md")
+  if strict_run "$base" design fresh-batch > "$base/later.out" 2>&1; then fail 'later batch bypassed failed wake'; fi
+  [ "$(cat "$base/source/data/backlog.md")" = "$before" ] || fail 'later batch moved despite earlier failed wake'
+  [ "$(find "$base/parent/data/handoff/transfers" -name '*.record' | wc -l | tr -d ' ')" = "$count" ] || fail 'later batch stranded new provenance behind an earlier wake'
+  pass 'a previous local wake failure refuses new source work before provenance or row mutation'
+}
+
+test_strict_source_preserves_an_earlier_failed_wake
+
+test_strict_source_routes_and_retries
+test_strict_source_refusals
+test_strict_source_task_set_contention
+
+
 test_handoff_wakes_live_local_receiver
 test_failed_wake_retries_when_the_item_is_already_present
 test_known_receiver_failure_remains_retryable_after_grace

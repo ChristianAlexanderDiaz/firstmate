@@ -52,7 +52,7 @@ trap fm_remote_handoff_teardown EXIT
 printf 'fixture\n' > "$REMOTE_ROOT/AGENTS.md"
 cp "$ROOT/bin/fm-remote-entrypoint.sh" "$ROOT/bin/fm-remote-job-lib.sh" \
   "$ROOT/bin/fm-remote-job-worker.sh" "$ROOT/bin/fm-remote-file.sh" \
-  "$ROOT/bin/fm-backlog-receive.sh" "$ROOT/bin/fm-tasks-axi-lib.sh" \
+  "$ROOT/bin/fm-backlog-receive.sh" "$ROOT/bin/fm-handoff-record-lib.sh" "$ROOT/bin/fm-secondmate-parent-lib.sh" "$ROOT/bin/fm-tasks-axi-lib.sh" \
   "$ROOT/bin/fm-wake-lib.sh" "$ROOT/bin/fm-path-lib.sh" "$REMOTE_ROOT/bin/"
 ln -s "$(command -v tasks-axi)" "$REMOTE_ROOT/bin/tasks-axi"
 ln -s "$(command -v node)" "$REMOTE_ROOT/bin/node"
@@ -640,6 +640,106 @@ assert_contains "$(cat "$TMP_ROOT/after-stale-wake.out")" "stale wake marker rem
 assert_present "$stale_wake_marker" "later handoff concealed the forced stale-marker removal failure"
 rm -f -- "$stale_wake_marker"
 pass "undeletable invalid wake state cannot block remote handoffs"
+
+# New local-source transfers use the same fake SSH transport, never a real host.
+printf 'schema=fm-secondmate-parent.v1\nroute=remote\n' > "$REMOTE/.fm-secondmate-parent"
+SOURCE="$TMP_ROOT/source"
+mkdir -p "$SOURCE"/{bin,data,state,config,projects}
+printf 'fixture\n' > "$SOURCE/AGENTS.md"
+printf 'source\n' > "$SOURCE/.fm-secondmate-home"
+printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$PARENT" > "$SOURCE/.fm-secondmate-parent"
+printf 'backend = "markdown"\n' > "$SOURCE/.tasks.toml"
+printf -- '- alpha [direct-PR] - product (added 2026-10-20)\n' > "$SOURCE/data/projects.md"
+cp "$SOURCE/data/projects.md" "$PARENT/data/projects.md"
+cp "$SOURCE/data/projects.md" "$REMOTE/data/projects.md"
+printf -- '- source - source (home: %s; scope: alpha; projects: alpha; added 2026-10-20)\n' "$SOURCE" >> "$PARENT/data/secondmates.md"
+printf '## Queued\n- [ ] strict-remote - Source intent (repo: alpha)\n  Durable detail.\n\n## Done\n' > "$SOURCE/data/backlog.md"
+# An older receiver must refuse before source ownership changes.
+cp "$REMOTE_ROOT/bin/fm-backlog-receive.sh" "$TMP_ROOT/receiver-current.sh"
+printf '#!/usr/bin/env bash\nprintf "old receiver\\n" >&2\nexit 2\n' > "$REMOTE_ROOT/bin/fm-backlog-receive.sh"
+if handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --from-secondmate source ios strict-remote > "$TMP_ROOT/strict-old-receiver.out" 2>&1; then
+  fail 'strict source handoff fell back to an old receiver'
+fi
+assert_grep 'upgrade destination Firstmate' "$TMP_ROOT/strict-old-receiver.out" 'old receiver did not request an upgrade'
+assert_grep strict-remote "$SOURCE/data/backlog.md" 'old receiver removed source ownership'
+mv "$TMP_ROOT/receiver-current.sh" "$REMOTE_ROOT/bin/fm-backlog-receive.sh"
+# Same-key parent work is independent of this source-specific transfer.
+tasks-axi add strict-remote 'Independent parent intent' --repo alpha --file "$PARENT/data/backlog.md" >/dev/null || fail 'parent same-key fixture failed'
+parent_before_strict=$(cat "$PARENT/data/backlog.md")
+FM_FAKE_SSH_MODE=after-put handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --from-secondmate source ios strict-remote > "$TMP_ROOT/strict-drop.out" 2>&1 \
+  && fail 'strict dropped transport unexpectedly succeeded'
+assert_absent "$SOURCE/state/strict-remote.meta" 'handoff fabricated worker state'
+! grep -q strict-remote "$SOURCE/data/backlog.md" || fail 'strict source remained dispatchable'
+assert_grep strict-remote "$PARENT/data/handoff/ios.outbox.md" 'strict outbox not preserved'
+strict_record=$(find "$PARENT/data/handoff/transfers" -name '*.record' -print -quit)
+strict_id=$(sed -n '2p' "$strict_record")
+strict_payload="${strict_record%.record}.payload"
+strict_hash=$(sha256_file "$strict_payload")
+# Reproduce interrupted source persistence: the authoritative outbox exists,
+# but the predecessor still has its identical row. Resume must clean that home.
+cp "$strict_payload" "$SOURCE/data/backlog.md"
+tasks-axi add unrelated 'Different batch' --repo alpha --file "$SOURCE/data/backlog.md" >/dev/null || fail 'unrelated source fixture failed'
+handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --from-secondmate source ios unrelated > "$TMP_ROOT/strict-unrelated.out" 2>&1 \
+  && fail 'unrelated strict batch replaced pending provenance'
+assert_grep unrelated "$SOURCE/data/backlog.md" 'unrelated source row changed'
+# A new invocation has no in-memory source selector: provenance restores it.
+handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --resume-pending > "$TMP_ROOT/strict-resume.out" 2>&1 \
+  || fail "strict resume failed: $(cat "$TMP_ROOT/strict-resume.out")"
+assert_grep 'Durable detail' "$REMOTE/data/backlog.md" 'strict remote body lost'
+! grep -q strict-remote "$SOURCE/data/backlog.md" || fail 'resume retained predecessor duplicate'
+[ "$(cat "$PARENT/data/backlog.md")" = "$parent_before_strict" ] || fail 'source-specific recovery changed the parent queue'
+[ "$(sha256_file "$strict_payload")" = "$strict_hash" ] || fail 'retry changed pinned payload'
+assert_grep "$strict_id" "$REMOTE/state/handoff/receipts/$strict_id.receipt" 'strict accepted receipt missing'
+pass 'local source remote handoff survives lost transport and parent restart with pinned identity'
+
+# Public strict receiver: a collision refuses the full batch; accepted retries
+# remain valid after destination progress, and id/hash reuse refuses.
+strict_deliver() {
+  local id=$1 payload=$2 gen=$3 bytes hash
+  bytes=$(wc -c < "$payload" | tr -d ' ')
+  hash=$(sha256_file "$payload")
+  cp "$payload" "$REMOTE/state/handoff/strict-test.outbox.md"
+  printf '%s\n%s\n%s\n' "$gen" "$bytes" "$hash" > "$REMOTE/state/handoff/.strict-test.upload-generation"
+  FM_HOME="$REMOTE" "$ROOT/bin/fm-backlog-receive.sh" --strict-transfer "$id" state/handoff/strict-test.outbox.md "$bytes" "$hash" "$gen"
+}
+STRICT_TEST_ID=0123456789abcdef0123456789abcdef
+printf '## Queued\n- [ ] strict-remote - Conflicting incoming intent (repo: alpha)\n- [ ] strict-fresh - Must stay absent on collision (repo: alpha)\n\n## Done\n' > "$TMP_ROOT/strict-collision.md"
+strict_deliver "$STRICT_TEST_ID" "$TMP_ROOT/strict-collision.md" 1 > "$TMP_ROOT/strict-collision.out" 2>&1 \
+  && fail 'unknown strict collision accepted'
+! grep -q strict-fresh "$REMOTE/data/backlog.md" || fail 'collision partially applied batch'
+printf '## Queued\n- [ ] strict-fresh - New intent (repo: alpha)\n\n## Done\n' > "$TMP_ROOT/strict-fresh.md"
+strict_deliver "$STRICT_TEST_ID" "$TMP_ROOT/strict-fresh.md" 2 > "$TMP_ROOT/strict-fresh.out" 2>&1 \
+  || fail "fresh strict delivery failed: $(cat "$TMP_ROOT/strict-fresh.out")"
+tasks-axi "done" strict-fresh --file "$REMOTE/data/backlog.md" >/dev/null || fail 'destination completion failed'
+strict_deliver "$STRICT_TEST_ID" "$TMP_ROOT/strict-fresh.md" 3 >/dev/null || fail 'accepted retry after completion failed'
+strict_deliver "$STRICT_TEST_ID" "$TMP_ROOT/strict-collision.md" 4 > "$TMP_ROOT/strict-conflict.out" 2>&1 \
+  && fail 'same strict ID accepted different payload'
+pass 'strict receipt rejects batch collisions and changed payload, accepts retries after progress'
+
+# Inject a receipt-publication crash through the external mv command, after the
+# real task move. A later receive must preserve the ambiguous incoming scratch.
+CRASHBIN="$TMP_ROOT/strict-crashbin"
+mkdir "$CRASHBIN"
+REAL_MV=$(command -v mv)
+cat > "$CRASHBIN/mv" <<'SH'
+#!/usr/bin/env bash
+case "$*" in *'/receipts/'*'.receipt'*) exit 1 ;; esac
+exec "$FM_REAL_MV" "$@"
+SH
+chmod +x "$CRASHBIN/mv"
+printf '## Queued\n- [ ] strict-crash - Retain ambiguous intent (repo: alpha)\n\n## Done\n' > "$TMP_ROOT/strict-crash.md"
+CRASH_ID=abcdef0123456789abcdef0123456789
+PATH="$CRASHBIN:$PATH" FM_REAL_MV="$REAL_MV" strict_deliver "$CRASH_ID" "$TMP_ROOT/strict-crash.md" 5 > "$TMP_ROOT/strict-crash.out" 2>&1 \
+  && fail 'receipt publication failure reported success'
+assert_grep strict-crash "$REMOTE/data/backlog.md" 'crash did not commit move'
+strict_deliver "$CRASH_ID" "$TMP_ROOT/strict-crash.md" 6 > "$TMP_ROOT/strict-ambiguous.out" 2>&1 \
+  && fail 'ambiguous crash repaired receipt from key presence'
+assert_grep ambiguous "$TMP_ROOT/strict-ambiguous.out" 'ambiguous crash not identified'
+assert_grep strict-crash "$REMOTE/state/handoff/strict-test.outbox.md" 'ambiguous scratch removed'
+pass 'post-commit receipt failure stays ambiguous and preserves delivered payload'
+rm -f "$REMOTE/state/handoff/strict-test.outbox.md"
+
+
 
 write_backlog '- [ ] route-race - remains dispatchable through retirement (repo: alpha)'
 registry_lock="$PARENT/state/.secondmate-registry.lock"

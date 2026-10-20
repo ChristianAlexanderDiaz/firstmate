@@ -3,6 +3,10 @@
 #
 # Usage:
 #   fm-backlog-receive.sh state/handoff/<secondmate-id>.outbox.md <bytes> <sha256> <generation>
+#   fm-backlog-receive.sh --capabilities
+#   fm-backlog-receive.sh --strict-transfer <32-lowercase-hex-id> state/handoff/<id>.outbox.md <bytes> <sha256> <generation>
+# Strict mode uses accepted receipts, refuses unknown duplicate keys, and keeps
+# post-commit/pre-receipt crashes ambiguous; see fm-handoff-record-lib.sh.
 #
 # The delivered file must be a non-symlink backlog-format scratch file confined
 # to FM_HOME/state/handoff. Every item must be Queued. Keys already present in
@@ -26,6 +30,11 @@ LOCK_STALE_SECS=30
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+
+# shellcheck source=bin/fm-handoff-record-lib.sh
+. "$SCRIPT_DIR/fm-handoff-record-lib.sh"
+# shellcheck source=bin/fm-secondmate-parent-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-parent-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
@@ -82,6 +91,28 @@ run_move() { # <keys...>
   tasks-axi mv "$@" --file "$DELIVERED" --to "$DEST"
 }
 
+STRICT_TRANSFER=
+if [ "${1:-}" = --capabilities ]; then
+  [ "$#" -eq 1 ] || usage
+  [ -f "$FM_HOME/.fm-secondmate-home" ] && [ ! -L "$FM_HOME/.fm-secondmate-home" ] || die "receiver is not a seeded home"
+  fm_handoff_markdown "$FM_HOME" || die "strict receiver requires markdown"
+  fm_secondmate_parent_record_parse "$FM_HOME/.fm-secondmate-parent" || die "invalid receiver parent binding"
+  printf 'binding:%s\n' "$FM_SECONDMATE_PARENT_ROUTE"
+  [ -d "$FM_HOME/data" ] && [ ! -L "$FM_HOME/data" ] && [ -d "$FM_HOME/state" ] && [ ! -L "$FM_HOME/state" ] || die "unsafe receiver operational directories"
+  printf 'strict-transfer-v1\n'
+  printf 'marker:%s\nhome:%s\n' "$(cat "$FM_HOME/.fm-secondmate-home")" "$(cd "$FM_HOME" && pwd -P)"
+  if [ -e "$FM_HOME/data/projects.md" ]; then
+    fm_handoff_file "$FM_HOME/data/projects.md" || die "unsafe project registry"
+    sed -n 's/^- \([^ ][^ ]*\) .*/project:\1/p' "$FM_HOME/data/projects.md"
+  fi
+  exit 0
+fi
+if [ "${1:-}" = --strict-transfer ]; then
+  [ "$#" -eq 6 ] || usage
+  STRICT_TRANSFER=$2
+  fm_handoff_id_valid "$STRICT_TRANSFER" || die "strict transfer id must be 32 lowercase hexadecimal characters"
+  shift 2
+fi
 [ "$#" -eq 4 ] || usage
 REL=$1
 EXPECTED_BYTES=$2
@@ -110,8 +141,15 @@ NAME=$(basename "$REL")
 ID=${NAME%.outbox.md}
 case "$ID" in ''|*[!A-Za-z0-9._-]*) die "delivered outbox id is unsafe" ;; esac
 TRANSFER_LOCK="$PARENT_REAL/.$ID.upload.lock"
+TASK_SET_LOCK=
+release_receipt_locks() {
+  fm_lock_release "$TRANSFER_LOCK" || true
+  [ -z "$TASK_SET_LOCK" ] || fm_lock_release "$TASK_SET_LOCK" || true
+}
+trap release_receipt_locks EXIT
+TASK_SET_LOCK=$(fm_task_set_lock_path "$FM_HOME/state") || die "invalid destination task-set lock"
+fm_lock_acquire_wait "$TASK_SET_LOCK" || die "cannot lock destination task set"
 fm_lock_acquire_wait "$TRANSFER_LOCK" || die "cannot lock delivered outbox"
-trap 'fm_lock_release "$TRANSFER_LOCK" || true' EXIT
 [ -f "$DELIVERED" ] && [ ! -L "$DELIVERED" ] || die "delivered outbox is not a non-symlink regular file"
 GENERATION_FILE="$PARENT_REAL/.$ID.upload-generation"
 [ -f "$GENERATION_FILE" ] && [ ! -L "$GENERATION_FILE" ] || die "delivered outbox generation is unavailable or unsafe"
@@ -141,6 +179,21 @@ KEYS=()
 while IFS= read -r key; do
   [ -n "$key" ] && KEYS+=("$key")
 done < <(list_keys "$DELIVERED")
+if [ -n "$STRICT_TRANSFER" ]; then
+  fm_handoff_markdown "$FM_HOME" || die "unsupported receiver backlog backend"
+  STRICT_KEYS=$(fm_handoff_keys "$FM_HOME" "$DELIVERED") || die "cannot parse delivered backlog"
+  KEYS=()
+  while IFS= read -r key; do [ -z "$key" ] || KEYS+=("$key"); done <<< "$STRICT_KEYS"
+  [ "${#KEYS[@]}" -gt 0 ] || die "strict transfer is empty"
+  KEY_HASH=$(printf '%s\n' "${KEYS[@]}" | LC_ALL=C sort | fm_handoff_digest) || die "cannot bind key set"
+  RECEIPT_RC=0
+  fm_handoff_receipt_check "$FM_HOME" "$STRICT_TRANSFER" "$EXPECTED_HASH" "$KEY_HASH" || RECEIPT_RC=$?
+  case "$RECEIPT_RC" in
+    0) rm -f -- "$DELIVERED"; printf 'received: %s accepted retry\n' "$ID"; exit 0 ;;
+    3) ;;
+    *) die "conflicting or unsafe strict receipt; delivered outbox preserved" ;;
+  esac
+fi
 for key in "${KEYS[@]}"; do
   section=$(backlog_key_section "$DELIVERED" "$key") || die "delivered key disappeared during classification: $key"
   [ "$section" = '## Queued' ] || die "delivered outbox contains non-Queued item $key under $section"
@@ -156,6 +209,9 @@ TO_MOVE=()
 ALREADY=()
 for key in "${KEYS[@]}"; do
   if backlog_key_section "$DEST" "$key" >/dev/null 2>&1; then
+    if [ -n "$STRICT_TRANSFER" ]; then
+      die "ambiguous strict transfer: destination key $key exists without an accepted receipt; preserve the parent outbox and reconcile destination task bodies/history"
+    fi
     ALREADY+=("$key")
   else
     TO_MOVE+=("$key")
@@ -181,7 +237,12 @@ for key in "${KEYS[@]}"; do
   backlog_key_section "$DEST" "$key" >/dev/null 2>&1 \
     || die "receipt verification failed for $key; delivered outbox is preserved"
 done
+if [ -n "$STRICT_TRANSFER" ]; then
+  fm_handoff_receipt_accept "$FM_HOME" "$STRICT_TRANSFER" "$EXPECTED_HASH" "$KEY_HASH" \
+    || die "move committed but accepted receipt could not be published; preserve parent outbox for reconciliation"
+fi
 rm -f -- "$DELIVERED" || die "receipt succeeded but delivered scratch cleanup failed"
 fm_lock_release "$TRANSFER_LOCK" || die "receipt succeeded but transfer lock cleanup failed"
+[ -z "$TASK_SET_LOCK" ] || fm_lock_release "$TASK_SET_LOCK"
 trap - EXIT
 printf 'received: %s moved=%s already=%s\n' "$(basename "$REL" .outbox.md)" "${#TO_MOVE[@]}" "${#ALREADY[@]}"

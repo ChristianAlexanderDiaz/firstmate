@@ -3101,3 +3101,71 @@ test_secondmate_idle_pane_is_not_stale
 test_secondmate_charter_brief_is_idle_by_default
 test_backlog_handoff_aborts_safely
 test_backlog_handoff_refuses_done_items_and_non_secondmate_homes
+
+test_secondmate_retirement_refuses_stranded_records() {
+  local mode home sub fakebin out expected parent_state parent_data
+  command -v tasks-axi >/dev/null 2>&1 || { echo 'skip: tasks-axi not found'; return; }
+  for mode in queued held decision source-inbox parent-inbox reconcile result transfer unsafe parent-route; do
+    home="$TMP_ROOT/record-retire-$mode"
+    sub="$TMP_ROOT/record-sub-$mode"
+    parent_state="$home/state"
+    parent_data="$home/data"
+    mkdir -p "$home/data" "$home/state" "$sub/data" "$sub/state" "$sub/config" "$sub/projects"
+    mark_firstmate_home "$sub"
+    printf 'domain\n' > "$sub/.fm-secondmate-home"
+    printf 'backend = "markdown"\n' > "$sub/.tasks.toml"
+    printf '## Queued\n\n## Done\n' > "$sub/data/backlog.md"
+    printf -- '- domain - domain (home: %s; scope: alpha; projects: alpha; added 2026-10-20)\n' "$sub" > "$home/data/secondmates.md"
+    printf 'window=firstmate:fm-domain\nbackend=tmux\nkind=secondmate\nmode=secondmate\nharness=echo\nhome=%s\nworktree=%s\nproject=%s\n' "$sub" "$sub" "$sub" > "$home/state/domain.meta"
+    case "$mode" in
+      queued|held)
+        printf '## Queued\n- [ ] open-task - Preserve me (repo: alpha)\n\n## Done\n' > "$sub/data/backlog.md"
+        [ "$mode" != held ] || tasks-axi hold open-task --reason pending --kind captain --file "$sub/data/backlog.md" >/dev/null
+        ;;
+      decision) printf 'needs-decision [at=1] [key=open]: pending\n' > "$sub/state/old.status" ;;
+      source-inbox) mkdir "$sub/state/old.inbox"; printf 'pending\n' > "$sub/state/old.inbox/001.msg" ;;
+      parent-inbox) mkdir "$home/state/domain.inbox"; printf 'pending\n' > "$home/state/domain.inbox/001.msg" ;;
+      reconcile) mkdir "$sub/state/reconcile-requests"; printf 'pending\n' > "$sub/state/reconcile-requests/old.request" ;;
+      result) mkdir "$sub/state/procevent-inbox"; printf 'pending\n' > "$sub/state/procevent-inbox/board.1.result" ;;
+      transfer)
+        mkdir -p "$home/data/handoff/transfers"
+        local transfer_id=0123456789abcdef0123456789abcdef key_hash
+        key_hash=$(printf 'task\n' | shasum -a 256 | awk '{print $1}')
+        printf 'fm-handoff-source.v1\n%s\ndomain\n%s\n%s\n%s\ndest\n%s\n%s\ntask\n' "$transfer_id" "$sub" "$key_hash" "$key_hash" "$key_hash" "$key_hash" > "$home/data/handoff/transfers/$transfer_id.record"
+        ;;
+      parent-route)
+        parent_state="$home/route-state"
+        parent_data="$home/route-data"
+        mkdir -p "$parent_state/domain.inbox" "$parent_data"
+        mv "$home/state/domain.meta" "$parent_state/domain.meta"
+        cp "$home/data/secondmates.md" "$parent_data/secondmates.md"
+        printf 'pending\n' > "$parent_state/domain.inbox/001.msg"
+        ;;
+      unsafe) rm "$sub/data/backlog.md"; ln -s /dev/null "$sub/data/backlog.md" ;;
+    esac
+    fakebin=$(make_fake_tmux "$TMP_ROOT/record-fake-$mode")
+    out="$TMP_ROOT/record-retire-$mode.out"
+    if PATH="$fakebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+      FM_STATE_OVERRIDE="$parent_state" FM_DATA_OVERRIDE="$parent_data" \
+      FM_FAKE_TMUX_WINDOW=firstmate:fm-domain FM_FAKE_TMUX_LOG="$TMP_ROOT/record-fake-$mode/log" \
+      FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/record-fake-$mode/pane.txt" \
+      "$ROOT/bin/fm-teardown.sh" domain > "$out" 2>&1; then
+      fail "retirement discarded $mode records"
+    fi
+    case "$mode" in
+      queued|held) expected='open backlog task' ;;
+      decision) expected='unresolved status decision' ;;
+      source-inbox|parent-inbox|parent-route) expected='unread steering' ;;
+      reconcile) expected='unread steering or reconciliation' ;;
+      result) expected='unhandled captured process-event' ;;
+      transfer) expected='unfinished transfer' ;;
+      unsafe) expected='unsafe or unreadable' ;;
+    esac
+    assert_grep "$expected" "$out" "unexpected refusal for $mode: $(cat "$out")"
+    [ -d "$sub" ] && [ -f "$parent_state/domain.meta" ] || fail "retirement removed records on $mode refusal"
+    assert_grep domain "$parent_data/secondmates.md" "retirement removed route on $mode refusal"
+  done
+  pass 'ordinary retirement preserves queued/held decisions, steering, reconciliation, results and unfinished transfers'
+}
+
+test_secondmate_retirement_refuses_stranded_records

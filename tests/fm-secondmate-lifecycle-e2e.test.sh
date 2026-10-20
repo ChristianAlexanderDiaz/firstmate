@@ -222,6 +222,17 @@ phase_recovery() {
 
 phase_teardown() {
   local teardown_out corr rec leftover leftover_rec other_corr
+  # A drained retirement finishes the transferred work and consumes steering;
+  # the safety suite separately proves these records refuse while still open.
+  local item message
+  for item in feat-x feat-y; do
+    tasks-axi "done" "$item" --file "$SUB/data/backlog.md" >/dev/null || fail "could not finish fixture task $item"
+  done
+  mkdir -p "$HOME_DIR/state/design.inbox/handled"
+  for message in "$HOME_DIR/state/design.inbox"/*.msg; do
+    [ -f "$message" ] || continue
+    mv "$message" "$HOME_DIR/state/design.inbox/handled/" || fail 'could not acknowledge fixture steering'
+  done
   corr=$(FM_HOME="$HOME_DIR" bash -c '
     . "$1"
     fm_pending_reply_create "$2" "$2/state" design "New routed work is in your backlog."

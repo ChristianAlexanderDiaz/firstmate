@@ -2118,6 +2118,27 @@ Non-Herdr backends return before any viewer mutation.
 Task teardown cleanup of a recorded viewer, including one beside a chat pane from before a relaunch, is covered through the real `bin/fm-teardown.sh` by `test_herdr_flat_teardown_closes_recorded_viewer` in `tests/fm-teardown.test.sh`; this record does not include an observed run of that case.
 Live Herdr lifecycle verification was unavailable on this host because the lab helper could not establish its required running-default-session tripwire; this record makes no live-backend claim for the new pane behavior.
 
+### Secondmate retirement record guard
+
+Verified on 2026-10-20 on macOS arm64 with Herdr 0.9.3, protocol 22.
+The named-lab guard exercises the real teardown executable: queued intent refuses before endpoint closure, and a drained retry closes the exact pane, removes the home, and preserves the independent focus anchor.
+The test routes every CLI operation through `bin/fm-herdr-lab.sh` and verifies the live default session is unchanged at cleanup.
+The focused command belongs to the required `real-herdr-gated` lane:
+
+```sh
+bash bin/fm-test-run.sh tests/fm-herdr-session-cleanup-e2e.test.sh
+```
+
+The run selected the production helper through `HERDR_LAB_HELPER` and a private label through `HERDR_LAB_LABEL`.
+Observed output:
+
+```text
+evidence: herdr=0.9.3 protocol=22 default-session-tripwire=armed
+ok - real named lab retirement refuses open records before close and removes a drained home through endpoint guards
+```
+
+This is a shell endpoint fixture; it makes no harness-specific agent-liveness claim.
+
 ## Zellij
 
 The current compatibility floor and latest verification are Zellij 0.44.0 with `jq` on macOS aarch64.

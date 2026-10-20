@@ -32,11 +32,12 @@
 #     caller makes.
 #
 # What `tasks-axi mv <id>... --to <dest>` owns: moving each full item BLOCK
-# byte-exact (header, body lines, blank separators, and indented pseudo-headings
+# with task content preserved (header, body lines, and indented pseudo-headings
 # such as `  ## Intent`), preserving destination section placement, and moving a
 # whole connected set (a blocker and its dependents) atomically with blocked-by
 # links preserved. It refuses a move that would strand a dependency across the
-# two files; that error is surfaced verbatim and nothing is moved.
+# two files; that error is surfaced verbatim and nothing is moved. Separator
+# whitespace may be normalized by tasks-axi and is not a receipt identity.
 #
 # Item bodies must use at least two leading spaces. The helper refuses a selected
 # item with a single-space or tab-indented continuation rather than risk leaving
@@ -75,6 +76,17 @@
 # completed remote handoff.
 # Usage: fm-backlog-handoff.sh <secondmate-id> <item-key>...
 #        fm-backlog-handoff.sh --resume-pending
+#        fm-backlog-handoff.sh --from-secondmate <local-id> <destination-id> <key>...
+#        fm-backlog-handoff.sh --from-secondmate <local-id> --to-parent <key>...
+# New forms require markdown + automatic source dispatch gating, validate parent
+# bindings and operational records under task-set locks, and use strict receipts.
+# Parent-owned data/handoff/transfers/<random-id>.record is immutable provenance:
+# schema, id, source id, source home, source identity, route digest, destination,
+# key-set digest, pinned payload digest, then sorted keys (one per line).
+# The matching .payload pins the batch; .accepted is published only on receipt.
+# Unknown receipt keeps provenance and payload; never restore rows automatically.
+# Resume revalidates the original source and route. An ambiguous local commit
+# needs supervised reconciliation; no force or accept-anyway flag exists.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -95,16 +107,34 @@ MAIN_BACKLOG="$DATA/backlog.md"
 # shellcheck source=bin/fm-pending-reply-lib.sh
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 
+# shellcheck source=bin/fm-handoff-record-lib.sh
+. "$SCRIPT_DIR/fm-handoff-record-lib.sh"
+# shellcheck source=bin/fm-secondmate-parent-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-parent-lib.sh"
+# shellcheck source=bin/fm-backlog-transition-lib.sh
+. "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
+
 RECEIVER_WAKE_MESSAGE='New routed work is in your backlog. Run bin/fm-session-start.sh now, then act on the routed task.'
 
+ACTIVE_SOURCE_LOCK=
+ACTIVE_DEST_LOCK=
+STRICT_TRANSFER=
+SOURCE_ID=
+TO_PARENT=0
+WORK_HOME=main
 ACTIVE_HANDOFF_LOCK=
 ACTIVE_REGISTRY_LOCK=
 RECEIVER_WAKE_IGNORE_ID=
 release_remote_locks() {
+  if [ -n "$ACTIVE_DEST_LOCK" ]; then fm_lock_release "$ACTIVE_DEST_LOCK"; ACTIVE_DEST_LOCK=; fi
+  if [ -n "$ACTIVE_SOURCE_LOCK" ]; then fm_lock_release "$ACTIVE_SOURCE_LOCK"; ACTIVE_SOURCE_LOCK=; fi
   if [ -n "$ACTIVE_HANDOFF_LOCK" ]; then
     fm_lock_release "$ACTIVE_HANDOFF_LOCK"
     ACTIVE_HANDOFF_LOCK=
   fi
+  STRICT_TRANSFER=
+  SOURCE_ID=
+  WORK_HOME=main
   if [ -n "$ACTIVE_REGISTRY_LOCK" ]; then
     fm_lock_release "$ACTIVE_REGISTRY_LOCK"
     ACTIVE_REGISTRY_LOCK=
@@ -117,6 +147,15 @@ sha256_file() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'; else sha256sum "$1" | awk '{print $1}'; fi
 }
 
+if [ "${1:-}" = --help ]; then sed -n '2,100p' "$0" | sed 's/^# *//'; exit 0; fi
+if [ "${1:-}" = --from-secondmate ]; then
+  [ "$#" -ge 4 ] || { echo 'error: explicit source, destination and keys required' >&2; exit 1; }
+  SOURCE_ID=$2
+  case "$SOURCE_ID" in ''|.|..|*[!A-Za-z0-9._-]*) exit 1 ;; esac
+  WORK_HOME="secondmate:$SOURCE_ID"
+  shift 2
+  if [ "$1" = --to-parent ]; then TO_PARENT=1; set -- parent "${@:2}"; fi
+fi
 RESUME_PENDING=0
 if [ "${1:-}" = --resume-pending ]; then
   [ "$#" -eq 1 ] || {
@@ -329,19 +368,20 @@ seed_backlog_scaffold() { # <path>
 # detectable, so report it loudly instead of letting the promise go quiet.
 # A home that never opted into the relay pays one presence check per key here.
 warn_stale_public_commitments() { # <secondmate-id> <moved-key>...
-  local id=$1 key out rc
+  local id=$1 key out rc target_home="secondmate:$1"
+  [ "$TO_PARENT" != 1 ] || target_home=main
   shift
   for key in "$@"; do
     rc=0
-    out=$("$SCRIPT_DIR/fm-public-followup.sh" guard-work main "$key" 2>/dev/null) || rc=$?
+    out=$("$SCRIPT_DIR/fm-public-followup.sh" guard-work "$WORK_HOME" "$key" 2>/dev/null) || rc=$?
     [ "$rc" -ne 0 ] || continue
     [ -z "$out" ] || printf '%s\n' "$out" >&2
-    printf 'warning: %s still owes a public reply bound to main/%s; rebind it to secondmate:%s (bin/fm-tasks-axi.sh public-followup bind-work, then bin/fm-public-followup.sh register <obligation-id> --relation <relation-id> --work-home secondmate:%s --work-id %s --generation <n>) or the promised reply will be reconciled against work this home no longer owns.\n' \
-      "$key" "$key" "$id" "$id" "$key" >&2
+    printf 'warning: %s still owes a public reply bound to %s/%s; rebind it to %s (bin/fm-tasks-axi.sh public-followup bind-work, then bin/fm-public-followup.sh register <obligation-id> --relation <relation-id> --work-home %s --work-id %s --generation <n>) or the promised reply will be reconciled against work this home no longer owns.\n' \
+      "$key" "$WORK_HOME" "$key" "$target_home" "$target_home" "$key" >&2
   done
   if fm_pf_relay_active "$FM_HOME" && fm_pf_has_delivered_open_loops "$STATE"; then
-    printf 'warning: this home has an open public loop with nothing owed; routing work to secondmate:%s does not close it. Hand it on with bin/fm-public-followup.sh rechain or close it with retire --reason.\n' \
-      "$id" >&2
+    printf 'warning: this home has an open public loop with nothing owed; routing work to %s does not close it. Hand it on with bin/fm-public-followup.sh rechain or close it with retire --reason.\n' \
+      "$target_home" >&2
   fi
   # Reporting never changes the handoff's own success: the move already landed.
   return 0
@@ -356,9 +396,9 @@ warn_stale_public_commitments() { # <secondmate-id> <moved-key>...
 receiver_wake_batch_id() { # <item-key>...
   local digest
   if command -v shasum >/dev/null 2>&1; then
-    digest=$(printf '%s\n' "$@" | LC_ALL=C sort | shasum -a 256 2>/dev/null | awk '{print $1}')
+    digest=$({ [ -z "$SOURCE_ID" ] || printf '%s\n' "$WORK_HOME"; printf '%s\n' "$@"; } | LC_ALL=C sort | shasum -a 256 2>/dev/null | awk '{print $1}')
   else
-    digest=$(printf '%s\n' "$@" | LC_ALL=C sort | sha256sum 2>/dev/null | awk '{print $1}')
+    digest=$({ [ -z "$SOURCE_ID" ] || printf '%s\n' "$WORK_HOME"; printf '%s\n' "$@"; } | LC_ALL=C sort | sha256sum 2>/dev/null | awk '{print $1}')
   fi
   printf '%s' "$digest" | grep -Eq '^[a-f0-9]{64}$' || return 1
   printf '%s' "${digest:0:16}"
@@ -694,7 +734,7 @@ remote_deliver_outbox() { # <secondmate-id> <outbox-path>
   fi
   rm -f -- "$snapshot"
   if ! receive_out=$("$SCRIPT_DIR/fm-on.sh" "$id" fm-backlog-receive.sh \
-    "$remote_rel" "$bytes" "$hash" "$generation" </dev/null 2>&1); then
+    ${STRICT_TRANSFER:+--strict-transfer} ${STRICT_TRANSFER:+"$STRICT_TRANSFER"} "$remote_rel" "$bytes" "$hash" "$generation" </dev/null 2>&1); then
     [ -z "$receive_out" ] || printf '%s\n' "$receive_out" >&2
     echo "error: handoff receipt by $id was unavailable or completion is unknown; outbox preserved at $outbox" >&2
     return 1
@@ -760,6 +800,14 @@ remote_handoff() { # <secondmate-id> <keys...>
   local -a requested to_move already missing in_flight done_items not_queued
   shift
   requested=("$@")
+  local provenance
+  for provenance in "$DATA/handoff/transfers"/*.record; do
+    [ -e "$provenance" ] || [ -L "$provenance" ] || continue
+    fm_handoff_provenance "$provenance" || return 1
+    if [ "$(sed -n '7p' "$provenance")" = "$id" ] && [ ! -f "${provenance%.record}.accepted" ]; then
+      fm_handoff_error 'strict source handoff pending; resume its original batch before a parent handoff'; return 1
+    fi
+  done
   outbox="$DATA/handoff/$id.outbox.md"
   validate_backlog_file "main backlog" "$MAIN_BACKLOG" || return 1
   validate_backlog_file "remote handoff outbox" "$outbox" || return 1
@@ -864,20 +912,47 @@ with_remote_route_locks() { # <secondmate-id> <function> <args...>
 
 resume_remote_outbox() { # <secondmate-id> <outbox-path>
   local id=$1 outbox=$2
-  [ -e "$outbox" ] || [ -L "$outbox" ] || return 0
-  if [ ! -f "$outbox" ] || [ -L "$outbox" ]; then
+  if { [ -e "$outbox" ] || [ -L "$outbox" ]; } && { [ ! -f "$outbox" ] || [ -L "$outbox" ]; }; then
     echo "error: unsafe pending handoff outbox: $outbox" >&2
     return 1
   fi
+  local provenance sid target keyset
+  for provenance in "$DATA/handoff/transfers"/*.record; do
+    [ -e "$provenance" ] || [ -L "$provenance" ] || continue
+    fm_handoff_provenance "$provenance" || return 1
+    target=$(sed -n '7p' "$provenance")
+    [ "$target" = "$id" ] || continue
+    [ ! -f "${provenance%.record}.accepted" ] || continue
+    sid=$(sed -n '3p' "$provenance")
+    SOURCE_ID=$sid
+    WORK_HOME="secondmate:$sid"
+    local -a resume_keys
+    resume_keys=()
+    while IFS= read -r keyset; do resume_keys+=("$keyset"); done < <(sed -n '10,$p' "$provenance")
+    strict_source_handoff "$id" "${resume_keys[@]}"
+    return $?
+  done
+  [ -e "$outbox" ] || return 0
   remote_deliver_outbox "$id" "$outbox"
 }
 
 resume_pending_outboxes() {
   local outbox id failed=0
   [ -d "$DATA/handoff" ] || return 0
+  local record target resumed=$'\n'
+  for record in "$DATA/handoff/transfers"/*.record; do
+    [ -e "$record" ] || [ -L "$record" ] || continue
+    fm_handoff_provenance "$record" || return 1
+    target=$(sed -n '7p' "$record")
+    [ "$(secondmate_registry_field "$REG" "$target" remote 2>/dev/null || true)" = 1 ] || continue
+    [ ! -f "${record%.record}.accepted" ] || continue
+    with_remote_route_locks "$target" resume_remote_outbox "$target" "$DATA/handoff/$target.outbox.md" || failed=1
+    resumed="$resumed$target"$'\n'
+  done
   for outbox in "$DATA/handoff"/*.outbox.md; do
     [ -e "$outbox" ] || [ -L "$outbox" ] || continue
     id=$(basename "$outbox" .outbox.md)
+    case "$resumed" in *$'\n'"$id"$'\n'*) continue ;; esac
     case "$id" in '' | *[!A-Za-z0-9._-]*)
       echo "error: unsafe pending handoff id: $id" >&2
       failed=1
@@ -918,6 +993,257 @@ resume_pending_wakes() {
   return "$failed"
 }
 
+# Validate a new local source/successor against the parent's durable binding.
+strict_local_home() {
+  local id=$1 home=$2 parent
+  home=$(validate_secondmate_home "$id" "$home") || return 1
+  fm_handoff_file "$home/.fm-secondmate-home" || return 1
+  fm_secondmate_parent_record_parse "$home/.fm-secondmate-parent" || { fm_handoff_error "invalid parent binding: $home"; return 1; }
+  parent=$(cd "$FM_HOME" && pwd -P) || return 1
+  [ "$FM_SECONDMATE_PARENT_ROUTE" = local ] && [ "$FM_SECONDMATE_PARENT_HOME" = "$parent" ] \
+    || { fm_handoff_error "secondmate $id is bound to another parent"; return 1; }
+  fm_handoff_markdown "$home" || return 1
+  printf '%s\n' "$home"
+}
+
+strict_source_handoff() { # <destination> <keys...>; caller holds registry/handoff
+  local id=$1 source dest route route_hash keys_hash record payload accepted file
+  local transfer hash old_source old_work show key section cap rc present=0 batch tmp proof
+  local -a keys
+  shift
+  keys=()
+  while IFS= read -r key; do
+    case "$key" in ''|.|..|*[!A-Za-z0-9._-]*) fm_handoff_error "unsafe task key: $key"; return 1 ;; esac
+    keys+=("$key")
+  done < <(printf '%s\n' "$@" | LC_ALL=C sort -u)
+  [ "${#keys[@]}" -eq "$#" ] || { fm_handoff_error 'duplicate or missing explicit task keys'; return 1; }
+  [ "$(secondmate_registry_field "$REG" "$SOURCE_ID" remote 2>/dev/null || true)" != 1 ] \
+    || { fm_handoff_error 'remote source handoff is unsupported; use a registered local source'; return 1; }
+  secondmate_registry_validate_bindings "$REG" resolved_existing_dir || { fm_handoff_error "$SECONDMATE_REGISTRY_ERROR"; return 1; }
+  source=$(strict_local_home "$SOURCE_ID" "$(secondmate_home "$SOURCE_ID")") || return 1
+  if [ -e "$source/config/backlog-backend" ] || [ -L "$source/config/backlog-backend" ]; then fm_handoff_file "$source/config/backlog-backend" || return 1; fi
+  [ "$(fm_backlog_backend_value "$source/config")" = tasks-axi ] \
+    || { fm_handoff_error 'source-secondmate handoff requires the ordinary tasks-axi dispatch gate; manual sources are unsupported'; return 1; }
+  if [ "$TO_PARENT" = 1 ]; then
+    dest=$(cd "$FM_HOME" && pwd -P) || return 1
+    fm_handoff_markdown "$dest" || return 1
+    route="parent:$dest"
+  elif [ "$(secondmate_registry_field "$REG" "$id" remote 2>/dev/null || true)" = 1 ]; then
+    dest=
+    secondmate_registry_line_for_id "$REG" "$id" || return 1
+    route=$SECONDMATE_REGISTRY_LINE
+    if ! cap=$("$SCRIPT_DIR/fm-on.sh" "$id" fm-backlog-receive.sh --capabilities </dev/null); then
+      fm_handoff_error 'upgrade destination Firstmate for strict-transfer-v1 before handing off source work'; return 1
+    fi
+    printf '%s\n' "$cap" | grep -qx 'strict-transfer-v1' \
+      || { fm_handoff_error 'upgrade destination Firstmate for strict-transfer-v1 before handing off source work'; return 1; }
+    printf '%s\n' "$cap" | grep -Fxq binding:remote || { fm_handoff_error 'remote receiver parent binding is not remote'; return 1; }
+    # shellcheck disable=SC2015
+    printf '%s\n' "$cap" | grep -Fxq "marker:$id" && \
+      printf '%s\n' "$cap" | grep -Fxq "home:$(secondmate_registry_field "$REG" "$id" home)" \
+      || { fm_handoff_error 'remote receiver identity does not match destination route'; return 1; }
+  else
+    [ "$SOURCE_ID" != "$id" ] || { fm_handoff_error 'source and destination must differ'; return 1; }
+    dest=$(strict_local_home "$id" "$(secondmate_home "$id")") || return 1
+    case "$dest/" in "$source/"*) fm_handoff_error 'source and destination homes overlap'; return 1 ;; esac
+    case "$source/" in "$dest/"*) fm_handoff_error 'source and destination homes overlap'; return 1 ;; esac
+    route="local:$id:$dest:$(fm_handoff_home_identity "$dest")"
+  fi
+  route_hash=$(printf '%s\n' "$route" | fm_handoff_digest) || return 1
+  keys_hash=$(printf '%s\n' "${keys[@]}" | fm_handoff_digest) || return 1
+  fm_handoff_dir "$DATA/handoff" && fm_handoff_dir "$DATA/handoff/transfers" || return 1
+  record=
+  for file in "$DATA/handoff/transfers"/*.record; do
+    [ -e "$file" ] || [ -L "$file" ] || continue
+    fm_handoff_provenance "$file" || return 1
+    if [ "$(sed -n '3p' "$file")" = "$SOURCE_ID" ] && [ "$(sed -n '7p' "$file")" = "$id" ] && [ "$(sed -n '8p' "$file")" = "$keys_hash" ]; then
+      [ -z "$record" ] || { fm_handoff_error 'multiple matching transfer records need reconciliation'; return 1; }
+      record=$file
+    elif [ "$(sed -n '7p' "$file")" = "$id" ] && [ ! -f "${file%.record}.accepted" ]; then
+      fm_handoff_error "an unfinished transfer owns this destination; retry its original batch: $file"; return 1
+    fi
+  done
+  ACTIVE_SOURCE_LOCK=$(fm_task_set_lock_path "$source/state") || return 1
+  fm_lock_acquire_wait "$ACTIVE_SOURCE_LOCK" || return 1
+  if [ -n "$dest" ]; then
+    ACTIVE_DEST_LOCK=$(fm_task_set_lock_path "$dest/state") || return 1
+    fm_lock_try_acquire "$ACTIVE_DEST_LOCK" || { fm_handoff_error 'destination task set is busy; retry this handoff after publication finishes'; ACTIVE_DEST_LOCK=; return 1; }
+    validate_backlog_file 'destination backlog' "$dest/data/backlog.md" || return 1
+  fi
+  fm_handoff_file "$source/data/backlog.md" || return 1
+  fm_tasks_axi_compatible || return 1
+  for key in "${keys[@]}"; do
+    if show=$(fm_handoff_show "$source" "$key" 2>/dev/null); then
+      present=$((present + 1))
+      [ "$(fm_handoff_field "$show" state)" = queued ] && [ "$(fm_handoff_field "$show" held)" = no ] \
+        || { fm_handoff_error "source task $key must be Queued and unheld"; return 1; }
+      # Expiry does not answer a captain call; the hold owner decides openness.
+      rc=0
+      env -u TASKS_AXI_BACKEND FM_HOME="$source" FM_ROOT_OVERRIDE="$FM_ROOT" \
+        FM_DATA_OVERRIDE="$source/data" FM_STATE_OVERRIDE="$source/state" FM_CONFIG_OVERRIDE="$source/config" \
+        bash "$SCRIPT_DIR/fm-captain-hold.sh" open "$key" --distinguish-absent >/dev/null || rc=$?
+      case "$rc" in
+        1) ;;
+        0) fm_handoff_error "source task $key has an unresolved captain hold"; return 1 ;;
+        *) fm_handoff_error "source task $key captain-hold evidence cannot be verified"; return 1 ;;
+      esac
+      fm_handoff_task_records_clear "$source" "$key" || return 1
+      section=$(fm_handoff_field "$show" repo)
+      case "$section" in ''|'"-"'|*[!A-Za-z0-9._-]*) fm_handoff_error "task $key needs a registered project"; return 1 ;; esac
+      for file in "$source/data/projects.md" "$DATA/projects.md" ${dest:+"$dest/data/projects.md"}; do
+        # shellcheck disable=SC2015
+        [ -f "$file" ] && [ ! -L "$file" ] && awk -v name="$section" 'index($0, "- " name " [") == 1 || index($0, "- " name " - ") == 1 { found=1 } END { exit !found }' "$file" \
+          || { fm_handoff_error "unregistered project $section in $file"; return 1; }
+      done
+      if [ -z "$dest" ]; then
+        printf '%s\n' "$cap" | grep -Fxq "project:$section" || { fm_handoff_error "remote project $section is unregistered"; return 1; }
+      fi
+      if [ "$TO_PARENT" != 1 ]; then
+        old_work=$(FM_DATA_OVERRIDE="$source/data" "$SCRIPT_DIR/fm-project-mode.sh" "$section") || return 1
+        case "$old_work" in local-only*) fm_handoff_error 'local-only work stays with the parent'; return 1 ;; esac
+      fi
+      [ -z "$(backlog_key_noncanonical_body_lines "$source/data/backlog.md" "$key")" ] \
+        || { fm_handoff_error "non-2-space continuation in $key"; return 1; }
+    else
+      if fm_backlog_row_probe "$source/data" "$key"; then
+        fm_handoff_error "source task $key could not be read consistently"; return 1
+      elif [ "$FM_BACKLOG_ROW_RESULT" != not_found ]; then
+        fm_handoff_error "$FM_BACKLOG_ROW_ERROR"; return 1
+      elif [ -z "$record" ]; then
+        fm_handoff_error "no source backlog task matched $key"; return 1
+      fi
+    fi
+  done
+  # Reconcile the previous local wake before publishing another transfer.
+  # A prepared correlation belongs to its original source/key batch.
+  if [ -n "$dest" ] && [ "$TO_PARENT" != 1 ]; then
+    batch=$(receiver_wake_batch_id "${keys[@]}") || return 1
+    file="$STATE/.backlog-handoff-$id.wake-pending"
+    if [ -e "$file" ] || [ -L "$file" ]; then
+      case "$(cat "$file" 2>/dev/null || true)" in
+        prepared:*:"$batch") ;;
+        prepared:*) fm_handoff_error 'prepared receiver wake belongs to a different source/batch; retry that original handoff'; return 1 ;;
+        *) wake_pending_secondmate_receiver "$id" || return 1 ;;
+      esac
+    fi
+  fi
+  if [ -z "$record" ] && [ -z "$dest" ] && { [ -e "$DATA/handoff/$id.outbox.md" ] || [ -L "$DATA/handoff/$id.outbox.md" ]; }; then
+    fm_handoff_error 'previous outbox owns this route; resume it before a new source batch'; return 1
+  fi
+  if [ -n "$record" ]; then
+    transfer=$(sed -n '2p' "$record")
+    fm_handoff_id_valid "$transfer" || return 1
+    [ "$(sed -n '1p' "$record")" = fm-handoff-source.v1 ] && \
+      [ "$(sed -n '4p' "$record")" = "$source" ] && \
+      [ "$(sed -n '5p' "$record")" = "$(fm_handoff_home_identity "$source")" ] && \
+      [ "$(sed -n '6p' "$record")" = "$route_hash" ] || { fm_handoff_error 'transfer source/route identity changed'; return 1; }
+    payload="${record%.record}.payload"
+    accepted="${record%.record}.accepted"
+    fm_handoff_file "$payload" || return 1
+    hash=$(sha256_file "$payload")
+    [ "$hash" = "$(sed -n '9p' "$record")" ] || { fm_handoff_error 'pinned transfer payload changed'; return 1; }
+    if [ -e "$accepted" ] || [ -L "$accepted" ]; then
+      fm_handoff_file "$accepted" || return 1
+      [ "$(cat "$accepted")" = "$hash" ] && [ "$present" = 0 ] \
+        || { fm_handoff_error 'accepted transfer conflicts with source rows or receipt'; return 1; }
+      echo "handoff accepted retry: $transfer"
+      if [ "$TO_PARENT" != 1 ]; then
+        batch=$(receiver_wake_batch_id "${keys[@]}") || return 1
+        case "$(cat "$STATE/.backlog-handoff-$id.wake-pending" 2>/dev/null || true)" in
+          prepared:*:"$batch") receiver_wake_promote_prepared "$id" "$batch" || return 1 ;;
+        esac
+        wake_pending_secondmate_receiver "$id" || return 1
+      fi
+      return 0
+    fi
+  else
+    [ "$present" -eq "${#keys[@]}" ] || return 1
+    transfer=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n') || return 1
+    fm_handoff_id_valid "$transfer" || return 1
+    record="$DATA/handoff/transfers/$transfer.record"
+    payload="${record%.record}.payload"
+    accepted="${record%.record}.accepted"
+    [ ! -e "$record" ] && [ ! -L "$record" ] && [ ! -e "$payload" ] && [ ! -L "$payload" ] || return 1
+    # Preview through tasks-axi on a private source copy to pin exactly the
+    # payload that staging will produce, including its whitespace normalization.
+    tmp=$(umask 077; mktemp -d "$DATA/handoff/.prepare.XXXXXX") || return 1
+    cp "$source/data/backlog.md" "$tmp/source.md" || return 1
+    seed_backlog_scaffold "$tmp/payload.md"
+    if ! proof=$(env -u TASKS_AXI_BACKEND tasks-axi mv "${keys[@]}" --file "$tmp/source.md" --to "$tmp/payload.md" 2>&1); then
+      printf '%s\n' "$proof" >&2; rm -rf -- "$tmp"; return 1
+    fi
+    hash=$(sha256_file "$tmp/payload.md") || return 1
+    fm_handoff_publish "$payload" < "$tmp/payload.md" || return 1
+    rm -rf -- "$tmp"
+    { printf 'fm-handoff-source.v1\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$transfer" "$SOURCE_ID" "$source" "$(fm_handoff_home_identity "$source")" "$route_hash" "$id" "$keys_hash" "$hash"; printf '%s\n' "${keys[@]}"; } | fm_handoff_publish "$record" || return 1
+  fi
+  fm_handoff_provenance "$record" || { fm_handoff_error 'transfer provenance is invalid or exceeds its 65536-byte bound; nothing new was moved'; return 1; }
+  if [ "$present" -gt 0 ]; then
+    [ "$present" -eq "${#keys[@]}" ] || { fm_handoff_error 'partially removed source requires reconciliation'; return 1; }
+    tmp=$(umask 077; mktemp -d "$DATA/handoff/.verify.XXXXXX") || return 1
+    cp "$source/data/backlog.md" "$tmp/source.md" || return 1
+    seed_backlog_scaffold "$tmp/payload.md"
+    if ! proof=$(env -u TASKS_AXI_BACKEND tasks-axi mv "${keys[@]}" --file "$tmp/source.md" --to "$tmp/payload.md" 2>&1); then
+      printf '%s\n' "$proof" >&2; rm -rf -- "$tmp"; return 1
+    fi
+    proof=$(sha256_file "$tmp/payload.md")
+    rm -rf -- "$tmp"
+    [ "$proof" = "$hash" ] || { fm_handoff_error 'source differs from pinned transfer; reconcile before removing rows'; return 1; }
+  fi
+  if [ -n "$dest" ]; then
+    rc=0
+    fm_handoff_receipt_check "$dest" "$transfer" "$hash" "$keys_hash" || rc=$?
+    if [ "$rc" = 3 ]; then
+      for key in "${keys[@]}"; do
+        if [ -f "$dest/data/backlog.md" ] && fm_handoff_show "$dest" "$key" >/dev/null 2>&1; then
+          fm_handoff_error "ambiguous strict transfer: destination key $key exists without accepted receipt; preserve transfer $transfer and reconcile destination bodies/history"; return 1
+        fi
+      done
+      [ "$present" -eq "${#keys[@]}" ] || { fm_handoff_error 'incomplete source transfer needs reconciliation'; return 1; }
+      if [ "$TO_PARENT" != 1 ]; then
+        batch=$(receiver_wake_batch_id "${keys[@]}") || return 1
+        receiver_wake_mark_prepared "$id" "$batch" || return 1
+      fi
+      seed_backlog_scaffold "$dest/data/backlog.md"
+      env -u TASKS_AXI_BACKEND tasks-axi mv "${keys[@]}" --file "$source/data/backlog.md" --to "$dest/data/backlog.md" || return 1
+      fm_handoff_receipt_accept "$dest" "$transfer" "$hash" "$keys_hash" \
+        || { fm_handoff_error 'move committed; receipt publication failed; retain transfer for reconciliation'; return 1; }
+    elif [ "$rc" != 0 ]; then return 1
+    fi
+    printf '%s\n' "$hash" | fm_handoff_publish "$accepted" || return 1
+    echo "handoff durable: $transfer source=$SOURCE_ID destination=$id keys=${keys[*]}"
+    fm_lock_release "$ACTIVE_DEST_LOCK"; ACTIVE_DEST_LOCK=
+    fm_lock_release "$ACTIVE_SOURCE_LOCK"; ACTIVE_SOURCE_LOCK=
+    if [ "$TO_PARENT" != 1 ]; then
+      batch=$(receiver_wake_batch_id "${keys[@]}") || return 1
+      receiver_wake_promote_prepared "$id" "$batch" && wake_pending_secondmate_receiver "$id" || return 1
+    fi
+  else
+    file="$DATA/handoff/$id.outbox.md"
+    validate_backlog_file 'strict outbox' "$file" || return 1
+    if [ ! -e "$file" ]; then
+      if [ "$present" -eq "${#keys[@]}" ]; then
+        seed_backlog_scaffold "$file"
+        env -u TASKS_AXI_BACKEND tasks-axi mv "${keys[@]}" --file "$source/data/backlog.md" --to "$file" || return 1
+      elif [ "$present" = 0 ]; then
+        fm_handoff_publish "$file" < "$payload" || return 1
+      else fm_handoff_error 'partially removed source requires reconciliation'; return 1
+      fi
+    fi
+    [ "$(sha256_file "$file")" = "$hash" ] || { fm_handoff_error 'outstanding outbox conflicts with pinned batch'; return 1; }
+    old_source=$MAIN_BACKLOG
+    MAIN_BACKLOG="$source/data/backlog.md"
+    remove_interrupted_source_duplicates "$file" "${keys[@]}" || return 1
+    MAIN_BACKLOG=$old_source
+    fm_lock_release "$ACTIVE_SOURCE_LOCK"; ACTIVE_SOURCE_LOCK=
+    STRICT_TRANSFER=$transfer
+    remote_deliver_outbox "$id" "$file" || return 1
+    printf '%s\n' "$hash" | fm_handoff_publish "$accepted" || return 1
+    echo "handoff durable: $transfer source=$SOURCE_ID destination=$id keys=${keys[*]}"
+  fi
+  warn_stale_public_commitments "$id" "${keys[@]}"
+}
+
 if [ "$RESUME_PENDING" -eq 1 ]; then
   FAILED=0
   resume_pending_wakes || FAILED=1
@@ -927,6 +1253,12 @@ fi
 
 ACTIVE_REGISTRY_LOCK=$(secondmate_registry_lock_path "$STATE")
 fm_lock_acquire_wait "$ACTIVE_REGISTRY_LOCK"
+if [ -n "$SOURCE_ID" ]; then
+  ACTIVE_HANDOFF_LOCK="$STATE/.backlog-handoff-$ID.lock"
+  fm_lock_acquire_wait "$ACTIVE_HANDOFF_LOCK" || exit 1
+  strict_source_handoff "$ID" "$@"
+  exit $?
+fi
 REMOTE=$(secondmate_registry_field "$REG" "$ID" remote 2>/dev/null || true)
 if [ "$REMOTE" = 1 ]; then
   ACTIVE_HANDOFF_LOCK="$STATE/.backlog-handoff-$ID.lock"
