@@ -1228,6 +1228,16 @@ strict_source_handoff() { # <destination> <keys...>; caller holds registry/hando
   else
     file="$DATA/handoff/$id.outbox.md"
     validate_backlog_file 'strict outbox' "$file" || return 1
+    if [ -e "$file" ] && [ "$(sha256_file "$file")" != "$hash" ]; then
+      tmp=$(umask 077; mktemp -d "$DATA/handoff/.scaffold.XXXXXX") || return 1
+      seed_backlog_scaffold "$tmp/empty.md"
+      proof=$(sha256_file "$tmp/empty.md") || return 1
+      rm -rf -- "$tmp"
+      [ "$(sha256_file "$file")" = "$proof" ] || { fm_handoff_error 'outstanding outbox conflicts with pinned batch'; return 1; }
+      proof=$(fm_handoff_keys "$source" "$file") || return 1
+      [ -z "$proof" ] || { fm_handoff_error 'outstanding outbox conflicts with pinned batch'; return 1; }
+      rm -f -- "$file" || return 1
+    fi
     if [ ! -e "$file" ]; then
       if [ "$present" -eq "${#keys[@]}" ]; then
         seed_backlog_scaffold "$file"

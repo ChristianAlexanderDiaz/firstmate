@@ -730,6 +730,75 @@ assert_grep 'Durable detail' "$REMOTE/data/backlog.md" 'strict remote body lost'
 assert_grep "$strict_id" "$REMOTE/state/handoff/receipts/$strict_id.receipt" 'strict accepted receipt missing'
 pass 'local source remote handoff survives lost transport and parent restart with pinned identity'
 
+STAGE_BIN="$TMP_ROOT/scaffold-crash-bin"
+STAGE_REAL_TASKS=$(command -v tasks-axi)
+mkdir -p "$STAGE_BIN"
+cat > "$STAGE_BIN/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = mv ] && [[ " $* " = *" --file $FM_STAGE_SOURCE/data/backlog.md --to $FM_STAGE_OUTBOX "* ]]; then
+  [ -f "$FM_STAGE_OUTBOX" ] || exit 1
+  touch "$FM_STAGE_CRASHED"
+  kill -KILL "$PPID"
+  exit 1
+fi
+exec "$FM_STAGE_REAL_TASKS" "$@"
+SH
+chmod +x "$STAGE_BIN/tasks-axi"
+for stage_mode in explicit resume; do
+  stage_key="scaffold-$stage_mode"
+  stage_outbox="$PARENT/data/handoff/ios.outbox.md"
+  tasks-axi add "$stage_key" 'Preserve staging crash intent' --repo alpha --file "$SOURCE/data/backlog.md" >/dev/null || fail 'scaffold crash task fixture failed'
+  stage_source_before=$(cat "$SOURCE/data/backlog.md")
+  stage_parent_before=$(cat "$PARENT/data/backlog.md")
+  if PATH="$STAGE_BIN:$PATH" FM_STAGE_SOURCE="$SOURCE" FM_STAGE_OUTBOX="$stage_outbox" \
+    FM_STAGE_CRASHED="$TMP_ROOT/$stage_key.crashed" FM_STAGE_REAL_TASKS="$STAGE_REAL_TASKS" \
+    handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --from-secondmate source ios "$stage_key" > "$TMP_ROOT/$stage_key.crash.out" 2>&1; then
+    fail 'scaffold crash unexpectedly completed staging'
+  fi
+  assert_present "$TMP_ROOT/$stage_key.crashed" 'crash did not reach the scaffold-before-move boundary'
+  [ "$(cat "$SOURCE/data/backlog.md")" = "$stage_source_before" ] || fail 'scaffold crash mutated source work'
+  stage_empty_hash=$(printf '## In flight\n\n## Queued\n\n## Done\n' | shasum -a 256 | awk '{print $1}')
+  [ "$(sha256_file "$stage_outbox")" = "$stage_empty_hash" ] || fail 'crash did not preserve the exact empty staging scaffold'
+  cp "$stage_outbox" "$TMP_ROOT/$stage_key.empty"
+  stage_record=
+  for stage_candidate in "$PARENT/data/handoff/transfers/"*.record; do
+    if [ "$(sed -n '10p' "$stage_candidate")" = "$stage_key" ]; then stage_record=$stage_candidate; break; fi
+  done
+  [ -n "$stage_record" ] || fail 'scaffold crash lost immutable provenance'
+  stage_record_hash=$(sha256_file "$stage_record")
+  stage_payload="${stage_record%.record}.payload"
+  stage_payload_hash=$(sha256_file "$stage_payload")
+  stage_id=$(sed -n '2p' "$stage_record")
+  stage_retry=(--from-secondmate source ios "$stage_key")
+  [ "$stage_mode" != resume ] || stage_retry=(--resume-pending)
+  for stage_conflict in changed-empty populated; do
+    cp "$TMP_ROOT/$stage_key.empty" "$stage_outbox"
+    if [ "$stage_conflict" = populated ]; then
+      tasks-axi add conflict-task 'Unrelated outbox work' --repo alpha --file "$stage_outbox" >/dev/null || fail 'conflicting outbox fixture failed'
+    else
+      printf '\n' >> "$stage_outbox"
+    fi
+    stage_conflict_hash=$(sha256_file "$stage_outbox")
+    if handoff_env "$ROOT/bin/fm-backlog-handoff.sh" "${stage_retry[@]}" > "$TMP_ROOT/$stage_key.$stage_conflict.out" 2>&1; then
+      fail "$stage_mode accepted a $stage_conflict outbox"
+    fi
+    [ "$(sha256_file "$stage_outbox")" = "$stage_conflict_hash" ] || fail 'conflicting outbox was overwritten'
+    [ "$(cat "$SOURCE/data/backlog.md")" = "$stage_source_before" ] || fail 'conflicting outbox retry mutated source'
+    assert_no_grep "$stage_key" "$REMOTE/data/backlog.md" 'conflicting outbox retry delivered source work'
+  done
+  cp "$TMP_ROOT/$stage_key.empty" "$stage_outbox"
+  handoff_env "$ROOT/bin/fm-backlog-handoff.sh" "${stage_retry[@]}" > "$TMP_ROOT/$stage_key.retry.out" 2>&1 \
+    || fail "$stage_mode failed to resume empty staging scaffold: $(cat "$TMP_ROOT/$stage_key.retry.out")"
+  assert_no_grep "$stage_key" "$SOURCE/data/backlog.md" 'resumed staging retained source ownership'
+  assert_grep "$stage_key" "$REMOTE/data/backlog.md" 'resumed staging lost destination work'
+  assert_present "$REMOTE/state/handoff/receipts/$stage_id.receipt" 'resumed staging lost strict receipt identity'
+  assert_absent "$stage_outbox" 'resumed staging did not clear accepted outbox'
+  [ "$(sha256_file "$stage_record")" = "$stage_record_hash" ] || fail 'staging retry changed provenance'
+  [ "$(sha256_file "$stage_payload")" = "$stage_payload_hash" ] || fail 'staging retry changed pinned payload'
+  [ "$(cat "$PARENT/data/backlog.md")" = "$stage_parent_before" ] || fail 'staging retry changed parent queue'
+  pass "$stage_mode recovers the scaffold-before-move crash and preserves conflicting outboxes"
+done
+
 # Public strict receiver: a collision refuses the full batch; accepted retries
 # remain valid after destination progress, and id/hash reuse refuses.
 strict_deliver() {
