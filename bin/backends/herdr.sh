@@ -1875,6 +1875,7 @@ fm_backend_herdr_workspace_find() {  # <session>
 #   FM_BACKEND_HERDR_LAUNCHER_PANE_ID
 #   FM_BACKEND_HERDR_LAUNCHER_TAB_ID
 #   FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID
+#   FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_LABEL (empty when not journalable)
 #
 # Returns:
 #   0 - one exact, self-consistent launcher pane/tab/workspace in <session>.
@@ -1886,12 +1887,16 @@ fm_backend_herdr_workspace_find() {  # <session>
 #       contradictory, or belongs to another herdr session. The caller must
 #       refuse before creating or publishing any worker endpoint rather than
 #       degrading to a label search.
+# The observed workspace label is also returned for projection publication.
+# An absent or non-journalable label leaves that output empty, without
+# invalidating the independently verified launcher identity.
 fm_backend_herdr_launcher_identity() {  # <session>
   local session=$1 pane=${HERDR_PANE_ID:-} claimed_session claimed_socket session_socket
   local pane_out tab_out list tab workspace
   FM_BACKEND_HERDR_LAUNCHER_PANE_ID=""
   FM_BACKEND_HERDR_LAUNCHER_TAB_ID=""
   FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID=""
+  FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_LABEL=""
   [ -n "$pane" ] || return 2
 
   # Same-session proof, before the pane id is trusted at all: herdr pane ids
@@ -1973,6 +1978,14 @@ fm_backend_herdr_launcher_identity() {  # <session>
   # shellcheck disable=SC2034  # callers consume the verified binding's parts
   FM_BACKEND_HERDR_LAUNCHER_TAB_ID=$tab
   FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID=$workspace
+  # Labels are display data, not identity. Read only the verified workspace,
+  # and reject bytes the line-based journal or Bash cannot preserve exactly.
+  # shellcheck disable=SC2034  # spawn consumes the observed parent label
+  FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_LABEL=$(printf '%s' "$list" | jq -r --arg workspace "$workspace" '
+    .result.workspaces[] | select(.workspace_id == $workspace) | .label
+    | select(type == "string") | select(length > 0)
+    | select(test("[\u0000\r\n]") | not)
+  ' 2>/dev/null) || return 1
   return 0
 }
 
@@ -2915,9 +2928,9 @@ fm_backend_herdr_projection_reclaim_rollback() {  # <session> <new-pane>
 # Return 0 means exact reclaim, 2 means non-mutating or exactly rolled-back
 # refusal with flat fallback permitted, and 1 means a live/unknown or
 # post-mutation uncertainty that must refuse the launch.
-fm_backend_herdr_projection_reclaim_task() {  # <session> <journal> <task-id> <home> <meta-workspace> <meta-tab> <meta-pane> <parent-label> <task-label> <cwd>
+fm_backend_herdr_projection_reclaim_task() {  # <session> <journal> <task-id> <home> <meta-workspace> <meta-tab> <meta-pane> <task-label> <cwd>
   local session=$1 journal=$2 id=$3 home=$4 meta_workspace=$5 meta_tab=$6 meta_pane=$7
-  local parent_label=$8 task_label=$9 cwd=${10} canonical_home state focus_before active_tab out new_tab new_pane info close_status
+  local task_label=$8 cwd=$9 parent_label canonical_home state focus_before active_tab out new_tab new_pane info close_status
   FM_BACKEND_HERDR_PROJECTION_TAB_ID=""
   FM_BACKEND_HERDR_PROJECTION_PANE_ID=""
   fm_backend_herdr_projection_journal_snapshot "$journal" "$id" || return 1
@@ -2925,6 +2938,10 @@ fm_backend_herdr_projection_reclaim_task() {  # <session> <journal> <task-id> <h
     echo "warning: herdr presentation journal for $id has no exact restart binding; spawning flat" >&2
     return 2
   fi
+  # A launcher may have a custom label unrelated to the home label. Preserve
+  # the exact observed parent binding published at spawn; the live checks
+  # below still require that same workspace ID and label to exist.
+  parent_label=$FM_BACKEND_HERDR_JOURNAL_PARENT_LABEL
   canonical_home=$(fm_backend_herdr_projection_home_identity "$home") || {
     echo "warning: herdr presentation home for $id could not be resolved exactly; spawning flat" >&2
     return 2
@@ -2934,7 +2951,6 @@ fm_backend_herdr_projection_reclaim_task() {  # <session> <journal> <task-id> <h
      || [ "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" != "$meta_workspace" ] \
      || [ "$FM_BACKEND_HERDR_JOURNAL_TAB_ID" != "$meta_tab" ] \
      || [ "$FM_BACKEND_HERDR_JOURNAL_PANE_ID" != "$meta_pane" ] \
-     || [ "$FM_BACKEND_HERDR_JOURNAL_PARENT_LABEL" != "$parent_label" ] \
      || [ "$FM_BACKEND_HERDR_JOURNAL_TASK_LABEL" != "$task_label" ]; then
     echo "warning: herdr presentation binding for $id does not match its exact home, endpoint, or parent; spawning flat" >&2
     return 2

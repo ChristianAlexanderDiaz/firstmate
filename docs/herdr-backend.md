@@ -256,6 +256,8 @@ Creation proceeds in this order:
    That binding records the physical home, named session, endpoint, parent, and immutable expected labels.
 
 Another parent with the same presentation label does not prevent publication or participate in restart reclaim.
+For a verified Herdr launcher, the parent label is the observed label of its exact workspace, even when it differs from the home's `firstmate` or `2ndmate-<id>` label.
+An absent or multiline parent label cannot be bound in the line-based journal and uses the separate-workspace fallback.
 
 The token is visible in the workspace title, because Herdr exposes no verified hidden persistent field.
 Neither token, title, nor journal authorizes send, capture, task ownership, Treehouse return, or general recovery.
@@ -395,7 +397,7 @@ The replacement is allowed only when all of these agree:
 - The metadata endpoint.
 - The unique token match.
 - The workspace shape and labels.
-- The exact parent identity and label, independently of sidebar position.
+- The exact parent identity and label recorded at publication, independently of the computed home label and sidebar position.
 - The non-target focus snapshot.
 
 The replacement tab and pane are created and verified before the old pane is rechecked and closed.

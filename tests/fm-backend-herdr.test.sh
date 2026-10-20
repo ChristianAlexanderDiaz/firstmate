@@ -1010,22 +1010,24 @@ test_launcher_identity_absent_when_herdr_env_alone_is_set() {
 }
 
 test_launcher_identity_resolves_the_exact_pane_tab_and_workspace() {
-  local dir log resp fb out
+  local dir log resp fb out label_json=${1:-'"firstmate"'} expected_label=${2-firstmate}
   dir="$TMP_ROOT/launcher-ok"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  rm -f "$resp/.count"
   printf '{"sessions":[{"name":"fmtest","running":true,"socket_path":"/tmp/fm-herdr-unit/fmtest.sock"}]}\n' > "$resp/1.out"
   printf '{"result":{"pane":{"pane_id":"w7:p3","tab_id":"w7:t3","workspace_id":"w7"}}}\n' > "$resp/2.out"
   printf '{"result":{"tab":{"tab_id":"w7:t3","workspace_id":"w7"}}}\n' > "$resp/3.out"
-  printf '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate"},{"workspace_id":"w7","label":"firstmate"}]}}\n' > "$resp/4.out"
+  jq -cn --argjson label_value "$label_json" \
+    '{result:{workspaces:[{workspace_id:"w0",label:"firstmate"},{workspace_id:"w1",label:$label_value},{workspace_id:"w7",label:$label_value}]}}' > "$resp/4.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=fmtest HERDR_SOCKET_PATH=/tmp/fm-herdr-unit/fmtest.sock \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest || exit 1
-      printf "%s|%s|%s" "$FM_BACKEND_HERDR_LAUNCHER_PANE_ID" "$FM_BACKEND_HERDR_LAUNCHER_TAB_ID" "$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID"' "$ROOT" )
-  [ "$out" = 'w7:p3|w7:t3|w7' ] \
-    || fail "launcher_identity should resolve the launcher's own pane, tab, and workspace, got '$out'"
+      printf "%s|%s|%s|%s" "$FM_BACKEND_HERDR_LAUNCHER_PANE_ID" "$FM_BACKEND_HERDR_LAUNCHER_TAB_ID" "$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID" "$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_LABEL"' "$ROOT" )
+  [ "$out" = "w7:p3|w7:t3|w7|$expected_label" ] \
+    || fail "launcher_identity should resolve exact IDs and a journalable observed label ($label_json), got '$out'"
   assert_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''get'$'\x1f''w7:p3' "launcher_identity did not read its own pane"
   assert_contains "$(cat "$log")" $'\x1f''tab'$'\x1f''get'$'\x1f''w7:t3' "launcher_identity did not cross-check the owning tab"
-  pass "fm_backend_herdr_launcher_identity: resolves the launcher's exact workspace even when a same-labeled workspace sorts first"
+  pass "fm_backend_herdr_launcher_identity: exact workspace and observed label $label_json survive earlier same-labeled and canonical-label workspaces"
 }
 
 test_launcher_identity_refuses_a_pane_from_another_session_name() {
@@ -3559,6 +3561,40 @@ test_presentation_session_lock_path_rejects_malformed_socket() {
   pass "herdr presentation lock: null and missing socket paths fail closed"
 }
 
+test_projection_custom_parent_binding_keeps_exact_identity_and_shape() {
+  local dir log resp fb mode out status want
+  dir="$TMP_ROOT/projection-custom-parent"; mkdir -p "$dir/responses"
+  log="$dir/log"; resp="$dir/responses"
+  fb=$(make_herdr_fakebin "$dir")
+  for mode in exact renamed missing-parent extra-tab; do
+    : > "$log"; rm -f "$resp/.count"
+    jq -cn --arg mode "$mode" '
+      {result:{workspaces:[
+        {workspace_id:"w0",label:"custom launcher"},
+        {workspace_id:"w1",label:(if $mode == "renamed" then "renamed" else "custom launcher" end)},
+        {workspace_id:"w2",label:"└ custom-bind · p:AbCdEfGhIjKlMnOpQrStUv"}
+      ]}}
+      | if $mode == "missing-parent" then .result.workspaces |= map(select(.workspace_id != "w1")) else . end
+    ' > "$resp/1.out"
+    jq -cn --arg mode "$mode" '
+      {result:{tabs:[{tab_id:"w2:t2",label:"fm-custom-bind"}]}}
+      | if $mode == "extra-tab" then .result.tabs += [{tab_id:"w2:t3",label:"notes"}] else . end
+    ' > "$resp/2.out"
+    printf '%s\n' '{"result":{"panes":[{"pane_id":"w2:p2","tab_id":"w2:t2"}]}}' > "$resp/3.out"
+    out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+      bash -c '. "$0/bin/backends/herdr.sh"
+        fm_backend_herdr_projection_live_binding_matches \
+          fmtest AbCdEfGhIjKlMnOpQrStUv w2 w2:t2 w2:p2 w1 "custom launcher" \
+          "└ custom-bind · p:AbCdEfGhIjKlMnOpQrStUv" fm-custom-bind' "$ROOT" 2>&1)
+    status=$?
+    want=1; [ "$mode" != exact ] || want=0
+    expect_code "$want" "$status" "custom parent binding $mode returned an unexpected verdict: $out"
+    assert_not_contains "$(cat "$log")" $'\x1fcreate' "binding verification must remain read-only"
+    assert_not_contains "$(cat "$log")" $'\x1fclose' "binding verification must not close an endpoint"
+  done
+  pass "herdr custom parent binding: duplicate labels retain exact ID, rename/missing parent and extra tab still refuse"
+}
+
 test_projection_reclaim_refusal_matrix_is_non_mutating() {
   local dir state home other_home home_real journal legacy token label out mutation_log
   dir="$TMP_ROOT/projection-reclaim-refusals"; state="$dir/state"; home="$dir/home"; other_home="$dir/other-home"
@@ -3602,7 +3638,7 @@ test_projection_reclaim_refusal_matrix_is_non_mutating() {
         }
         set +e
         fm_backend_herdr_projection_reclaim_task \
-          fmtest "$journal" refusal-r1 "$home" w2 w2:t2 w2:p2 firstmate fm-refusal-r1 /tmp/project \
+          fmtest "$journal" refusal-r1 "$home" w2 w2:t2 w2:p2 fm-refusal-r1 /tmp/project \
           >/dev/null 2>&1
         rc=$?
         set -e
@@ -3625,8 +3661,8 @@ test_projection_reclaim_refusal_matrix_is_non_mutating() {
 }
 
 test_projection_reclaim_replaces_only_exact_husk_and_advances_binding() {
-  local dir state home home_real log resp fb journal token label out calls create_line close_line agent_line boundary_mutations
-  dir="$TMP_ROOT/projection-reclaim-exact"; state="$dir/state"; home="$dir/home"
+  local dir state home home_real log resp fb journal token label out calls create_line close_line agent_line boundary_mutations parent_label=${1:-firstmate}
+  dir="$TMP_ROOT/projection-reclaim-exact-$parent_label"; state="$dir/state"; home="$dir/home"
   mkdir -p "$dir/responses" "$state" "$home"
   home_real=$(cd "$home" && pwd -P)
   log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -3636,17 +3672,17 @@ test_projection_reclaim_replaces_only_exact_husk_and_advances_binding() {
     label=$(fm_backend_herdr_projection_workspace_label fm-hibit-r1 "$token")
     fm_backend_herdr_projection_journal_bind \
       "$1/fm-hibit-r1.herdr-presentation" fm-hibit-r1 "$2" fmtest \
-      w2 w2:t2 w2:p2 w1 firstmate "$label" fm-fm-hibit-r1 || exit 1
+      w2 w2:t2 w2:p2 w1 "$3" "$label" fm-fm-hibit-r1 || exit 1
     printf "%s" "$token"
-  ' "$ROOT" "$state" "$home_real") || fail "could not create exact reclaim journal fixture"
+  ' "$ROOT" "$state" "$home_real" "$parent_label") || fail "could not create exact reclaim journal fixture"
   journal="$state/fm-hibit-r1.herdr-presentation"
   label="└ hibit-r1 · p:$token"
-  printf '%s\n' "{\"result\":{\"workspaces\":[{\"workspace_id\":\"w0\",\"label\":\"firstmate\",\"focused\":false,\"active_tab_id\":\"w0:t1\"},{\"workspace_id\":\"w1\",\"label\":\"firstmate\",\"focused\":true,\"active_tab_id\":\"w1:t1\"},{\"workspace_id\":\"w2\",\"label\":\"$label\",\"focused\":false,\"active_tab_id\":\"w2:t2\"}]}}" > "$resp/1.out"
+  printf '%s\n' "{\"result\":{\"workspaces\":[{\"workspace_id\":\"w0\",\"label\":\"$parent_label\",\"focused\":false,\"active_tab_id\":\"w0:t1\"},{\"workspace_id\":\"w1\",\"label\":\"$parent_label\",\"focused\":true,\"active_tab_id\":\"w1:t1\"},{\"workspace_id\":\"w2\",\"label\":\"$label\",\"focused\":false,\"active_tab_id\":\"w2:t2\"}]}}" > "$resp/1.out"
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w2:t2","label":"fm-fm-hibit-r1"}]}}' > "$resp/2.out"
   printf '%s\n' '{"result":{"panes":[{"pane_id":"w2:p2","tab_id":"w2:t2"}]}}' > "$resp/3.out"
   printf '%s\n' '{"result":{"pane":{"pane_id":"w2:p2"}}}' > "$resp/4.out"
   printf '%s\n' '{"error":{"code":"agent_not_found"}}' > "$resp/5.out"
-  printf '%s\n' "{\"result\":{\"workspaces\":[{\"workspace_id\":\"w1\",\"label\":\"firstmate\",\"focused\":true,\"active_tab_id\":\"w1:t1\"},{\"workspace_id\":\"w2\",\"label\":\"$label\",\"focused\":false,\"active_tab_id\":\"w2:t2\"}]}}" > "$resp/6.out"
+  printf '%s\n' "{\"result\":{\"workspaces\":[{\"workspace_id\":\"w1\",\"label\":\"$parent_label\",\"focused\":true,\"active_tab_id\":\"w1:t1\"},{\"workspace_id\":\"w2\",\"label\":\"$label\",\"focused\":false,\"active_tab_id\":\"w2:t2\"}]}}" > "$resp/6.out"
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w1:t1","focused":true}]}}' > "$resp/7.out"
   printf '%s\n' '{"result":{"tab":{"tab_id":"w2:t3"},"root_pane":{"pane_id":"w2:p3"}}}' > "$resp/8.out"
   cp "$resp/6.out" "$resp/9.out"
@@ -3676,13 +3712,15 @@ test_projection_reclaim_replaces_only_exact_husk_and_advances_binding() {
     bash -c '
       . "$0/bin/backends/herdr.sh"
       fm_backend_herdr_projection_reclaim_task \
-        fmtest "$1" fm-hibit-r1 "$2" w2 w2:t2 w2:p2 firstmate fm-fm-hibit-r1 /tmp/project || exit 1
+        fmtest "$1" fm-hibit-r1 "$2" w2 w2:t2 w2:p2 fm-fm-hibit-r1 /tmp/project || exit 1
       printf "%s %s" "$FM_BACKEND_HERDR_PROJECTION_TAB_ID" "$FM_BACKEND_HERDR_PROJECTION_PANE_ID"
     ' "$ROOT" "$journal" "$home") || fail "exact agent-free projection reclaim failed"
   [ "$out" = "w2:t3 w2:p3" ] || fail "reclaim did not return exact replacement ids: $out"
   [ "$(sed -n 's/^tab_id=//p' "$journal")" = w2:t3 ] \
     && [ "$(sed -n 's/^pane_id=//p' "$journal")" = w2:p3 ] \
     || fail "reclaim did not advance the journal to the replacement endpoint"
+  [ "$(sed -n 's/^parent_label=//p' "$journal")" = "$parent_label" ] \
+    || fail "reclaim replaced the recorded actual parent label with the computed home label"
   calls=$(cat "$log")
   create_line=$(grep -n $'tab\x1fcreate\x1f--workspace\x1fw2' "$log" | cut -d: -f1)
   close_line=$(grep -n $'pane\x1fclose\x1fw2:p2' "$log" | cut -d: -f1)
@@ -3699,7 +3737,7 @@ test_projection_reclaim_replaces_only_exact_husk_and_advances_binding() {
   assert_not_contains "$calls" $'workspace\x1frename' "reclaim renamed the projected workspace"
   assert_not_contains "$calls" $'tab\x1ffocus' "focus-preserving reclaim changed an already-stable focus snapshot"
   assert_not_contains "$calls" $'\x1fw0' "reclaim touched the same-labeled sibling parent"
-  pass "herdr presentation reclaim: exact agent-free husk survives duplicate parent labels while its sibling stays untouched"
+  pass "herdr presentation reclaim: exact agent-free husk preserves recorded parent label '$parent_label' while its same-labeled sibling stays untouched"
 }
 
 test_projection_recovery_is_read_only_and_refuses_live_duplicate_risk() {
@@ -6129,6 +6167,10 @@ test_client_status_reads_both_status_shapes
 test_launcher_identity_absent_without_a_herdr_pane
 test_launcher_identity_absent_when_herdr_env_alone_is_set
 test_launcher_identity_resolves_the_exact_pane_tab_and_workspace
+test_launcher_identity_resolves_the_exact_pane_tab_and_workspace '"custom launcher = primary"' 'custom launcher = primary'
+for launcher_label_json in null false 23 '""' '"bad\nlabel"' '"bad\rlabel"' '"bad\u0000label"'; do
+  test_launcher_identity_resolves_the_exact_pane_tab_and_workspace "$launcher_label_json" ''
+done
 test_launcher_identity_refuses_a_pane_from_another_session_name
 test_launcher_identity_refuses_a_missing_server_socket
 test_launcher_identity_refuses_a_pane_from_another_server_socket
@@ -6218,7 +6260,9 @@ test_workspace_mover_connects_to_an_overlong_socket_path
 test_presentation_session_lock_path_is_shared_across_homes
 test_presentation_session_lock_path_rejects_malformed_socket
 test_projection_reclaim_refusal_matrix_is_non_mutating
+test_projection_custom_parent_binding_keeps_exact_identity_and_shape
 test_projection_reclaim_replaces_only_exact_husk_and_advances_binding
+test_projection_reclaim_replaces_only_exact_husk_and_advances_binding 'custom launcher'
 test_projection_recovery_is_read_only_and_refuses_live_duplicate_risk
 test_workspace_find_matches_only_this_homes_own_label
 test_list_live_scoped_to_this_homes_workspace_only
