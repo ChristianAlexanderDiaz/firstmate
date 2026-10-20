@@ -1299,7 +1299,8 @@ Within a lane, Loop-classified work is ordered by cycle start, then build-first 
 The grid visits High/low, High/medium, High/high, Medium/low, Medium/medium, Low/low, Low/medium, Low/high, then Medium/high (Deprioritize last); Urgent shares High's row.
 Only `agent` with a finish declaration and `agent-reviewed` enter refill from classified work, with complete impact and cost values below the split threshold; milestone and personal-judgment tickets stay outside automatic refill.
 Unclassified backlog work retains its existing order as a fallback.
-The source uses intake/dispatch snapshots without contacting Linear; spawn reads current corrections again before launch.
+Before filtering by Loop or ranking, the source refreshes eligible queued ships in active lanes through each owning home's Linear intake, then re-reads the backlog; unreadable configured metadata defers the sample.
+Spawn reads current corrections again before launch.
 An uncapped lane's reported places equal its ready ticket count, rather than implying a machine concurrency limit.
 Notices include the current Claude admission verdict for a possible Codex-to-Claude validation fallback; they do not change validation policy or select work, credentials or models.
 Firstmate starts the next eligible ticket in the reported grid order under ordinary dispatch authority, honoring explicit task-order instructions and dependencies, and spawn rechecks admission.

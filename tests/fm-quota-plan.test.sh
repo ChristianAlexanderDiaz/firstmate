@@ -202,7 +202,7 @@ rc=0; "$REFILL" check > "$TMP_ROOT/repeat" || rc=$?
 [ "$rc" = 75 ] || fail 'reopened episode repeated'
 pass 'registered refill reports ready lanes once per transition and PR handoff frees capacity'
 
-# Loop metadata comes from intake/dispatch; refill stays network-free.
+# Without Linear configuration, refill ranks the existing intake/dispatch snapshots.
 cp "$FM_HOME/data/backlog.md" "$TMP_ROOT/backlog-before-grid"
 cat > "$FM_HOME/data/backlog.md" <<'MD'
 # Backlog

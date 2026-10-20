@@ -294,6 +294,47 @@ rc=0; sync_event dispatch "$TASK" >/dev/null 2>&1 || rc=$?
 assert_equals 0 "$(mutations)" 'partial label page never changes the Loop'
 pass 'partial label metadata refuses dispatch without mutation'
 
+make_case refill-current-metadata
+fm_fake_exit0 "$FAKEBIN" quota-axi
+fm_git_init_commit "$HOME_DIR/projects/sample"
+fm_git_add_origin "$HOME_DIR/projects/sample" "$CASE/sample.git"
+printf '%s\n' 'reserve claude 0' 'reserve codex 0' 'lane sample' > "$HOME_DIR/config/quota-plan"
+now=$(date +%s)
+jq -n --argjson now "$now" --argjson reset "$((now+500000))" '
+  {fetchedAt:$now,snapshot:{providers:[{provider:"codex",state:{status:"fresh",stale:false},
+    windows:[{kind:"weekly",percentRemaining:100,resetsAt:($reset|todateiso8601)}]}]}}' \
+  > "$HOME_DIR/state/quota-plan-snapshot.json"
+seed_issue
+tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+tasks add next 'Next ticket' --repo sample --kind ship --body 'Linear issue: ABC-43' >/dev/null
+tasks add recovered 'Previously human ticket' --repo sample --kind ship --body $'Linear issue: ABC-44\nLoop: Christian' >/dev/null
+tasks add held 'Held ticket' --repo sample --kind ship --body 'Linear issue: ABC-999' >/dev/null
+tasks hold held --reason 'Await captain' --kind captain >/dev/null
+tasks add active 'Running ticket' --repo sample --kind ship --body 'Linear issue: ABC-998' >/dev/null
+fm_write_meta "$HOME_DIR/state/active.meta" "project=$HOME_DIR/projects/sample" 'kind=ship'
+jq '.[0] |= (.priority=4 | .estimate=3 | .labels=["loop-agent"] |
+    .description="Loop finish: test exits zero only when expired invites fail" | .cycle={startsAt:"2026-10-19"}) |
+  . + [ (.[0] | .id="00000000-0000-4000-8000-000000000011" | .identifier="ABC-43" | .priority=2 | .estimate=1),
+         (.[0] | .id="00000000-0000-4000-8000-000000000012" | .identifier="ABC-44" | .priority=3 | .estimate=1) ]' \
+  "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/refill" || fail 'refill failed to refresh existing tickets'
+order=$(sed -n 's/^fingerprint: //p' "$CASE/refill" | jq -r '.lanes[0].ready | map(.id) | join(",")')
+assert_equals next,recovered,work "$order" 'remote grid metadata ranks snapshotless and previously excluded tickets'
+assert_contains "$(tasks show "$TASK" --full)" 'Linear priority: 4' 'refill persists intake metadata'
+jq 'map(if .identifier == "ABC-42" then .priority=1 | .estimate=1
+         elif .identifier == "ABC-43" then .priority=4 | .estimate=3
+         else .labels=["loop-Christian"] end)' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/corrected" || fail 'refill failed after remote correction'
+order=$(sed -n 's/^fingerprint: //p' "$CASE/corrected" | jq -r '.lanes[0].ready | map(.id) | join(",")')
+assert_equals work,next "$order" 'current priority estimate and Loop corrections change refill selection'
+touch "$CASE/http-error"
+rc=0; run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/unreadable" 2>/dev/null || rc=$?
+assert_equals 75 "$rc" 'unreadable intake defers refill'
+assert_equals '' "$(cat "$CASE/unreadable")" 'failed refresh never emits stale candidates'
+pass 'refill refreshes eligible queued ships before filtering and ranking, and refuses stale metadata'
+
 make_case lost-response
 touch "$CASE/lost-create"
 out=$(sync_event spawn "$TASK" 2>&1)

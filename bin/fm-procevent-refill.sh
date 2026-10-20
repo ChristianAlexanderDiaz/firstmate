@@ -20,7 +20,7 @@
 # grid order (Deprioritize last), then Linear manual order and backlog order.
 # Only agent and agent-reviewed enter automatic refill; an agent also needs a
 # Loop finish declaration. Unclassified work retains ordinary backlog order.
-# Linear intake/dispatch owns the body snapshots; no API is called here.
+# Linear intake refreshes eligible ships before ranking the body snapshots.
 # At most five ids are reported per lane.
 # Occupancy uses fm-project-capacity-lib.sh. An uncapped lane reports places
 # equal to its ready count, never an invented machine capacity. Capacity shared
@@ -83,20 +83,37 @@ notify() {
 }
 
 # Observe queued work with the existing canonical parser, never a second parser.
+queued_rows() {
+  local state=$1 home=${1%/state} snapshot
+  snapshot=$(FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$home/data" \
+    FM_CONFIG_OVERRIDE="$home/config" FM_PROJECTS_OVERRIDE="$home/projects" \
+    fm_run_timed 30 "$SCRIPT_DIR/fm-fleet-snapshot.sh" --contribution-input) || return 1
+  printf '%s\n' "$snapshot" | jq -ce --argjson plan "$FM_QUOTA_PLAN_JSON" --arg today "$(date -u +%Y-%m-%d)" '
+    [.tasks[].id] as $live | [.backlog.records[] |
+      select(.structured and .state == "queued" and (.kind == "ship" or .kind == "scout") and
+        .hold_reason == null and .hold_kind == null and
+        (.unresolved_blocker_ids|length) == 0) |
+      select(.id as $id | $live | index($id) | not) |
+      select(.repo as $repo | any($plan.lanes[];
+        .project == $repo and (.until == null or .until >= $today)))]'
+}
+
 ready_rows() {
-  local state home snapshot all='[]' rows
+  local state home candidates task all='[]' rows
   fm_local_firstmate_state_dirs "$STATE" || return 1
   for state in "${FM_LOCAL_FIRSTMATE_STATES[@]}"; do
     home=${state%/state}
-    snapshot=$(FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$home/data" \
-      FM_CONFIG_OVERRIDE="$home/config" FM_PROJECTS_OVERRIDE="$home/projects" \
-      fm_run_timed 30 "$SCRIPT_DIR/fm-fleet-snapshot.sh" --contribution-input) || return 1
-    rows=$(printf '%s\n' "$snapshot" | jq -ce --arg home "$home" '
-      [.tasks[].id] as $live | [.backlog.records[] |
-        select(.structured and .state == "queued" and (.kind == "ship" or .kind == "scout") and
-          .hold_reason == null and .hold_kind == null and
-          (.unresolved_blocker_ids|length) == 0) |
-        select(.id as $id | $live | index($id) | not) |
+    candidates=$(queued_rows "$state") || return 1
+    if [ -f "$home/config/linear" ]; then
+      while IFS= read -r task; do
+        [ -n "$task" ] || continue
+        FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$home/data" \
+          FM_CONFIG_OVERRIDE="$home/config" FM_PROJECTS_OVERRIDE="$home/projects" \
+          bash "$SCRIPT_DIR/fm-linear-lib.sh" intake "$task" >/dev/null || return 1
+      done < <(printf '%s\n' "$candidates" | jq -r '.[] | select(.kind == "ship") | .id')
+      candidates=$(queued_rows "$state") || return 1
+    fi
+    rows=$(printf '%s\n' "$candidates" | jq -ce --arg home "$home" '[.[] |
         def field($key): [.body_lines[]? | select(startswith($key + ": ")) | ltrimstr($key + ": ")][0] // "";
         (field("Loop")) as $loop |
         select($loop == "" or $loop == "agent-reviewed" or
