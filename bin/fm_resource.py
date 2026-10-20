@@ -697,7 +697,7 @@ def prepare(args, config_name):
 
 
 def node_options(command):
-    """Return option positions without consuming operands as options or files."""
+    """Return option positions, skipping operands of recognized value options."""
     values = {"-r", "--require", "--import", "--loader", "--experimental-loader", "-C", "--conditions",
         "--env-file", "--env-file-if-exists", "--test-concurrency", "--test-reporter",
         "--test-reporter-destination", "--test-name-pattern", "--test-skip-pattern", "--test-timeout",

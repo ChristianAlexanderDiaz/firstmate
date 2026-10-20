@@ -531,8 +531,8 @@ sys.exit(subprocess.call(command + " " + shlex.join(args), shell=True))
         result = self.call("prepare", "--directory", str(adapters), "--worktree", str(ROOT),
             "--task", "scripts", "--account-label", "default", "--", "true", env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        # Package managers put project-local executables before the prepared
-        # PATH. Node still resolves through its adapter; Playwright is local.
+        # Model project-local executable precedence for these fake package managers.
+        # Node resolves through its adapter here; Playwright is local.
         local = self.root / "node_modules" / ".bin"
         local.mkdir(parents=True)
         (fake / "playwright").rename(local / "playwright")
