@@ -89,7 +89,10 @@
 # means the session remains open and is handled as a silent reconnect wait.
 # Before each poll attempt, resolve the artifact's saved URL from Lavish's own
 # session store (LAVISH_AXI_STATE_DIR/state.json, default ~/.lavish-axi/state.json)
-# and use its host and port. Opening the board writes that URL; polling does not.
+# and use its port with Lavish's default local-server discovery.
+# Clear LAVISH_AXI_HOST: it controls server binding, so copying a saved URL's
+# host into it disables automatic Tailscale binding when Lavish restarts.
+# Opening the board writes that URL; polling does not.
 # This is a routing lookup before the blocking call, not presence polling or a
 # second route record. Ambient/configured addresses must not retarget a reply.
 # An unreadable or missing session stops before the staged reply is consumed.
@@ -152,9 +155,9 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,/^set -u$/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 2; }
 
-apply_session_host() {  # <artifact>
-  local endpoint
-  endpoint=$(perl -MJSON::PP -MCwd=realpath -MEncode=decode,FB_CROAK -e '
+apply_session_port() {  # <artifact>
+  local port
+  port=$(perl -MJSON::PP -MCwd=realpath -MEncode=decode,FB_CROAK -e '
     use strict;
     use warnings;
     my ($path, $artifact) = @ARGV;
@@ -178,12 +181,12 @@ apply_session_host() {  # <artifact>
     $host =~ s/^\[|\]$//g;
     $host ne "0.0.0.0" && $host ne "::" && $port >= 1 && $port <= 65535
       or die "invalid saved Lavish server address\n";
-    print "$host\n$port\n";
+    print "$port\n";
   ' "${LAVISH_AXI_STATE_DIR:-$HOME/.lavish-axi}/state.json" "$1") \
     || die "cannot resolve the board server from its Lavish session: $1"
-  LAVISH_AXI_HOST=${endpoint%$'\n'*}
-  LAVISH_AXI_PORT=${endpoint##*$'\n'}
-  export LAVISH_AXI_HOST LAVISH_AXI_PORT
+  unset LAVISH_AXI_HOST
+  LAVISH_AXI_PORT=$port
+  export LAVISH_AXI_PORT
 }
 
 lavish_reply_compatible() {
@@ -291,7 +294,7 @@ cmd_arm() {
 cmd_deliver_reply() {
   [ "$#" -eq 4 ] && [ "$1" = poll ] && [ "$3" = --agent-reply-file ] || usage
   lavish_reply_compatible || exit 3
-  apply_session_host "$2"
+  apply_session_port "$2"
   post_lavish_reply "$2" "$4"
 }
 
@@ -421,7 +424,7 @@ cmd_poll() {
     iteration_started=$(poll_iteration_started) || die "cannot start the poll rate governor"
     [ -f "$artifact" ] && [ ! -L "$artifact" ] && [ -r "$artifact" ] \
       || die "artifact is no longer a readable file: $artifact"
-    apply_session_host "$artifact"
+    apply_session_port "$artifact"
     # Newer Lavish builds expose a one-shot reply command whose success is the
     # server's acceptance receipt. Consume the staged file only after that
     # confirmation; older compatible builds retain the published poll reply
