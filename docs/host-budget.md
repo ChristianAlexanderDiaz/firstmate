@@ -67,7 +67,8 @@ Keep the existing review, test, documentation, lint and CI requirements; no broa
 
 Reserve browser plus server as one outer stage and keep both in that stage's process group.
 Give each task a new browser profile and a task-specific server port; only reuse a server after checking its task, process identity and build commit.
-A browser stage, including one nested under another compute reservation, creates a private profile, named Chrome automation session, server/bridge port candidates and a same-commit resource manifest, exported through `FM_RESOURCE_BROWSER_PROFILE`, `FM_RESOURCE_SERVER_PORT` and `FM_RESOURCE_BROWSER_MANIFEST`.
+A browser stage creates a private profile, named Chrome automation session, server/bridge port candidates and a same-commit resource manifest, exported through `FM_RESOURCE_BROWSER_PROFILE`, `FM_RESOURCE_SERVER_PORT` and `FM_RESOURCE_BROWSER_MANIFEST`.
+Nested browser stages initialize these resources if the outer compute reservation has none; otherwise they reuse the inherited profile and composite lifetime.
 Project server configuration must consume that port and keep reuse disabled by default; a bind collision must fail rather than attach to a different server.
 The Chrome adapter rejects short requests outside that composite lifetime and clears ambient auto-connect and browser URL settings when creating it.
 The wrapper exports `FM_RESOURCE_CPU_WORKERS` and `FM_RESOURCE_BROWSER_WORKERS` for project runners, and applies direct Vitest, Node test, Playwright, graphify and Nix caps where the command interface supports them.

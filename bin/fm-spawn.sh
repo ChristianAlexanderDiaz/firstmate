@@ -371,8 +371,8 @@
 #   docs/configuration.md "Worker tool exclusions" owns config/crew-exclude-tools
 #   and its operator contract. Resolve it with bin/fm-exclude-tools-lib.sh
 #   before provisioning; __PIEXCLUDE__ below owns the Pi launch substitution.
-# Host budget: when FM_RESOURCE_CONFIG or config/host-budget.json selects the
-# per-user policy, all harness/backend launch commands receive the same resident
+# Host budget: when a per-user policy is selected (docs/host-budget.md),
+# all harness/backend launch commands receive the same resident
 # lease, restore manifest and PATH adapters (fm-resource-run --help owns these).
 # This never starts a service, drives a backend restore or changes an account.
 # Missing service refuses execution; direct interpreter/absolute heavy commands

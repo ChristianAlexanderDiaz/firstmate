@@ -437,8 +437,8 @@ class Budget:
                 if not worker:
                     heavy_waiting = True
                 continue
-            # Research stays available under compute vetoes, but not unknown or
-            # warning memory; a fresh normal monitor is required for new CLIs.
+            # Resident CLIs need their own admission check even without compute;
+            # unknown or warning memory cannot admit more resident CLI memory.
             if worker and (self.telemetry is None or self.telemetry["memory"]["pressure"] != "normal" or self.reason not in ("ready", "battery below 30% admission reserve") and not self.reason.startswith("recovery hysteresis")):
                 continue
             lease = dict(request, acquired=time.monotonic(), heartbeat=time.monotonic())
