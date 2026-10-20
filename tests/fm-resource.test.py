@@ -359,6 +359,62 @@ PATH="$fakebin:$PATH" /bin/bash -c "$(cat "$case_root/launch.log")"
         result = self.call("run", "--class", "browser", "--", "chrome-devtools-axi", "start")
         self.assertEqual(result.returncode, 75)
 
+    def test_browser_client_requires_and_inherits_composite_lifetime(self):
+        fake = self.root / "browser-bin"
+        fake.mkdir()
+        client = fake / "chrome-devtools-axi"
+        client.write_text("#!" + sys.executable + "\n" + '''import json, os, subprocess
+from pathlib import Path
+manifest = json.loads(Path(os.environ["FM_RESOURCE_BROWSER_MANIFEST"]).read_text())
+status = json.loads(subprocess.check_output([os.environ["CLIENT_RESOURCE_CLI"],
+    "--config", os.environ["FM_RESOURCE_CONFIG"], "status"], text=True))
+print(json.dumps({"lease": os.environ["FM_RESOURCE_LEASE"],
+    "profile": os.environ["FM_RESOURCE_BROWSER_PROFILE"], "manifest": manifest,
+    "leases": list(status["leases"])}))
+''')
+        client.chmod(0o700)
+        env = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ["PATH"], CLIENT_RESOURCE_CLI=CLI)
+        directory = self.root / "browser-adapters"
+        result = self.call("prepare", "--directory", str(directory), "--worktree", str(ROOT),
+            "--task", "browser-client", "--account-label", "fixture-default", "--", "true", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        adapter = str(directory / "bin/chrome-devtools-axi")
+        direct = [CLI, "--config", str(self.root / "config.json"), "run", "--class", "browser", "--", str(client)]
+        driver = self.root / "browser-client-driver.py"
+        driver.write_text('''import json, subprocess, sys
+for command in json.loads(sys.argv[1]):
+    result = subprocess.run(command, text=True, capture_output=True, timeout=10)
+    if result.returncode:
+        sys.stderr.write(result.stderr)
+        sys.exit(result.returncode)
+    print(result.stdout, end="")
+''')
+        result = self.call("run", "--class", "browser", "--", sys.executable, str(driver),
+            json.dumps([[adapter, "rpc"], [*direct, "rpc"]]), env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        records = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0], records[1])
+        for record in records:
+            self.assertEqual(record["leases"], [record["lease"]])
+            self.assertEqual(record["manifest"]["lease"], record["lease"])
+            self.assertEqual(record["manifest"]["profile"], record["profile"])
+        for command in ([adapter, "rpc"], [*direct, "rpc"]):
+            for inherited in (False, True):
+                with self.subTest(command=command, forged=inherited):
+                    outside = env.copy()
+                    outside.pop("FM_RESOURCE_LEASE", None)
+                    outside.pop("FM_RESOURCE_BROWSER_PROFILE", None)
+                    if inherited:
+                        outside.update(FM_RESOURCE_LEASE=uuid.uuid4().hex,
+                            FM_RESOURCE_BROWSER_PROFILE=records[0]["profile"])
+                    result = subprocess.run(command, text=True, capture_output=True, timeout=10, env=outside)
+                    self.assertEqual(result.returncode, 75, result.stderr)
+                    self.assertEqual(result.stdout, "")
+            result = self.call("run", "--class", "exclusive", "--", *command, env=env)
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertEqual(result.stdout, "")
+
     def test_recovery_requires_continuous_nominal_observations(self):
         sample = copy.deepcopy(SAMPLE)
         sample["thermalState"] = "serious"

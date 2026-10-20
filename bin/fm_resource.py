@@ -702,8 +702,6 @@ def tool_job(args, name, config, digest):
             argv[0] in queries.get(args.name, ()) or
             args.name in ("npm", "pnpm") and argv == ["version"]):
         os.execv(args.executable, [args.executable, *argv])
-    if args.name == "chrome-devtools-axi" and not (os.environ.get("FM_RESOURCE_LEASE") and os.environ.get("FM_RESOURCE_BROWSER_PROFILE")):
-        raise Refusal("persistent browser requests require an outer composite browser/server stage; a short CLI request cannot own its lifetime")
     args.argv = [args.executable, *argv]
     args.resource_class, args.memory_mib = kind, None
     args.manifest, args.wait_seconds = None, 0
@@ -764,7 +762,10 @@ def run_job(args, config_name, config, digest):
         command = command[1:]
     if not command:
         raise Refusal("run requires an argv after --")
-    if args.resource_class == "browser" and Path(command[0]).name == "chrome-devtools-axi":
+    inherited = os.environ.get("FM_RESOURCE_LEASE")
+    if (args.resource_class == "browser" and
+            (Path(command[0]).name == "chrome-devtools-axi" or getattr(args, "name", None) == "chrome-devtools-axi") and
+            not (inherited and os.environ.get("FM_RESOURCE_BROWSER_PROFILE"))):
         raise Refusal("lease a composite browser/server script, not a short persistent-browser CLI request")
     if args.manifest:
         validate_manifest(args.manifest, command, args.task)
@@ -773,7 +774,6 @@ def run_job(args, config_name, config, digest):
     if memory < CLASSES[kind]:
         raise Refusal("reservation cannot be smaller than its workload class")
     owner = identity(os.getpid())
-    inherited = os.environ.get("FM_RESOURCE_LEASE")
     if inherited and kind != "worker":
         rpc(config, digest, op="inherit", token=inherited, controller=owner, memoryMiB=memory)
         command, env = caps(command, kind, os.environ.get("FM_RESOURCE_PORTABLE") == "1")
