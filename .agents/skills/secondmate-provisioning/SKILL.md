@@ -173,7 +173,7 @@ Both of those cases require record intake before the new mate acts on any inheri
 
 For an existing or inherited domain, the creating agent must:
 
-1. Reconcile every inherited plan against the domain's authoritative shipped state, which is `origin/main` for each relevant project plus the live deployment.
+1. Reconcile every inherited plan against the domain's authoritative shipped state, using each relevant project's fetched default branch plus the live deployment.
    A fetched clone of each relevant project is a precondition of that reconciliation, so wire the home to its projects before reconciling rather than on first task.
    The imported backlog, the predecessor's own notes, instruction-surface prose, and an absent or unfetched local view are all inadmissible as shipped-state evidence.
 2. Seed the new home with only genuinely open work plus the domain's durable knowledge, meaning the learnings, decisions, and delivery posture that are still live.
@@ -200,18 +200,18 @@ For a local route, the helper resolves and validates the secondmate home from `d
 For a remote route, the same helper first moves the dependency-closed set atomically from the main backlog into `data/handoff/<id>.outbox.md`, then transfers that backlog-format outbox through `fm-on.sh` and lets the remote home's `fm-backlog-receive.sh` move every not-already-present key under the destination lock.
 After a new local placement or a remote outbox receipt becomes durable, the helper attempts one marked routed-work instruction through the receiving secondmate's recorded endpoint.
 [`bin/fm-backlog-handoff.sh`](../../../bin/fm-backlog-handoff.sh) owns route-specific wake outcomes, remote outbox release after durable receipt, and stable wake-correlation retry behavior.
-There is no two-phase handoff journal and no tasks-axi release beyond the already-required atomic `mv` capability.
+Legacy main-to-mate handoffs keep key-presence retries; source-secondmate transfers use the strict provenance and receipt contract owned by the handoff/receiver script headers.
 Bootstrap retries pending outboxes and wakes when mutation is authorized and emits `SECONDMATE_HANDOFF:` for any outboxes that remain.
-This delegated route remains required when `config/backlog-backend=manual`, which controls only routine firstmate backlog edits.
-It moves each queued item's whole block - the `- [ ] <id> ...` header plus every following two-or-more-space-indented body line and blank separator, up to the next item or column-0 section heading - byte-exact under the same section, treating an indented `## ...` line as body rather than a section boundary, so neither the header nor its body is duplicated or orphaned.
+The legacy main-to-mate delegated route remains required when `config/backlog-backend=manual`, which controls only routine firstmate backlog edits.
+The delegated move preserves task content and dependencies; tasks-axi owns block serialization and may normalize separator whitespace.
 It refuses a selected item with a single-space or tab-indented continuation rather than risk leaving content orphaned in the main backlog.
 It accepts in-scope `## Queued` entries only and refuses `## In flight` and historical `## Done` entries.
 Done records stay with their home for pruning or archiving.
-It is idempotent; an item already in the secondmate backlog is skipped.
-After a successful move it warns for any moved key that still owes a public relay reply bound to `main/<key>`, because that binding no longer names the home owning the work; rebind the commitment to `secondmate:<id>` through the `fmx-respond` promised-final procedure, which owns those commands.
+The legacy main-to-mate form skips destination-present keys; the source-secondmate forms require proof of acceptance and refuse unknown collisions.
+After a successful move it warns for any moved key that still owes a public relay reply bound to its original home and key, because that binding no longer names the home owning the work; rebind the commitment to the home now owning the work through the `fmx-respond` promised-final procedure, which owns those commands.
 That same rule governs routing generally: a Relay-linked request whose work goes to a secondmate cannot use the home-local mention link at all and needs a promised-final commitment bound to that secondmate's home.
-It refuses any destination that is not a genuine seeded firstmate home with safe operational directories and a matching `.fm-secondmate-home` marker, so a move can never land in a project.
-Do not hand off `local-only` items.
+Secondmate destinations require a genuine seeded firstmate home with safe operational directories and a matching `.fm-secondmate-home` marker; parent returns use the invoking home.
+Send `local-only` work only to the parent.
 
 ## Recovery
 
@@ -246,8 +246,28 @@ A secondmate is persistent by default.
 An empty queue is healthy and does not trigger teardown.
 Run `bin/fm-teardown.sh <id>` for `kind=secondmate` only when the captain or main firstmate explicitly decides to retire that persistent second mate.
 
+### Successor drainage and preservation
+
+Keep a predecessor and its registered successor as distinct homes.
+Do not rename a live identity, transplant runtime state, or reseed an existing successor.
+Complete the existing-domain record intake above, then select only reconciled, dependency-closed queued work for the parent-owned source-secondmate handoff described in [`bin/fm-backlog-handoff.sh`](../../../bin/fm-backlog-handoff.sh).
+The supported source is local, uses a markdown backlog, and keeps automatic tasks-axi dispatch gating enabled; a destination is the parent or an already seeded local/remote successor.
+Local-only operational work returns to the parent.
+Each actual transfer and final retirement needs its own explicit authorization.
+Keep active workers, validation, live decisions, boards, captured results, steering and routed replies with their existing owner until settled.
+A transferred row does not copy referenced files or rebind a promised public reply; preserve source provenance and supply reviewed successor-local context before dispatch.
+A strict transfer with unknown completion retains its immutable payload and provenance for the same route/batch retry; a commit without an accepted receipt needs supervised reconciliation rather than automatic acceptance or row restoration.
+The script headers own the exact receipt, retry, ambiguity and lock mechanics.
+
+After drainage and before retirement, archive the predecessor's durable data, relevant configuration, handled provenance, and original charter in a private parent-owned Mac directory.
+Retain the retired identity and original relative paths in the archive index, verify the file inventory and digests, and record the archive in the cutover note.
+Keep that archive on the Mac.
+Inspect unique project-local work and ignored data explicitly; an empty backlog and a Git-clean Firstmate copy do not establish that project data is disposable.
+If files change while archiving, verify again after the predecessor has quiesced before retiring it.
+Use ordinary local archive tools and the existing guarded teardown; the record-empty check does not prove preservation.
+
 The safety check is the secondmate's own home.
-Teardown refuses while its `state/*.meta` contains in-flight work.
+Teardown refuses while its `state/*.meta` contains in-flight work or its operational records remain open, under the record checks owned by [`bin/fm-handoff-record-lib.sh`](../../../bin/fm-handoff-record-lib.sh).
 Non-forced retirement also refuses while any parent pending-reply for that id is still unresolved.
 A remote route delegates the in-flight guard to its configured host and additionally refuses while the primary has a pending handoff outbox.
 SSH exit 255 preserves the route and local records because remote completion is unknown.

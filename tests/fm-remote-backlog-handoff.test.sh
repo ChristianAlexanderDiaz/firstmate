@@ -52,7 +52,7 @@ trap fm_remote_handoff_teardown EXIT
 printf 'fixture\n' > "$REMOTE_ROOT/AGENTS.md"
 cp "$ROOT/bin/fm-remote-entrypoint.sh" "$ROOT/bin/fm-remote-job-lib.sh" \
   "$ROOT/bin/fm-remote-job-worker.sh" "$ROOT/bin/fm-remote-file.sh" \
-  "$ROOT/bin/fm-backlog-receive.sh" "$ROOT/bin/fm-tasks-axi-lib.sh" \
+  "$ROOT/bin/fm-backlog-receive.sh" "$ROOT/bin/fm-handoff-record-lib.sh" "$ROOT/bin/fm-secondmate-parent-lib.sh" "$ROOT/bin/fm-tasks-axi-lib.sh" \
   "$ROOT/bin/fm-wake-lib.sh" "$ROOT/bin/fm-path-lib.sh" "$REMOTE_ROOT/bin/"
 ln -s "$(command -v tasks-axi)" "$REMOTE_ROOT/bin/tasks-axi"
 ln -s "$(command -v node)" "$REMOTE_ROOT/bin/node"
@@ -640,6 +640,272 @@ assert_contains "$(cat "$TMP_ROOT/after-stale-wake.out")" "stale wake marker rem
 assert_present "$stale_wake_marker" "later handoff concealed the forced stale-marker removal failure"
 rm -f -- "$stale_wake_marker"
 pass "undeletable invalid wake state cannot block remote handoffs"
+
+# New local-source transfers use the same fake SSH transport, never a real host.
+printf 'schema=fm-secondmate-parent.v1\nroute=remote\n' > "$REMOTE/.fm-secondmate-parent"
+SOURCE="$TMP_ROOT/source"
+mkdir -p "$SOURCE"/{bin,data,state,config,projects}
+printf 'fixture\n' > "$SOURCE/AGENTS.md"
+printf 'source\n' > "$SOURCE/.fm-secondmate-home"
+printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$PARENT" > "$SOURCE/.fm-secondmate-parent"
+printf 'backend = "markdown"\n' > "$SOURCE/.tasks.toml"
+printf -- '- alpha [direct-PR] - product (added 2026-10-20)\n' > "$SOURCE/data/projects.md"
+cp "$SOURCE/data/projects.md" "$PARENT/data/projects.md"
+cp "$SOURCE/data/projects.md" "$REMOTE/data/projects.md"
+printf -- '- source - source (home: %s; scope: alpha; projects: alpha; added 2026-10-20)\n' "$SOURCE" >> "$PARENT/data/secondmates.md"
+printf '## Queued\n- [ ] strict-remote - Source intent (repo: alpha)\n  Durable detail.\n\n## Done\n' > "$SOURCE/data/backlog.md"
+# An older receiver must refuse before source ownership changes.
+cp "$REMOTE_ROOT/bin/fm-backlog-receive.sh" "$TMP_ROOT/receiver-current.sh"
+printf '#!/usr/bin/env bash\nprintf "old receiver\\n" >&2\nexit 2\n' > "$REMOTE_ROOT/bin/fm-backlog-receive.sh"
+if handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --from-secondmate source ios strict-remote > "$TMP_ROOT/strict-old-receiver.out" 2>&1; then
+  fail 'strict source handoff fell back to an old receiver'
+fi
+assert_grep 'upgrade destination Firstmate' "$TMP_ROOT/strict-old-receiver.out" 'old receiver did not request an upgrade'
+assert_grep strict-remote "$SOURCE/data/backlog.md" 'old receiver removed source ownership'
+mv "$TMP_ROOT/receiver-current.sh" "$REMOTE_ROOT/bin/fm-backlog-receive.sh"
+# Same-key parent work is independent of this source-specific transfer.
+tasks-axi add strict-remote 'Independent parent intent' --repo alpha --file "$PARENT/data/backlog.md" >/dev/null || fail 'parent same-key fixture failed'
+parent_before_strict=$(cat "$PARENT/data/backlog.md")
+FM_FAKE_SSH_MODE=after-put handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --from-secondmate source ios strict-remote > "$TMP_ROOT/strict-drop.out" 2>&1 \
+  && fail 'strict dropped transport unexpectedly succeeded'
+assert_absent "$SOURCE/state/strict-remote.meta" 'handoff fabricated worker state'
+! grep -q strict-remote "$SOURCE/data/backlog.md" || fail 'strict source remained dispatchable'
+assert_grep strict-remote "$PARENT/data/handoff/ios.outbox.md" 'strict outbox not preserved'
+strict_record=$(find "$PARENT/data/handoff/transfers" -name '*.record' -print -quit)
+strict_id=$(sed -n '2p' "$strict_record")
+strict_payload="${strict_record%.record}.payload"
+strict_hash=$(sha256_file "$strict_payload")
+# Reproduce interrupted source persistence: the authoritative outbox exists,
+# but the predecessor still has its identical row. Resume must clean that home.
+cp "$strict_payload" "$SOURCE/data/backlog.md"
+SPAWN_CRASH_HOME="$TMP_ROOT/source-spawn-user-home"
+mkdir -p "$SOURCE/projects/alpha" "$SOURCE/data/strict-remote" "$SPAWN_CRASH_HOME"
+fm_git_init_commit "$SOURCE/projects/alpha"
+fm_git_add_origin "$SOURCE/projects/alpha" "$TMP_ROOT/source-spawn-origin.git"
+printf '# Task\n## Captain\x27s intent\nKeep reserved work with its transfer.\n\n## Firstmate spec\nRefuse dispatch.\n\n# Definition of done\nDelivery contract: mode=direct-PR\n' > "$SOURCE/data/strict-remote/brief.md"
+source_crash_backlog=$(cat "$SOURCE/data/backlog.md")
+if FM_HOME="$SOURCE" FM_ROOT_OVERRIDE="$ROOT" HOME="$SPAWN_CRASH_HOME" FM_SPAWN_NO_GUARD=1 \
+  "$ROOT/bin/fm-spawn.sh" strict-remote "$SOURCE/projects/alpha" --mode direct-PR --yolo off 'echo fixture' > "$TMP_ROOT/strict-reserved-spawn.out" 2>&1; then
+  fail 'fresh source spawn acquired an unfinished transfer after its lock was released'
+fi
+assert_grep 'unfinished transfer owns source task strict-remote' "$TMP_ROOT/strict-reserved-spawn.out" "reserved dispatch refused for an unrelated reason: $(cat "$TMP_ROOT/strict-reserved-spawn.out")"
+assert_absent "$SOURCE/state/strict-remote.meta" 'reserved dispatch published a worker'
+[ "$(cat "$SOURCE/data/backlog.md")" = "$source_crash_backlog" ] || fail 'reserved dispatch changed source ownership'
+[ "$(sha256_file "$strict_payload")" = "$strict_hash" ] || fail 'reserved dispatch changed pinned payload'
+SUCCESSOR="$TMP_ROOT/successor"
+mkdir -p "$SUCCESSOR"/{bin,data,state,config,projects}
+printf 'fixture\n' > "$SUCCESSOR/AGENTS.md"
+printf 'successor\n' > "$SUCCESSOR/.fm-secondmate-home"
+printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$PARENT" > "$SUCCESSOR/.fm-secondmate-parent"
+printf 'backend = "markdown"\n' > "$SUCCESSOR/.tasks.toml"
+cp "$SOURCE/data/projects.md" "$SUCCESSOR/data/projects.md"
+printf '## Queued\n\n## Done\n' > "$SUCCESSOR/data/backlog.md"
+printf -- '- successor - successor (home: %s; scope: alpha; projects: alpha; added 2026-10-20)\n' "$SUCCESSOR" >> "$PARENT/data/secondmates.md"
+tasks-axi add extra 'Overlapping batch companion' --repo alpha --file "$SOURCE/data/backlog.md" >/dev/null || fail 'overlap fixture failed'
+source_before_retry=$(cat "$SOURCE/data/backlog.md")
+for reserved_target in successor --to-parent; do
+  for reserved_variant in exact overlap; do
+    reserved_batch=(strict-remote)
+    [ "$reserved_variant" != overlap ] || reserved_batch+=(extra)
+    if handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --from-secondmate source "$reserved_target" "${reserved_batch[@]}" > "$TMP_ROOT/strict-reserved.out" 2>&1; then
+      fail 'unfinished remote transfer allowed overlapping source work to a second successor'
+    fi
+    [ "$(cat "$SOURCE/data/backlog.md")" = "$source_before_retry" ] || fail 'reservation refusal mutated source'
+    assert_no_grep strict-remote "$SUCCESSOR/data/backlog.md" 'unfinished transfer gave a second successor ownership'
+    [ "$(cat "$PARENT/data/backlog.md")" = "$parent_before_strict" ] || fail 'reservation refusal gave parent a second copy'
+    assert_grep 'unfinished transfer owns source task strict-remote' "$TMP_ROOT/strict-reserved.out" "cross-route source reservation was not enforced: $(cat "$TMP_ROOT/strict-reserved.out")"
+  done
+done
+tasks-axi add unrelated 'Different batch' --repo alpha --file "$SOURCE/data/backlog.md" >/dev/null || fail 'unrelated source fixture failed'
+handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --from-secondmate source ios unrelated > "$TMP_ROOT/strict-unrelated.out" 2>&1 \
+  && fail 'unrelated strict batch replaced pending provenance'
+assert_grep unrelated "$SOURCE/data/backlog.md" 'unrelated source row changed'
+# A new invocation has no in-memory source selector: provenance restores it.
+handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --resume-pending > "$TMP_ROOT/strict-resume.out" 2>&1 \
+  || fail "strict resume failed: $(cat "$TMP_ROOT/strict-resume.out")"
+assert_grep 'Durable detail' "$REMOTE/data/backlog.md" 'strict remote body lost'
+! grep -q strict-remote "$SOURCE/data/backlog.md" || fail 'resume retained predecessor duplicate'
+[ "$(cat "$PARENT/data/backlog.md")" = "$parent_before_strict" ] || fail 'source-specific recovery changed the parent queue'
+[ "$(sha256_file "$strict_payload")" = "$strict_hash" ] || fail 'retry changed pinned payload'
+assert_grep "$strict_id" "$REMOTE/state/handoff/receipts/$strict_id.receipt" 'strict accepted receipt missing'
+pass 'local source remote handoff survives lost transport and parent restart with pinned identity'
+
+STAGE_BIN="$TMP_ROOT/scaffold-crash-bin"
+STAGE_REAL_TASKS=$(command -v tasks-axi)
+mkdir -p "$STAGE_BIN"
+cat > "$STAGE_BIN/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = mv ] && [[ " $* " = *" --file $FM_STAGE_SOURCE/data/backlog.md --to $FM_STAGE_OUTBOX "* ]]; then
+  [ -f "$FM_STAGE_OUTBOX" ] || exit 1
+  touch "$FM_STAGE_CRASHED"
+  kill -KILL "$PPID"
+  exit 1
+fi
+exec "$FM_STAGE_REAL_TASKS" "$@"
+SH
+chmod +x "$STAGE_BIN/tasks-axi"
+for stage_mode in explicit resume; do
+  stage_key="scaffold-$stage_mode"
+  stage_outbox="$PARENT/data/handoff/ios.outbox.md"
+  tasks-axi add "$stage_key" 'Preserve staging crash intent' --repo alpha --file "$SOURCE/data/backlog.md" >/dev/null || fail 'scaffold crash task fixture failed'
+  stage_source_before=$(cat "$SOURCE/data/backlog.md")
+  stage_parent_before=$(cat "$PARENT/data/backlog.md")
+  if PATH="$STAGE_BIN:$PATH" FM_STAGE_SOURCE="$SOURCE" FM_STAGE_OUTBOX="$stage_outbox" \
+    FM_STAGE_CRASHED="$TMP_ROOT/$stage_key.crashed" FM_STAGE_REAL_TASKS="$STAGE_REAL_TASKS" \
+    handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --from-secondmate source ios "$stage_key" > "$TMP_ROOT/$stage_key.crash.out" 2>&1; then
+    fail 'scaffold crash unexpectedly completed staging'
+  fi
+  assert_present "$TMP_ROOT/$stage_key.crashed" 'crash did not reach the scaffold-before-move boundary'
+  [ "$(cat "$SOURCE/data/backlog.md")" = "$stage_source_before" ] || fail 'scaffold crash mutated source work'
+  stage_empty_hash=$(printf '## In flight\n\n## Queued\n\n## Done\n' | shasum -a 256 | awk '{print $1}')
+  [ "$(sha256_file "$stage_outbox")" = "$stage_empty_hash" ] || fail 'crash did not preserve the exact empty staging scaffold'
+  cp "$stage_outbox" "$TMP_ROOT/$stage_key.empty"
+  stage_record=
+  for stage_candidate in "$PARENT/data/handoff/transfers/"*.record; do
+    if [ "$(sed -n '10p' "$stage_candidate")" = "$stage_key" ]; then stage_record=$stage_candidate; break; fi
+  done
+  [ -n "$stage_record" ] || fail 'scaffold crash lost immutable provenance'
+  stage_record_hash=$(sha256_file "$stage_record")
+  stage_payload="${stage_record%.record}.payload"
+  stage_payload_hash=$(sha256_file "$stage_payload")
+  stage_id=$(sed -n '2p' "$stage_record")
+  stage_retry=(--from-secondmate source ios "$stage_key")
+  [ "$stage_mode" != resume ] || stage_retry=(--resume-pending)
+  for stage_conflict in changed-empty populated; do
+    cp "$TMP_ROOT/$stage_key.empty" "$stage_outbox"
+    if [ "$stage_conflict" = populated ]; then
+      tasks-axi add conflict-task 'Unrelated outbox work' --repo alpha --file "$stage_outbox" >/dev/null || fail 'conflicting outbox fixture failed'
+    else
+      printf '\n' >> "$stage_outbox"
+    fi
+    stage_conflict_hash=$(sha256_file "$stage_outbox")
+    if handoff_env "$ROOT/bin/fm-backlog-handoff.sh" "${stage_retry[@]}" > "$TMP_ROOT/$stage_key.$stage_conflict.out" 2>&1; then
+      fail "$stage_mode accepted a $stage_conflict outbox"
+    fi
+    [ "$(sha256_file "$stage_outbox")" = "$stage_conflict_hash" ] || fail 'conflicting outbox was overwritten'
+    [ "$(cat "$SOURCE/data/backlog.md")" = "$stage_source_before" ] || fail 'conflicting outbox retry mutated source'
+    assert_no_grep "$stage_key" "$REMOTE/data/backlog.md" 'conflicting outbox retry delivered source work'
+  done
+  cp "$TMP_ROOT/$stage_key.empty" "$stage_outbox"
+  handoff_env "$ROOT/bin/fm-backlog-handoff.sh" "${stage_retry[@]}" > "$TMP_ROOT/$stage_key.retry.out" 2>&1 \
+    || fail "$stage_mode failed to resume empty staging scaffold: $(cat "$TMP_ROOT/$stage_key.retry.out")"
+  assert_no_grep "$stage_key" "$SOURCE/data/backlog.md" 'resumed staging retained source ownership'
+  assert_grep "$stage_key" "$REMOTE/data/backlog.md" 'resumed staging lost destination work'
+  assert_present "$REMOTE/state/handoff/receipts/$stage_id.receipt" 'resumed staging lost strict receipt identity'
+  assert_absent "$stage_outbox" 'resumed staging did not clear accepted outbox'
+  [ "$(sha256_file "$stage_record")" = "$stage_record_hash" ] || fail 'staging retry changed provenance'
+  [ "$(sha256_file "$stage_payload")" = "$stage_payload_hash" ] || fail 'staging retry changed pinned payload'
+  [ "$(cat "$PARENT/data/backlog.md")" = "$stage_parent_before" ] || fail 'staging retry changed parent queue'
+  pass "$stage_mode recovers the scaffold-before-move crash and preserves conflicting outboxes"
+done
+
+# Public strict receiver: a collision refuses the full batch; accepted retries
+# remain valid after destination progress, and id/hash reuse refuses.
+strict_deliver() {
+  local id=$1 payload=$2 gen=$3 bytes hash
+  bytes=$(wc -c < "$payload" | tr -d ' ')
+  hash=$(sha256_file "$payload")
+  cp "$payload" "$REMOTE/state/handoff/strict-test.outbox.md"
+  printf '%s\n%s\n%s\n' "$gen" "$bytes" "$hash" > "$REMOTE/state/handoff/.strict-test.upload-generation"
+  FM_HOME="$REMOTE" "$ROOT/bin/fm-backlog-receive.sh" --strict-transfer "$id" state/handoff/strict-test.outbox.md "$bytes" "$hash" "$gen"
+}
+STRICT_TEST_ID=0123456789abcdef0123456789abcdef
+printf '## Queued\n- [ ] strict-remote - Conflicting incoming intent (repo: alpha)\n- [ ] strict-fresh - Must stay absent on collision (repo: alpha)\n\n## Done\n' > "$TMP_ROOT/strict-collision.md"
+strict_deliver "$STRICT_TEST_ID" "$TMP_ROOT/strict-collision.md" 1 > "$TMP_ROOT/strict-collision.out" 2>&1 \
+  && fail 'unknown strict collision accepted'
+! grep -q strict-fresh "$REMOTE/data/backlog.md" || fail 'collision partially applied batch'
+printf '## Queued\n- [ ] strict-fresh - New intent (repo: alpha)\n\n## Done\n' > "$TMP_ROOT/strict-fresh.md"
+strict_deliver "$STRICT_TEST_ID" "$TMP_ROOT/strict-fresh.md" 2 > "$TMP_ROOT/strict-fresh.out" 2>&1 \
+  || fail "fresh strict delivery failed: $(cat "$TMP_ROOT/strict-fresh.out")"
+tasks-axi "done" strict-fresh --file "$REMOTE/data/backlog.md" >/dev/null || fail 'destination completion failed'
+strict_deliver "$STRICT_TEST_ID" "$TMP_ROOT/strict-fresh.md" 3 >/dev/null || fail 'accepted retry after completion failed'
+strict_deliver "$STRICT_TEST_ID" "$TMP_ROOT/strict-collision.md" 4 > "$TMP_ROOT/strict-conflict.out" 2>&1 \
+  && fail 'same strict ID accepted different payload'
+pass 'strict receipt rejects batch collisions and changed payload, accepts retries after progress'
+
+RACE_BASE="$TMP_ROOT/receipt-race"
+mkdir -p "$RACE_BASE/fakebin" "$RACE_BASE/user-home" "$REMOTE/data/receipt-race" "$REMOTE/projects/alpha"
+fm_git_init_commit "$REMOTE/projects/alpha"
+fm_git_add_origin "$REMOTE/projects/alpha" "$RACE_BASE/alpha-origin.git"
+printf '# Task\n## Captain\x27s intent\nExercise concurrent receipt.\n\n## Firstmate spec\nRefuse dispatch.\n\n# Definition of done\nDelivery contract: mode=direct-PR\n' > "$REMOTE/data/receipt-race/brief.md"
+printf '## Queued\n- [ ] receipt-race - One destination owner (repo: alpha)\n\n## Done\n' > "$RACE_BASE/payload.md"
+mkfifo "$RACE_BASE/entered" "$RACE_BASE/release"
+cat > "$RACE_BASE/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = mv ] && [ "${2:-}" = receipt-race ]; then
+  printf 'before-move\n' > "$FM_RACE_BASE/entered"
+  read -r _ < "$FM_RACE_BASE/release"
+fi
+exec "$FM_REAL_TASKS_AXI" "$@"
+SH
+cat > "$RACE_BASE/fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'/receipts/'*'.receipt'*)
+    printf 'before-receipt\n' > "$FM_RACE_BASE/entered"
+    read -r _ < "$FM_RACE_BASE/release"
+    "$FM_REAL_MV" "$@" || exit $?
+    printf 'after-receipt\n' > "$FM_RACE_BASE/entered"
+    read -r _ < "$FM_RACE_BASE/release"
+    exit 0
+    ;;
+esac
+exec "$FM_REAL_MV" "$@"
+SH
+chmod +x "$RACE_BASE/fakebin/"*
+RACE_ID=11111111111111111111111111111111
+FM_REAL_TASKS_AXI=$(command -v tasks-axi) FM_REAL_MV=$(command -v mv) FM_RACE_BASE="$RACE_BASE" \
+  PATH="$RACE_BASE/fakebin:$PATH" strict_deliver "$RACE_ID" "$RACE_BASE/payload.md" 1 > "$RACE_BASE/receive.out" 2>&1 &
+race_receiver_pid=$!
+for race_phase in before-move before-receipt after-receipt; do
+  read -r race_observed < "$RACE_BASE/entered"
+  [ "$race_observed" = "$race_phase" ] || fail 'wrong receipt barrier'
+  if [ "$race_phase" = before-move ]; then
+    assert_no_grep receipt-race "$REMOTE/data/backlog.md" 'receiver moved before classification barrier'
+  else
+    assert_grep receipt-race "$REMOTE/data/backlog.md" 'receiver did not commit destination work'
+  fi
+  if [ "$race_phase" = after-receipt ]; then
+    assert_present "$REMOTE/state/handoff/receipts/$RACE_ID.receipt" 'receipt was not accepted before cleanup'
+  else
+    assert_absent "$REMOTE/state/handoff/receipts/$RACE_ID.receipt" 'receipt published before acceptance barrier'
+  fi
+  if FM_HOME="$REMOTE" FM_ROOT_OVERRIDE="$ROOT" HOME="$RACE_BASE/user-home" FM_SPAWN_NO_GUARD=1 \
+    "$ROOT/bin/fm-spawn.sh" receipt-race "$REMOTE/projects/alpha" --mode direct-PR --yolo off 'echo fixture' > "$RACE_BASE/spawn-$race_phase.out" 2>&1; then
+    fail "spawn interleaved receipt at $race_phase"
+  fi
+  assert_grep 'task set is locked' "$RACE_BASE/spawn-$race_phase.out" "spawn refused for unrelated reason: $(cat "$RACE_BASE/spawn-$race_phase.out")"
+  assert_absent "$REMOTE/state/receipt-race.meta" 'spawn published during receipt'
+  printf 'release\n' > "$RACE_BASE/release"
+done
+wait "$race_receiver_pid" || fail "concurrent receipt failed: $(cat "$RACE_BASE/receive.out")"
+assert_absent "$REMOTE/state/handoff/strict-test.outbox.md" 'accepted receipt retained scratch'
+pass 'public destination spawn excludes receipt classification, move and acceptance'
+
+# Inject a receipt-publication crash through the external mv command, after the
+# real task move. A later receive must preserve the ambiguous incoming scratch.
+CRASHBIN="$TMP_ROOT/strict-crashbin"
+mkdir "$CRASHBIN"
+REAL_MV=$(command -v mv)
+cat > "$CRASHBIN/mv" <<'SH'
+#!/usr/bin/env bash
+case "$*" in *'/receipts/'*'.receipt'*) exit 1 ;; esac
+exec "$FM_REAL_MV" "$@"
+SH
+chmod +x "$CRASHBIN/mv"
+printf '## Queued\n- [ ] strict-crash - Retain ambiguous intent (repo: alpha)\n\n## Done\n' > "$TMP_ROOT/strict-crash.md"
+CRASH_ID=abcdef0123456789abcdef0123456789
+PATH="$CRASHBIN:$PATH" FM_REAL_MV="$REAL_MV" strict_deliver "$CRASH_ID" "$TMP_ROOT/strict-crash.md" 5 > "$TMP_ROOT/strict-crash.out" 2>&1 \
+  && fail 'receipt publication failure reported success'
+assert_grep strict-crash "$REMOTE/data/backlog.md" 'crash did not commit move'
+strict_deliver "$CRASH_ID" "$TMP_ROOT/strict-crash.md" 6 > "$TMP_ROOT/strict-ambiguous.out" 2>&1 \
+  && fail 'ambiguous crash repaired receipt from key presence'
+assert_grep ambiguous "$TMP_ROOT/strict-ambiguous.out" 'ambiguous crash not identified'
+assert_grep strict-crash "$REMOTE/state/handoff/strict-test.outbox.md" 'ambiguous scratch removed'
+pass 'post-commit receipt failure stays ambiguous and preserves delivered payload'
+rm -f "$REMOTE/state/handoff/strict-test.outbox.md"
+
+
 
 write_backlog '- [ ] route-race - remains dispatchable through retirement (repo: alpha)'
 registry_lock="$PARENT/state/.secondmate-registry.lock"

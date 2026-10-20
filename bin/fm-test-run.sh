@@ -1511,7 +1511,7 @@ families_for_changed_path() {
       printf '%s\n' session-bootstrap
       ;;
     bin/fm-secondmate*|bin/fm-remote*|bin/fm-on.sh|bin/fm-home-seed.sh|\
-    bin/fm-backlog-handoff.sh|bin/fm-backlog-receive.sh|bin/fm-procevent-remote-reply.sh|\
+    bin/fm-backlog-handoff.sh|bin/fm-backlog-receive.sh|bin/fm-handoff-record-lib.sh|bin/fm-procevent-remote-reply.sh|\
     bin/fm-config-inherit-lib.sh|bin/fm-config-push.sh|bin/fm-shared*|\
     bin/fm-stow-cascade.sh)
       printf '%s\n' secondmate

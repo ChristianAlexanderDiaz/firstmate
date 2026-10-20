@@ -19,7 +19,7 @@
 #   - spawn meta records kind=secondmate, home=, and the project list; launch runs
 #     in the subhome with the persistent charter and cleared operational overrides
 #   - a bare `fm-<id>` send targets the window recorded in THIS home's meta
-#   - backlog items move verbatim into the subhome and leave the main backlog
+#   - backlog task content moves into the subhome and leaves the main backlog
 #   - recovery respawns from the durable registry + persistent home
 #   - teardown removes meta and the registry route only after removing the home
 set -u
@@ -159,8 +159,8 @@ other-session:fm-design" \
 }
 
 phase_handoff() {
-  # The move is delegated to `tasks-axi mv`; skip cleanly when it is absent (the
-  # downstream recovery and teardown phases do not depend on this phase).
+  # The move is delegated to `tasks-axi mv`; this phase skips when it is absent.
+  # Teardown also needs tasks-axi to finish the transferred fixture work.
   if ! command -v tasks-axi >/dev/null 2>&1; then
     echo "skip: tasks-axi not found (backlog handoff delegates to it)"
     return 0
@@ -222,6 +222,17 @@ phase_recovery() {
 
 phase_teardown() {
   local teardown_out corr rec leftover leftover_rec other_corr
+  # A drained retirement finishes the transferred work and consumes steering;
+  # the safety suite separately proves these records refuse while still open.
+  local item message
+  for item in feat-x feat-y; do
+    tasks-axi "done" "$item" --file "$SUB/data/backlog.md" >/dev/null || fail "could not finish fixture task $item"
+  done
+  mkdir -p "$HOME_DIR/state/design.inbox/handled"
+  for message in "$HOME_DIR/state/design.inbox"/*.msg; do
+    [ -f "$message" ] || continue
+    mv "$message" "$HOME_DIR/state/design.inbox/handled/" || fail 'could not acknowledge fixture steering'
+  done
   corr=$(FM_HOME="$HOME_DIR" bash -c '
     . "$1"
     fm_pending_reply_create "$2" "$2/state" design "New routed work is in your backlog."

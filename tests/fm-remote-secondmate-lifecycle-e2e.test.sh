@@ -1082,7 +1082,7 @@ while [ ! -f "$TMP_ROOT/inherit.entered" ]; do
   inherit_wait=$((inherit_wait + 1))
   # Match the earlier spawn/inheritance wait: a loaded portable runner can
   # spend several seconds in the remote entrypoint before reaching this write.
-  [ "$inherit_wait" -le 1500 ] || fail "first inheritance transaction never reached its blocked write"
+  [ "$inherit_wait" -le 1500 ] || fail "first inheritance transaction never reached its blocked write: $(cat "$TMP_ROOT/config-concurrent-first.out")"
   sleep 0.02
 done
 cat > "$PARENT/data/captain-shared.md" <<'EOF'
@@ -1471,6 +1471,18 @@ assert_present "$PARENT/state/procevent/remote-reply-ios.source" \
   "bootstrap did not repair reply registration after retirement rollback"
 resolve_ios_pending
 rm -f "$REMOTE_HOME/state/child.meta"
+# The actual remote route inbox lives beneath the target home, not the code
+# root or synthetic DATA directory. No child metadata remains to mask this.
+if remote_env "$ROOT/bin/fm-teardown.sh" ios > "$TMP_ROOT/retire-unread-steering.out" 2>&1; then
+  fail 'remote retirement discarded unread parent steering'
+fi
+assert_grep 'unread steering' "$TMP_ROOT/retire-unread-steering.out" 'remote retirement did not inspect its configured route inbox'
+assert_present "$REMOTE_HOME" 'unread steering refusal removed the actual remote home'
+mkdir -p "$PARENT_ROUTE_INBOX/handled"
+for message in "$PARENT_ROUTE_INBOX"/*.msg; do
+  [ -f "$message" ] || continue
+  mv "$message" "$PARENT_ROUTE_INBOX/handled/" || fail 'could not acknowledge remote fixture steering'
+done
 mkdir -p "$PARENT/data/handoff"
 ln -s "$TMP_ROOT/missing-outbox-target" "$PARENT/data/handoff/ios.outbox.md"
 if remote_env "$ROOT/bin/fm-teardown.sh" ios >/dev/null 2>&1; then
