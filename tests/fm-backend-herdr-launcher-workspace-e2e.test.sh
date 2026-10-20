@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/fm-backend-herdr-launcher-workspace-e2e.test.sh - mandatory ISOLATED
-# end-to-end real-Herdr test for worker PLACEMENT with presentation spaces
-# disabled.
+# end-to-end real-Herdr test for worker placement with presentation spaces
+# enabled and disabled, including custom-label publication and restart reclaim.
 #
 # Every worker gets its own workspace even with presentation spaces disabled.
 # Launcher identity is still checked, but never authorizes a task tab in the

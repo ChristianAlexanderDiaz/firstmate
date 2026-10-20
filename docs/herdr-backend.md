@@ -257,7 +257,7 @@ Creation proceeds in this order:
 
 Another parent with the same presentation label does not prevent publication or participate in restart reclaim.
 For a verified Herdr launcher, the parent label is the observed label of its exact workspace, even when it differs from the home's `firstmate` or `2ndmate-<id>` label.
-An absent or multiline parent label cannot be bound in the line-based journal and uses the separate-workspace fallback.
+An absent, empty, or non-string parent label, or one containing NUL, carriage return, or newline, cannot be bound exactly and uses the separate-workspace fallback.
 
 The token is visible in the workspace title, because Herdr exposes no verified hidden persistent field.
 Neither token, title, nor journal authorizes send, capture, task ownership, Treehouse return, or general recovery.
