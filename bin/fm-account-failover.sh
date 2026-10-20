@@ -500,6 +500,7 @@ cmd_tick() {
       if [ -f "$state/.claude-exhausted" ] && [ "$(fm_path_age "$state/.claude-exhausted")" -ge 300 ]; then
         model=$(cat "$state/.claude-exhausted")
         snapshot="$state/.account-failover-rearm.$$.json"
+        # shellcheck disable=SC2016 # Positional parameters expand in the inner Bash process.
         if touch "$state/.claude-exhausted" && fm_run_timed 2 bash -c '
           . "$1"
           env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json > "$2" </dev/null &&
