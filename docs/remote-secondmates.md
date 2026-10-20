@@ -659,7 +659,7 @@ The existing main-to-mate form remains compatible with historical key-presence r
 The parent can also select reconciled queued work from a registered local secondmate and hand it to an existing local/remote successor or return it to itself; the additive forms and exact mechanics are owned by the [handoff script header](../bin/fm-backlog-handoff.sh).
 The source must use a markdown backlog with automatic tasks-axi dispatch gating enabled.
 Remote sources, live migration, in-place renaming, and reseeding an existing destination are unsupported.
-These transfers probe strict-receipt support before source removal and refuse unknown duplicate IDs as a whole batch.
+Remote destinations are probed for strict-receipt support before source removal; unknown destination-key collisions refuse the whole batch.
 An accepted receipt allows retry after the destination edits or completes the work.
 If a move committed before acceptance was recorded, preserve the source and parent transfer records and reconcile the destination's task bodies/history; there is no automatic acceptance or restoration.
 Payload and original source/route identity remain pinned across a parent restart or transport retry.

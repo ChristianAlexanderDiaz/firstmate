@@ -9,10 +9,10 @@
 # post-commit/pre-receipt crashes ambiguous; see fm-handoff-record-lib.sh.
 #
 # The delivered file must be a non-symlink backlog-format scratch file confined
-# to FM_HOME/state/handoff. Every item must be Queued. Keys already present in
-# data/backlog.md are skipped; every remaining key moves in one dependency-closed
-# `tasks-axi mv` transaction under tasks-axi's own locks. On an ambiguous caller
-# retry, destination-present classification makes this operation idempotent.
+# to FM_HOME/state/handoff. Every item must be Queued. Legacy mode skips keys
+# already in data/backlog.md; strict mode requires its matching accepted receipt
+# for a retry and refuses destination-present keys without one. New keys move
+# in one dependency-closed `tasks-axi mv` under tasks-axi's own file locks.
 #
 # If tasks-axi reports a lock failure, this host may remove and retry once only
 # for its own backlog or delivered lock whose pid is dead and whose mtime is at

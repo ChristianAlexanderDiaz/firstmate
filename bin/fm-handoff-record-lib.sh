@@ -3,7 +3,7 @@
 # Usage: source after fm-wake-lib.sh and fm-tasks-axi-lib.sh.
 # Retirement checks also require fm-backlog-transition-lib.sh.
 # Receipt v1 is five newline-terminated fields: schema, transfer id, payload
-# SHA-256, canonical destination home + marker identity, sorted key-set SHA-256.
+# SHA-256, SHA-256 of canonical destination home + marker, sorted key-set SHA-256.
 # Files are private, atomically published below state/handoff/receipts only.
 # Lock order: parent registry, parent handoff, source task-set, destination
 # task-set, receiver upload. tasks-axi owns its own file locks inside this order.

@@ -16,17 +16,16 @@
 #
 # What this script still owns (never delegated):
 #   - resolving the secondmate home from data/secondmates.md;
-#   - proving the destination is a genuine seeded secondmate home
+#   - proving a secondmate destination is a genuine seeded home
 #     (.fm-secondmate-home marker, AGENTS.md + bin/), never a project clone, the
 #     active home, or the firstmate repo;
 #   - moving only `## Queued` items, refusing `## In flight` and historical
 #     `## Done` records, which must stay with their home for pruning or
 #     archiving;
-#   - the multi-key classification and idempotent per-key reporting: a key
-#     already present in the secondmate backlog is reported and skipped, and if
-#     any key matches neither backlog nothing is moved;
+#   - legacy multi-key classification and per-key reporting: a destination key
+#     is skipped; source-secondmate forms instead require strict acceptance;
 #   - warning, after a successful move, when a moved key still owes a public
-#     relay reply bound to main/<key>, or when this home has an open public loop
+#     relay reply bound to its original home/key, or this home has an open loop
 #     with nothing owed, because routing work out does not close that loop. The
 #     move is not blocked: rebinding or rechain is a relay-side decision the
 #     caller makes.
@@ -44,9 +43,9 @@
 # it orphaned, because tasks-axi treats only two-or-more-space lines as body.
 # The move needs compatible `tasks-axi` on PATH, including atomic multi-ID `mv`
 # support. Bootstrap requires a compatible build fleet-wide, so this works
-# everywhere; the `config/backlog-backend=manual` knob only governs firstmate's
-# own hand-editing of its own backlog, not this validated helper. Idempotent:
-# re-running converges. Atomic: on any move failure nothing moves.
+# everywhere. Legacy main-to-mate handoffs bypass config/backlog-backend=manual;
+# source-secondmate forms require automatic gating. tasks-axi owns atomic moves;
+# interrupted commits can require the reconciliation described below.
 # See AGENTS.md project management and task lifecycle.
 # Remote routes use an outbox handoff: one atomic local tasks-axi mv removes the
 # selected set from the dispatchable backlog into data/handoff/<id>.outbox.md,
@@ -58,10 +57,10 @@
 # An undelivered wake stays retryable under that same correlation even after the
 # watcher escalates its unknown delivery; only confirmed delivery prevents a
 # resend. A prepared local wake is bound to the exact sorted
-# requested-key batch; an unrelated handoff to that mate refuses until the
-# original batch is retried, so it cannot discard wake intent for work that
-# already moved. No two-phase journal exists.
-# Every newly durable backlog delivery attempts one marked wake to the receiving
+# requested-key batch (including source identity for source-secondmate forms);
+# an unrelated handoff refuses until the original batch is retried, preserving
+# wake intent for work that already moved.
+# Every newly durable secondmate delivery attempts one marked wake to the receiving
 # endpoint. A local route moves directly into the destination backlog, and a
 # missing or rejected local wake makes that command fail with the move intact so
 # rerunning the same handoff retries its prepared wake intent. After a durable
@@ -84,9 +83,13 @@
 # schema, id, source id, source home, source identity, route digest, destination,
 # key-set digest, pinned payload digest, then sorted keys (one per line).
 # The matching .payload pins the batch; .accepted is published only on receipt.
+# Unfinished records reserve source keys against fresh spawn and other batches.
 # Unknown receipt keeps provenance and payload; never restore rows automatically.
-# Resume revalidates the original source and route. An ambiguous local commit
-# needs supervised reconciliation; no force or accept-anyway flag exists.
+# --resume-pending retries remote transfers, revalidating source and route; retry
+# local/parent transfers with their original explicit source, destination and keys.
+# A verified empty staging scaffold retries the move; conflicting outboxes refuse.
+# A commit without receipt needs supervised reconciliation; no force/accept flag.
+# --to-parent moves directly to this parent, without a receiver wake.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -362,7 +365,7 @@ seed_backlog_scaffold() { # <path>
 
 # A public commitment made through the relay binds its work by home AND id, so an
 # item that leaves this home takes that binding out of sync: reconciliation would
-# still look for main/<key> while the work now lives in the secondmate's home.
+# still look for the original home/key while another home now owns the work.
 # The move itself stays safe and is never blocked - rebinding is a relay-side
 # decision the caller owns - but this is the one moment the staleness is
 # detectable, so report it loudly instead of letting the promise go quiet.

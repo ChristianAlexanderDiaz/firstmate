@@ -210,7 +210,7 @@ Done records stay with their home for pruning or archiving.
 The legacy main-to-mate form skips destination-present keys; the source-secondmate forms require proof of acceptance and refuse unknown collisions.
 After a successful move it warns for any moved key that still owes a public relay reply bound to its original home and key, because that binding no longer names the home owning the work; rebind the commitment to the home now owning the work through the `fmx-respond` promised-final procedure, which owns those commands.
 That same rule governs routing generally: a Relay-linked request whose work goes to a secondmate cannot use the home-local mention link at all and needs a promised-final commitment bound to that secondmate's home.
-It refuses any destination that is not a genuine seeded firstmate home with safe operational directories and a matching `.fm-secondmate-home` marker, so a move can never land in a project.
+Secondmate destinations require a genuine seeded firstmate home with safe operational directories and a matching `.fm-secondmate-home` marker; parent returns use the invoking home.
 Send `local-only` work only to the parent.
 
 ## Recovery

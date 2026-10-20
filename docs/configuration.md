@@ -482,11 +482,11 @@ An unreadable backend configuration can refuse lifecycle work before the no-back
 
 ### Handoffs between homes
 
-Secondmate handoffs bypass that routine-backend choice: `fm-backlog-handoff.sh` keeps only its own fleet-level validation and delegates the item move to `tasks-axi mv`; its [script header](../bin/fm-backlog-handoff.sh) owns route-specific wake outcomes and remote outbox release.
+Legacy main-to-mate handoffs bypass that routine-backend choice; source-secondmate eligibility and transfer mechanics are owned by the [`fm-backlog-handoff.sh` header](../bin/fm-backlog-handoff.sh).
 It moves in-scope `## Queued` items only and refuses `## In flight` and historical `## Done` records, which stay with their home for pruning or archiving.
 
 Handoff item bodies must use at least two leading spaces, and the helper refuses a selected item with a single-space or tab-indented continuation rather than risk orphaning it.
-Because bootstrap requires `tasks-axi` on `PATH` on every profile, that delegation works fleet-wide, and the `config/backlog-backend=manual` knob governs firstmate's own hand-editing of its backlog, not this validated helper.
+Bootstrap requires compatible `tasks-axi` on `PATH` on every profile for delegated moves.
 
 ### Required tools and manual mode
 
