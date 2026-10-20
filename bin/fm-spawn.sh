@@ -371,6 +371,12 @@
 #   docs/configuration.md "Worker tool exclusions" owns config/crew-exclude-tools
 #   and its operator contract. Resolve it with bin/fm-exclude-tools-lib.sh
 #   before provisioning; __PIEXCLUDE__ below owns the Pi launch substitution.
+# Host budget: when FM_RESOURCE_CONFIG or config/host-budget.json selects the
+# per-user policy, all harness/backend launch commands receive the same resident
+# lease, restore manifest and PATH adapters (fm-resource-run --help owns these).
+# This never starts a service, drives a backend restore or changes an account.
+# Missing service refuses execution; direct interpreter/absolute heavy commands
+# still require an explicit stage lease, as documented in docs/host-budget.md.
 # Worker account pin (config/claude-account, config/pi-account):
 #   Opt-in. With no file, a Claude or Pi launch is unchanged: Claude still
 #   receives this process's own CLAUDE_CONFIG_DIR when it is set, and Pi the
@@ -5573,6 +5579,39 @@ esac
 # A home's worker account pin replaces that forwarding: the launch names the
 # pinned root (or unsets the variable for the ordinary Claude account) and
 # sheds the environment credentials Claude ranks above the root's login.
+RESOURCE_CONFIG=${FM_RESOURCE_CONFIG:-}
+if [ -z "$RESOURCE_CONFIG" ] && [ -e "$CONFIG/host-budget.json" ]; then
+  RESOURCE_CONFIG="$CONFIG/host-budget.json"
+fi
+if [ -z "$RESOURCE_CONFIG" ] && [ -e "$HOME/.config/firstmate/host-budget.json" ]; then
+  RESOURCE_CONFIG="$HOME/.config/firstmate/host-budget.json"
+fi
+if [ -n "$RESOURCE_CONFIG" ]; then
+  "$SCRIPT_DIR/fm-resource-run" --config "$RESOURCE_CONFIG" status >/dev/null || exit 1
+  RESOURCE_DIR="$DATA/$ID/resource-$SPAWN_GEN"
+  resource_accounts=()
+  case "$HARNESS" in
+  claude)
+    resource_account_root=${CLAUDE_CONFIG_DIR:-}
+    if [ -n "$WORKER_ACCOUNT" ]; then
+      resource_account_root=$WORKER_ACCOUNT_ROOT
+    elif [ -n "$CLAUDE_ACCOUNT" ]; then
+      resource_account_root=$CLAUDE_ACCOUNT_ROOT
+    fi
+    resource_accounts+=(--account-env "CLAUDE_CONFIG_DIR=$resource_account_root")
+    ;;
+  pi | pi-signed)
+    [ -z "$WORKER_ACCOUNT" ] || resource_accounts+=(--account-env "PI_CODING_AGENT_DIR=$WORKER_ACCOUNT_ROOT")
+    ;;
+  esac
+  RESOURCE_MANIFEST=$("$SCRIPT_DIR/fm-resource-run" --config "$RESOURCE_CONFIG" prepare \
+    --directory "$RESOURCE_DIR" --worktree "$WT" --task "$ID" \
+    --account-label "${WORKER_ACCOUNT:-${CLAUDE_ACCOUNT:-default-$HARNESS}}" \
+    ${resource_accounts[@]+"${resource_accounts[@]}"} -- /bin/sh -c "$LAUNCH") || exit 1
+  # Account prefixes below remain outside the wrapper, so validation sees the
+  # actual selected config environment before any model CLI can start.
+  LAUNCH="env FM_RESOURCE_CONFIG=$(shell_quote "$RESOURCE_CONFIG") PATH=$(shell_quote "$RESOURCE_DIR/bin")\":\$PATH\" $(shell_quote "$SCRIPT_DIR/fm-resource-run") --config $(shell_quote "$RESOURCE_CONFIG") run --class worker --task $(shell_quote "$ID") --manifest $(shell_quote "$RESOURCE_MANIFEST") -- /bin/sh -c $(shell_quote "$LAUNCH")"
+fi
 if [ -n "$WORKER_ACCOUNT" ]; then
   case "$HARNESS" in
   claude)

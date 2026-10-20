@@ -130,6 +130,8 @@ When this task works on Firstmate itself, the repository root `AGENTS.md` (also 
 Project instructions still govern the work wherever they do not conflict with this worker identity, including `CONTRIBUTING.md` and `firstmate-coding-guidelines` for Firstmate changes.
 EOF
   printf "If the \`firstmate-coding-guidelines\` skill name does not resolve in this session, read \`%s/.agents/skills/firstmate-coding-guidelines/SKILL.md\` instead.\n" "$root"
+  printf "When FM_RESOURCE_CONFIG is set, read \`%s/bin/fm-resource-run --help\` and lease every local compute stage through that command, including direct interpreter commands and browser/server lifetimes that PATH adapters cannot cover.\n" "$root"
+  printf '%s\n' 'Keep remote no-mistakes controller and CI waits outside compute leases; the local stage interface owns its reservations.'
 }
 
 # Closed-set gate shared by every forge-aware renderer and bin/fm-brief.sh, so a
