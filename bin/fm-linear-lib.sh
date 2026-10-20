@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# fm-linear-lib.sh - best-effort, one-way Linear lifecycle sync.
+# fm-linear-lib.sh - Linear lifecycle sync and intake/dispatch metadata.
 # Usage: fm-linear-lib.sh spawn|merge|closed|hold|release|idle|teardown|dependencies|refresh <task-id> [pr-url]
 #        fm-linear-lib.sh tick
 #        fm-linear-lib.sh intake|dispatch <task-id>
 # intake uses explicit backlog lines Linear priority: 1..4, Linear estimate:
 # 1|2|3|5 and Loop: agent|agent-reviewed|milestones|Christian as defaults for
 # missing fields before the first metadata snapshot, creating an unstarted
-# ticket when needed. Existing values win.
+# ticket when needed. Priority 0 means no default. Existing values win.
 # Loop finish: names a test-decidable check (never executed by this script).
 # An initial local check is retained as Loop local finish: until a remote
 # declaration supersedes it. Loop finish: then records only the effective check.
@@ -30,7 +30,8 @@
 # Linkage is a `Linear issue: ABC-123` line in the existing backlog body.
 # A deterministic client issue UUID, derived from the data root, task and team,
 # prevents duplicate creation after an ambiguous timeout or failed link write.
-# Only intake and spawn create; all other events require an existing issue.
+# Only intake and spawn create; dispatch refuses a missing mapped issue, while
+# other events skip work without an existing issue.
 # `closed` returns a started issue (In Progress or a review state) to Todo when
 # its recorded PR is closed without merging and no worker is on it. Teardown
 # produces it with the recorded PR URL; the heartbeat produces it for a ship

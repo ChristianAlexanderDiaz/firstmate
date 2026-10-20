@@ -378,7 +378,7 @@ The existing Linear label group named `Loop` supplies exactly one of `agent`, `a
 Intake creates an unstarted ticket if necessary and fills missing priority, estimate and Loop values from initial declarations only before the first metadata snapshot, preserving later corrections including cleared values, other labels and cycle placement.
 Firstmate judges whether an agent's finish is test-decidable and records the specific check in a `Loop finish:` declaration in the ticket description or backlog body.
 The declaration names the test and the observable pass/fail result; the sync never executes its text or guesses from ordinary prose mentioning tests.
-An initial backlog check is retained separately as `Loop local finish:` until a remote declaration supersedes it; subsequent removal of the remote declaration leaves no effective check.
+An initial backlog check remains effective until a remote declaration supersedes it; subsequent removal of the remote declaration leaves no effective check.
 Before launch, spawn reads priority, estimate, Loop, cycle start and manual order into the backlog and adds a metadata instruction overlay to the worker brief, outside captain intent.
 Linear values take precedence over intake defaults, so corrections made there win at pickup.
 An `agent` without a nonempty finish declaration is relabeled `milestones`, preserving all labels outside Loop, and receives milestone instructions.
@@ -386,8 +386,9 @@ An `agent` with a finish declaration requires spawn mode `no-mistakes`; any othe
 An `agent-reviewed` receives rubric and screenshot instructions; a `Christian` ticket refuses worker launch and records a captain hold on its existing task, naming the Linear ticket.
 Firstmate prepares those calls together on the existing daily Bearings board and Captain's Call digest, then files the work after Christian answers.
 Configured dispatch metadata that cannot be read refuses launch for retry; lifecycle updates after a successful action retain their best-effort behavior.
-A successful ship spawn creates a ticket when no linkage exists, then selects the team's started state named `In Progress`, falling back to the first started state returned by Linear.
-Creation specifies that state explicitly, avoiding Linear's default Triage intake for teams with Triage enabled.
+Normal ship launches create any missing ticket during intake, then the successful spawn selects the team's started state named `In Progress`, falling back to the first started state returned by Linear.
+The standalone spawn sync event can also create a missing ticket directly in that started state.
+Both creation paths specify the state explicitly, avoiding Linear's default Triage intake for teams with Triage enabled.
 A recorded PR merge, including one detected from the forge, selects the completed state named `Done`, falling back to the first completed state, and attaches the PR URL unless the issue already has an attachment for it, as Linear's own GitHub integration usually adds one first.
 That integration also moves a ticket to its review state when a PR opens, so this sync does not.
 A captain hold adds the configured label without changing workflow status; its answer, release or reconciled close removes only that label.
@@ -416,10 +417,10 @@ Sync never mutates a Triage issue, deletes an issue, or writes a cycle field.
 Linear's own cycle behavior still applies to status changes.
 
 Existing linkage is found in the task id, backlog title/body, or, on merge or closed-PR reconciliation, an identifier following `fixes`, `closes` or `resolves` (case-insensitive) in the complete PR record from GitHub or GitLab.
-Only identifiers belonging to mapped teams are eligible, and ambiguous references are skipped.
+Only identifiers belonging to mapped teams are eligible; ambiguous references skip lifecycle sync and refuse intake or dispatch.
 The saved backlog linkage takes precedence over incidental references elsewhere.
-A completed or canceled issue changes only through saved linkage; an incidental reference to one is skipped and never saved.
-Only intake and spawn create tickets; other events without a linked or previously created issue are skipped.
+A completed or canceled issue changes only through saved linkage; an incidental reference to one is never saved and skips lifecycle sync or refuses intake and dispatch.
+Only intake and spawn create tickets; dispatch refuses a missing mapped issue, while other events without a linked or previously created issue are skipped.
 A failed forge read never causes ticket creation.
 GitHub PR-body and branch-merge reads use `gh-axi`; closure checks use the shared PR reader, which prefers `gh` and falls back to `gh-axi`.
 GitLab reads use `glab`.
