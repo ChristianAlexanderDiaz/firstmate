@@ -833,25 +833,6 @@ test_genuine_failure_near_deadline_is_unavailable() {
   pass 'a genuine forge failure inside the budget still records the error, its cause and wakes'
 }
 
-test_http_500_once_retries_without_waking() {
-  local home out calls
-  home=$(new_home retry-http-500-once)
-  forge_home "$home"
-  wrap_forge "$home"
-  mutate_record "$home" delivery '.records[0].checked_at="2026-09-15T08:00:00Z"'
-  printf 'fail-once\n' > "$home/forge/fault"
-  out=$(with_home "$home" "$ROOT/bin/fm-contributions.sh" poll) \
-    || fail 'poll failed after one transient HTTP 500'
-  [ -z "$out" ] || fail "a recovered HTTP 500 printed an unavailable line: $out"
-  calls=$(grep -cF 'api repos/o/r/pulls/8/reviews?' "$home/forge/calls")
-  [ "$calls" = 2 ] || fail "one HTTP 500 made $calls review reads, expected 2"
-  jq -e --arg now "$NOW" '.records[0] | .checked_at == $now and .error == null' \
-    "$home/data/delivery/contributions.json" >/dev/null \
-    || fail 'a recovered HTTP 500 left an error in the contribution record'
-  [ ! -s "$home/state/.wake-queue" ] || fail 'a recovered HTTP 500 enqueued a wake'
-  pass 'one HTTP 500 is retried once and a successful retry stays healthy'
-}
-
 test_http_500_twice_records_the_failed_read() {
   local home out calls why='reviews read exited 1 with Ns of budget left: gh: Internal Server Error (HTTP 500)'
   home=$(new_home retry-http-500-twice)

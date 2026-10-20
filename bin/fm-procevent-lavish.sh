@@ -216,23 +216,6 @@ post_lavish_reply() {  # <artifact> <reply-file>
   fi
 }
 
-lavish_reply_compatible() {
-  local status=0
-  "$FM_ROOT/bin/fm-bootstrap.sh" lavish-reply-compatible >/dev/null 2>&1 || status=$?
-  case "$status" in
-    0|1) return "$status" ;;
-  esac
-  die "cannot confirm a supported lavish-axi version, so the staged reply was not posted; retry once \`lavish-axi --version\` reports a supported release"
-}
-
-post_lavish_reply() {  # <artifact> <reply-file>
-  local output
-  if ! output=$(lavish-axi reply "$1" --agent-reply-file "$2" 2>&1); then
-    [ -n "$output" ] || output="lavish-axi reply exited nonzero"
-    die "Lavish did not accept the staged reply: $output"
-  fi
-}
-
 # Canonical identity is physical, not the path string: Lavish itself keys a
 # session on the realpath of the artifact, so two names for one file are one
 # source and must never become two owners.
