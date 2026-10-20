@@ -323,12 +323,16 @@ fakebin=$(fm_test_make_spawn_fakebin "$case_root/fake")
 fm_test_spawn_home "$task_home" codex
 fm_git_worktree "$project" "$worktree" wt-resource
 fm_test_spawn_brief "$task_home" budget-fixture
-printf '#!/bin/sh\\nprintf "resource-probe=%%s\\n" "$FM_TASK_ID"\\nexec "%s/bin/fm-resource-run" status\\n' "$ROOT" > "$fakebin/codex"
+printf '#!/bin/sh\\ntest -d "$CODEX_HOME" || exit 19\\nprintf "resource-probe=%%s\\n" "$FM_TASK_ID"\\nexec "%s/bin/fm-resource-run" status\\n' "$ROOT" > "$fakebin/codex"
 chmod +x "$fakebin/codex"
 export FM_FAKE_LAUNCH_LOG=$case_root/launch.log
+export CLAUDE_CONFIG_DIR=$case_root/unrelated
+mkdir -p "$case_root/codex-config"
+export CODEX_HOME=$case_root/codex-config
 FM_RESOURCE_CONFIG=$2/config.json fm_test_run_spawn "$task_home" "$worktree" "$fakebin" budget-fixture "$project" --mode no-mistakes --yolo off > "$case_root/spawn.out"
 cd "$worktree"
 export FM_TASK_ID=budget-fixture
+unset CODEX_HOME CLAUDE_CONFIG_DIR
 PATH="$fakebin:$PATH" /bin/bash -c "$(cat "$case_root/launch.log")"
 ''')
         result = subprocess.run(["/bin/bash", str(script), str(ROOT), str(self.root)],
@@ -348,9 +352,120 @@ PATH="$fakebin:$PATH" /bin/bash -c "$(cat "$case_root/launch.log")"
         self.assertTrue(manifest["session"].startswith("fm-resource-"))
         self.assertFalse(manifest["reuseServer"])
         self.assertGreater(manifest["serverPort"], 0)
-        self.assertEqual(Path(manifest["profile"]).stat().st_mode & 0o777, 0o700)
+        self.assertFalse(Path(manifest["profile"]).parent.exists())
         result = self.call("run", "--class", "browser", "--", "chrome-devtools-axi", "start")
         self.assertEqual(result.returncode, 75)
+
+    def test_recovery_requires_continuous_nominal_observations(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["thermalState"] = "serious"
+        self.write("input.json", sample)
+        wait_for(lambda: "serious" in self.status()["reason"])
+        sample["thermalState"] = "nominal"
+        self.write("input.json", sample)
+        wait_for(lambda: "recovery hysteresis" in self.status()["reason"])
+        (self.root / "clock").write_text("181")
+        sample["thermalState"] = "fair"
+        self.write("input.json", sample)
+        wait_for(lambda: "nominal thermal recovery" in self.status()["reason"])
+        sample["thermalState"] = "nominal"
+        self.write("input.json", sample)
+        (self.root / "clock").write_text("242")
+        wait_for(lambda: "recovery hysteresis" in self.status()["reason"])
+        self.assertEqual(self.call("run", "--wait-seconds", "0.1", "--", "true").returncode, 75)
+        (self.root / "clock").write_text("363")
+        wait_for(lambda: self.status()["reason"] == "ready")
+        sample["thermalState"] = "fair"
+        self.write("input.json", sample)
+        self.assertEqual(self.call("run", "--wait-seconds", "3", "--", "true").returncode, 0)
+
+    def test_fresh_post_sleep_sample_restarts_recovery(self):
+        (self.root / "sleep-offset").write_text("60")
+        wait_for(lambda: "recovery hysteresis" in self.status()["reason"])
+        self.assertEqual(self.call("run", "--wait-seconds", "0.1", "--", "true").returncode, 75)
+        (self.root / "clock").write_text("242")
+        wait_for(lambda: self.status()["reason"] == "ready")
+
+    def test_ac_low_battery_blocks_and_cancels(self):
+        job = self.job("sleep 30")
+        wait_for(lambda: any(l.get("group") for l in self.status().get("leases", {}).values()))
+        sample = copy.deepcopy(SAMPLE)
+        sample["power"]["batteryPercent"] = 29
+        self.write("input.json", sample)
+        wait_for(lambda: "30%" in self.status()["reason"])
+        self.assertEqual(self.call("run", "--wait-seconds", "0.1", "--", "true").returncode, 75)
+        self.assertIsNone(job.poll())
+        sample["power"]["batteryPercent"] = 10
+        self.write("input.json", sample)
+        wait_for(lambda: not self.status().get("leases"))
+        job.communicate(timeout=10)
+        self.assertNotEqual(job.returncode, 0)
+
+    def test_nested_browser_setup_uses_one_outer_lease(self):
+        script = self.root / "browser.sh"
+        script.write_text('cat "$FM_RESOURCE_BROWSER_MANIFEST"; test -d "$FM_RESOURCE_BROWSER_PROFILE"; test -n "$FM_RESOURCE_SERVER_PORT"')
+        result = self.call("run", "--class", "exclusive", "--", CLI,
+            "--config", str(self.root / "config.json"), "run", "--class", "browser", "--", "/bin/sh", str(script))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertFalse(Path(manifest["profile"]).parent.exists())
+        self.assertFalse(self.status()["leases"])
+
+    def test_browser_cleanup_waits_for_descendants_and_survives_restart(self):
+        job = self.job('cat "$FM_RESOURCE_BROWSER_MANIFEST"; sleep 30 & sleep 3; exit 0', kind="browser")
+        manifest = json.loads(job.stdout.readline())
+        self.assertTrue(Path(manifest["profile"]).is_dir())
+        wait_for(lambda: any(len(l.get("members", [])) > 1 for l in self.status().get("leases", {}).values()))
+        self.stop(signal.SIGKILL)
+        self.start()
+        wait_for(lambda: self.status().get("leases"))
+        self.assertTrue(Path(manifest["profile"]).is_dir())
+        sample = copy.deepcopy(SAMPLE)
+        sample["power"]["batteryPercent"] = 10
+        self.write("input.json", sample)
+        wait_for(lambda: not self.status().get("leases"))
+        self.assertFalse(Path(manifest["profile"]).parent.exists())
+        job.communicate(timeout=10)
+
+    def test_runner_options_and_package_script_environment(self):
+        fake = self.root / "runners"
+        fake.mkdir()
+        for name, argv, expected in (("playwright", ["install", "chromium"], []),
+                ("playwright", ["show-report"], []), ("playwright", ["test"], ["--workers=1"]),
+                ("nix-build", ["."], ["--max-jobs", "1", "--cores", "2"]),
+                ("npm", ["run", "test"], [])):
+            with self.subTest(name=name, argv=argv):
+                tool = fake / name
+                tool.write_text("#!" + sys.executable + "\nimport json, os, sys\nprint(json.dumps([sys.argv[1:], {k:v for k,v in os.environ.items() if k.startswith('VITEST_')}]))\n")
+                tool.chmod(0o700)
+                result = self.call("run", "--class", "exclusive", "--", str(tool), *argv)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                actual, env = json.loads(result.stdout)
+                self.assertEqual(actual, argv + expected)
+                for key in ("VITEST_MAX_WORKERS", "VITEST_MAX_THREADS", "VITEST_MAX_FORKS"):
+                    self.assertEqual(env[key], "1")
+
+    def test_registered_check_emits_each_transition_once(self):
+        state = self.root / "home-state"
+        result = self.call("register-check", "--directory", str(state))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        check = state / "host-budget.check.sh"
+        self.assertTrue((state / "host-budget.check-trust").is_file())
+        def poll():
+            result = subprocess.run([str(check)], text=True, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.splitlines()
+        first = poll()
+        self.assertTrue(first)
+        self.assertEqual(poll(), [])
+        sample = copy.deepcopy(SAMPLE)
+        sample["thermalState"] = "serious"
+        self.write("input.json", sample)
+        wait_for(lambda: "serious" in self.status()["reason"])
+        lines = wait_for(poll)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("serious", lines[0])
+        self.assertEqual(poll(), [])
 
 
 if __name__ == "__main__":

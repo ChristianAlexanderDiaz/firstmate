@@ -26,7 +26,11 @@ No client starts or repairs an owner automatically.
 For a LaunchAgent, use that exact argv, `RunAtLoad`, a conservative restart throttle and `Umask` 63; retain transition output with bounded logging.
 Keep the executable and configuration paths stable across Firstmate worktree cleanup.
 `bin/fm-resource-run status` gives the compact exception view, active reservations, pending queue, monitor timestamp and last cause.
-The owner also writes one JSON transition event to stdout when the cause changes; an existing process-event source can consume those events without polling a model.
+The owner appends each cause change to its private `transitions.jsonl` and also emits it to stdout.
+For each supervising home, run `bin/fm-resource-run register-check --directory /absolute/path/to/home/state` once with the same policy selected.
+This creates `host-budget.check.sh` and authenticates it through `bin/fm-check-register.sh`; the ordinary watcher check sweep prints one line per new transition using that home's durable byte cursor.
+The transition file is append-only so a home that was offline can read its missed events.
+Retire the check with `bin/fm-check-unregister.sh host-budget` in that home before changing its registration.
 
 ## Local launch boundaries
 
@@ -61,10 +65,11 @@ Keep the existing review, test, documentation, lint and CI requirements; no broa
 
 Reserve browser plus server as one outer stage and keep both in that stage's process group.
 Give each task a new browser profile and a task-specific server port; only reuse a server after checking its task, process identity and build commit.
-An outer browser stage creates a private profile, named Chrome automation session, server/bridge port candidates and a same-commit resource manifest, exported through `FM_RESOURCE_BROWSER_PROFILE`, `FM_RESOURCE_SERVER_PORT` and `FM_RESOURCE_BROWSER_MANIFEST`.
+A browser stage, including one nested under another compute reservation, creates a private profile, named Chrome automation session, server/bridge port candidates and a same-commit resource manifest, exported through `FM_RESOURCE_BROWSER_PROFILE`, `FM_RESOURCE_SERVER_PORT` and `FM_RESOURCE_BROWSER_MANIFEST`.
 Project server configuration must consume that port and keep reuse disabled by default; a bind collision must fail rather than attach to a different server.
 The Chrome adapter rejects short requests outside that composite lifetime and clears ambient auto-connect and browser URL settings when creating it.
 The wrapper exports `FM_RESOURCE_CPU_WORKERS` and `FM_RESOURCE_BROWSER_WORKERS` for project runners, and applies direct Vitest, Node test, Playwright, graphify and Nix caps where the command interface supports them.
+Package-script Vitest runs inherit `VITEST_MAX_WORKERS` and the older thread/fork environment limits, with minimum workers set to one; see [Vitest's environment variable migration](https://vitest.dev/guide/migration.html).
 Project configuration still needs to consume the exported values for custom runners and Next compiler settings.
 Neither a generic Node heap limit nor these worker defaults is a process-tree memory ceiling.
 The reservations are planning budgets, with live memory pressure providing the admission veto.
@@ -82,16 +87,18 @@ Heartbeat expiry alone cannot release capacity while an owned group survives.
 An unanchored surviving group is quarantined, retaining capacity without signaling an unverified process.
 Cancellation sends TERM to verified members, then KILL after the configured grace, and never kills by executable name or port.
 Stopping the owner preserves live reservations for reconciliation by its replacement.
+Once a lease's verified process group has drained, the owner checks the browser manifest's lease, boot and profile identity and removes the token directory, including its profile and caches.
+The same reconciliation handles completion, cancellation, inherited browser stages and owner recovery.
 Unknown or corrupt recovery state fails closed; preserve it for inspection rather than deleting it to regain slots.
 
 ## Exceptions and rollout
 
 Missing, stale, unavailable, wrong-boot or malformed monitor samples hold new compute.
-The owner uses the monitor's observation time and uptime, restarts recovery after source or monitor-instance changes, and persists its last blocking cause.
+The owner uses the monitor's observation time and uptime, restarts recovery after source or monitor-instance changes, observed suspension or gaps longer than ten seconds, and persists its last blocking cause.
 An explicit `emergency --evidence` records an observed emergency sleep; a critical thermal reading also latches conservatively without asserting that sleep occurred.
 Dotfiles schema 1 does not report historical emergency sleeps, so an emergency that happened while both monitor and coordinator were absent must be recorded from inspected OS evidence before restoring work.
 Clear the latch only with `clear-emergency --evidence` after inspecting that evidence.
-Fresh healthy telemetry must still satisfy recovery hysteresis after a clear or owner restart.
+Fresh healthy telemetry must still satisfy continuous nominal recovery hysteresis after a clear, warning, wake or owner restart.
 
 The bounded private metrics ring records telemetry and numeric resource usage by lease, without prompts, cookies or environment contents.
 Transition history, current cause and quarantine status provide the Firstmate exception summary; there is no permanent AI health watcher.

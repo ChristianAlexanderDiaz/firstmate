@@ -19,6 +19,18 @@ resource = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(resource)
 root = Path(sys.argv[2])
 real_time = time
+real_uptime = resource.uptime
+
+
+def awake_uptime():
+    try:
+        slept = float((root / "sleep-offset").read_text())
+    except (OSError, ValueError):
+        slept = 0
+    return real_uptime() - slept
+
+
+resource.uptime = awake_uptime
 
 
 def offset():

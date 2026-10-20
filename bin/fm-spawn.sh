@@ -5601,7 +5601,15 @@ if [ -n "$RESOURCE_CONFIG" ]; then
     resource_accounts+=(--account-env "CLAUDE_CONFIG_DIR=$resource_account_root")
     ;;
   pi | pi-signed)
-    [ -z "$WORKER_ACCOUNT" ] || resource_accounts+=(--account-env "PI_CODING_AGENT_DIR=$WORKER_ACCOUNT_ROOT")
+    resource_account_root=${PI_CODING_AGENT_DIR:-}
+    [ -z "$WORKER_ACCOUNT" ] || resource_account_root=$WORKER_ACCOUNT_ROOT
+    resource_accounts+=(--account-env "PI_CODING_AGENT_DIR=$resource_account_root")
+    ;;
+  codex)
+    resource_accounts+=(--account-env "CODEX_HOME=${CODEX_HOME:-}")
+    ;;
+  opencode)
+    resource_accounts+=(--account-env "OPENCODE_CONFIG_DIR=${OPENCODE_CONFIG_DIR:-}")
     ;;
   esac
   RESOURCE_MANIFEST=$("$SCRIPT_DIR/fm-resource-run" --config "$RESOURCE_CONFIG" prepare \
@@ -5610,7 +5618,19 @@ if [ -n "$RESOURCE_CONFIG" ]; then
     ${resource_accounts[@]+"${resource_accounts[@]}"} -- /bin/sh -c "$LAUNCH") || exit 1
   # Account prefixes below remain outside the wrapper, so validation sees the
   # actual selected config environment before any model CLI can start.
-  LAUNCH="env FM_RESOURCE_CONFIG=$(shell_quote "$RESOURCE_CONFIG") PATH=$(shell_quote "$RESOURCE_DIR/bin")\":\$PATH\" $(shell_quote "$SCRIPT_DIR/fm-resource-run") --config $(shell_quote "$RESOURCE_CONFIG") run --class worker --task $(shell_quote "$ID") --manifest $(shell_quote "$RESOURCE_MANIFEST") -- /bin/sh -c $(shell_quote "$LAUNCH")"
+  resource_transport="env"
+  if [ "${#resource_accounts[@]}" -gt 0 ]; then
+    resource_pair=${resource_accounts[1]}
+    resource_key=${resource_pair%%=*}
+    resource_value=${resource_pair#*=}
+    if [ -z "$resource_value" ]; then
+      resource_transport="$resource_transport -u $resource_key"
+    else
+      resource_value=$(cd -- "$resource_value" && pwd -P) || exit 1
+      resource_transport="$resource_transport $resource_key=$(shell_quote "$resource_value")"
+    fi
+  fi
+  LAUNCH="$resource_transport FM_RESOURCE_CONFIG=$(shell_quote "$RESOURCE_CONFIG") PATH=$(shell_quote "$RESOURCE_DIR/bin")\":\$PATH\" $(shell_quote "$SCRIPT_DIR/fm-resource-run") --config $(shell_quote "$RESOURCE_CONFIG") run --class worker --task $(shell_quote "$ID") --manifest $(shell_quote "$RESOURCE_MANIFEST") -- /bin/sh -c $(shell_quote "$LAUNCH")"
 fi
 if [ -n "$WORKER_ACCOUNT" ]; then
   case "$HARNESS" in

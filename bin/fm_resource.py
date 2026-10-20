@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Per-user deterministic admission owner; no model, daemon or backend lifecycle calls.
 
-Wire/configuration owner: --help and the parser below. All writes use atomic
-replacement; the lifetime flock is never removed. Clients cannot grant leases.
+Wire/configuration owner: --help and the parser below. Snapshots use atomic
+replacement; transitions append durably. The lifetime flock is never removed.
+Clients cannot grant leases.
 """
 
 import argparse
@@ -228,6 +229,7 @@ class Budget:
         self.monitor_id = None
         self.sample_id = None
         self.last_uptime = None
+        self.last_wall = None
         self.last_sequence = None
         self.swap = collections.deque()
         self.swap_bad = 0
@@ -252,8 +254,24 @@ class Budget:
             self.exception = reason
             self.data["events"].append({"timestamp": time.time(), "reason": reason})
             self.data["events"] = self.data["events"][-100:]
-            # Exactly one deterministic event per transition, not a model call.
-            print(json.dumps({"event": "host-budget-transition", "reason": reason}), flush=True)
+            record = json.dumps({"event": "host-budget-transition", "reason": reason})
+            with open(self.root / "transitions.jsonl", "a") as stream:
+                stream.write(record + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            print(record, flush=True)
+
+    def cleanup_browser(self, token, lease):
+        directory = self.root / "browser-jobs" / token
+        if not directory.exists():
+            return
+        private_dir(directory.parent)
+        private_dir(directory)
+        manifest = json.loads((directory / "manifest.json").read_text())
+        if (manifest.get("lease") != token or manifest.get("boot") != lease["controller"]["boot"] or
+                manifest.get("profile") != str(directory / "profile")):
+            raise Refusal("browser cleanup ownership mismatch")
+        shutil.rmtree(directory)
 
     def reconcile(self):
         self.table = process_table()
@@ -261,6 +279,7 @@ class Budget:
         for token, lease in list(self.data["leases"].items()):
             group = lease.get("group")
             if lease["controller"].get("boot") != boot_id():
+                self.cleanup_browser(token, lease)
                 del self.data["leases"][token]
                 continue
             if group:
@@ -275,8 +294,10 @@ class Budget:
                 elif members or group_exists(pgid):
                     lease["quarantined"] = True
                 else:
+                    self.cleanup_browser(token, lease)
                     del self.data["leases"][token]
             elif not matches(lease["controller"], self.table):
+                self.cleanup_browser(token, lease)
                 del self.data["leases"][token]
 
     def policy(self):
@@ -289,7 +310,8 @@ class Budget:
             if sample["bootSessionUUID"] != boot_id():
                 raise Refusal("old-boot monitor sample")
             age = now - float(sample["timestamp"])
-            uptime_age = uptime() - float(sample["uptimeSeconds"])
+            host_uptime = uptime()
+            uptime_age = host_uptime - float(sample["uptimeSeconds"])
             if not math.isfinite(age) or not math.isfinite(uptime_age) or not -1 <= age <= 10 or not -1 <= uptime_age <= 10:
                 raise Refusal("stale or future monitor sample")
             thermal, pressure = sample["thermalState"], sample["memory"]["pressure"]
@@ -301,14 +323,14 @@ class Budget:
             monitor_id = sample["instanceUUID"]
             sequence = sample["sequence"]
             source = (sample["power"]["source"], sample["power"]["adapterWatts"])
-            if monitor_id != self.monitor_id or source != self.source or (self.last_uptime is not None and uptime() - self.last_uptime > 10):
+            if monitor_id != self.monitor_id or source != self.source or (self.last_wall is not None and (now - self.last_wall > 10 or abs((now - self.last_wall) - (host_uptime - self.last_uptime)) > 1)):
                 self.healthy_since = None
                 self.swap.clear()
                 self.swap_bad = 0
             if monitor_id == self.monitor_id and self.last_sequence is not None and sequence < self.last_sequence:
                 raise Refusal("monitor sequence regressed")
             self.monitor_id, self.source, self.last_sequence = monitor_id, source, sequence
-            self.last_uptime = uptime()
+            self.last_uptime, self.last_wall = host_uptime, now
             self.telemetry = sample
             power = sample["power"]
             battery = power["batteryPercent"]
@@ -318,13 +340,13 @@ class Budget:
                 raise Refusal("power source is unavailable")
             if power["source"] == "ac" and (type(power["adapterWatts"]) not in (int, float) or power["adapterWatts"] <= 0):
                 raise Refusal("negotiated AC supply is unavailable")
-            if thermal == "critical" or pressure == "critical" or (power["source"] != "ac" and battery < 15):
+            if thermal == "critical" or pressure == "critical" or battery < 15:
                 cancel = True
             if thermal not in ("nominal", "fair") or pressure != "normal":
                 raise Refusal(f"thermal={thermal} memory={pressure}")
             if sample["lidClosed"] is not False:
                 raise Refusal("portable lid is closed or unknown")
-            if power["source"] != "ac" and battery < 30:
+            if battery < 30:
                 raise Refusal("battery below 30% admission reserve")
             if sample.get("performanceWarning", False) or sample.get("thermalWarning", False):
                 raise Refusal("secondary OS performance/thermal warning")
@@ -350,7 +372,7 @@ class Budget:
             if thermal == "nominal":
                 if self.healthy_since is None:
                     self.healthy_since = mono
-            elif self.healthy_since is None:
+            elif self.healthy_since is None or self.reason != "ready":
                 raise Refusal("nominal thermal recovery required")
             if mono - self.healthy_since < self.config["recoverySeconds"]:
                 return "recovery hysteresis: 120s stable nominal/normal/source required", cancel
@@ -433,6 +455,8 @@ class Budget:
         self.reconcile()
         if op in ("acquire", "inherit"):
             self.reason, _ = self.policy()
+            quarantined = sum(bool(l.get("quarantined")) for l in self.data["leases"].values())
+            self.event(self.reason + (f"; {quarantined} unverified process group(s) quarantined" if quarantined else ""))
         if op == "status":
             return {"ok": True, "reason": self.reason, "availableHeavySlots": max(0, 1 - sum(l["class"] != "worker" for l in self.data["leases"].values())) if self.reason == "ready" else 0,
                 "leases": self.data["leases"], "queue": self.data["queue"],
@@ -451,7 +475,7 @@ class Budget:
             self.save()
             return {"ok": True}
         token = request.get("token")
-        if not isinstance(token, str) or len(token) != 32:
+        if not isinstance(token, str) or len(token) != 32 or any(c not in "0123456789abcdef" for c in token):
             raise Refusal("invalid request nonce")
         if op == "acquire":
             controller = request["controller"]
@@ -492,6 +516,7 @@ class Budget:
         elif op == "release":
             if lease.get("group"):
                 raise Refusal("owned group still exists; reservation retained")
+            self.cleanup_browser(token, lease)
             del self.data["leases"][token]
         elif op == "inherit":
             if lease["class"] == "worker" or "cancelAt" in lease:
@@ -628,10 +653,10 @@ def prepare(args, config_name):
     cwd = str(Path(args.worktree).resolve(strict=True))
     branch = subprocess.run(["git", "-C", cwd, "symbolic-ref", "--short", "-q", "HEAD"], text=True, capture_output=True).stdout.strip()
     head = subprocess.check_output(["git", "-C", cwd, "rev-parse", "HEAD"], text=True).strip()
-    account = {key: os.environ.get(key) or None for key in ("CLAUDE_CONFIG_DIR", "PI_CODING_AGENT_DIR", "CODEX_HOME", "OPENCODE_CONFIG_DIR")}
+    account = {}
     for pair in args.account_env:
         key, separator, value = pair.partition("=")
-        if not separator or key not in account or value and not Path(value).is_dir():
+        if not separator or key not in ("CLAUDE_CONFIG_DIR", "PI_CODING_AGENT_DIR", "CODEX_HOME", "OPENCODE_CONFIG_DIR") or value and not Path(value).is_dir():
             raise Refusal("account environment must name an existing explicit config directory")
         account[key] = str(Path(value).resolve()) if value else None
     manifest = {"schemaVersion": 1, "worktree": cwd, "branch": branch,
@@ -686,20 +711,47 @@ def caps(command, kind, portable):
     env.update({"GRAPHIFY_MAX_WORKERS": str(workers), "RAYON_NUM_THREADS": str(workers),
         "CARGO_BUILD_JOBS": str(workers), "CMAKE_BUILD_PARALLEL_LEVEL": str(workers),
         "OMP_NUM_THREADS": str(workers), "GOMAXPROCS": str(workers),
-        "FM_RESOURCE_CPU_WORKERS": str(workers), "FM_RESOURCE_BROWSER_WORKERS": "1"})
+        "FM_RESOURCE_CPU_WORKERS": str(workers), "FM_RESOURCE_BROWSER_WORKERS": "1",
+        "VITEST_MAX_WORKERS": str(workers), "VITEST_MAX_THREADS": str(workers),
+        "VITEST_MAX_FORKS": str(workers), "VITEST_MIN_WORKERS": "1",
+        "VITEST_MIN_THREADS": "1", "VITEST_MIN_FORKS": "1"})
     name = Path(command[0]).name
     result = command[:]
-    if name in ("vitest", "playwright"):
-        result += [f"--maxWorkers={workers}"] if name == "vitest" else ["--workers=1"]
+    if name == "vitest":
+        result += [f"--maxWorkers={workers}"]
+    elif name == "playwright" and len(command) > 1 and command[1] == "test":
+        result += ["--workers=1"]
     elif name in ("npx", "npm", "pnpm", "yarn", "bun") and "playwright" in result and "test" in result:
         result += ["--workers=1"]
     elif name in ("npx", "npm", "pnpm", "yarn", "bun") and "vitest" in result:
         result += [f"--maxWorkers={workers}"]
     elif name == "node" and "--test" in command:
         result.insert(1, f"--test-concurrency={workers}")
-    elif name in ("nix", "darwin-rebuild", "nixos-rebuild") and any(v in command for v in ("build", "switch", "test")):
-        result += ["--max-jobs", "1", "--cores", str(workers)]
+    elif name == "nix-build" or name in ("nix", "darwin-rebuild", "nixos-rebuild") and any(v in command for v in ("build", "switch", "test")):
+        result += ["--max-jobs", "1", "--cores", "2"]
     return result, env
+
+
+def browser_environment(config, token, env):
+    directory = private_dir(private_dir(Path(config["stateDirectory"]) / "browser-jobs") / token)
+    profile = private_dir(directory / "profile")
+    with socket.socket() as port_probe, socket.socket() as bridge_probe:
+        port_probe.bind(("127.0.0.1", 0))
+        server_port = port_probe.getsockname()[1]
+        bridge_probe.bind(("127.0.0.1", 0))
+        bridge_port = bridge_probe.getsockname()[1]
+    session = "fm-resource-" + token
+    revision = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    atomic_json(directory / "manifest.json", {"schemaVersion": 1, "lease": token,
+        "boot": boot_id(), "worktree": str(Path.cwd().resolve()), "commit": revision,
+        "profile": str(profile), "serverPort": server_port, "bridgePort": bridge_port,
+        "session": session, "reuseServer": False})
+    env.update(FM_RESOURCE_BROWSER_PROFILE=str(profile), FM_RESOURCE_SERVER_PORT=str(server_port),
+        FM_RESOURCE_BROWSER_MANIFEST=str(directory / "manifest.json"), FM_RESOURCE_REUSE_SERVER="0",
+        CHROME_DEVTOOLS_AXI_SESSION=session, CHROME_DEVTOOLS_AXI_PORT=str(bridge_port),
+        CHROME_DEVTOOLS_AXI_USER_DATA_DIR=str(profile), CHROME_DEVTOOLS_AXI_AUTO_CONNECT="0")
+    env.pop("CHROME_DEVTOOLS_AXI_BROWSER_URL", None)
+    env.pop("CHROME_DEVTOOLS_AXI_WS_HEADERS", None)
 
 
 def run_job(args, config_name, config, digest):
@@ -721,6 +773,8 @@ def run_job(args, config_name, config, digest):
     if inherited and kind != "worker":
         rpc(config, digest, op="inherit", token=inherited, controller=owner, memoryMiB=memory)
         command, env = caps(command, kind, os.environ.get("FM_RESOURCE_PORTABLE") == "1")
+        if kind == "browser" and not env.get("FM_RESOURCE_BROWSER_PROFILE"):
+            browser_environment(config, inherited, env)
         os.execvpe(command[0], command, env)
     token = uuid.uuid4().hex
     child = None
@@ -748,25 +802,7 @@ def run_job(args, config_name, config, digest):
         command, env = caps(command, kind, portable)
         env.update(FM_RESOURCE_CONFIG=config_name, FM_RESOURCE_PORTABLE="1" if portable else "0")
         if kind == "browser":
-            directory = private_dir(private_dir(Path(config["stateDirectory"]) / "browser-jobs") / token)
-            profile = private_dir(directory / "profile")
-            with socket.socket() as port_probe, socket.socket() as bridge_probe:
-                port_probe.bind(("127.0.0.1", 0))
-                server_port = port_probe.getsockname()[1]
-                bridge_probe.bind(("127.0.0.1", 0))
-                bridge_port = bridge_probe.getsockname()[1]
-            session = "fm-resource-" + token
-            revision = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-            atomic_json(directory / "manifest.json", {"schemaVersion": 1, "lease": token,
-                "boot": boot_id(), "worktree": str(Path.cwd().resolve()), "commit": revision,
-                "profile": str(profile), "serverPort": server_port, "bridgePort": bridge_port,
-                "session": session, "reuseServer": False})
-            env.update(FM_RESOURCE_BROWSER_PROFILE=str(profile), FM_RESOURCE_SERVER_PORT=str(server_port),
-                FM_RESOURCE_BROWSER_MANIFEST=str(directory / "manifest.json"), FM_RESOURCE_REUSE_SERVER="0",
-                CHROME_DEVTOOLS_AXI_SESSION=session, CHROME_DEVTOOLS_AXI_PORT=str(bridge_port),
-                CHROME_DEVTOOLS_AXI_USER_DATA_DIR=str(profile), CHROME_DEVTOOLS_AXI_AUTO_CONNECT="0")
-            env.pop("CHROME_DEVTOOLS_AXI_BROWSER_URL", None)
-            env.pop("CHROME_DEVTOOLS_AXI_WS_HEADERS", None)
+            browser_environment(config, token, env)
         if kind != "worker":
             env["FM_RESOURCE_LEASE"] = token
         else:
@@ -813,19 +849,53 @@ def run_job(args, config_name, config, digest):
                 pass
 
 
+def register_check(args, config_name):
+    directory = private_dir(args.directory)
+    check = directory / "host-budget.check.sh"
+    command = [sys.executable, str(Path(__file__).resolve()), "--config", config_name,
+        "transitions", "--cursor", str(directory / ".host-budget-cursor")]
+    with check.open("x") as stream:
+        stream.write("#!/bin/sh\nexec " + shlex.join(command) + "\n")
+    check.chmod(0o700)
+    subprocess.run(["/bin/bash", str(HERE / "fm-check-register.sh"), "host-budget"],
+        env=dict(os.environ, FM_STATE_OVERRIDE=str(directory)), check=True)
+
+
+def transitions(args, config):
+    cursor = Path(args.cursor)
+    private_dir(cursor.parent)
+    with open(str(cursor) + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        position = json.loads(cursor.read_text()) if cursor.exists() else 0
+        path = Path(config["stateDirectory"]) / "transitions.jsonl"
+        with path.open("rb") as stream:
+            stream.seek(position)
+            for line in stream:
+                if not line.endswith(b"\n"):
+                    break
+                record = json.loads(line)
+                print(record["event"] + ": " + record["reason"], flush=True)
+                position += len(line)
+        atomic_json(cursor, position)
+
+
 def parser():
     p = argparse.ArgumentParser(description="One per-user atomic host budget. No auto-start or unlimited fallback.",
-        epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; maxHeavyJobs=1, memoryMiB=10240, maxResidentWorkers=12, recoverySeconds=120, graceSeconds=5. All homes must select the same config, via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger, 30-minute metrics ring and transition events are private atomic JSON. Critical thermal signals latch across boot; clear only after inspecting evidence. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; these are integration boundaries, not an OS sandbox. Direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
+        epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; maxHeavyJobs=1, memoryMiB=10240, maxResidentWorkers=12, recoverySeconds=120, graceSeconds=5. All homes must select the same config, via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger and 30-minute metrics ring are private atomic JSON; transitions append to transitions.jsonl. register-check --directory STATE writes and registers a host-budget custom watcher check; transitions --cursor PATH prints each new transition once per cursor. Critical thermal signals latch across boot; clear only after inspecting evidence. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; these are integration boundaries, not an OS sandbox. Direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
     p.add_argument("--config")
     sub = p.add_subparsers(dest="action", required=True)
     sub.add_parser("serve", help="foreground single owner; operator may supervise it with launchd")
     sub.add_parser("status", help="compact JSON status, including queue and last cause")
+    q = sub.add_parser("register-check", help="register the transition wake check in an explicit home state directory")
+    q.add_argument("--directory", required=True)
+    q = sub.add_parser("transitions", help="print new transition lines and advance a private byte cursor")
+    q.add_argument("--cursor", required=True)
     q = sub.add_parser("prepare", help="write a private restore manifest and command adapters")
     q.add_argument("--directory", required=True)
     q.add_argument("--worktree", required=True)
     q.add_argument("--task", required=True)
     q.add_argument("--account-label", required=True)
-    q.add_argument("--account-env", action="append", default=[])
+    q.add_argument("--account-env", action="append", default=[], help="selected harness config axis KEY=PATH; empty PATH requires the default account")
     q.add_argument("argv", nargs=argparse.REMAINDER)
     q = sub.add_parser("tool", help=argparse.SUPPRESS)
     q.add_argument("--name", required=True)
@@ -853,6 +923,12 @@ def main():
         os.execvpe(sys.argv[3], sys.argv[3:], os.environ)
     args = parser().parse_args()
     name, config, digest = load_config(args.config)
+    if args.action == "register-check":
+        register_check(args, name)
+        return 0
+    if args.action == "transitions":
+        transitions(args, config)
+        return 0
     if args.action == "prepare":
         prepare(args, name)
         return 0
