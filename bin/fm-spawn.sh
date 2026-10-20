@@ -1816,6 +1816,24 @@ if [ "$RELAUNCH" -eq 0 ]; then
   SPAWN_TASK_SET_LOCK_HELD=1
   spawn_refuse_if_away_spend_cap
   spawn_require_relocated_queued_work
+  if [ "$KIND" != secondmate ] && { [ -e "$FM_HOME/.fm-secondmate-parent" ] || [ -L "$FM_HOME/.fm-secondmate-parent" ]; }; then
+    # shellcheck source=bin/fm-secondmate-parent-lib.sh
+    . "$SCRIPT_DIR/fm-secondmate-parent-lib.sh"
+    # shellcheck source=bin/fm-handoff-record-lib.sh
+    . "$SCRIPT_DIR/fm-handoff-record-lib.sh"
+    fm_secondmate_parent_record_parse "$FM_HOME/.fm-secondmate-parent" || {
+      echo 'error: cannot verify source transfer reservations: invalid parent binding' >&2
+      exit 1
+    }
+    if [ "$FM_SECONDMATE_PARENT_ROUTE" = local ]; then
+      spawn_handoff_parent=$(cd "$FM_SECONDMATE_PARENT_HOME" && pwd -P) || exit 1
+      fm_handoff_file "$FM_HOME/.fm-secondmate-home" || exit 1
+      spawn_handoff_source_id=$(cat "$FM_HOME/.fm-secondmate-home") || exit 1
+      spawn_handoff_reserved=0
+      fm_handoff_source_key_reserved "$spawn_handoff_parent/data" "$spawn_handoff_source_id" "$FM_HOME" "$ID" || spawn_handoff_reserved=$?
+      [ "$spawn_handoff_reserved" = 1 ] || exit 1
+    fi
+  fi
 fi
 if [ "$KIND" = secondmate ]; then
   if spawn_remote_secondmate "$ID"; then

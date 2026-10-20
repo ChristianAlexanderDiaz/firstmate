@@ -1063,14 +1063,12 @@ strict_source_handoff() { # <destination> <keys...>; caller holds registry/hando
       if [ "$(sed -n '7p' "$file")" = "$id" ]; then
         fm_handoff_error "an unfinished transfer owns this destination; retry its original batch: $file"; return 1
       fi
-      if [ "$(sed -n '3p' "$file")" = "$SOURCE_ID" ] || [ "$(sed -n '4p' "$file")" = "$source" ]; then
-        for key in "${keys[@]}"; do
-          if sed -n '10,$p' "$file" | grep -Fxq -- "$key"; then
-            fm_handoff_error "an unfinished transfer owns source task $key; retry its original route/batch: $file"; return 1
-          fi
-        done
-      fi
     fi
+  done
+  for key in "${keys[@]}"; do
+    rc=0
+    fm_handoff_source_key_reserved "$DATA" "$SOURCE_ID" "$source" "$key" "$record" || rc=$?
+    [ "$rc" = 1 ] || return 1
   done
   ACTIVE_SOURCE_LOCK=$(fm_task_set_lock_path "$source/state") || return 1
   fm_lock_acquire_wait "$ACTIVE_SOURCE_LOCK" || return 1

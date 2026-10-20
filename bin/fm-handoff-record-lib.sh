@@ -8,6 +8,9 @@
 # Lock order: parent registry, parent handoff, source task-set, destination
 # task-set, receiver upload. tasks-axi owns its own file locks inside this order.
 # A committed move without an accepted receipt remains ambiguous on retry.
+# fm_handoff_source_key_reserved <parent-data> <source-id> <source-home> <key>
+# [retry-record] returns 0 reserved, 1 clear, 2 unsafe/unreadable.
+# Only the original route/batch may pass its matching record as retry-record.
 
 fm_handoff_error() { printf 'error: %s\n' "$*" >&2; return 1; }
 
@@ -208,4 +211,31 @@ fm_handoff_provenance() {
   keys_hash=$(sed -n '8p' "$file")
   actual=$(sed -n '10,$p' "$file" | fm_handoff_digest) || return 1
   [ "$keys_hash" = "$actual" ] || return 1
+}
+
+fm_handoff_source_key_reserved() {
+  local data=$1 source_id=$2 source_home=$3 key=$4 retry_record=${5:-} dir file
+  source_home=$(cd "$source_home" && pwd -P) || return 2
+  for dir in "$data" "$data/handoff" "$data/handoff/transfers"; do
+    [ -e "$dir" ] || [ -L "$dir" ] || return 1
+    [ -d "$dir" ] && [ ! -L "$dir" ] && [ -r "$dir" ] && [ -x "$dir" ] \
+      || { fm_handoff_error "unsafe or unreadable transfer directory: $dir"; return 2; }
+  done
+  for file in "$data/handoff/transfers"/*.record; do
+    [ -e "$file" ] || [ -L "$file" ] || continue
+    fm_handoff_provenance "$file" || return 2
+    [ "$file" != "$retry_record" ] || continue
+    if [ -e "${file%.record}.accepted" ] || [ -L "${file%.record}.accepted" ]; then
+      fm_handoff_file "${file%.record}.accepted" || return 2
+      [ "$(cat "${file%.record}.accepted")" = "$(sed -n '9p' "$file")" ] || return 2
+      continue
+    fi
+    if [ "$(sed -n '3p' "$file")" = "$source_id" ] || [ "$(sed -n '4p' "$file")" = "$source_home" ]; then
+      if sed -n '10,$p' "$file" | grep -Fxq -- "$key"; then
+        fm_handoff_error "an unfinished transfer owns source task $key; retry its original route/batch: $file"
+        return 0
+      fi
+    fi
+  done
+  return 1
 }

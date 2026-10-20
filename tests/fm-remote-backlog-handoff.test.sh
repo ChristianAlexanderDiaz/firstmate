@@ -678,6 +678,20 @@ strict_hash=$(sha256_file "$strict_payload")
 # Reproduce interrupted source persistence: the authoritative outbox exists,
 # but the predecessor still has its identical row. Resume must clean that home.
 cp "$strict_payload" "$SOURCE/data/backlog.md"
+SPAWN_CRASH_HOME="$TMP_ROOT/source-spawn-user-home"
+mkdir -p "$SOURCE/projects/alpha" "$SOURCE/data/strict-remote" "$SPAWN_CRASH_HOME"
+fm_git_init_commit "$SOURCE/projects/alpha"
+fm_git_add_origin "$SOURCE/projects/alpha" "$TMP_ROOT/source-spawn-origin.git"
+printf '# Task\n## Captain\x27s intent\nKeep reserved work with its transfer.\n\n## Firstmate spec\nRefuse dispatch.\n\n# Definition of done\nDelivery contract: mode=direct-PR\n' > "$SOURCE/data/strict-remote/brief.md"
+source_crash_backlog=$(cat "$SOURCE/data/backlog.md")
+if FM_HOME="$SOURCE" FM_ROOT_OVERRIDE="$ROOT" HOME="$SPAWN_CRASH_HOME" FM_SPAWN_NO_GUARD=1 \
+  "$ROOT/bin/fm-spawn.sh" strict-remote "$SOURCE/projects/alpha" --mode direct-PR --yolo off 'echo fixture' > "$TMP_ROOT/strict-reserved-spawn.out" 2>&1; then
+  fail 'fresh source spawn acquired an unfinished transfer after its lock was released'
+fi
+assert_grep 'unfinished transfer owns source task strict-remote' "$TMP_ROOT/strict-reserved-spawn.out" "reserved dispatch refused for an unrelated reason: $(cat "$TMP_ROOT/strict-reserved-spawn.out")"
+assert_absent "$SOURCE/state/strict-remote.meta" 'reserved dispatch published a worker'
+[ "$(cat "$SOURCE/data/backlog.md")" = "$source_crash_backlog" ] || fail 'reserved dispatch changed source ownership'
+[ "$(sha256_file "$strict_payload")" = "$strict_hash" ] || fail 'reserved dispatch changed pinned payload'
 SUCCESSOR="$TMP_ROOT/successor"
 mkdir -p "$SUCCESSOR"/{bin,data,state,config,projects}
 printf 'fixture\n' > "$SUCCESSOR/AGENTS.md"
