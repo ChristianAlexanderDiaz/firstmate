@@ -69,7 +69,7 @@
 #          The mutable local phase registers the optional root-home quota refill
 #          source; bin/fm-procevent-refill.sh owns registration and polling.
 #          quota-axi is required for the agent-owned dispatch-profile array
-#          procedure in AGENTS.md section 4 and
+#          procedure in the harness-adapters skill and
 #          .agents/skills/quota-array-dispatch/SKILL.md.
 #          On a primary home, the locked mutable path materializes the visible
 #          default config/startup-memory-budget=7500 when absent. It never
