@@ -14,7 +14,7 @@
 # file behaves exactly as before: `record` writes nothing, so `tick` and `run`
 # find nothing to do.
 #
-# Detection. Every Claude ship and scout launched by bin/fm-spawn.sh runs
+# Detection. Every Claude ship, scout, and local secondmate launched by bin/fm-spawn.sh runs
 # `record` from its StopFailure hook, the turn end Claude reports for an API
 # error. `record` reads the hook's JSON from stdin and, only for
 # `"error": "rate_limit"`, writes state/<id>.usage-limit naming the busy
@@ -30,7 +30,7 @@
 # backend capability boundary before consuming the generation-bound record
 # exactly once, rechecking that turn before cancellation and stopping, then:
 #   1. Drops the record silently when it is stale (a newer turn or incarnation,
-#      a task no longer a canonical claude ship or scout) or neither the rendered
+#      a task no longer a canonical claude ship, scout, or secondmate) or neither the rendered
 #      usage-limit prompt nor the verified account-exhaustion wording appears.
 #   2. Answers Claude's usage-limit prompt, when shown, with its
 #      cancel key (Escape), which leaves the session stopped exactly as the
@@ -42,8 +42,8 @@
 #   3. Takes one fresh `quota-axi --all-accounts --json` snapshot and picks an
 #      account of the map through `choose`.
 #   4. With no qualifying account, leaves the worker stopped and
-#      appends one `blocked:` line to the task's status naming each account's
-#      quota and reset time.
+#      appends one home-wide `blocked:` outcome naming each account's quota
+#      and reset time, once until a fresh watcher snapshot finds room again.
 #   5. For a ship whose own no-mistakes run is still active, aborts that run
 #      through `no-mistakes axi abort --run <id>` and proves it terminal before
 #      anything moves; a run it cannot read or stop blocks the move instead.
@@ -55,9 +55,9 @@
 #      the whole transcript uncached on the new account, while a fresh agent
 #      reads only the instructions, the local copy, and a short note.
 # `run` prints one line for its caller: `moved <id> <from> <to>`,
-# `blocked <id> <reason>`, or `skipped <id> <reason>`. Secondmates are not
-# moved: they carry no StopFailure hook; their workers use their own home's
-# worker account configuration (docs/configuration.md).
+# `blocked <id> <reason>`, or `skipped <id> <reason>`. Local secondmates keep
+# their home, charter, steering inbox, and child state; their launch-only hooks
+# merge with their own supervision hooks. Remote routes remain out of scope.
 #
 # Choice. `choose` reads the map's account names in order and one snapshot,
 # and qualifies an account only when exactly one fresh, unreused claude row carries its
@@ -237,6 +237,26 @@ skipped() {
   exit 0
 }
 
+# One notice per launching home and exhaustion episode, shared by every task.
+# A qualifying account clears the episode, including quota restored early.
+status_exhausted() {
+  local reason=$1 lock="$STATE/.claude-exhausted.lock"
+  fm_account_failover_require_current_turn
+  fm_lock_acquire_wait "$lock"
+  if [ -f "$STATE/.claude-exhausted" ]; then
+    fm_lock_release "$lock"
+    skipped "Claude account exhaustion already reported for this home"
+  fi
+  if ! printf 'blocked: %s\n' "$reason" >> "$STATE/$ID.status"; then
+    fm_lock_release "$lock"
+    die "could not append the account exhaustion outcome"
+  fi
+  printf '%s\n' "$(fm_meta_get "$META" model)" > "$STATE/.claude-exhausted"
+  fm_lock_release "$lock"
+  printf 'blocked %s %s\n' "$ID" "$reason"
+  exit 0
+}
+
 menu_visible() {
   local screen
   screen=$(fm_backend_visible_capture "${BACKEND:?}" "$T" "fm-$ID" 2>/dev/null) || return 1
@@ -364,7 +384,7 @@ fm_account_failover_recover() {
   MAP=$(fm_worker_account_failover_load "$CONFIG" 2>/dev/null) || MAP=invalid
   [ -n "$MAP" ] || skipped "this home has no config/$FM_WORKER_ACCOUNT_FAILOVER_FILE"
   [ "$RECORDED_HARNESS" = claude ] || skipped "not a canonical claude worker"
-  case "$KIND" in ship | scout) ;; *) skipped "a $KIND is not moved between accounts" ;; esac
+  case "$KIND" in ship | scout | secondmate) ;; *) skipped "a $KIND is not moved between accounts" ;; esac
   local FAILOVER_GEN=$gen FAILOVER_SEQ
   FAILOVER_SEQ=$(marker_field "$marker" turn_seq)
   case "$FAILOVER_SEQ" in ''|*[!0-9]*) skipped "the usage-limit record has no turn sequence" ;; esac
@@ -413,8 +433,11 @@ fm_account_failover_recover() {
   }
   rm -f "$snapshot"
   if ! pick=$(choose_print "$choice"); then
-    status_blocked "Claude usage limit reached ($limit_text); no other Claude account has room (${pick#none$'\t'}), so the worker was left stopped"
+    status_exhausted "Claude usage limit reached ($limit_text); no other Claude account has room (${pick#none$'\t'}), so the worker was left stopped"
   fi
+  fm_lock_acquire_wait "$STATE/.claude-exhausted.lock"
+  rm -f "$STATE/.claude-exhausted"
+  fm_lock_release "$STATE/.claude-exhausted.lock"
   to=$(printf '%s' "$pick" | cut -f2)
 
   run_id=
@@ -457,10 +480,29 @@ fm_account_failover_recover() {
 # --- tick -------------------------------------------------------------------
 
 cmd_tick() {
-  local state marker id
+  local state marker id snapshot model
   [ -n "${FM_HOME:-}" ] || return 0
   state="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
   [ -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/$FM_WORKER_ACCOUNT_FAILOVER_FILE" ] || return 0
+  # Re-arm the one home-wide notice when a fresh reading proves an account
+  # usable again, even when no stopped task has submitted another turn.
+  if [ -f "$state/.claude-exhausted" ]; then
+    model=$(cat "$state/.claude-exhausted")
+    snapshot="$state/.account-failover-rearm.$$.json"
+    if fm_run_timed "${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}" env -u QUOTA_AXI_MAX_AGE \
+      quota-axi --all-accounts --json > "$snapshot" 2>/dev/null </dev/null \
+      && cmd_choose --map "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/$FM_WORKER_ACCOUNT_FAILOVER_FILE" \
+        --snapshot "$snapshot" --model "$model" >/dev/null 2>&1; then
+      # tick runs standalone, while run is sourced by control; share the
+      # existing lock implementation without acquiring any fleet authority.
+      # shellcheck source=bin/fm-wake-lib.sh
+      . "$SCRIPT_DIR/fm-wake-lib.sh"
+      fm_lock_acquire_wait "$state/.claude-exhausted.lock"
+      rm -f "$state/.claude-exhausted"
+      fm_lock_release "$state/.claude-exhausted.lock"
+    fi
+    rm -f "$snapshot"
+  fi
   for marker in "$state"/*.usage-limit; do
     [ -f "$marker" ] || continue
     id=${marker##*/}

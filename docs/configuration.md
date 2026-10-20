@@ -1061,7 +1061,7 @@ Blank lines and lines starting with `#` are ignored, names are unique, and a con
 
 ### What happens at a usage limit
 
-Every Claude ship and scout records its turn end through Claude's `StopFailure` hook, and a `rate_limit` turn end counts as a usage limit when either the rendered prompt shows both "Stop and wait for limit to reset" and "Esc to cancel", or the recorded message starts with "You've hit your <window> limit" (with a straight or typographic apostrophe).
+Every Claude ship, scout, and local secondmate records its turn end through Claude's `StopFailure` hook, and a `rate_limit` turn end counts as a usage limit when either the rendered prompt shows both "Stop and wait for limit to reset" and "Esc to cancel", or the recorded message starts with "You've hit your <window> limit" (with a straight or typographic apostrophe).
 Claude can report a repeat account limit with that verified wording without reopening the menu.
 Without a rendered limit menu, other hook text, including "API Error: Rate limit reached", never triggers an account move or validation cancellation.
 Firstmate's monitoring then, within one cycle:
@@ -1076,11 +1076,15 @@ Prompt caching does not carry across accounts, so resuming would resend the whol
 
 The task record then carries `claude_account=<name>`; later relaunches retain it unless an explicit account or harness change overrides it, or [pacing](#claude-account-pacing-configclaude-account-paced) chooses afresh.
 Every selected account name, including `default`, resolves literally through the map.
-When no account qualifies, the worker stays stopped and its status gets one `blocked:` line naming each account's remaining quota and reset time.
+When no account qualifies, the worker stays stopped; the launching home emits one `blocked:` outcome naming each account's remaining quota and reset time across all affected tasks.
+The watcher re-arms that notice only when a fresh snapshot proves an account usable again.
 
 ### Limits
 
-Secondmates are never moved: they carry no `StopFailure` hook, and their workers use their own home's [worker account configuration](#worker-account-pin-configclaude-account-configpi-account).
+Local secondmates use the same failover path and retain their home, charter, child state, and steering inbox; launch-only hooks merge with their own supervision hooks without changing home settings.
+Endpoint-dead recovery retains the selected account.
+Their workers still use their own home's [worker account configuration](#worker-account-pin-configclaude-account-configpi-account).
+Remote secondmate routes remain a follow-up: local control refuses endpoints on another host.
 A `config/claude-account` that names one account pins every Claude worker to it, so a home with both files leaves limited workers stopped and says so; the `paced` value pins nothing, and failover moves its workers as usual.
 Accounts with a paid credits window or unknown paid usage status never qualify, even when their plan has room.
 Selection, control, and spawn require an unreused vendor reading and run their quota queries with `QUOTA_AXI_MAX_AGE` unset before launching a worker on a mapped account; disable paid extra usage in the account itself before using it for failover.

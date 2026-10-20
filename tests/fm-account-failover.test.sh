@@ -179,6 +179,15 @@ new_case() {
   : > "$dir/home/config/supervision-host-off"
   printf '%s' "$LIMIT_SCREEN" > "$dir/fake/screen"
   quota_snapshot 0 81 > "$dir/fake/quota.json"
+  if [ "$kind" = secondmate ]; then
+    mkdir -p "$dir/wt/state" "$dir/wt/data" "$dir/wt/bin" "$dir/wt/.claude"
+    printf '%s\n' "$id" > "$dir/wt/.fm-secondmate-home"
+    printf '# agents\n' > "$dir/wt/AGENTS.md"
+    printf '# standing charter\n' > "$dir/wt/data/charter.md"
+    printf '{"permissions":{"deny":["Agent"]}}\n' > "$dir/wt/.claude/settings.local.json"
+    printf 'home=%s\n' "$dir/wt" >> "$dir/home/state/$id.meta"
+    printf 'claude\n' > "$dir/home/config/secondmate-harness"
+  fi
 }
 
 # quota_snapshot <limited-percent> <spare-percent> [jq-filter]: an
@@ -1223,6 +1232,97 @@ test_paced_relaunches_choose_afresh_and_failover_still_moves() {
   assert_no_grep 'claude_account_reason=' "$CASE/home/state/t32.meta" "a failover move is not a pacing choice"
   pass "pacing: every paced relaunch chooses afresh, and failover still moves a limited worker beside the paced pin"
 }
+
+test_secondmate_failover() {
+  local out settings failure gen
+  new_case secondmate-move sm33 secondmate
+  mkdir -p "$CASE/home/state/sm33.inbox"
+  printf 'pending instruction\n' > "$CASE/home/state/sm33.inbox/001.msg"
+  printf 'unlanded child work\n' > "$CASE/wt/state/child.status"
+  record_limit sm33
+  out=$(case_env "$FAILOVER" run sm33 2>&1)
+  assert_contains "$out" 'moved sm33 limited spare' "the secondmate moves to the account with room: $out"
+  assert_grep "home=$CASE/wt" "$CASE/home/state/sm33.meta" "the home is retained"
+  assert_grep 'claude_account=spare' "$CASE/home/state/sm33.meta" "the moved account is durable"
+  assert_equals '# standing charter' "$(cat "$CASE/wt/data/charter.md")" "the standing charter survives"
+  assert_equals 'pending instruction' "$(cat "$CASE/home/state/sm33.inbox/001.msg")" "the steering inbox survives"
+  assert_equals 'unlanded child work' "$(cat "$CASE/wt/state/child.status")" "child state survives"
+  assert_equals '{"permissions":{"deny":["Agent"]}}' "$(cat "$CASE/wt/.claude/settings.local.json")" "home settings survive"
+  # Decode the shell launch via Python's shell lexer, rather than assuming the
+  # inline JSON's quoting. Execute the installed recorder with its real payload.
+  settings=$(python3 - "$CASE/fake/literal" <<'PY'
+import shlex, sys
+for line in open(sys.argv[1]):
+    args = shlex.split(line)
+    if '--settings' in args:
+        print(args[args.index('--settings') + 1])
+PY
+  )
+  failure=$(printf '%s' "$settings" | jq -r '.hooks.StopFailure[0].hooks[0].command')
+  gen=$(sed -n 's/^busy_gen=//p' "$CASE/home/state/sm33.meta")
+  [ -n "$gen" ] || fail "the secondmate must arm a parent generation"
+  jq -nc --arg m "$LIMIT_TEXT" '{error:"rate_limit",last_assistant_message:$m}' |
+    case_env CLAUDE_CONFIG_DIR="$CASE/accounts/spare" bash -c "$failure"
+  assert_grep "gen=$gen" "$CASE/home/state/sm33.usage-limit" "the installed hook records the replacement generation"
+  assert_grep "config_dir=$CASE/accounts/spare" "$CASE/home/state/sm33.usage-limit" "the installed hook records the replacement account"
+  # The endpoint-dead auto-recovery path also goes through --secondmate.
+  printf zsh > "$CASE/fake/command"
+  : > "$CASE/fake/windows"
+  out=$(case_env "$ROOT/bin/fm-spawn.sh" sm33 --secondmate 2>&1)
+  expect_code 0 $? "secondmate recovery succeeds: $out"
+  assert_grep 'claude_account=spare' "$CASE/home/state/sm33.meta" "recovery retains the moved account"
+  assert_equals 'pending instruction' "$(cat "$CASE/home/state/sm33.inbox/001.msg")" "recovery retains the inbox"
+  pass "secondmate: failover and recovery preserve home, inbox, charter, child state, settings and rearm StopFailure"
+
+  new_case secondmate-pin sm34 secondmate
+  printf 'ordinary\n' > "$CASE/home/config/claude-account"
+  record_limit sm34
+  out=$(case_env "$FAILOVER" run sm34 2>&1)
+  assert_contains "$out" 'pins every Claude worker' "a pinned secondmate stays stopped: $out"
+  assert_no_grep '/exit' "$CASE/fake/literal" "a pinned secondmate is not relaunched"
+
+  new_case secondmate-stale sm35 secondmate
+  record_limit sm35
+  case_env "$ROOT/bin/fm-busy-event.sh" arm "$CASE/home/state" sm35 >/dev/null
+  out=$(case_env "$FAILOVER" run sm35 2>&1)
+  assert_contains "$out" 'skipped sm35' "a superseded secondmate limit is ignored: $out"
+  [ ! -e "$CASE/home/state/sm35.usage-limit" ] || fail "stale limit is consumed"
+  pass "secondmate: pins prevent moves and stale limit records are dropped"
+}
+
+test_exhaustion_episode_is_shared() {
+  local out
+  new_case secondmate-exhausted sm36 secondmate
+  quota_snapshot 0 0 > "$CASE/fake/quota.json"
+  record_limit sm36
+  out=$(case_env "$FAILOVER" run sm36 2>&1)
+  assert_contains "$out" 'blocked sm36' "the first exhaustion emits an outcome: $out"
+  # Another mate in the SAME launching home, with its own incarnation.
+  sed 's/sm36/sm37/g; /^busy_gen=/d' "$CASE/home/state/sm36.meta" > "$CASE/home/state/sm37.meta"
+  printf 'fm-sm37\n' >> "$CASE/fake/windows"
+  CASE_GEN=$(case_env "$ROOT/bin/fm-busy-event.sh" arm "$CASE/home/state" sm37)
+  printf 'busy_gen=%s\n' "$CASE_GEN" >> "$CASE/home/state/sm37.meta"
+  record_limit sm37
+  out=$(case_env "$FAILOVER" run sm37 2>&1)
+  assert_contains "$out" 'already reported' "another mate cannot duplicate the outcome: $out"
+  [ ! -s "$CASE/home/state/sm37.status" ] || fail "another mate emitted a duplicate outcome"
+  assert_contains "$(status_of sm36)" 'limited:' "the notice names the first account"
+  assert_contains "$(status_of sm36)" 'spare:' "the notice names the spare account"
+  assert_contains "$(status_of sm36)" 'resets 2026-10-03T19:59Z' "the notice names the first reset"
+  assert_contains "$(status_of sm36)" 'resets 2026-10-06T22:59Z' "the notice names the other reset"
+  # A reset observed by the watcher re-arms the notice, with no task record.
+  quota_snapshot 0 81 > "$CASE/fake/quota.json"
+  case_env "$FAILOVER" tick >/dev/null
+  quota_snapshot 0 0 > "$CASE/fake/quota.json"
+  record_limit sm36
+  out=$(case_env "$FAILOVER" run sm36 2>&1)
+  assert_contains "$out" 'blocked sm36' "a later episode emits a new outcome: $out"
+  assert_equals 2 "$(grep -c '^blocked:' "$CASE/home/state/sm36.status")" "one notice per episode"
+  pass "secondmate: all-exhausted emits one home-wide outcome with resets per episode"
+}
+
+test_secondmate_failover
+test_exhaustion_episode_is_shared
 
 test_record_writes_a_usage_limit_record_only_for_a_rate_limit_with_the_map
 test_absent_map_is_a_no_op

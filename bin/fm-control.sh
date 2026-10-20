@@ -83,7 +83,7 @@
 #              For ships and scouts, the same pre-stop refusal applies to this
 #              home's worker tool exclusions (bin/fm-exclude-tools-lib.sh): a
 #              malformed list, or a replacement runtime that cannot hide the tools.
-#              --claude-account <name> moves a ship or scout Claude worker onto
+#              --claude-account <name> moves a ship, scout, or local secondmate onto
 #              that named account of config/claude-failover (docs/configuration.md
 #              "Claude account failover"); every name is literal. Without an
 #              override, a moved task retains its account unless this home's
@@ -1051,8 +1051,8 @@ resolve_relaunch_profile() {
     [ "$TARGET_HARNESS" = claude ] \
       || die "Claude account '$TARGET_CLAUDE_ACCOUNT' applies only to a claude replacement, not '$TARGET_HARNESS'"
     case "$KIND" in
-      ship|scout) ;;
-      *) die "Claude account failover moves ship and scout workers only; task $ID is a $KIND" ;;
+      ship|scout|secondmate) ;;
+      *) die "Claude account failover does not support task $ID's kind $KIND" ;;
     esac
     fm_worker_account_failover_select "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
       "$TARGET_CLAUDE_ACCOUNT" claude "$account_model" >/dev/null || return 1
