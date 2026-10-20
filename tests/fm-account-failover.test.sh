@@ -1310,7 +1310,7 @@ test_exhaustion_episode_is_shared() {
   assert_contains "$(status_of sm36)" 'spare:' "the notice names the spare account"
   assert_contains "$(status_of sm36)" 'resets 2026-10-03T19:59Z' "the notice names the first reset"
   assert_contains "$(status_of sm36)" 'resets 2026-10-06T22:59Z' "the notice names the other reset"
-  # A reset observed by the watcher re-arms the notice, with no task record.
+  # A reset observed by the watcher re-arms the notice, with no pending limit record.
   quota_snapshot 0 81 > "$CASE/fake/quota.json"
   touch -t 200001010000 "$CASE/home/state/.claude-exhausted"
   case_env "$FAILOVER" tick >/dev/null

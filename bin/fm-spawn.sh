@@ -405,8 +405,8 @@
 #   claude_account= plus a one-line claude_account_reason= naming each
 #   account's week left, reset, and pace. When no account is choosable it
 #   refuses before creating an endpoint, local copy, or task record, naming
-#   each account's week left and reset when available. A raw launch and a
-#   secondmate keep their ambient launch account.
+#   each account's week left and reset when available. Raw launches are not
+#   paced; secondmate account retention follows the failover contract above.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode

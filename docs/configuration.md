@@ -1077,7 +1077,8 @@ Prompt caching does not carry across accounts, so resuming would resend the whol
 The task record then carries `claude_account=<name>`; later relaunches retain it unless an explicit account or harness change overrides it, or [pacing](#claude-account-pacing-configclaude-account-paced) chooses afresh.
 Every selected account name, including `default`, resolves literally through the map.
 When no account qualifies, the worker stays stopped; the launching home emits one `blocked:` outcome naming each account's remaining quota and reset time across all affected tasks.
-The watcher re-arms that notice only when a fresh snapshot proves an account usable again.
+A fresh failover snapshot or the watcher's periodic maintenance re-arms that notice only when an account qualifies for the model recorded at exhaustion; room for an unrelated model alone does not re-arm it.
+Maintenance checks are throttled and time-bounded so quota or sign-in outages do not repeatedly delay ordinary watcher notifications; [`bin/fm-account-failover.sh`](../bin/fm-account-failover.sh)'s `tick` implementation owns those bounds.
 
 ### Limits
 
@@ -1119,7 +1120,8 @@ Control checks a fresh pacing choice before stopping the current worker, and spa
 When no account is choosable, the launch refuses with an `error: Claude account pacing:` line saying why and naming each account's week left and reset when available.
 A fresh spawn refuses before creating an endpoint, local copy, or task record; a relaunch whose pre-stop pacing check fails leaves the current worker running.
 A home with `paced` but no `config/claude-failover` refuses Claude ship and scout launches and names the missing file.
-Raw Claude launch commands and secondmate agents are not paced and keep their ambient launch account.
+Raw Claude launch commands are not paced and keep their ambient launch account.
+Secondmate agents are not paced; their account retention follows the [failover limits](#limits).
 A worker that later reaches a usage limit still moves through [Claude account failover](#claude-account-failover-configclaude-failover).
 [`bin/fm-worker-account-lib.sh`](../bin/fm-worker-account-lib.sh) owns the choice and its checks.
 
