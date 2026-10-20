@@ -1035,11 +1035,11 @@ _fm_recovery_marker_ack() {
 }
 
 _fm_recovery_marker_arm_check() {
-  local marker=$1 lock line quarantine
+  local marker=$1 required_dir=${2:-} lock line quarantine
   FM_RECOVERY_MARKER_ACTION='none'
   lock="${marker}.lock"
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
-  if ! fm_lock_acquire_wait "$lock"; then
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" "$required_dir" || return 1
+  if ! fm_lock_acquire_wait "$lock" "$required_dir"; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     return 1
   fi
@@ -1203,7 +1203,7 @@ fm_recovery_transition() {
       _fm_recovery_marker_ack "$marker" "$target"
       ;;
     arm-check)
-      _fm_recovery_marker_arm_check "$marker"
+      _fm_recovery_marker_arm_check "$marker" "$target"
       ;;
     reopen-announced)
       _fm_recovery_marker_reopen_announced "$marker"
@@ -1249,8 +1249,8 @@ fm_recovery_marker_begin_handling() {
   _fm_recovery_marker_begin_handling "$1" "${2:-}"
 }
 
-fm_recovery_marker_arm_check() {
-  fm_recovery_transition "$1" arm-check
+fm_recovery_marker_arm_check() {  # <marker> [required-directory]
+  fm_recovery_transition "$1" arm-check "${2:-}"
 }
 
 fm_recovery_marker_reopen_announced() {
@@ -1417,9 +1417,12 @@ fm_lock_try_acquire() {
   return "$rc"
 }
 
-fm_lock_acquire_wait() {
-  local lockdir=$1
+# The optional required directory cancels a wait when its owner's world is
+# removed, without changing ordinary waits on a live foreign lock holder.
+fm_lock_acquire_wait() {  # <lockdir> [required-directory]
+  local lockdir=$1 required_dir=${2:-}
   while ! fm_lock_try_acquire "$lockdir"; do
+    [ -z "$required_dir" ] || [ -d "$required_dir" ] || return 1
     sleep 0.1
   done
 }

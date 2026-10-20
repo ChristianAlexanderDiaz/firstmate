@@ -267,6 +267,23 @@ WATCH_HOME_EXISTED=0
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
 WATCHER_DOWNTIME_MARKER="$STATE/.watcher-down"
+
+# A detached helper can recreate a deleted state directory before the next
+# poll, so a missing singleton holder also means this world was removed.
+watcher_world_exists() {
+  if [ "$WATCH_HOME_EXISTED" -eq 1 ] && [ ! -d "$FM_HOME" ]; then
+    echo "watcher: exiting - home no longer exists: $FM_HOME" >&2
+  elif [ ! -d "$STATE" ]; then
+    echo "watcher: exiting - state directory no longer exists: $STATE" >&2
+  elif [ ! -e "$WATCH_LOCK/pid" ]; then
+    echo "watcher: exiting - state directory was torn down (singleton lock removed): $STATE" >&2
+  elif [ ! -d "$SCRIPT_DIR" ]; then
+    echo "watcher: exiting - code root no longer exists: $SCRIPT_DIR" >&2
+  else
+    return 0
+  fi
+  return 1
+}
 # The singleton-lock acquisition, EXIT trap, and the blocking supervision loop
 # all live below the source guard at the very bottom of this file (see "Main
 # entry"). Sourcing this file for unit tests therefore loads the functions -
@@ -2738,7 +2755,8 @@ if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" != 1 ] \
     exit 1
   fi
 fi
-if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER"; then
+if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER" "$STATE"; then
+  watcher_world_exists || exit 1
   echo "watcher: recovery state could not be consumed safely; retaining stale lock evidence" >&2
   exit 1
 fi
@@ -2938,7 +2956,8 @@ resurface_after_downtime() {
     return 0
   fi
   if [ "$WATCHER_RECOVERY_PENDING" -ne 1 ]; then
-    if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER"; then
+    if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER" "$STATE"; then
+      watcher_world_exists || exit 1
       echo "watcher: recovery state could not be consumed safely" >&2
       exit 1
     fi
@@ -2948,28 +2967,7 @@ resurface_after_downtime() {
 }
 
 while :; do
-  # Home-gone exit: a deleted home, state directory, or code root means this
-  # watcher's world is gone (a torn-down temporary home or a discarded
-  # disposable checkout). Exit with a logged reason rather than writing state
-  # into nothing, or into a live home from a checkout that no longer exists.
-  # A detached helper this watcher started (home-summary refresh, reconcile)
-  # can recreate a deleted state directory before the next poll, so a lock
-  # with no holder at all is read as the same teardown: only a fresh watcher
-  # ever recreates the lock, and that case is the self-eviction below.
-  # Scoped to this process alone: no other watcher is signalled.
-  if [ "$WATCH_HOME_EXISTED" -eq 1 ] && [ ! -d "$FM_HOME" ]; then
-    echo "watcher: exiting - home no longer exists: $FM_HOME" >&2
-    exit 1
-  elif [ ! -d "$STATE" ]; then
-    echo "watcher: exiting - state directory no longer exists: $STATE" >&2
-    exit 1
-  elif [ ! -e "$WATCH_LOCK/pid" ]; then
-    echo "watcher: exiting - state directory was torn down (singleton lock removed): $STATE" >&2
-    exit 1
-  elif [ ! -d "$SCRIPT_DIR" ]; then
-    echo "watcher: exiting - code root no longer exists: $SCRIPT_DIR" >&2
-    exit 1
-  fi
+  watcher_world_exists || exit 1
 
   # Self-eviction: if the singleton lock no longer names this process, a second
   # watcher has taken over (e.g. a transient duplicate from a racy arm). Stand

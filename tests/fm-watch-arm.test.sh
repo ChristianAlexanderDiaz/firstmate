@@ -1407,14 +1407,41 @@ wait_for_pid_gone() {  # <pid> <polls>
 # already in progress before its next FM_POLL=1 tick. A busy poll may spend
 # longer than ten seconds in subprocesses on a contended CI runner.
 test_watcher_exits_when_its_state_directory_is_removed() {
-  local dir home state fakebin armout
+  local dir home state fakebin armout i held=0
   dir=$(make_case state-dir-removed)
   home="$dir/home"
   state="$dir/state"
   fakebin="$dir/fakebin"
   armout="$dir/arm.out"
   mkdir -p "$home/data"
-  start_owned_watcher "$home" "$state" "$fakebin" "$armout"
+  # Keep the summary helper from recreating state and masking the deletion.
+  touch "$state/home-summary.json"
+  cat > "$fakebin/cat" <<'SH'
+#!/usr/bin/env bash
+for arg do
+  case "$arg" in
+    */.wake-queue.lock/pid) printf 'waiting\n' > "$FM_TEST_QUEUE_WAITING" ;;
+  esac
+done
+exec "$FM_TEST_REAL_CAT" "$@"
+SH
+  chmod +x "$fakebin/cat"
+  FM_TEST_QUEUE_WAITING="$dir/queue-waiting" FM_TEST_REAL_CAT="$(command -v cat)" \
+    start_owned_watcher "$home" "$state" "$fakebin" "$armout"
+
+  # Hold a live legacy queue lock until the watcher enters recovery's acquire.
+  # Deleting state there used to strand that acquire before the next poll.
+  i=0
+  while [ "$i" -lt 300 ]; do
+    if mkdir "$state/.wake-queue.lock" 2>/dev/null; then held=1; break; fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ "$held" -eq 1 ] || fail "could not hold the queue lock before deleting state"
+  printf '%s\n' "$$" > "$state/.wake-queue.lock/pid"
+  : > "$dir/queue-waiting"
+  wait_for_file_text "$dir/queue-waiting" waiting \
+    || fail "watcher did not reach the held queue lock before state deletion"
 
   rm -rf "$state"
   wait_for_pid_gone "$WATCH_PID" 400 \
