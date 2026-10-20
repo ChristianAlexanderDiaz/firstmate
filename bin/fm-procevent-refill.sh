@@ -159,7 +159,7 @@ refill_sample() {
     while IFS= read -r lane; do
       [ -n "$lane" ] || continue
       ids=$(printf '%s\n' "$ready" | jq -c --arg p "$lane" '[.[] | select(.repo == $p)] |
-        sort_by((if .loop == "" then 1 else 0 end),.cycle,.grid,.manual,.order) |
+        sort_by(if .loop == "" then [1,.order] else [0,.cycle,.grid,.manual,.order] end) |
         map({id,repo,home})') || return 75
       count=$(printf '%s\n' "$ids" | jq length)
       [ "$count" -gt 0 ] || continue

@@ -36,6 +36,8 @@
 #   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   fm-captain-hold.sh reconcile note <task-id> --note-file <path>
 #
+# FM_CAPTAIN_HOLD_CONTROL_LOCK_HELD=<task-id> lets a synchronous caller retain
+# its already-held task control lock while invoking hold.
 # `hold` places an existing task under an active captain hold, or creates the
 # task first when no work item exists to hold (--title required to create; the
 # optional --origin records provenance in the new task's body and supplies the
@@ -1016,7 +1018,9 @@ command_hold() {
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) : ;;
     *) fail "FM_CAPTAIN_HOLD_NOW must be a UTC YYYY-MM-DDTHH:MM:SSZ timestamp" ;;
   esac
-  acquire_task_control_lock "$id"
+  if [ "${FM_CAPTAIN_HOLD_CONTROL_LOCK_HELD:-}" != "$id" ]; then
+    acquire_task_control_lock "$id"
+  fi
   require_tasks_axi
   if task_show "$id"; then
     show=$TASK_SHOW_OUTPUT

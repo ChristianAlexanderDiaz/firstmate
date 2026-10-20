@@ -61,6 +61,9 @@ with (root / 'requests').open('a') as f:
     f.write(json.dumps(payload) + '\n')
 if (root / 'slow').exists():
     time.sleep(30)
+if (root / 'transient-error').exists():
+    (root / 'transient-error').unlink()
+    sys.exit(22)
 if (root / 'error').exists():
     print(json.dumps({'errors': [{'message': 'fake-secret-value'}]}))
     sys.exit(0)
@@ -251,10 +254,36 @@ rc=0; sync_event dispatch "$TASK" > "$CASE/overlay" 2> "$CASE/dispatch-error" ||
 assert_equals 25 "$rc" 'human loop cannot launch a worker'
 assert_equals '' "$(cat "$CASE/overlay")" 'refused dispatch has no worker overlay'
 assert_equals old "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'dispatch read does not start work'
+assert_contains "$(tasks show "$TASK" --full)" 'hold_kind: captain' 'Christian ticket enters Captain Call'
+assert_contains "$(tasks show "$TASK" --full)" 'ABC-42' 'hold names the Linear ticket'
+held=$(tasks show "$TASK" --full)
+rc=0
+run bash -c '
+  . "$1/bin/fm-wake-lib.sh"
+  fm_lock_acquire_wait "$FM_STATE_OVERRIDE/.control-$2.lock"
+  FM_LINEAR_CONTROL_LOCK_HELD=1 bash "$1/bin/fm-linear-lib.sh" dispatch "$2"
+  rc=$?
+  [ -d "$FM_STATE_OVERRIDE/.control-$2.lock" ] || exit 99
+  fm_lock_release "$FM_STATE_OVERRIDE/.control-$2.lock"
+  exit "$rc"
+' _ "$ROOT" "$TASK" >/dev/null 2>&1 || rc=$?
+assert_equals 25 "$rc" 'repeated refusal shares and preserves caller control lock'
+assert_equals "$held" "$(tasks show "$TASK" --full)" 'repeated refusal preserves one existing hold'
 touch "$CASE/http-error"
 rc=0; sync_event dispatch "$TASK" >/dev/null 2>&1 || rc=$?
 [ "$rc" != 0 ] || fail 'unreadable dispatch metadata was admitted'
 pass 'human loops and unreadable configured metadata refuse launch'
+
+make_case unlinked-dispatch
+rc=0; sync_event dispatch "$TASK" > "$CASE/overlay" 2>/dev/null || rc=$?
+[ "$rc" != 0 ] || fail 'mapped work without intake was admitted'
+assert_equals '' "$(cat "$CASE/overlay")" 'missing ticket has no overlay'
+assert_equals 0 "$(mutations)" 'dispatch never creates an unlinked ticket'
+tasks update "$TASK" --repo unmapped >/dev/null
+sync_event intake "$TASK"
+sync_event dispatch "$TASK" > "$CASE/overlay"
+assert_equals '' "$(cat "$CASE/overlay")" 'unmapped work still skips Linear'
+pass 'missing mapped intake refuses dispatch while unmapped work remains unaffected'
 
 make_case loop-incomplete-labels
 seed_issue
@@ -487,13 +516,17 @@ assert_equals "$DONE" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'watcher sy
 assert_not_contains "$(cat "$CASE/watch.err")" 'timed out' 'watcher does not deadlock with Linear sync'
 pass 'real watcher syncs an externally merged PR under its existing control lock'
 
-for failure in no landed zero-work lookup-failed merge-commit fast-forward yes; do
+for failure in no landed zero-work lookup-failed merge-commit fast-forward yes transient agent-mode; do
   make_case "real-spawn-$failure"
   fm_test_spawn_home "$HOME_DIR" claude
   printf '%s\n' "$$" > "$HOME_DIR/state/.lock"
   fm_test_spawn_brief "$HOME_DIR" "$TASK" 'Exercise automatic issue sync.'
   fm_git_worktree "$CASE/sample" "$CASE/wt" "fm/$TASK"
   [ "$failure" != yes ] || touch "$CASE/error"
+  [ "$failure" != transient ] || touch "$CASE/transient-error"
+  if [ "$failure" = agent-mode ]; then
+    tasks update "$TASK" --body $'Loop: agent\nLoop finish: bash tests/rate-limit.test.sh rejects requests above the limit' >/dev/null
+  fi
   if [ "$failure" = no ]; then
     tasks update "$TASK" --body $'Linear priority: 3\nLinear estimate: 1\nLoop: agent' >/dev/null
   fi
@@ -506,10 +539,17 @@ for failure in no landed zero-work lookup-failed merge-commit fast-forward yes; 
   out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
     HOME="$HOME_DIR/user-home" CLAUDE_CONFIG_DIR='' \
     bash "$ROOT/bin/fm-spawn.sh" "$TASK" "$CASE/sample" --mode direct-PR --yolo off 2>&1) \
-    || { [ "$failure" = yes ] || fail "real spawn failed: $out"; }
-  if [ "$failure" = yes ]; then
-    assert_contains "$out" 'dispatch metadata unreadable' 'preflight failure refuses launch'
+    || { case "$failure" in yes|transient|agent-mode) ;; *) fail "real spawn failed: $out" ;; esac; }
+  if [ "$failure" = yes ] || [ "$failure" = transient ]; then
+    assert_contains "$out" 'intake metadata unreadable' 'preflight failure refuses launch'
     [ ! -f "$HOME_DIR/state/$TASK.meta" ] || fail 'failed preflight launched worker'
+    continue
+  fi
+  if [ "$failure" = agent-mode ]; then
+    assert_contains "$out" 'ABC-101 has Loop: agent' 'mode refusal names the Linear ticket'
+    assert_contains "$out" 'requires mode=no-mistakes; received mode=direct-PR' 'agent refuses direct publication'
+    [ ! -f "$HOME_DIR/state/$TASK.meta" ] || fail 'wrong delivery mode launched worker'
+    [ ! -f "$HOME_DIR/data/$TASK/launch-brief.md" ] || fail 'wrong delivery mode published launch brief'
     continue
   fi
   assert_contains "$out" 'spawned work' 'spawn succeeds after sync attempt'
@@ -562,8 +602,6 @@ for failure in no landed zero-work lookup-failed merge-commit fast-forward yes; 
     out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
       bash "$ROOT/bin/fm-teardown.sh" "$TASK" 2>&1) || fail "real teardown failed: $out"
     assert_equals "$STARTED" "$(jq -r '.[0].state.id' "$CASE/issues.json")" "$failure landing without recorded PR keeps status"
-  else
-    assert_contains "$out" 'sync failed' 'actual spawn tolerates API failure'
   fi
 done
 pass 'real spawn reads Loop metadata before dispatch and syncs after it; unreadable preflight refuses launch; teardown demotes only unlanded work'

@@ -381,7 +381,9 @@ The declaration names the test and the observable pass/fail result; the sync nev
 Before launch, spawn reads priority, estimate, Loop, cycle start and manual order into the backlog and adds a metadata instruction overlay to the worker brief, outside captain intent.
 Linear values take precedence over intake defaults, so corrections made there win at pickup.
 An `agent` without a nonempty finish declaration is relabeled `milestones`, preserving all labels outside Loop, and receives milestone instructions.
-An `agent-reviewed` receives rubric and screenshot instructions; a `Christian` ticket refuses worker launch and remains preparation work for Firstmate.
+An `agent` with a finish declaration requires spawn mode `no-mistakes`; any other mode refuses launch and names the ticket and mode.
+An `agent-reviewed` receives rubric and screenshot instructions; a `Christian` ticket refuses worker launch and records a captain hold on its existing task, naming the Linear ticket.
+Firstmate prepares those calls together on the existing daily Bearings board and Captain's Call digest, then files the work after Christian answers.
 Configured dispatch metadata that cannot be read refuses launch for retry; lifecycle updates after a successful action retain their best-effort behavior.
 A successful ship spawn creates a ticket when no linkage exists, then selects the team's started state named `In Progress`, falling back to the first started state returned by Linear.
 Creation specifies that state explicitly, avoiding Linear's default Triage intake for teams with Triage enabled.

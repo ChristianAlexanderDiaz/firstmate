@@ -9,8 +9,9 @@
 # Loop finish: names a test-decidable check (never executed by this script).
 # dispatch reads these fields before launch, saves them in the backlog, and
 # prints a worker instruction overlay. Agent without a declared check becomes
-# milestones; Christian returns 25 and cannot launch. Unlike lifecycle events,
-# dispatch propagates sync errors so configured work cannot launch unread.
+# milestones; Christian records a captain hold and returns 25 without launch.
+# Unlike lifecycle events, intake and dispatch propagate sync errors so
+# configured work cannot launch unread.
 # Loop cycle: and Loop sort: are read-only cycle start/manual order snapshots.
 # FM_HOME and FM_{STATE,DATA,CONFIG}_OVERRIDE address the owning home.
 # FM_LINEAR_TEARDOWN_{BRANCH,REPO} name a zero-work teardown's branch and clone;
@@ -232,9 +233,13 @@ Loop cycle: $cycle
 Loop sort: $sort_value"
   fm_backlog_mutate "$data" update "$task" --body "$updated"
   [ "$event" = dispatch ] || return 0
-  [ "$loop" != Christian ] || return 25
+  if [ "$loop" = Christian ]; then
+    FM_CAPTAIN_HOLD_CONTROL_LOCK_HELD=$task bash "$LINEAR_DIR/fm-captain-hold.sh" hold "$task" \
+      --reason "Prepare Linear ticket $(printf '%s' "$issue" | jq -r .identifier) on the daily Bearings board for Christian" >/dev/null || return 1
+    return 25
+  fi
   [ -n "$loop" ] || return 0
-  printf '\n# Linear dispatch metadata\nPriority (impact): %s\nEstimate (cost): %s\nLoop: %s\n' "$priority" "$estimate" "$loop"
+  printf '\n# Linear dispatch metadata\nLinear issue: %s\nPriority (impact): %s\nEstimate (cost): %s\nLoop: %s\n' "$(printf '%s' "$issue" | jq -r .identifier)" "$priority" "$estimate" "$loop"
   case "$loop" in
     agent) printf 'Test-decidable finish: %s\n' "$finish" ;;
     agent-reviewed) printf 'Use the approved rubric and include PR screenshots for review.\n' ;;
@@ -479,7 +484,7 @@ fm_linear_event() {
     printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.issues.nodes | type == "array"' >/dev/null
     issue=$(printf '%s' "$LINEAR_RESPONSE" | jq -c '.data.issues.nodes[0] // empty')
     if [ -z "$issue" ]; then
-      case "$event" in spawn|intake) ;; *) exit 22 ;; esac
+      case "$event" in spawn|intake) ;; dispatch) exit 1 ;; *) exit 22 ;; esac
       [ -n "$title" ]
       if [ "$event" = intake ]; then
         state_id=$(fm_linear_state "$team" unstarted)
@@ -502,7 +507,11 @@ fm_linear_event() {
   [ "$issue_type" != triage ] || exit 24
   # Finished work is reopened or re-completed only through its saved linkage,
   # never through an incidental mention.
-  case "$issue_type" in completed|canceled) [ -n "$marker" ] || exit 22 ;; esac
+  case "$issue_type" in completed|canceled)
+    if [ -z "$marker" ]; then
+      case "$event" in intake|dispatch) exit 1 ;; *) exit 22 ;; esac
+    fi
+    ;; esac
   if [ "$marker" != "$identifier" ]; then
     # Re-read before writing, preserving current body and all other fields.
     row=$(fm_backlog_row_show "$data" "$id" --full)
@@ -621,12 +630,12 @@ fm_linear_main() {
   if [ "${1:-}" = tick ]; then fm_linear_tick; return 0; fi
   # shellcheck source=bin/fm-timeout-lib.sh
   . "$LINEAR_DIR/fm-timeout-lib.sh"
-  if [ "${1:-}" = dispatch ]; then
+  if [ "${1:-}" = intake ] || [ "${1:-}" = dispatch ]; then
     fm_run_timed "${LINEAR_BOUND:-10}" bash "$LINEAR_DIR/fm-linear-lib.sh" --run "$@" 2>/dev/null || result=$?
     case "$result" in
       0|22) return 0 ;;
       25) printf 'linear: Christian loop requires preparation, not a worker\n' >&2 ;;
-      *) printf 'linear: dispatch metadata unreadable; retry before launch\n' >&2 ;;
+      *) printf 'linear: %s metadata unreadable; retry before launch\n' "$1" >&2 ;;
     esac
     return "$result"
   fi

@@ -3365,10 +3365,14 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if [ "$KIND" = ship ] && [ -f "$CONFIG/linear" ]; then
     FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
       FM_LINEAR_CONTROL_LOCK_HELD=$RELAUNCH \
-      bash "$SCRIPT_DIR/fm-linear-lib.sh" intake "$ID"
+      bash "$SCRIPT_DIR/fm-linear-lib.sh" intake "$ID" || exit $?
     LINEAR_DISPATCH_METADATA=$(FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
       FM_LINEAR_CONTROL_LOCK_HELD=$RELAUNCH \
       bash "$SCRIPT_DIR/fm-linear-lib.sh" dispatch "$ID") || exit $?
+    if printf '%s\n' "$LINEAR_DISPATCH_METADATA" | grep -qx 'Loop: agent' && [ "$MODE" != no-mistakes ]; then
+      echo "error: $(printf '%s\n' "$LINEAR_DISPATCH_METADATA" | sed -n 's/^Linear issue: //p') has Loop: agent and requires mode=no-mistakes; received mode=$MODE" >&2
+      exit 1
+    fi
   fi
   BRIEF="$DATA/$ID/launch-brief.md"
   BRIEF_TMP="$DATA/$ID/.launch-brief.md.${BASHPID:-$$}"

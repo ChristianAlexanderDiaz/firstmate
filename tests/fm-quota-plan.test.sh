@@ -259,6 +259,25 @@ fm_write_meta "$FM_HOME/state/security.meta" "project=$FM_HOME/projects/carryran
 "$REFILL" check > "$TMP_ROOT/next-grid" || fail 'next agent not offered'
 assert_contains "$(cat "$TMP_ROOT/next-grid")" 'next ready: carryrank: strong@' 'next eligible agent in grid order'
 mv "$FM_HOME/state/security.meta" "$TMP_ROOT/security-finished.meta"
+cat > "$FM_HOME/data/backlog.md" <<'MD'
+# Backlog
+## Queued
+- [ ] first - Earlier unclassified ticket with saved metadata (repo: carryrank, kind: ship)
+  Loop cycle: 2026-10-26
+  Loop sort: 90
+  Linear priority: 4
+  Linear estimate: 3
+- [ ] second - Later unclassified ticket without metadata (repo: carryrank, kind: ship)
+- [ ] third - Last unclassified ticket with earlier cycle (repo: carryrank, kind: ship)
+  Loop cycle: 2026-10-19
+  Loop sort: 1
+  Linear priority: 1
+  Linear estimate: 1
+## Done
+MD
+"$REFILL" check > "$TMP_ROOT/unclassified" || fail 'unclassified refill missing'
+order=$(sed -n 's/^fingerprint: //p' "$TMP_ROOT/unclassified" | jq -r '.lanes[0].ready | map(.id) | join(",")')
+assert_equals first,second,third "$order" 'unclassified backlog order ignores all metadata sort keys'
 mv "$TMP_ROOT/backlog-before-grid" "$FM_HOME/data/backlog.md"
 pass 'refill advances in cycle/grid order, respects priority corrections and excludes human loops and agents without checks'
 
