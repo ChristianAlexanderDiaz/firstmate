@@ -584,6 +584,26 @@ sys.exit(subprocess.call(command + " " + shlex.join(args), shell=True))
                 self.assertIn("simple runner command", result.stderr)
                 self.assertFalse(self.status()["leases"])
 
+    def test_package_forwarded_runner_terminators_are_refused(self):
+        self.write("package.json", {"scripts": {"test": "playwright test"}})
+        for name in ("npm", "pnpm", "yarn"):
+            tool = self.root / name
+            tool.write_text("#!" + sys.executable + "\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n")
+            tool.chmod(0o700)
+            terminators = ["--", "--"] if name == "npm" else ["--"]
+            for invocation in (["run", "test"], ["test"]):
+                with self.subTest(name=name, invocation=invocation):
+                    result = self.call("run", "--class", "exclusive", "--", str(tool), *invocation,
+                        *terminators, "--custom=value", cwd=self.root)
+                    self.assertEqual(result.returncode, 75, result.stderr)
+                    self.assertFalse(result.stdout)
+                    self.assertIn("simple runner command", result.stderr)
+                    self.assertFalse(self.status()["leases"])
+            if name == "npm":
+                result = self.call("run", "--class", "exclusive", "--", str(tool), "run", "test", "--", "--custom=value", cwd=self.root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), ["run", "test", "--", "--custom=value", "--workers=1"])
+
     @unittest.skipUnless(shutil.which("npm") and shutil.which("node"), "npm and node required")
     def test_real_npm_package_selection_caps_only_selected_runner(self):
         ui = self.root / "ui"
@@ -595,12 +615,18 @@ sys.exit(subprocess.call(command + " " + shlex.join(args), shell=True))
             tool.write_text("#!" + sys.executable + "\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n")
             tool.chmod(0o700)
             (directory / "probe.cjs").write_text("console.log(JSON.stringify(process.argv.slice(2)))")
+        (self.root / "user.npmrc").write_text("")
         for root_runner, selected_runner in (("node probe.cjs", "playwright test"), ("playwright test", "node probe.cjs")):
             self.write("package.json", {"private": True, "workspaces": ["ui"], "scripts": {"test": root_runner}})
             self.write("ui/package.json", {"name": "playwright", "version": "1.0.0", "scripts": {"test": selected_runner}})
             for argv in (["--prefix", "ui", "run", "test"], ["run", "test", "--prefix=ui"],
                     ["run", "test", "--workspace", "ui"], ["--workspace=playwright", "run", "test"],
-                    ["run", "--workspace", "playwright", "test"], ["run", "test", "-w", "ui"]):
+                    ["run", "--workspace", "playwright", "test"], ["run", "test", "-w", "ui"],
+                    ["--loglevel", "error", "--prefix", "ui", "run", "test"],
+                    ["--userconfig", str(self.root / "user.npmrc"), "--prefix", "ui", "run", "test"],
+                    ["--loglevel=error", "--userconfig=" + str(self.root / "user.npmrc"), "-C", "ui", "run", "test"],
+                    ["run", "--loglevel", "error", "test", "--workspace", "ui"],
+                    ["-C", "ui", "run", "test"]):
                 with self.subTest(root_runner=root_runner, argv=argv):
                     result = self.call("run", "--class", "exclusive", "--", shutil.which("npm"), *argv, cwd=self.root)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -686,6 +712,13 @@ for argv in json.loads(sys.argv[2]):
             clock.write_text(str(int(clock.read_text()) + 121))
             wait_for(lambda: self.status()["reason"] == "ready")
             cases = [
+                (["--test", "--experimental-test-coverage", "--test-coverage-exclude", "fixtures/**", "--test-concurrency=99", "file.js"],
+                    ["--test", "--experimental-test-coverage", "--test-coverage-exclude", "fixtures/**", f"--test-concurrency={cap}", "file.js"]),
+                (["--test", "--test_concurrency=99", "file.js"], ["--test", f"--test-concurrency={cap}", "file.js"]),
+                (["--env_file", ".env", "--test", "--test_concurrency", "1", "file.js"],
+                    ["--env_file", ".env", "--test", "--test_concurrency", "1", "file.js"]),
+                (["--test", "--test_coverage_exclude", "--test-concurrency=99", "file.js"],
+                    ["--test", f"--test-concurrency={cap}", "--test_coverage_exclude", "--test-concurrency=99", "file.js"]),
                 (["--env-file", ".env", "--test", "file.js"],
                     ["--env-file", ".env", "--test", f"--test-concurrency={cap}", "file.js"]),
                 (["--test", "--test-name-pattern", "--test-concurrency=99", "file.js"],
@@ -765,6 +798,24 @@ setTimeout(() => fs.rmdirSync('active-test'), 300);
                     cwd=self.root, env=env)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertFalse((self.root / "active-test").exists())
+
+    @unittest.skipUnless(shutil.which("npm") and shutil.which("node"), "npm and node required")
+    def test_direct_npm_node_tests_cap_new_and_inherited_leases_with_ordinary_path(self):
+        probe = "const fs = require('node:fs'); fs.mkdirSync('active-test'); setTimeout(() => fs.rmdirSync('active-test'), 300);"
+        for name in ("first.cjs", "second.cjs"):
+            (self.root / name).write_text(probe)
+        for options in ("--test-concurrency=99", "--test_concurrency=99",
+                "--experimental-test-coverage --test-coverage-exclude fixtures/** --test-concurrency=99"):
+            self.write("package.json", {"scripts": {"test": "node --test " + options + " first.cjs second.cjs"}})
+            for inherited in (False, True):
+                with self.subTest(options=options, inherited=inherited):
+                    command = [shutil.which("npm"), "test"]
+                    if inherited:
+                        command = ["/bin/sh", "-c", 'exec "$@"', "nested", CLI, "--config", str(self.root / "config.json"),
+                            "run", "--class", "test", "--", *command]
+                    result = self.call("run", "--class", "test", "--", *command, cwd=self.root)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertFalse((self.root / "active-test").exists())
 
     def test_registered_check_emits_each_transition_once(self):
         state = self.root / "home-state"

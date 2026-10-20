@@ -73,11 +73,16 @@ Project server configuration must consume that port and keep reuse disabled by d
 The Chrome adapter rejects short requests outside that composite lifetime and clears ambient auto-connect and browser URL settings when creating it.
 The wrapper exports `FM_RESOURCE_CPU_WORKERS` and `FM_RESOURCE_BROWSER_WORKERS` for project runners, and applies direct Vitest, Node test, Playwright, graphify and Nix caps where the command interface supports them.
 Package-script Vitest runs inherit `VITEST_MAX_WORKERS` and the older thread/fork environment limits, with minimum workers set to one; see [Vitest's environment variable migration](https://vitest.dev/guide/migration.html).
-The prepared PATH includes a Node adapter that caps `node --test` before file arguments at two workers on desk power or one on portable power, including npm, pnpm and yarn package scripts.
+Prepared launches and direct leased package-test runs install a Node PATH adapter that caps `node --test` before file arguments at two workers on desk power or one on portable power, including npm, pnpm and yarn package scripts.
 Explicit Node concurrency limits at or below the cap are preserved, and other Node invocations pass through unchanged.
 For npm, pnpm and yarn `run <script>` or `test`, simple package scripts invoking `playwright test` receive one worker, while simple Node test scripts use the prepared Node adapter.
 Scripts containing `playwright test` or `node --test` tokens anywhere are refused unless they are a supported simple runner command; this includes shell compounds with setup or cleanup commands and script-level `--` terminators.
 Package directory and single workspace selectors are resolved before inspecting the script; workspace selections that cannot be resolved to one package are refused.
+Playwright forwarding is refused if npm receives a runner-level `--` after its forwarding separator, or if pnpm or yarn receives a forwarded `--`.
+Worker-cap detection is limited to the supported explicit `run <script>` and `test` forms and recognized option operands.
+It does not resolve package selection from npm configuration files or environment variables, npm option abbreviations or combined short flags, or indirect runners such as `bash tests.sh`.
+Separate operands for unrecognized options, such as `npm --fetch-retry-mintimeout 10 run test` or `node --dns-result-order ipv4first --test`, are outside this containment; use the full `--option=value` form instead.
+Package scripts invoking Node by an absolute path or shadowing `node` with a project-local executable bypass the PATH adapter; invoke that runner directly through `run` for a worker cap.
 These package scripts still reserve exclusive global capacity.
 Project configuration still needs to consume the exported values for custom runners and Next compiler settings.
 Neither a generic Node heap limit nor these worker defaults is a process-tree memory ceiling.
