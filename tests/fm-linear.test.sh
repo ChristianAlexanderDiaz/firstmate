@@ -44,7 +44,7 @@ SH
   chmod +x "$FAKEBIN/gh"
   cat > "$FAKEBIN/curl" <<'PY'
 #!/usr/bin/env python3
-import json, os, pathlib, sys, time
+import json, os, pathlib, re, sys, time
 root = pathlib.Path(os.environ['FM_TEST_LINEAR'])
 argv = sys.argv[1:]
 with (root / 'argv').open('a') as f:
@@ -61,6 +61,9 @@ with (root / 'requests').open('a') as f:
     f.write(json.dumps(payload) + '\n')
 if (root / 'slow').exists():
     time.sleep(30)
+if (root / 'transient-error').exists():
+    (root / 'transient-error').unlink()
+    sys.exit(22)
 if (root / 'error').exists():
     print(json.dumps({'errors': [{'message': 'fake-secret-value'}]}))
     sys.exit(0)
@@ -78,6 +81,19 @@ issuefile = root / 'issues.json'
 attachfile = root / 'attachments.json'
 attachments = json.loads(attachfile.read_text()) if attachfile.exists() else []
 issues = json.loads(issuefile.read_text())
+def api_issue(issue):
+    if issue is None:
+        return None
+    result = dict(issue)
+    result['labels'] = {'nodes': [
+        {'id': label, 'name': label.removeprefix('loop-'),
+         'parent': {'name': 'Loop'} if label.startswith('loop-') else None}
+        for label in issue.get('labels', [])], 'pageInfo': {'hasNextPage': (root / 'partial-labels').exists()}}
+    # Match GraphQL projection: a test cannot read a field it forgot to request.
+    for field in ['description', 'priority', 'estimate', 'sortOrder', 'cycle', 'labels']:
+        if not re.search(r'\b' + field + r'\b', q):
+            result.pop(field, None)
+    return result
 if q.startswith('query Teams'):
     states = [{'id': 'fallback', 'name': 'Working', 'type': 'started'},
               {'id': started, 'name': 'In Progress', 'type': 'started'},
@@ -87,6 +103,11 @@ if q.startswith('query Teams'):
         states = states[:1] + states[2:]
     data = {'teams': {'nodes': [{'id': team, 'key': 'ABC', 'states': {
         'nodes': states, 'pageInfo': {'hasNextPage': False}}}],
+        'pageInfo': {'hasNextPage': False}}}
+elif q.startswith('query LoopLabels'):
+    data = {'issueLabels': {'nodes': [dict(id='loop-' + name, name=name,
+        parent={'name': 'Loop'}, team=None)
+        for name in ['agent', 'agent-reviewed', 'milestones', 'Christian']],
         'pageInfo': {'hasNextPage': False}}}
 elif q.startswith('query Relations'):
     nodes = [dict(id=r['id'], type=r['type'], issue=next(i for i in issues if i['id'] == r['issueId']))
@@ -102,21 +123,24 @@ elif q.startswith('mutation Unblock'):
 elif q.startswith('mutation Comment'):
     data = {'commentCreate': {'success': True}}
 elif q.startswith('query CreatedIssue'):
-    data = {'issues': {'nodes': [i for i in issues if i['id'] == v['id']]}}
+    data = {'issues': {'nodes': [api_issue(i) for i in issues if i['id'] == v['id']]}}
 elif q.startswith('query Issue'):
-    data = {'issue': next((i for i in issues if i['identifier'] == v['id'] or i.get('alias') == v['id']), None)}
+    data = {'issue': api_issue(next((i for i in issues if i['identifier'] == v['id'] or i.get('alias') == v['id']), None))}
 elif q.startswith('mutation CreateIssue'):
     value = v['input']
     assert not any(i['id'] == value['id'] for i in issues), 'duplicate create'
     issue = {'id': value['id'], 'identifier': 'ABC-101', 'team': {'id': team},
-             'state': {'id': value['stateId'], 'type': 'started'}, 'labels': ['unrelated']}
+             'state': {'id': value['stateId'], 'type': 'unstarted' if value['stateId'] == todo else 'started'}, 'labels': ['unrelated']}
     issues.append(issue)
-    data = {'issueCreate': {'success': True, 'issue': issue}}
+    data = {'issueCreate': {'success': True, 'issue': api_issue(issue)}}
 elif q.startswith('mutation UpdateIssue'):
     issue = next(i for i in issues if i['id'] == v['id'])
     assert issue['state']['type'] != 'triage'
     value = v['input']
-    assert set(value) <= {'stateId', 'addedLabelIds', 'removedLabelIds'}
+    assert set(value) <= {'stateId', 'addedLabelIds', 'removedLabelIds', 'priority', 'estimate'}
+    for key in ['priority', 'estimate']:
+        if key in value:
+            issue[key] = value[key]
     if 'stateId' in value:
         issue['state'] = {'id': value['stateId'], 'type': 'completed' if value['stateId'] == done else 'unstarted' if value['stateId'] == todo else 'started'}
     issue['labels'] = sorted(set(issue.get('labels', []) + value.get('addedLabelIds', [])) - set(value.get('removedLabelIds', [])))
@@ -178,6 +202,207 @@ assert_equals "$DONE" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'merge comp
 assert_equals "$PR" "$(jq -sr '[.[] | select(.query | startswith("mutation AttachPR"))][0].variables.input.url' "$CASE/requests")" 'merge attaches PR URL'
 assert_not_contains "$(cat "$CASE/argv")" fake-secret-value 'key absent from curl argv'
 pass 'spawn creates, persists, reuses; merge completes and attaches'
+
+# The intake and pre-launch read use the same event CLI; curl is always fake.
+make_case loop-intake
+tasks update "$TASK" --body $'Linear priority: 3\nLinear estimate: 2\nLoop: agent\nLoop finish: bash tests/rate-limit.test.sh proves rejection above the limit' >/dev/null
+sync_event intake "$TASK"
+assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'intake does not start a worker'
+assert_equals '3:2:loop-agent' "$(jq -r '.[0] | "\(.priority):\(.estimate):\(.labels[] | select(startswith("loop-")))"' "$CASE/issues.json")" 'intake sets impact cost and Loop'
+assert_equals true "$(jq '.[0].labels | index("unrelated") != null' "$CASE/issues.json")" 'intake preserves other labels'
+# A correction in Linear wins over every local default at pickup.
+jq '.[0] |= (.priority=2 | .estimate=1 | .labels=["unrelated","loop-agent-reviewed"] | .cycle={startsAt:"2026-10-19T00:00:00Z"} | .sortOrder=12)' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Loop: agent-reviewed' 'dispatch overlay uses corrected loop'
+assert_contains "$out" 'approved rubric' 'reviewed loop carries review instruction'
+assert_contains "$(tasks show "$TASK" --full)" 'Linear priority: 2' 'priority correction saved'
+assert_contains "$(tasks show "$TASK" --full)" 'Linear estimate: 1' 'estimate correction saved'
+assert_contains "$(tasks show "$TASK" --full)" 'Loop cycle: 2026-10-19' 'cycle read for refill'
+sync_event intake "$TASK"
+assert_equals 2 "$(jq '.[0].priority' "$CASE/issues.json")" 'later intake preserves correction'
+pass 'intake writes metadata in Todo; dispatch reads corrections and produces worker instructions'
+
+before=$(mutations)
+jq '.[0] |= (.priority=0 | .estimate=null | .labels=["unrelated"] | .description="")' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+for attempt in 1 2; do
+  sync_event intake "$TASK"
+  out=$(sync_event dispatch "$TASK")
+  assert_equals '' "$out" 'cleared Loop stays unclassified after repeated reads'
+done
+assert_equals "$before" "$(mutations)" 'cleared values never restore initial defaults or snapshots'
+assert_equals true "$(jq '.[0] | .priority == 0 and .estimate == null and .labels == ["unrelated"]' "$CASE/issues.json")" 'all remote clears remain authoritative'
+pass 'cleared impact cost and ownership survive repeated intake and dispatch without writes'
+
+make_case local-finish-declaration
+seed_issue
+tasks update "$TASK" --body $'Linear issue: ABC-42\nLoop: agent\nLoop finish: a local test rejects expired invites' >/dev/null
+sync_event intake "$TASK"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Test-decidable finish: a local test rejects expired invites' 'initial local declaration survives intake and dispatch'
+sync_event intake "$TASK"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Test-decidable finish: a local test rejects expired invites' 'explicit local declaration is retained independently of snapshots'
+jq '.[0].description="Loop finish: a remote test rejects expired invites"' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Test-decidable finish: a remote test rejects expired invites' 'remote declaration supersedes local declaration'
+jq '.[0].description=""' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+sync_event intake "$TASK"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Loop: milestones' 'removing remote check cannot resurrect prior local declaration'
+pass 'local finish declarations persist until superseded; removed remote checks demote agents'
+
+make_case loop-guard
+seed_issue
+tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+jq '.[0].labels += ["loop-agent"]' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Loop: milestones' 'agent without check refuses autonomous loop'
+assert_equals true "$(jq '.[0].labels | index("loop-milestones") != null and index("loop-agent") == null and index("unrelated") != null' "$CASE/issues.json")" 'guard replaces only Loop label'
+assert_contains "$(tasks show "$TASK" --full)" 'Loop: milestones' 'effective loop persisted'
+# An ordinary description mentioning tests is not a finish declaration.
+jq '.[0] |= (.labels=["loop-agent"] | .description="We should test the polished result")' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+sync_event dispatch "$TASK" > "$CASE/overlay"
+assert_contains "$(cat "$CASE/overlay")" 'Loop: milestones' 'vague prose never grants an agent loop'
+# Explicit remote finish declarations are accepted without executing them.
+jq '.[0] |= (.labels=["loop-agent"] | .description="Loop finish: a pgTAP check proves the old invite cannot open a room")' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Loop: agent' 'test-decidable check retains agent'
+assert_contains "$out" 'pgTAP check' 'remote finish read'
+pass 'missing test-decidable finish demotes agent to milestones; explicit checks permit agent'
+
+make_case christian-dispatch
+seed_issue
+tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+jq '.[0].labels += ["loop-Christian"]' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+rc=0; sync_event dispatch "$TASK" > "$CASE/overlay" 2> "$CASE/dispatch-error" || rc=$?
+assert_equals 25 "$rc" 'human loop cannot launch a worker'
+assert_equals '' "$(cat "$CASE/overlay")" 'refused dispatch has no worker overlay'
+assert_equals old "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'dispatch read does not start work'
+assert_contains "$(tasks show "$TASK" --full)" 'hold_kind: captain' 'Christian ticket enters Captain Call'
+assert_contains "$(tasks show "$TASK" --full)" 'ABC-42' 'hold names the Linear ticket'
+held=$(tasks show "$TASK" --full)
+rc=0
+run bash -c '
+  . "$1/bin/fm-wake-lib.sh"
+  fm_lock_acquire_wait "$FM_STATE_OVERRIDE/.control-$2.lock"
+  FM_LINEAR_CONTROL_LOCK_HELD=1 bash "$1/bin/fm-linear-lib.sh" dispatch "$2"
+  rc=$?
+  [ -d "$FM_STATE_OVERRIDE/.control-$2.lock" ] || exit 99
+  fm_lock_release "$FM_STATE_OVERRIDE/.control-$2.lock"
+  exit "$rc"
+' _ "$ROOT" "$TASK" >/dev/null 2>&1 || rc=$?
+assert_equals 25 "$rc" 'repeated refusal shares and preserves caller control lock'
+assert_equals "$held" "$(tasks show "$TASK" --full)" 'repeated refusal preserves one existing hold'
+touch "$CASE/http-error"
+rc=0; sync_event dispatch "$TASK" >/dev/null 2>&1 || rc=$?
+[ "$rc" != 0 ] || fail 'unreadable dispatch metadata was admitted'
+pass 'human loops and unreadable configured metadata refuse launch'
+
+make_case unlinked-dispatch
+rc=0; sync_event dispatch "$TASK" > "$CASE/overlay" 2>/dev/null || rc=$?
+[ "$rc" != 0 ] || fail 'mapped work without intake was admitted'
+assert_equals '' "$(cat "$CASE/overlay")" 'missing ticket has no overlay'
+assert_equals 0 "$(mutations)" 'dispatch never creates an unlinked ticket'
+tasks update "$TASK" --repo unmapped >/dev/null
+sync_event intake "$TASK"
+sync_event dispatch "$TASK" > "$CASE/overlay"
+assert_equals '' "$(cat "$CASE/overlay")" 'unmapped work still skips Linear'
+pass 'missing mapped intake refuses dispatch while unmapped work remains unaffected'
+
+make_case loop-incomplete-labels
+seed_issue
+tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+touch "$CASE/partial-labels"
+rc=0; sync_event dispatch "$TASK" >/dev/null 2>&1 || rc=$?
+[ "$rc" != 0 ] || fail 'partial Loop labels were treated as complete'
+assert_equals 0 "$(mutations)" 'partial label page never changes the Loop'
+pass 'partial label metadata refuses dispatch without mutation'
+
+make_case refill-current-metadata
+fm_fake_exit0 "$FAKEBIN" quota-axi
+fm_git_init_commit "$HOME_DIR/projects/sample"
+fm_git_add_origin "$HOME_DIR/projects/sample" "$CASE/sample.git"
+printf '%s\n' 'reserve claude 0' 'reserve codex 0' 'lane sample' > "$HOME_DIR/config/quota-plan"
+now=$(date +%s)
+jq -n --argjson now "$now" --argjson reset "$((now+500000))" '
+  {fetchedAt:$now,snapshot:{providers:[{provider:"codex",state:{status:"fresh",stale:false},
+    windows:[{kind:"weekly",percentRemaining:100,resetsAt:($reset|todateiso8601)}]}]}}' \
+  > "$HOME_DIR/state/quota-plan-snapshot.json"
+seed_issue
+tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+fm_git_init_commit "$HOME_DIR/projects/other"
+fm_git_add_origin "$HOME_DIR/projects/other" "$CASE/other.git"
+printf 'project=other|%s\n' "$TEAM" >> "$HOME_DIR/config/linear"
+printf 'lane other\n' >> "$HOME_DIR/config/quota-plan"
+tasks add other-work 'Other lane work' --repo other --kind ship --body 'Linear issue: ABC-45' >/dev/null
+jq '. + [(.[0] | .id="00000000-0000-4000-8000-000000000013" | .identifier="ABC-45" | .priority=0)]' \
+  "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+for attempt in 1 2; do
+  sync_event intake "$TASK" || fail 'repeated intake rejected absent priority'
+  run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/no-priority-$attempt" || fail 'unprioritized work stalled refill'
+  order=$(sed -n 's/^fingerprint: //p' "$CASE/no-priority-$attempt" | jq -r '.lanes | map(.lane + ":" + (.ready | map(.id) | join(","))) | join(";")')
+  assert_equals 'sample:work;other:other-work' "$order" 'unprioritized mapped work remains eligible across both lanes'
+done
+assert_contains "$(tasks show "$TASK" --full)" 'Linear priority: 0' 'no-priority snapshot round-trips'
+assert_equals 0 "$(mutations)" 'absent and zero priority never produce an API update'
+pass 'repeated intake and refill preserve no-priority work and keep other lanes eligible'
+tasks add next 'Next ticket' --repo sample --kind ship --body 'Linear issue: ABC-43' >/dev/null
+tasks add recovered 'Previously human ticket' --repo sample --kind ship --body $'Linear issue: ABC-44\nLoop: Christian' >/dev/null
+tasks add held 'Held ticket' --repo sample --kind ship --body 'Linear issue: ABC-999' >/dev/null
+tasks hold held --reason 'Await captain' --kind captain >/dev/null
+tasks add active 'Running ticket' --repo sample --kind ship --body 'Linear issue: ABC-998' >/dev/null
+fm_write_meta "$HOME_DIR/state/active.meta" "project=$HOME_DIR/projects/sample" 'kind=ship'
+jq '.[0] |= (.priority=4 | .estimate=3 | .labels=["loop-agent"] |
+    .description="Loop finish: test exits zero only when expired invites fail" | .cycle={startsAt:"2026-10-19"}) |
+  . + [ (.[0] | .id="00000000-0000-4000-8000-000000000011" | .identifier="ABC-43" | .priority=2 | .estimate=1),
+         (.[0] | .id="00000000-0000-4000-8000-000000000012" | .identifier="ABC-44" | .priority=3 | .estimate=1) ]' \
+  "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/refill" || fail 'refill failed to refresh existing tickets'
+order=$(sed -n 's/^fingerprint: //p' "$CASE/refill" | jq -r '.lanes[0].ready | map(.id) | join(",")')
+assert_equals next,recovered,work "$order" 'remote grid metadata ranks snapshotless and previously excluded tickets'
+assert_contains "$(tasks show "$TASK" --full)" 'Linear priority: 4' 'refill persists intake metadata'
+jq 'map(if .identifier == "ABC-42" then .priority=1 | .estimate=1
+         elif .identifier == "ABC-43" then .priority=4 | .estimate=3
+         else .labels=["loop-Christian"] end)' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/corrected" || fail 'refill failed after remote correction'
+order=$(sed -n 's/^fingerprint: //p' "$CASE/corrected" | jq -r '.lanes[0].ready | map(.id) | join(",")')
+assert_equals work,next "$order" 'current priority estimate and Loop corrections change refill selection'
+before=$(mutations)
+jq 'map(if .identifier == "ABC-42" then .priority=0 | .estimate=null | .labels=["unrelated"] | .description="" else . end)' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+for attempt in 1 2; do
+  sync_event intake "$TASK"
+  run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/cleared-$attempt" || fail 'cleared metadata stalled refill'
+  order=$(sed -n 's/^fingerprint: //p' "$CASE/cleared-$attempt" | jq -r '.lanes[0].ready | map(.id) | join(",")')
+  assert_equals next,work "$order" 'cleared Loop uses unclassified order instead of old grid rank'
+done
+assert_equals "$before" "$(mutations)" 'refill never writes cleared metadata back from snapshots'
+jq 'map(if .identifier == "ABC-43" then .description="" else . end)' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+for attempt in 1 2; do
+  run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/removed-check-$attempt" || fail 'missing check stalled other work'
+  order=$(sed -n 's/^fingerprint: //p' "$CASE/removed-check-$attempt" | jq -r '.lanes[0].ready | map(.id) | join(",")')
+  assert_equals work "$order" 'removed remote finish excludes agent from refill'
+done
+assert_equals "$((before+1))" "$(mutations)" 'removed finish only demotes once'
+assert_equals true "$(jq -s '[.[] | select(.query | startswith("mutation UpdateIssue"))][-1].variables.input == {addedLabelIds:["loop-milestones"],removedLabelIds:["loop-agent"]}' "$CASE/requests")" 'demotion never rewrites priority estimate or description'
+pass 'remote clears survive repeated refill; removed checks only trigger safe demotion'
+touch "$CASE/http-error"
+rc=0; run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/unreadable" 2>/dev/null || rc=$?
+assert_equals 75 "$rc" 'unreadable intake defers refill'
+assert_equals '' "$(cat "$CASE/unreadable")" 'failed refresh never emits stale candidates'
+pass 'refill refreshes eligible queued ships before filtering and ranking, and refuses stale metadata'
 
 make_case lost-response
 touch "$CASE/lost-create"
@@ -401,13 +626,20 @@ assert_equals "$DONE" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'watcher sy
 assert_not_contains "$(cat "$CASE/watch.err")" 'timed out' 'watcher does not deadlock with Linear sync'
 pass 'real watcher syncs an externally merged PR under its existing control lock'
 
-for failure in no landed zero-work lookup-failed merge-commit fast-forward yes; do
+for failure in no landed zero-work lookup-failed merge-commit fast-forward yes transient agent-mode; do
   make_case "real-spawn-$failure"
   fm_test_spawn_home "$HOME_DIR" claude
   printf '%s\n' "$$" > "$HOME_DIR/state/.lock"
   fm_test_spawn_brief "$HOME_DIR" "$TASK" 'Exercise automatic issue sync.'
   fm_git_worktree "$CASE/sample" "$CASE/wt" "fm/$TASK"
   [ "$failure" != yes ] || touch "$CASE/error"
+  [ "$failure" != transient ] || touch "$CASE/transient-error"
+  if [ "$failure" = agent-mode ]; then
+    tasks update "$TASK" --body $'Loop: agent\nLoop finish: bash tests/rate-limit.test.sh rejects requests above the limit' >/dev/null
+  fi
+  if [ "$failure" = no ]; then
+    tasks update "$TASK" --body $'Linear priority: 3\nLinear estimate: 1\nLoop: agent' >/dev/null
+  fi
   if [ "$failure" = zero-work ]; then
     # Upstream moved past the local base before spawn.
     upstream=$(git -C "$CASE/sample" -c user.name=Test -c user.email=test@example.invalid \
@@ -417,10 +649,24 @@ for failure in no landed zero-work lookup-failed merge-commit fast-forward yes; 
   out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
     HOME="$HOME_DIR/user-home" CLAUDE_CONFIG_DIR='' \
     bash "$ROOT/bin/fm-spawn.sh" "$TASK" "$CASE/sample" --mode direct-PR --yolo off 2>&1) \
-    || fail "real spawn failed: $out"
+    || { case "$failure" in yes|transient|agent-mode) ;; *) fail "real spawn failed: $out" ;; esac; }
+  if [ "$failure" = yes ] || [ "$failure" = transient ]; then
+    assert_contains "$out" 'intake metadata unreadable' 'preflight failure refuses launch'
+    [ ! -f "$HOME_DIR/state/$TASK.meta" ] || fail 'failed preflight launched worker'
+    continue
+  fi
+  if [ "$failure" = agent-mode ]; then
+    assert_contains "$out" 'ABC-101 has Loop: agent' 'mode refusal names the Linear ticket'
+    assert_contains "$out" 'requires mode=no-mistakes; received mode=direct-PR' 'agent refuses direct publication'
+    [ ! -f "$HOME_DIR/state/$TASK.meta" ] || fail 'wrong delivery mode launched worker'
+    [ ! -f "$HOME_DIR/data/$TASK/launch-brief.md" ] || fail 'wrong delivery mode published launch brief'
+    continue
+  fi
   assert_contains "$out" 'spawned work' 'spawn succeeds after sync attempt'
   if [ "$failure" = no ]; then
     assert_equals 1 "$(jq length "$CASE/issues.json")" 'actual ship spawn creates ticket'
+    assert_contains "$(cat "$HOME_DIR/data/$TASK/launch-brief.md")" 'Loop: milestones' 'pre-launch guard reaches the real worker brief'
+    assert_equals true "$(jq '.[0].labels | index("loop-milestones") != null' "$CASE/issues.json")" 'pickup intake demotes agent before launch'
     printf 'unlanded change\n' > "$CASE/wt/change"
     git -C "$CASE/wt" add change
     git -C "$CASE/wt" -c user.name=Test -c user.email=test@example.invalid commit -qm 'Test change'
@@ -466,11 +712,9 @@ for failure in no landed zero-work lookup-failed merge-commit fast-forward yes; 
     out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
       bash "$ROOT/bin/fm-teardown.sh" "$TASK" 2>&1) || fail "real teardown failed: $out"
     assert_equals "$STARTED" "$(jq -r '.[0].state.id' "$CASE/issues.json")" "$failure landing without recorded PR keeps status"
-  else
-    assert_contains "$out" 'sync failed' 'actual spawn tolerates API failure'
   fi
 done
-pass 'real ship spawn calls sync after dispatch and survives API failure; teardown demotes only unlanded work'
+pass 'real spawn reads Loop metadata before dispatch and syncs after it; unreadable preflight refuses launch; teardown demotes only unlanded work'
 
 for attached in none other same slash; do
   make_case "merge-attach-$attached"
