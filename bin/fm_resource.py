@@ -644,6 +644,21 @@ def validate_manifest(path, command, task):
     return value
 
 
+def write_command_adapter(path, name, executable, config_name):
+    text = "#!/bin/sh\nexec " + " ".join(shlex.quote(v) for v in [sys.executable,
+        str(Path(__file__).resolve()), "--config", str(Path(config_name).resolve()), "tool", "--name", name,
+        "--executable", executable, "--"]) + ' "$@"\n'
+    fd, temporary = tempfile.mkstemp(prefix=".adapter-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(text)
+            os.fchmod(stream.fileno(), 0o700)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def prepare(args, config_name):
     """Write task-owned launch material, never change a project or account."""
     directory = private_dir(args.directory)
@@ -668,29 +683,54 @@ def prepare(args, config_name):
     atomic_json(directory / "manifest.json", manifest)
     shims = directory / "bin"
     private_dir(shims)
-    tools = ("npm", "npx", "pnpm", "yarn", "bun", "vitest", "playwright", "graphify",
+    tools = ("node", "npm", "npx", "pnpm", "yarn", "bun", "vitest", "playwright", "graphify",
              "make", "cmake", "ninja", "cargo", "go", "nix", "nix-build", "darwin-rebuild", "nixos-rebuild",
              "chrome-devtools-axi")
     for name in tools:
         executable = shutil.which(name)
         if executable:
-            text = "#!/bin/sh\nexec " + " ".join(shlex.quote(v) for v in [sys.executable,
-                str(Path(__file__).resolve()), "--config", config_name, "tool", "--name", name,
-                "--executable", executable, "--"]) + ' "$@"\n'
             path = shims / name
             if path.exists() or path.is_symlink():
                 raise Refusal("refusing to replace an existing task command adapter")
-            path.write_text(text)
-            path.chmod(0o700)
+            write_command_adapter(path, name, executable, config_name)
     print(str(directory / "manifest.json"))
+
+
+def node_options(command):
+    """Return option positions, skipping operands of recognized value options."""
+    values = {"-r", "--require", "--import", "--loader", "--experimental-loader", "-C", "--conditions",
+        "--env-file", "--env-file-if-exists", "--test-concurrency", "--test-reporter",
+        "--test-reporter-destination", "--test-name-pattern", "--test-skip-pattern", "--test-timeout",
+        "--test-shard", "--test-coverage-exclude", "--test-coverage-include",
+        "--test-coverage-lines", "--test-coverage-branches", "--test-coverage-functions", "--inspect-port",
+        "--title", "--icu-data-dir", "--openssl-config",
+        "--redirect-warnings", "--diagnostic-dir", "--report-directory", "--report-dir",
+        "--report-filename", "--snapshot-blob", "--heap-prof-dir", "--heap-prof-name",
+        "--heap-prof-interval", "--cpu-prof-dir", "--cpu-prof-name", "--cpu-prof-interval",
+        "--trace-event-categories", "--trace-event-file-pattern", "--unhandled-rejections",
+        "--experimental-default-type", "--experimental-specifier-resolution", "--input-type",
+        "--experimental-policy", "--policy-integrity", "--max-old-space-size", "--max-semi-space-size"}
+    indices = []
+    index = 1
+    while index < len(command):
+        value = command[index].replace("_", "-")
+        if (not value.startswith("-") or value in ("--", "-")
+                or value.split("=", 1)[0] in ("--eval", "--print")
+                or value.startswith(("-e", "-p"))):
+            break
+        indices.append(index)
+        index += 2 if value in values else 1
+    return indices
 
 
 def tool_job(args, name, config, digest):
     argv = args.argv[1:] if args.argv and args.argv[0] == "--" else args.argv
+    if args.name == "node" and not any(argv[index - 1] == "--test" for index in node_options([args.executable, *argv])):
+        os.execv(args.executable, [args.executable, *argv])
     kind = "exclusive"
     if args.name == "graphify":
         kind = "graph"
-    elif args.name == "vitest":
+    elif args.name in ("vitest", "node"):
         kind = "test"
     elif args.name in ("playwright", "chrome-devtools-axi"):
         kind = "browser"
@@ -709,7 +749,110 @@ def tool_job(args, name, config, digest):
     return run_job(args, name, config, digest)
 
 
-def caps(command, kind, portable):
+def package_test_runner(command):
+    """Resolve simple package scripts without executing or changing the project."""
+    name = Path(command[0]).name
+    if name not in ("npm", "pnpm", "yarn") or len(command) < 2:
+        return None
+    directory = Path.cwd()
+    selectors = []
+    script = None
+    script_index = None
+    running = False
+    multiple = False
+    directory_options = {"npm": ("--prefix", "-C"), "pnpm": ("--dir", "-C"), "yarn": ("--cwd",)}
+    workspace_options = {"npm": ("--workspace", "-w"), "pnpm": ("--filter", "-F"), "yarn": ()}
+    value_options = {"--loglevel", "--userconfig", "--globalconfig", "--registry", "--cache",
+        "--script-shell", "--location", "--logs-dir", "--fetch-retries", "--fetch-timeout",
+        "--tag", "--access", "--otp", "--node-options", "--heading", "--before", "--proxy",
+        "--https-proxy", "--cafile", "--cert", "--key", "--scope", "--auth-type",
+        "--reg", "-L", "--enjoy-by", "-m", "--message", "-c", "--call"}
+    index = 1
+    while index < len(command):
+        token = command[index]
+        if token == "--":
+            break
+        option, equals, operand = token.partition("=")
+        if option in (*directory_options[name], *workspace_options[name]) or name == "yarn" and token == "workspace" and script is None:
+            if not equals:
+                index += 1
+                if index >= len(command):
+                    raise Refusal("package selection needs an operand")
+                operand = command[index]
+            if option in directory_options[name]:
+                directory = Path.cwd() / operand
+            else:
+                selectors.append(operand)
+        elif name == "npm" and option in value_options:
+            if not equals:
+                index += 1
+                if index >= len(command):
+                    raise Refusal("package option needs an operand")
+        elif name == "npm" and option in ("--workspaces", "--include-workspace-root", "--ws"):
+            multiple = True
+        elif script is None and not token.startswith("-"):
+            if not running and token in ("run", "run-script"):
+                running = True
+            elif running or token == "test":
+                script = token
+                script_index = index
+            else:
+                return None
+        if script is not None and name != "npm":
+            break
+        index += 1
+    if script is None:
+        return None
+    if multiple:
+        raise Refusal("package worker limits require a single selected package")
+    package = next((parent / "package.json" for parent in (directory, *directory.parents)
+        if (parent / "package.json").is_file()), None)
+    if package is None:
+        return None
+    try:
+        value = json.loads(package.read_text())
+        if selectors:
+            if len(selectors) != 1:
+                raise Refusal("package worker limits require a single selected package")
+            selector = selectors[0]
+            patterns = value.get("workspaces", [])
+            if isinstance(patterns, dict):
+                patterns = patterns.get("packages", [])
+            candidates = {path.parent for pattern in patterns for path in package.parent.glob(pattern + "/package.json")}
+            selected_path = package.parent / selector
+            matches = [path for path in candidates if selector == json.loads((path / "package.json").read_text()).get("name")
+                or path.resolve() == selected_path.resolve()]
+            if len(matches) != 1:
+                raise Refusal("package worker limits cannot resolve a single workspace")
+            value = json.loads((matches[0] / "package.json").read_text())
+        text = value.get("scripts", {}).get(script, "")
+        lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        argv = list(lexer)
+    except (OSError, ValueError, AttributeError, TypeError):
+        if selectors:
+            raise Refusal("package worker limits cannot resolve a single workspace")
+        return None
+    mentions_runner = any(
+        Path(token).name == "playwright" and argv[index + 1:index + 2] == ["test"]
+        or Path(token).name == "node" and any(argv[index + offset] == "--test" for offset in node_options(argv[index:]))
+        for index, token in enumerate(argv))
+    if not mentions_runner:
+        return "other"
+    while argv and "=" in argv[0] and not argv[0].startswith("-"):
+        argv.pop(0)
+    if argv[:1] == ["npx"]:
+        argv.pop(0)
+    runner = Path(argv[0]).name if argv else ""
+    simple = runner == "playwright" and argv[1:2] == ["test"] or runner == "node" and any(argv[index] == "--test" for index in node_options(argv))
+    if not simple or "\n" in text or any(token and all(c in "();<>|&" for c in token) for token in argv) or "--" in argv:
+        raise Refusal("package test script needs a simple runner command for worker limits")
+    if runner == "playwright" and command[script_index + 1:].count("--") > (1 if name == "npm" else 0):
+        raise Refusal("package test script needs a simple runner command for worker limits")
+    return runner
+
+
+def caps(command, kind, portable, config_name, config):
     workers = 1 if portable else 2
     env = os.environ.copy()
     env.update({"GRAPHIFY_MAX_WORKERS": str(workers),
@@ -719,7 +862,21 @@ def caps(command, kind, portable):
         "VITEST_MIN_THREADS": "1", "VITEST_MIN_FORKS": "1"})
     name = Path(command[0]).name
     result = command[:]
-    if name == "vitest":
+    package_runner = package_test_runner(command)
+    if package_runner:
+        if package_runner in ("node", "playwright"):
+            executable = shutil.which("node")
+            if not executable:
+                raise Refusal("package test script requires a Node executable on PATH")
+            key = hashlib.sha256(json.dumps([str(Path(config_name).resolve()), executable]).encode()).hexdigest()
+            shims = private_dir(Path(config["stateDirectory"]) / "node-adapters" / key)
+            write_command_adapter(shims / "node", "node", executable, config_name)
+            env["PATH"] = str(shims) + os.pathsep + env.get("PATH", os.defpath)
+        if package_runner == "playwright":
+            if name == "npm" and "--" not in result[2:]:
+                result += ["--"]
+            result += ["--workers=1"]
+    elif name == "vitest":
         result += [f"--maxWorkers={workers}"]
     elif name == "playwright" and len(command) > 1 and command[1] == "test":
         result += ["--workers=1"]
@@ -727,8 +884,29 @@ def caps(command, kind, portable):
         result += ["--workers=1"]
     elif name in ("npx", "npm", "pnpm", "yarn", "bun") and "vitest" in result:
         result += [f"--maxWorkers={workers}"]
-    elif name == "node" and "--test" in command:
-        result.insert(1, f"--test-concurrency={workers}")
+    elif name == "node":
+        indices = node_options(command)
+        test_index = next((index for index in indices if command[index] == "--test"), None)
+        if test_index is not None:
+            explicit = False
+            for index in indices:
+                value = result[index].replace("_", "-")
+                if value.startswith("--test-concurrency="):
+                    explicit = True
+                    try:
+                        if not 0 < int(value.split("=", 1)[1]) <= workers:
+                            result[index] = f"--test-concurrency={workers}"
+                    except ValueError:
+                        pass
+                elif value == "--test-concurrency" and index + 1 < len(result):
+                    explicit = True
+                    try:
+                        if not 0 < int(result[index + 1]) <= workers:
+                            result[index + 1] = str(workers)
+                    except ValueError:
+                        pass
+            if not explicit:
+                result.insert(test_index + 1, f"--test-concurrency={workers}")
     elif name == "nix-build" or name in ("nix", "darwin-rebuild", "nixos-rebuild") and any(v in command for v in ("build", "switch", "test")):
         result += ["--max-jobs", "1", "--cores", "2"]
     return result, env
@@ -776,7 +954,7 @@ def run_job(args, config_name, config, digest):
     owner = identity(os.getpid())
     if inherited and kind != "worker":
         rpc(config, digest, op="inherit", token=inherited, controller=owner, memoryMiB=memory)
-        command, env = caps(command, kind, os.environ.get("FM_RESOURCE_PORTABLE") == "1")
+        command, env = caps(command, kind, os.environ.get("FM_RESOURCE_PORTABLE") == "1", config_name, config)
         if kind == "browser" and not env.get("FM_RESOURCE_BROWSER_PROFILE"):
             browser_environment(config, inherited, env)
         os.execvpe(command[0], command, env)
@@ -807,7 +985,7 @@ def run_job(args, config_name, config, digest):
             time.sleep(0.2)
         state = rpc(config, digest, op="status")
         portable = state["telemetry"]["power"]["source"] != "ac" or state["telemetry"]["power"]["adapterWatts"] < 96
-        command, env = caps(command, kind, portable)
+        command, env = caps(command, kind, portable, config_name, config)
         env.update(FM_RESOURCE_CONFIG=config_name, FM_RESOURCE_PORTABLE="1" if portable else "0")
         if kind == "browser":
             browser_environment(config, token, env)
