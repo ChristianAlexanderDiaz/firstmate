@@ -132,9 +132,10 @@
 # times. Missing parallel hints are reported without failing this guard.
 #
 # portable-serial stays strictly serial. Its CI shards (portable-serial-<k>of<n>)
-# split it across separate runners, so two of its stateful scripts still never
-# share a machine. This script owns <n>: a lane whose <n> disagrees with the
-# configured shard count is refused, so a CI matrix cannot silently drop a shard.
+# run on separate runners upstream; the fork groups shards sequentially on
+# fewer runners, so two stateful scripts still never run concurrently there.
+# This script owns <n>: a lane whose <n> disagrees with the configured shard
+# count is refused. tests/fm-ci-workflow.test.sh guards complete CI selection.
 # --check-coverage also reports serial_max_ms (largest packed hint sum, including
 # default weights) and serial_budget_ms (the 20-minute packing target), refusing
 # a split above that target. Neither figure is an execution timeout or proof of
@@ -197,7 +198,7 @@ PER_SCRIPT_TIMEOUT_SECS=0
 # silently outruns a caller's invocation budget.
 CHANGED_DEFAULT_TIMEOUT_SECS=1500
 
-# How many separate-runner shards the portable serial remainder splits into.
+# How many canonical shards the portable serial remainder splits into.
 # One owner: CI lane names carry this count and are refused when they disagree.
 PORTABLE_SERIAL_SHARDS=9
 
@@ -1032,7 +1033,7 @@ select_lane() {
       done < <(list_portable_serial)
       ;;
     portable-serial-*)
-      # One separate-runner shard of the same remainder, still serial in itself.
+      # One canonical shard of the same remainder, still serial in itself.
       shard=$(portable_serial_shard_index "$want")
       while IFS=$'\t' read -r idx s; do
         [ -n "$s" ] || continue
