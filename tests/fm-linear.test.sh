@@ -306,6 +306,23 @@ jq -n --argjson now "$now" --argjson reset "$((now+500000))" '
   > "$HOME_DIR/state/quota-plan-snapshot.json"
 seed_issue
 tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+fm_git_init_commit "$HOME_DIR/projects/other"
+fm_git_add_origin "$HOME_DIR/projects/other" "$CASE/other.git"
+printf 'project=other|%s\n' "$TEAM" >> "$HOME_DIR/config/linear"
+printf 'lane other\n' >> "$HOME_DIR/config/quota-plan"
+tasks add other-work 'Other lane work' --repo other --kind ship --body 'Linear issue: ABC-45' >/dev/null
+jq '. + [(.[0] | .id="00000000-0000-4000-8000-000000000013" | .identifier="ABC-45" | .priority=0)]' \
+  "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+for attempt in 1 2; do
+  sync_event intake "$TASK" || fail 'repeated intake rejected absent priority'
+  run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/no-priority-$attempt" || fail 'unprioritized work stalled refill'
+  order=$(sed -n 's/^fingerprint: //p' "$CASE/no-priority-$attempt" | jq -r '.lanes | map(.lane + ":" + (.ready | map(.id) | join(","))) | join(";")')
+  assert_equals 'sample:work;other:other-work' "$order" 'unprioritized mapped work remains eligible across both lanes'
+done
+assert_contains "$(tasks show "$TASK" --full)" 'Linear priority: 0' 'no-priority snapshot round-trips'
+assert_equals 0 "$(mutations)" 'absent and zero priority never produce an API update'
+pass 'repeated intake and refill preserve no-priority work and keep other lanes eligible'
 tasks add next 'Next ticket' --repo sample --kind ship --body 'Linear issue: ABC-43' >/dev/null
 tasks add recovered 'Previously human ticket' --repo sample --kind ship --body $'Linear issue: ABC-44\nLoop: Christian' >/dev/null
 tasks add held 'Held ticket' --repo sample --kind ship --body 'Linear issue: ABC-999' >/dev/null

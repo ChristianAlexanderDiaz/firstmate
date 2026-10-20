@@ -190,7 +190,7 @@ fm_linear_loop() {  # <event> <issue-json> <body> <data> <task> <team>
   if [ "$event" = intake ]; then
     if [ "$priority" = 0 ]; then
       wanted=$(fm_linear_body_value "$body" 'Linear priority')
-      case "$wanted" in 1|2|3|4) priority=$wanted; input=$(printf '%s' "$input" | jq -c --argjson p "$wanted" '.priority=$p') ;; '') ;; *) return 1 ;; esac
+      case "$wanted" in 1|2|3|4) priority=$wanted; input=$(printf '%s' "$input" | jq -c --argjson p "$wanted" '.priority=$p') ;; ''|0) ;; *) return 1 ;; esac
     fi
     if [ -z "$estimate" ]; then
       wanted=$(fm_linear_body_value "$body" 'Linear estimate')
