@@ -3105,7 +3105,7 @@ test_backlog_handoff_refuses_done_items_and_non_secondmate_homes
 test_secondmate_retirement_refuses_stranded_records() {
   local mode home sub fakebin out expected parent_state parent_data
   command -v tasks-axi >/dev/null 2>&1 || { echo 'skip: tasks-axi not found'; return; }
-  for mode in queued held decision source-inbox parent-inbox reconcile result transfer unsafe parent-route; do
+  for mode in queued held decision source-inbox parent-inbox reconcile result transfer unsafe parent-route beads-queued beads-drained beads-unreadable; do
     home="$TMP_ROOT/record-retire-$mode"
     sub="$TMP_ROOT/record-sub-$mode"
     parent_state="$home/state"
@@ -3121,6 +3121,29 @@ test_secondmate_retirement_refuses_stranded_records() {
       queued|held)
         printf '## Queued\n- [ ] open-task - Preserve me (repo: alpha)\n\n## Done\n' > "$sub/data/backlog.md"
         [ "$mode" != held ] || tasks-axi hold open-task --reason pending --kind captain --file "$sub/data/backlog.md" >/dev/null
+        ;;
+      beads-*)
+        printf 'backend = "beads"\n' > "$sub/.tasks.toml"
+        rm "$sub/data/backlog.md"
+        mkdir -p "$home/fakebin" "$parent_state/domain.inbox"
+        printf 'pending\n' > "$parent_state/domain.inbox/001.msg"
+        cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+case " $* " in *' --file '*) echo 'unexpected markdown addressing' >&2; exit 1 ;; esac
+case "$1" in
+  list)
+    [ "$FM_RETIRE_BACKEND_CASE" != beads-unreadable ] || { echo "backend unreadable" >&2; exit 1; }
+    if [ "$FM_RETIRE_BACKEND_CASE" = beads-queued ]; then
+      printf 'tasks[1]{id,state,held}:\n  adapter-task,queued,no\n'
+    else
+      printf 'tasks[0]{id,state,held}:\n'
+    fi
+    ;;
+  show) printf 'task:\n  id: adapter-task\n  state: queued\n  held: no\n' ;;
+  *) exec "$FM_RETIRE_REAL_TASKS" "$@" ;;
+esac
+SH
+        chmod +x "$home/fakebin/tasks-axi"
         ;;
       decision) printf 'needs-decision [at=1] [key=open]: pending\n' > "$sub/state/old.status" ;;
       source-inbox) mkdir "$sub/state/old.inbox"; printf 'pending\n' > "$sub/state/old.inbox/001.msg" ;;
@@ -3145,7 +3168,7 @@ test_secondmate_retirement_refuses_stranded_records() {
     esac
     fakebin=$(make_fake_tmux "$TMP_ROOT/record-fake-$mode")
     out="$TMP_ROOT/record-retire-$mode.out"
-    if PATH="$fakebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    if PATH="$home/fakebin:$fakebin:$PATH" FM_RETIRE_BACKEND_CASE="$mode" FM_RETIRE_REAL_TASKS="$(command -v tasks-axi)" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
       FM_STATE_OVERRIDE="$parent_state" FM_DATA_OVERRIDE="$parent_data" \
       FM_FAKE_TMUX_WINDOW=firstmate:fm-domain FM_FAKE_TMUX_LOG="$TMP_ROOT/record-fake-$mode/log" \
       FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/record-fake-$mode/pane.txt" \
@@ -3153,7 +3176,9 @@ test_secondmate_retirement_refuses_stranded_records() {
       fail "retirement discarded $mode records"
     fi
     case "$mode" in
-      queued|held) expected='open backlog task' ;;
+      queued|held|beads-queued) expected='open backlog task' ;;
+      beads-drained) expected='unread steering' ;;
+      beads-unreadable) expected='backend unreadable' ;;
       decision) expected='unresolved status decision' ;;
       source-inbox|parent-inbox|parent-route) expected='unread steering' ;;
       reconcile) expected='unread steering or reconciliation' ;;

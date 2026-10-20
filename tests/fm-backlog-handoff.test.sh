@@ -1444,19 +1444,47 @@ test_strict_source_refusals() {
 }
 
 test_strict_source_task_set_contention() {
-  local base="$TMP_ROOT/strict-contention" pid n=0
+  local base="$TMP_ROOT/strict-contention" handoff_pid real_tasks fakebin phase
   strict_fixture "$base"
-  bash -c '. "$1/bin/fm-wake-lib.sh"; fm_lock_acquire_wait "$2/source/state/.task-set.lock"; touch "$2/locked"; while [ ! -f "$2/release" ]; do sleep .02; done; fm_lock_release "$2/source/state/.task-set.lock"' _ "$ROOT" "$base" &
-  pid=$!
-  while [ ! -f "$base/locked" ]; do n=$((n+1)); [ "$n" -lt 200 ] || fail 'task lock not acquired'; sleep .02; done
-  strict_run "$base" --to-parent move-a move-b > "$base/out" 2>&1 &
-  local handoff_pid=$!
-  sleep .2
-  assert_grep 'move-a' "$base/source/data/backlog.md" 'handoff bypassed task-set lock'
-  touch "$base/release"
-  wait "$pid" || fail 'lock holder failed'
-  wait "$handoff_pid" || fail "handoff after lock release failed: $(cat "$base/out")"
-  pass 'source handoff serializes with task publication lock'
+  fm_git_init_commit "$base/source/projects/alpha"
+  fm_git_add_origin "$base/source/projects/alpha" "$base/alpha-origin.git"
+  mkdir -p "$base/source/data/move-a" "$base/user-home" "$base/fakebin"
+  printf '# Task\n## Captain\x27s intent\nExercise concurrent dispatch.\n\n## Firstmate spec\nRefuse dispatch.\n\n# Definition of done\nDelivery contract: mode=direct-PR\n' > "$base/source/data/move-a/brief.md"
+  real_tasks=$(command -v tasks-axi)
+  fakebin="$base/fakebin"
+  mkfifo "$base/entered" "$base/release"
+  cat > "$fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = mv ] && [[ " $* " = *" --file $FM_RACE_BASE/source/data/backlog.md "* ]]; then
+  printf 'before\n' > "$FM_RACE_BASE/entered"
+  read -r _ < "$FM_RACE_BASE/release"
+  "$FM_REAL_TASKS_AXI" "$@" || exit $?
+  printf 'after\n' > "$FM_RACE_BASE/entered"
+  read -r _ < "$FM_RACE_BASE/release"
+  exit 0
+fi
+exec "$FM_REAL_TASKS_AXI" "$@"
+SH
+  chmod +x "$fakebin/tasks-axi"
+  PATH="$fakebin:$PATH" FM_RACE_BASE="$base" FM_REAL_TASKS_AXI="$real_tasks" \
+    strict_run "$base" --to-parent move-a move-b > "$base/out" 2>&1 &
+  handoff_pid=$!
+  for phase in before after; do
+    local observed
+    read -r observed < "$base/entered"
+    [ "$observed" = "$phase" ] || fail 'wrong handoff barrier'
+    if FM_HOME="$base/source" FM_ROOT_OVERRIDE="$ROOT" HOME="$base/user-home" FM_SPAWN_NO_GUARD=1 \
+      "$ROOT/bin/fm-spawn.sh" move-a "$base/source/projects/alpha" --mode direct-PR --yolo off 'echo fixture' > "$base/dispatch-$phase" 2>&1; then
+      fail "source spawn interleaved $phase source removal"
+    fi
+    assert_grep 'task set is locked' "$base/dispatch-$phase" "spawn missed publication lock: $(cat "$base/dispatch-$phase")"
+    assert_absent "$base/source/state/move-a.meta" 'source spawn published a second owner'
+    printf 'release\n' > "$base/release"
+  done
+  wait "$handoff_pid" || fail "handoff after competing spawn failed: $(cat "$base/out")"
+  assert_no_grep move-a "$base/source/data/backlog.md" 'source retained transferred work'
+  assert_grep move-a "$base/parent/data/backlog.md" 'handoff lost ownership'
+  pass 'public source spawn cannot interleave before or after handoff removal'
 }
 
 test_strict_source_preserves_an_earlier_failed_wake() {

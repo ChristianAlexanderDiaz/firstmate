@@ -1059,8 +1059,17 @@ strict_source_handoff() { # <destination> <keys...>; caller holds registry/hando
     if [ "$(sed -n '3p' "$file")" = "$SOURCE_ID" ] && [ "$(sed -n '7p' "$file")" = "$id" ] && [ "$(sed -n '8p' "$file")" = "$keys_hash" ]; then
       [ -z "$record" ] || { fm_handoff_error 'multiple matching transfer records need reconciliation'; return 1; }
       record=$file
-    elif [ "$(sed -n '7p' "$file")" = "$id" ] && [ ! -f "${file%.record}.accepted" ]; then
-      fm_handoff_error "an unfinished transfer owns this destination; retry its original batch: $file"; return 1
+    elif [ ! -f "${file%.record}.accepted" ]; then
+      if [ "$(sed -n '7p' "$file")" = "$id" ]; then
+        fm_handoff_error "an unfinished transfer owns this destination; retry its original batch: $file"; return 1
+      fi
+      if [ "$(sed -n '3p' "$file")" = "$SOURCE_ID" ] || [ "$(sed -n '4p' "$file")" = "$source" ]; then
+        for key in "${keys[@]}"; do
+          if sed -n '10,$p' "$file" | grep -Fxq -- "$key"; then
+            fm_handoff_error "an unfinished transfer owns source task $key; retry its original route/batch: $file"; return 1
+          fi
+        done
+      fi
     fi
   done
   ACTIVE_SOURCE_LOCK=$(fm_task_set_lock_path "$source/state") || return 1

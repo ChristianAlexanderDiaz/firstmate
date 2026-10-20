@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Shared strict-transfer receipts and operational-record refusals.
 # Usage: source after fm-wake-lib.sh and fm-tasks-axi-lib.sh.
+# Retirement checks also require fm-backlog-transition-lib.sh.
 # Receipt v1 is five newline-terminated fields: schema, transfer id, payload
 # SHA-256, canonical destination home + marker identity, sorted key-set SHA-256.
 # Files are private, atomically published below state/handoff/receipts only.
@@ -87,9 +88,13 @@ fm_handoff_receipt_accept() {
 # Parse task data only through tasks-axi; no task block serialization lives here.
 fm_handoff_show() { (cd "$1" && env -u TASKS_AXI_BACKEND tasks-axi show "$2" --file "$1/data/backlog.md" --full); }
 fm_handoff_field() { sed -n "s/^  $2: //p" <<< "$1"; }
-fm_handoff_keys() { # <home> <file>
+fm_handoff_keys() { # <home> [file]
   local out
-  out=$(cd "$1" && env -u TASKS_AXI_BACKEND tasks-axi list --file "$2") || return 1
+  if [ "$#" -eq 2 ]; then
+    out=$(cd "$1" && env -u TASKS_AXI_BACKEND tasks-axi list --file "$2") || { printf '%s\n' "$out" >&2; return 1; }
+  else
+    out=$(unset TASKS_AXI_BACKEND; fm_backlog_row_list "$1/data") || { printf '%s\n' "$out" >&2; return 1; }
+  fi
   printf '%s\n' "$out" | sed -n '/^tasks\[[0-9]*\]{id.*}:$/,/^help\[/ { /^  / { s/^  //; s/,.*//; p; }; }'
 }
 
@@ -128,7 +133,7 @@ fm_handoff_task_records_clear() { # <home> <key> [parent] [state-override]
 }
 
 fm_handoff_retirement_clear() { # <target-home> <parent-home> <id> [parent-state] [parent-data]
-  local home=$1 parent=$2 id=$3 keys key show file pending dir
+  local home=$1 parent=$2 id=$3 keys key show file pending dir backend
   local parent_state=${4:-$2/state} parent_data=${5:-$2/data}
   for dir in data state config; do
     [ ! -e "$home/$dir" ] && [ ! -L "$home/$dir" ] && continue
@@ -137,14 +142,16 @@ fm_handoff_retirement_clear() { # <target-home> <parent-home> <id> [parent-state
   for file in "$home/state"/*.meta "$home/data/handoff"/*.outbox.md; do
     [ ! -e "$file" ] && [ ! -L "$file" ] || { fm_handoff_error "secondmate $id has child work or an unfinished outbox: $file"; return 1; }
   done
-  fm_handoff_markdown "$home" || return 1
-  if [ -e "$home/data/backlog.md" ] || [ -L "$home/data/backlog.md" ]; then
-    fm_handoff_file "$home/data/backlog.md" || return 1
-    keys=$(fm_handoff_keys "$home" "$home/data/backlog.md") || return 1
+  backend=$(unset TASKS_AXI_BACKEND; fm_tasks_axi_backend_resolve "$home") || return 1
+  if [ "$backend" != markdown ] || [ -e "$home/data/backlog.md" ] || [ -L "$home/data/backlog.md" ]; then
+    [ "$backend" != markdown ] || fm_handoff_file "$home/data/backlog.md" || return 1
+    keys=$(fm_handoff_keys "$home") || return 1
     while IFS= read -r key; do
       [ -n "$key" ] || continue
-      show=$(fm_handoff_show "$home" "$key") || return 1
-      [ "$(fm_handoff_field "$show" state)" = "done" ] || { fm_handoff_error "secondmate $id still has open backlog task $key"; return 1; }
+      show=$(unset TASKS_AXI_BACKEND; fm_backlog_row_show "$home/data" "$key") || return 1
+      if [ "$(fm_handoff_field "$show" state)" != done ] || [ "$(fm_handoff_field "$show" held)" != no ]; then
+        fm_handoff_error "secondmate $id still has open backlog task $key"; return 1
+      fi
     done <<< "$keys"
   fi
   for file in "$home/state"/*.status; do

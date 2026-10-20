@@ -678,6 +678,30 @@ strict_hash=$(sha256_file "$strict_payload")
 # Reproduce interrupted source persistence: the authoritative outbox exists,
 # but the predecessor still has its identical row. Resume must clean that home.
 cp "$strict_payload" "$SOURCE/data/backlog.md"
+SUCCESSOR="$TMP_ROOT/successor"
+mkdir -p "$SUCCESSOR"/{bin,data,state,config,projects}
+printf 'fixture\n' > "$SUCCESSOR/AGENTS.md"
+printf 'successor\n' > "$SUCCESSOR/.fm-secondmate-home"
+printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$PARENT" > "$SUCCESSOR/.fm-secondmate-parent"
+printf 'backend = "markdown"\n' > "$SUCCESSOR/.tasks.toml"
+cp "$SOURCE/data/projects.md" "$SUCCESSOR/data/projects.md"
+printf '## Queued\n\n## Done\n' > "$SUCCESSOR/data/backlog.md"
+printf -- '- successor - successor (home: %s; scope: alpha; projects: alpha; added 2026-10-20)\n' "$SUCCESSOR" >> "$PARENT/data/secondmates.md"
+tasks-axi add extra 'Overlapping batch companion' --repo alpha --file "$SOURCE/data/backlog.md" >/dev/null || fail 'overlap fixture failed'
+source_before_retry=$(cat "$SOURCE/data/backlog.md")
+for reserved_target in successor --to-parent; do
+  for reserved_variant in exact overlap; do
+    reserved_batch=(strict-remote)
+    [ "$reserved_variant" != overlap ] || reserved_batch+=(extra)
+    if handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --from-secondmate source "$reserved_target" "${reserved_batch[@]}" > "$TMP_ROOT/strict-reserved.out" 2>&1; then
+      fail 'unfinished remote transfer allowed overlapping source work to a second successor'
+    fi
+    [ "$(cat "$SOURCE/data/backlog.md")" = "$source_before_retry" ] || fail 'reservation refusal mutated source'
+    assert_no_grep strict-remote "$SUCCESSOR/data/backlog.md" 'unfinished transfer gave a second successor ownership'
+    [ "$(cat "$PARENT/data/backlog.md")" = "$parent_before_strict" ] || fail 'reservation refusal gave parent a second copy'
+    assert_grep 'unfinished transfer owns source task strict-remote' "$TMP_ROOT/strict-reserved.out" "cross-route source reservation was not enforced: $(cat "$TMP_ROOT/strict-reserved.out")"
+  done
+done
 tasks-axi add unrelated 'Different batch' --repo alpha --file "$SOURCE/data/backlog.md" >/dev/null || fail 'unrelated source fixture failed'
 handoff_env "$ROOT/bin/fm-backlog-handoff.sh" --from-secondmate source ios unrelated > "$TMP_ROOT/strict-unrelated.out" 2>&1 \
   && fail 'unrelated strict batch replaced pending provenance'
@@ -715,6 +739,65 @@ strict_deliver "$STRICT_TEST_ID" "$TMP_ROOT/strict-fresh.md" 3 >/dev/null || fai
 strict_deliver "$STRICT_TEST_ID" "$TMP_ROOT/strict-collision.md" 4 > "$TMP_ROOT/strict-conflict.out" 2>&1 \
   && fail 'same strict ID accepted different payload'
 pass 'strict receipt rejects batch collisions and changed payload, accepts retries after progress'
+
+RACE_BASE="$TMP_ROOT/receipt-race"
+mkdir -p "$RACE_BASE/fakebin" "$RACE_BASE/user-home" "$REMOTE/data/receipt-race" "$REMOTE/projects/alpha"
+fm_git_init_commit "$REMOTE/projects/alpha"
+fm_git_add_origin "$REMOTE/projects/alpha" "$RACE_BASE/alpha-origin.git"
+printf '# Task\n## Captain\x27s intent\nExercise concurrent receipt.\n\n## Firstmate spec\nRefuse dispatch.\n\n# Definition of done\nDelivery contract: mode=direct-PR\n' > "$REMOTE/data/receipt-race/brief.md"
+printf '## Queued\n- [ ] receipt-race - One destination owner (repo: alpha)\n\n## Done\n' > "$RACE_BASE/payload.md"
+mkfifo "$RACE_BASE/entered" "$RACE_BASE/release"
+cat > "$RACE_BASE/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = mv ] && [ "${2:-}" = receipt-race ]; then
+  printf 'before-move\n' > "$FM_RACE_BASE/entered"
+  read -r _ < "$FM_RACE_BASE/release"
+fi
+exec "$FM_REAL_TASKS_AXI" "$@"
+SH
+cat > "$RACE_BASE/fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'/receipts/'*'.receipt'*)
+    printf 'before-receipt\n' > "$FM_RACE_BASE/entered"
+    read -r _ < "$FM_RACE_BASE/release"
+    "$FM_REAL_MV" "$@" || exit $?
+    printf 'after-receipt\n' > "$FM_RACE_BASE/entered"
+    read -r _ < "$FM_RACE_BASE/release"
+    exit 0
+    ;;
+esac
+exec "$FM_REAL_MV" "$@"
+SH
+chmod +x "$RACE_BASE/fakebin/"*
+RACE_ID=11111111111111111111111111111111
+FM_REAL_TASKS_AXI=$(command -v tasks-axi) FM_REAL_MV=$(command -v mv) FM_RACE_BASE="$RACE_BASE" \
+  PATH="$RACE_BASE/fakebin:$PATH" strict_deliver "$RACE_ID" "$RACE_BASE/payload.md" 1 > "$RACE_BASE/receive.out" 2>&1 &
+race_receiver_pid=$!
+for race_phase in before-move before-receipt after-receipt; do
+  read -r race_observed < "$RACE_BASE/entered"
+  [ "$race_observed" = "$race_phase" ] || fail 'wrong receipt barrier'
+  if [ "$race_phase" = before-move ]; then
+    assert_no_grep receipt-race "$REMOTE/data/backlog.md" 'receiver moved before classification barrier'
+  else
+    assert_grep receipt-race "$REMOTE/data/backlog.md" 'receiver did not commit destination work'
+  fi
+  if [ "$race_phase" = after-receipt ]; then
+    assert_present "$REMOTE/state/handoff/receipts/$RACE_ID.receipt" 'receipt was not accepted before cleanup'
+  else
+    assert_absent "$REMOTE/state/handoff/receipts/$RACE_ID.receipt" 'receipt published before acceptance barrier'
+  fi
+  if FM_HOME="$REMOTE" FM_ROOT_OVERRIDE="$ROOT" HOME="$RACE_BASE/user-home" FM_SPAWN_NO_GUARD=1 \
+    "$ROOT/bin/fm-spawn.sh" receipt-race "$REMOTE/projects/alpha" --mode direct-PR --yolo off 'echo fixture' > "$RACE_BASE/spawn-$race_phase.out" 2>&1; then
+    fail "spawn interleaved receipt at $race_phase"
+  fi
+  assert_grep 'task set is locked' "$RACE_BASE/spawn-$race_phase.out" "spawn refused for unrelated reason: $(cat "$RACE_BASE/spawn-$race_phase.out")"
+  assert_absent "$REMOTE/state/receipt-race.meta" 'spawn published during receipt'
+  printf 'release\n' > "$RACE_BASE/release"
+done
+wait "$race_receiver_pid" || fail "concurrent receipt failed: $(cat "$RACE_BASE/receive.out")"
+assert_absent "$REMOTE/state/handoff/strict-test.outbox.md" 'accepted receipt retained scratch'
+pass 'public destination spawn excludes receipt classification, move and acceptance'
 
 # Inject a receipt-publication crash through the external mv command, after the
 # real task move. A later receive must preserve the ambiguous incoming scratch.
