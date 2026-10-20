@@ -3361,11 +3361,21 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   # Use the existing launch-brief overlay for every worker kind, including
   # pre-scope briefs and relaunches. Charters never enter this worker path.
   SOURCE_BRIEF=$BRIEF
+  LINEAR_DISPATCH_METADATA=''
+  if [ "$KIND" = ship ] && [ -f "$CONFIG/linear" ]; then
+    FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
+      FM_LINEAR_CONTROL_LOCK_HELD=$RELAUNCH \
+      bash "$SCRIPT_DIR/fm-linear-lib.sh" intake "$ID"
+    LINEAR_DISPATCH_METADATA=$(FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
+      FM_LINEAR_CONTROL_LOCK_HELD=$RELAUNCH \
+      bash "$SCRIPT_DIR/fm-linear-lib.sh" dispatch "$ID") || exit $?
+  fi
   BRIEF="$DATA/$ID/launch-brief.md"
   BRIEF_TMP="$DATA/$ID/.launch-brief.md.${BASHPID:-$$}"
   {
     fm_brief_worker_role "$STATE" "$ID" "$FM_ROOT" &&
       printf '\n' &&
+      printf '%s\n' "$LINEAR_DISPATCH_METADATA" &&
       cat "$SOURCE_BRIEF" &&
       if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
         fm_brief_intent_overlay "$CAPTAIN_INTENT"

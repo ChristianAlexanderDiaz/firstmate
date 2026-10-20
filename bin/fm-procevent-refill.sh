@@ -16,7 +16,12 @@
 #
 # Candidates use fm-fleet-snapshot.sh --contribution-input for each local home,
 # excluding held, blocked, already-dispatched and non-worker rows. Active lanes
-# are ordered as declared, then backlog order, with at most five ids per lane.
+# are ordered as declared. Loop-classified tickets use cycle then build-first
+# grid order (Deprioritize last), then Linear manual order and backlog order.
+# Only agent and agent-reviewed enter automatic refill; an agent also needs a
+# Loop finish declaration. Unclassified work retains ordinary backlog order.
+# Linear intake/dispatch owns the body snapshots; no API is called here.
+# At most five ids are reported per lane.
 # Occupancy uses fm-project-capacity-lib.sh. An uncapped lane reports places
 # equal to its ready count, never an invented machine capacity. Capacity shared
 # by same-origin clones is counted once. Each id is qualified by its home.
@@ -92,7 +97,21 @@ ready_rows() {
           .hold_reason == null and .hold_kind == null and
           (.unresolved_blocker_ids|length) == 0) |
         select(.id as $id | $live | index($id) | not) |
-        {id,repo,home:$home}]') || return 1
+        def field($key): [.body_lines[]? | select(startswith($key + ": ")) | ltrimstr($key + ": ")][0] // "";
+        (field("Loop")) as $loop |
+        select($loop == "" or $loop == "agent-reviewed" or
+          ($loop == "agent" and (field("Loop finish") | test("\\S")))) |
+        (field("Linear priority") | tonumber? // 0) as $impact |
+        (field("Linear estimate") | tonumber? // 0) as $cost |
+        select($loop == "" or (($impact >= 1 and $impact <= 4) and
+          ($cost == 1 or $cost == 2 or $cost == 3))) |
+        # High and Urgent share the high-impact row. Cost 5 needs splitting.
+        (if $impact == 1 or $impact == 2 then 0 elif $impact == 3 then 1 else 2 end) as $row |
+        (if $cost == 1 then 0 elif $cost == 2 then 1 else 2 end) as $column |
+        ($row * 3 + $column + 1) as $cell |
+        {id,repo,home:$home,loop:$loop,cycle:field("Loop cycle"),
+          grid:(if $loop == "" then 99 elif $cell == 6 then 10 else $cell end),
+          manual:(field("Loop sort") | tonumber? // 0),order}]') || return 1
     all=$(jq -cn --argjson a "$all" --argjson b "$rows" '$a+$b') || return 1
   done
   printf '%s\n' "$all"
@@ -139,7 +158,9 @@ refill_sample() {
     ready=$(ready_rows) || return 75
     while IFS= read -r lane; do
       [ -n "$lane" ] || continue
-      ids=$(printf '%s\n' "$ready" | jq -c --arg p "$lane" '[.[] | select(.repo == $p)]') || return 75
+      ids=$(printf '%s\n' "$ready" | jq -c --arg p "$lane" '[.[] | select(.repo == $p)] |
+        sort_by((if .loop == "" then 1 else 0 end),.cycle,.grid,.manual,.order) |
+        map({id,repo,home})') || return 75
       count=$(printf '%s\n' "$ids" | jq length)
       [ "$count" -gt 0 ] || continue
       # Any local clone of the lane suffices for same-origin occupancy.

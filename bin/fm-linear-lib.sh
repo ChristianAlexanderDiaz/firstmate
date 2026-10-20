@@ -2,13 +2,23 @@
 # fm-linear-lib.sh - best-effort, one-way Linear lifecycle sync.
 # Usage: fm-linear-lib.sh spawn|merge|closed|hold|release|idle|teardown|dependencies|refresh <task-id> [pr-url]
 #        fm-linear-lib.sh tick
+#        fm-linear-lib.sh intake|dispatch <task-id>
+# intake uses explicit backlog lines Linear priority: 1..4, Linear estimate:
+# 1|2|3|5 and Loop: agent|agent-reviewed|milestones|Christian as defaults for
+# missing fields, creating an unstarted ticket when needed. Existing values win.
+# Loop finish: names a test-decidable check (never executed by this script).
+# dispatch reads these fields before launch, saves them in the backlog, and
+# prints a worker instruction overlay. Agent without a declared check becomes
+# milestones; Christian returns 25 and cannot launch. Unlike lifecycle events,
+# dispatch propagates sync errors so configured work cannot launch unread.
+# Loop cycle: and Loop sort: are read-only cycle start/manual order snapshots.
 # FM_HOME and FM_{STATE,DATA,CONFIG}_OVERRIDE address the owning home.
 # FM_LINEAR_TEARDOWN_{BRANCH,REPO} name a zero-work teardown's branch and clone;
 # its issue is demoted only after a GitHub lookup there lists no merged PR.
 # Configuration schema: docs/configuration.md, "Linear sync".
 #
-# Call only AFTER the local lifecycle action succeeds. Every public invocation
-# returns zero, emits at most one generic diagnostic on stderr, and bounds the
+# Call lifecycle events only AFTER the local lifecycle action succeeds. Every
+# lifecycle invocation returns zero, emits at most one generic diagnostic, and bounds the
 # entire attempt (including credentials, backlog and forge reads) to 10 seconds.
 # No API response, credential-command output or curl error is printed.
 # The key travels to curl through its header stdin, never argv or a file.
@@ -16,7 +26,7 @@
 # Linkage is a `Linear issue: ABC-123` line in the existing backlog body.
 # A deterministic client issue UUID, derived from the data root, task and team,
 # prevents duplicate creation after an ambiguous timeout or failed link write.
-# Only spawn creates; all other events require an existing issue.
+# Only intake and spawn create; all other events require an existing issue.
 # `closed` returns a started issue (In Progress or a review state) to Todo when
 # its recorded PR is closed without merging and no worker is on it. Teardown
 # produces it with the recorded PR URL; the heartbeat produces it for a ship
@@ -160,6 +170,78 @@ fm_linear_review_state() {  # <issue-json>
   printf '%s' "$1" | jq -e '.state.type == "started" and ((.state.name // "") | ascii_downcase) == "in review"' >/dev/null
 }
 
+# One metadata format shared by intake, launch and the existing refill parser.
+fm_linear_body_value() {  # <body> <literal key>
+  printf '%s\n' "$1" | awk -v key="$2: " 'index($0,key)==1 {print substr($0,length(key)+1); exit}'
+}
+
+# shellcheck disable=SC2016
+fm_linear_loop() {  # <event> <issue-json> <body> <data> <task> <team>
+  local event=$1 issue=$2 body=$3 data=$4 task=$5 team=$6
+  local loop priority estimate finish labels input='{}' wanted local_loop cycle sort_value updated
+  loop=$(printf '%s' "$issue" | jq -er '
+    [.labels.nodes[]? | select(.parent.name == "Loop") | .name] |
+    if length <= 1 then .[0] // "" else error("multiple Loop labels") end') || return 1
+  local_loop=$(fm_linear_body_value "$body" Loop)
+  case "$loop" in ''|agent|agent-reviewed|milestones|Christian) ;; *) return 1 ;; esac
+  priority=$(printf '%s' "$issue" | jq -r '.priority // 0')
+  estimate=$(printf '%s' "$issue" | jq -r '.estimate // ""')
+  if [ "$event" = intake ]; then
+    if [ "$priority" = 0 ]; then
+      wanted=$(fm_linear_body_value "$body" 'Linear priority')
+      case "$wanted" in 1|2|3|4) priority=$wanted; input=$(printf '%s' "$input" | jq -c --argjson p "$wanted" '.priority=$p') ;; '') ;; *) return 1 ;; esac
+    fi
+    if [ -z "$estimate" ]; then
+      wanted=$(fm_linear_body_value "$body" 'Linear estimate')
+      case "$wanted" in 1|2|3|5) estimate=$wanted; input=$(printf '%s' "$input" | jq -c --argjson e "$wanted" '.estimate=$e') ;; '') ;; *) return 1 ;; esac
+    fi
+    [ -n "$loop" ] || loop=$local_loop
+  fi
+  case "$loop" in ''|agent|agent-reviewed|milestones|Christian) ;; *) return 1 ;; esac
+  # A declaration is a reviewed specification, not a keyword guess about prose.
+  finish=$(fm_linear_body_value "$(printf '%s' "$issue" | jq -r '.description // ""')" 'Loop finish')
+  [ -n "$finish" ] || finish=$(fm_linear_body_value "$body" 'Loop finish')
+  if [ "$loop" = agent ] && ! printf '%s' "$finish" | grep -q '[^[:space:]]'; then
+    loop=milestones
+  fi
+  if [ -n "$loop" ] && ! printf '%s' "$issue" | jq -e --arg name "$loop" \
+      'any(.labels.nodes[]?; .parent.name == "Loop" and .name == $name)' >/dev/null; then
+    fm_linear_api 'query LoopLabels{issueLabels(first:250){nodes{id name parent{name} team{id}} pageInfo{hasNextPage}}}' '{}'
+    labels=$(printf '%s' "$LINEAR_RESPONSE" | jq -ec --arg name "$loop" --arg team "$team" '
+      .data.issueLabels | select(.pageInfo.hasNextPage == false) | [.nodes[] |
+        select(.parent.name == "Loop" and .name == $name and (.team == null or .team.id == $team))] |
+      select(length == 1) | .[0].id') || return 1
+    input=$(printf '%s' "$input" | jq -c --arg label "$(printf '%s' "$labels" | jq -r '.')" \
+      --argjson issue "$issue" '.addedLabelIds=[$label] |
+        .removedLabelIds=[$issue.labels.nodes[]? | select(.parent.name == "Loop") | .id]')
+  fi
+  if [ "$input" != '{}' ]; then
+    fm_linear_api 'mutation UpdateIssue($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}' \
+      "$(jq -cn --arg id "$(printf '%s' "$issue" | jq -r .id)" --argjson input "$input" '{id:$id,input:$input}')"
+    printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.issueUpdate.success == true' >/dev/null || return 1
+  fi
+  cycle=$(printf '%s' "$issue" | jq -r '.cycle.startsAt // ""')
+  sort_value=$(printf '%s' "$issue" | jq -r '.sortOrder // 0')
+  updated=$(fm_backlog_row_show "$data" "$task" --full)
+  updated=$(fm_linear_field "$updated" body | sed '/^Linear priority: /d; /^Linear estimate: /d; /^Loop: /d; /^Loop finish: /d; /^Loop cycle: /d; /^Loop sort: /d')
+  updated="${updated}${updated:+$'\n'}Linear priority: $priority
+Linear estimate: $estimate
+Loop: $loop
+Loop finish: $finish
+Loop cycle: $cycle
+Loop sort: $sort_value"
+  fm_backlog_mutate "$data" update "$task" --body "$updated"
+  [ "$event" = dispatch ] || return 0
+  [ "$loop" != Christian ] || return 25
+  [ -n "$loop" ] || return 0
+  printf '\n# Linear dispatch metadata\nPriority (impact): %s\nEstimate (cost): %s\nLoop: %s\n' "$priority" "$estimate" "$loop"
+  case "$loop" in
+    agent) printf 'Test-decidable finish: %s\n' "$finish" ;;
+    agent-reviewed) printf 'Use the approved rubric and include PR screenshots for review.\n' ;;
+    milestones) printf 'Name observable milestones before implementation and report each for review; this ticket is not an autonomous agent loop.\n' ;;
+  esac
+}
+
 fm_linear_pr_closed() {  # <url>; succeeds only for a PR the forge reports closed and unmerged
   fm_pr_url_parse "$1" || return 1
   case "$FM_PR_PROVIDER" in
@@ -273,7 +355,7 @@ fm_linear_event() {
   state=${FM_STATE_OVERRIDE:-$home/state}
   data=${FM_DATA_OVERRIDE:-$home/data}
   config=${FM_CONFIG_OVERRIDE:-$home/config}/linear
-  case "$event" in spawn|merge|closed|hold|release|idle|teardown|dependencies|refresh) ;; *) exit 1 ;; esac
+  case "$event" in intake|dispatch|spawn|merge|closed|hold|release|idle|teardown|dependencies|refresh) ;; *) exit 1 ;; esac
   case "$id" in ''|*[!A-Za-z0-9._-]*) exit 1 ;; esac
   [ -f "$config" ] || exit 20
   command -v jq >/dev/null
@@ -384,7 +466,7 @@ fm_linear_event() {
   case "$candidates" in *$'\n'*) exit 23 ;; esac
   linked=$candidates
   if [ -n "$linked" ]; then
-    fm_linear_api 'query Issue($id:String!){issue(id:$id){id identifier team{id} state{id name type}}}' \
+    fm_linear_api 'query Issue($id:String!){issue(id:$id){id identifier description priority estimate sortOrder cycle{startsAt} labels(first:250){nodes{id name parent{name}} pageInfo{hasNextPage}} team{id} state{id name type}}}' \
       "$(jq -cn --arg id "$linked" '{id:$id}')"
     issue=$(printf '%s' "$LINEAR_RESPONSE" | jq -ec '.data.issue | select(.id != null)')
   else
@@ -392,17 +474,21 @@ fm_linear_event() {
     # response or the backlog write was lost. No local credential/state cache.
     create_id=$(printf '%s\n%s\n%s' "$(cd "$data" && pwd -P)" "$id" "$team" |
       perl -MDigest::SHA=sha256_hex -e 'local $/; my $h=sha256_hex(<STDIN>); printf "%s-%s-4%s-8%s-%s", substr($h,0,8),substr($h,8,4),substr($h,13,3),substr($h,17,3),substr($h,20,12)')
-    fm_linear_api 'query CreatedIssue($id:ID!){issues(filter:{id:{eq:$id}},first:1){nodes{id identifier team{id} state{id name type}}}}' \
+    fm_linear_api 'query CreatedIssue($id:ID!){issues(filter:{id:{eq:$id}},first:1){nodes{id identifier description priority estimate sortOrder cycle{startsAt} labels(first:250){nodes{id name parent{name}} pageInfo{hasNextPage}} team{id} state{id name type}}}}' \
       "$(jq -cn --arg id "$create_id" '{id:$id}')"
     printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.issues.nodes | type == "array"' >/dev/null
     issue=$(printf '%s' "$LINEAR_RESPONSE" | jq -c '.data.issues.nodes[0] // empty')
     if [ -z "$issue" ]; then
-      [ "$event" = spawn ] || exit 22
+      case "$event" in spawn|intake) ;; *) exit 22 ;; esac
       [ -n "$title" ]
-      state_id=$(fm_linear_state "$team" started)
+      if [ "$event" = intake ]; then
+        state_id=$(fm_linear_state "$team" unstarted)
+      else
+        state_id=$(fm_linear_state "$team" started)
+      fi
       input=$(jq -cn --arg id "$create_id" --arg team "$team" --arg title "$title" --arg body "$body" --arg state "$state_id" \
         '{input:{id:$id,teamId:$team,title:$title,description:$body,stateId:$state}}')
-      fm_linear_api 'mutation CreateIssue($input:IssueCreateInput!){issueCreate(input:$input){success issue{id identifier team{id} state{id name type}}}}' "$input"
+      fm_linear_api 'mutation CreateIssue($input:IssueCreateInput!){issueCreate(input:$input){success issue{id identifier description priority estimate sortOrder cycle{startsAt} labels(first:250){nodes{id name parent{name}} pageInfo{hasNextPage}} team{id} state{id name type}}}}' "$input"
       printf '%s' "$LINEAR_RESPONSE" | jq -e '.data.issueCreate.success == true' >/dev/null
       issue=$(printf '%s' "$LINEAR_RESPONSE" | jq -ec '.data.issueCreate.issue | select(.id != null)')
     fi
@@ -423,6 +509,12 @@ fm_linear_event() {
     body=$(fm_linear_field "$row" body | sed '/^Linear issue: /d')
     fm_backlog_mutate "$data" update "$id" --body "${body}${body:+$'\n\n'}Linear issue: $identifier"
   fi
+  case "$event" in intake|dispatch)
+    # Never interpret a partial label page as absence of a correction.
+    printf '%s' "$issue" | jq -e '.labels.pageInfo.hasNextPage == false' >/dev/null
+    fm_linear_loop "$event" "$issue" "$body" "$data" "$id" "$issue_team"
+    exit $?
+    ;; esac
   case "$event" in dependencies|refresh)
     fm_linear_dependencies "$data" "$state" "$id" "$row" "$issue_id"
     if [ "$event" = refresh ] && [ "$closed_due" = 1 ]; then
@@ -529,6 +621,15 @@ fm_linear_main() {
   if [ "${1:-}" = tick ]; then fm_linear_tick; return 0; fi
   # shellcheck source=bin/fm-timeout-lib.sh
   . "$LINEAR_DIR/fm-timeout-lib.sh"
+  if [ "${1:-}" = dispatch ]; then
+    fm_run_timed "${LINEAR_BOUND:-10}" bash "$LINEAR_DIR/fm-linear-lib.sh" --run "$@" 2>/dev/null || result=$?
+    case "$result" in
+      0|22) return 0 ;;
+      25) printf 'linear: Christian loop requires preparation, not a worker\n' >&2 ;;
+      *) printf 'linear: dispatch metadata unreadable; retry before launch\n' >&2 ;;
+    esac
+    return "$result"
+  fi
   fm_run_timed "${LINEAR_BOUND:-10}" bash "$LINEAR_DIR/fm-linear-lib.sh" --run "$@" >/dev/null 2>&1 || result=$?
   # Heartbeat refreshes revisit excluded, unmapped and unlinked work routinely.
   [ "${1:-}" != refresh ] || case "$result" in 22|23|24) return 0 ;; esac

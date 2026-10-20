@@ -44,7 +44,7 @@ SH
   chmod +x "$FAKEBIN/gh"
   cat > "$FAKEBIN/curl" <<'PY'
 #!/usr/bin/env python3
-import json, os, pathlib, sys, time
+import json, os, pathlib, re, sys, time
 root = pathlib.Path(os.environ['FM_TEST_LINEAR'])
 argv = sys.argv[1:]
 with (root / 'argv').open('a') as f:
@@ -78,6 +78,19 @@ issuefile = root / 'issues.json'
 attachfile = root / 'attachments.json'
 attachments = json.loads(attachfile.read_text()) if attachfile.exists() else []
 issues = json.loads(issuefile.read_text())
+def api_issue(issue):
+    if issue is None:
+        return None
+    result = dict(issue)
+    result['labels'] = {'nodes': [
+        {'id': label, 'name': label.removeprefix('loop-'),
+         'parent': {'name': 'Loop'} if label.startswith('loop-') else None}
+        for label in issue.get('labels', [])], 'pageInfo': {'hasNextPage': (root / 'partial-labels').exists()}}
+    # Match GraphQL projection: a test cannot read a field it forgot to request.
+    for field in ['description', 'priority', 'estimate', 'sortOrder', 'cycle', 'labels']:
+        if not re.search(r'\b' + field + r'\b', q):
+            result.pop(field, None)
+    return result
 if q.startswith('query Teams'):
     states = [{'id': 'fallback', 'name': 'Working', 'type': 'started'},
               {'id': started, 'name': 'In Progress', 'type': 'started'},
@@ -87,6 +100,11 @@ if q.startswith('query Teams'):
         states = states[:1] + states[2:]
     data = {'teams': {'nodes': [{'id': team, 'key': 'ABC', 'states': {
         'nodes': states, 'pageInfo': {'hasNextPage': False}}}],
+        'pageInfo': {'hasNextPage': False}}}
+elif q.startswith('query LoopLabels'):
+    data = {'issueLabels': {'nodes': [dict(id='loop-' + name, name=name,
+        parent={'name': 'Loop'}, team=None)
+        for name in ['agent', 'agent-reviewed', 'milestones', 'Christian']],
         'pageInfo': {'hasNextPage': False}}}
 elif q.startswith('query Relations'):
     nodes = [dict(id=r['id'], type=r['type'], issue=next(i for i in issues if i['id'] == r['issueId']))
@@ -102,21 +120,24 @@ elif q.startswith('mutation Unblock'):
 elif q.startswith('mutation Comment'):
     data = {'commentCreate': {'success': True}}
 elif q.startswith('query CreatedIssue'):
-    data = {'issues': {'nodes': [i for i in issues if i['id'] == v['id']]}}
+    data = {'issues': {'nodes': [api_issue(i) for i in issues if i['id'] == v['id']]}}
 elif q.startswith('query Issue'):
-    data = {'issue': next((i for i in issues if i['identifier'] == v['id'] or i.get('alias') == v['id']), None)}
+    data = {'issue': api_issue(next((i for i in issues if i['identifier'] == v['id'] or i.get('alias') == v['id']), None))}
 elif q.startswith('mutation CreateIssue'):
     value = v['input']
     assert not any(i['id'] == value['id'] for i in issues), 'duplicate create'
     issue = {'id': value['id'], 'identifier': 'ABC-101', 'team': {'id': team},
-             'state': {'id': value['stateId'], 'type': 'started'}, 'labels': ['unrelated']}
+             'state': {'id': value['stateId'], 'type': 'unstarted' if value['stateId'] == todo else 'started'}, 'labels': ['unrelated']}
     issues.append(issue)
-    data = {'issueCreate': {'success': True, 'issue': issue}}
+    data = {'issueCreate': {'success': True, 'issue': api_issue(issue)}}
 elif q.startswith('mutation UpdateIssue'):
     issue = next(i for i in issues if i['id'] == v['id'])
     assert issue['state']['type'] != 'triage'
     value = v['input']
-    assert set(value) <= {'stateId', 'addedLabelIds', 'removedLabelIds'}
+    assert set(value) <= {'stateId', 'addedLabelIds', 'removedLabelIds', 'priority', 'estimate'}
+    for key in ['priority', 'estimate']:
+        if key in value:
+            issue[key] = value[key]
     if 'stateId' in value:
         issue['state'] = {'id': value['stateId'], 'type': 'completed' if value['stateId'] == done else 'unstarted' if value['stateId'] == todo else 'started'}
     issue['labels'] = sorted(set(issue.get('labels', []) + value.get('addedLabelIds', [])) - set(value.get('removedLabelIds', [])))
@@ -178,6 +199,71 @@ assert_equals "$DONE" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'merge comp
 assert_equals "$PR" "$(jq -sr '[.[] | select(.query | startswith("mutation AttachPR"))][0].variables.input.url' "$CASE/requests")" 'merge attaches PR URL'
 assert_not_contains "$(cat "$CASE/argv")" fake-secret-value 'key absent from curl argv'
 pass 'spawn creates, persists, reuses; merge completes and attaches'
+
+# The intake and pre-launch read use the same event CLI; curl is always fake.
+make_case loop-intake
+tasks update "$TASK" --body $'Linear priority: 3\nLinear estimate: 2\nLoop: agent\nLoop finish: bash tests/rate-limit.test.sh proves rejection above the limit' >/dev/null
+sync_event intake "$TASK"
+assert_equals "$TODO" "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'intake does not start a worker'
+assert_equals '3:2:loop-agent' "$(jq -r '.[0] | "\(.priority):\(.estimate):\(.labels[] | select(startswith("loop-")))"' "$CASE/issues.json")" 'intake sets impact cost and Loop'
+assert_equals true "$(jq '.[0].labels | index("unrelated") != null' "$CASE/issues.json")" 'intake preserves other labels'
+# A correction in Linear wins over every local default at pickup.
+jq '.[0] |= (.priority=2 | .estimate=1 | .labels=["unrelated","loop-agent-reviewed"] | .cycle={startsAt:"2026-10-19T00:00:00Z"} | .sortOrder=12)' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Loop: agent-reviewed' 'dispatch overlay uses corrected loop'
+assert_contains "$out" 'approved rubric' 'reviewed loop carries review instruction'
+assert_contains "$(tasks show "$TASK" --full)" 'Linear priority: 2' 'priority correction saved'
+assert_contains "$(tasks show "$TASK" --full)" 'Linear estimate: 1' 'estimate correction saved'
+assert_contains "$(tasks show "$TASK" --full)" 'Loop cycle: 2026-10-19' 'cycle read for refill'
+sync_event intake "$TASK"
+assert_equals 2 "$(jq '.[0].priority' "$CASE/issues.json")" 'later intake preserves correction'
+pass 'intake writes metadata in Todo; dispatch reads corrections and produces worker instructions'
+
+make_case loop-guard
+seed_issue
+tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+jq '.[0].labels += ["loop-agent"]' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Loop: milestones' 'agent without check refuses autonomous loop'
+assert_equals true "$(jq '.[0].labels | index("loop-milestones") != null and index("loop-agent") == null and index("unrelated") != null' "$CASE/issues.json")" 'guard replaces only Loop label'
+assert_contains "$(tasks show "$TASK" --full)" 'Loop: milestones' 'effective loop persisted'
+# An ordinary description mentioning tests is not a finish declaration.
+jq '.[0] |= (.labels=["loop-agent"] | .description="We should test the polished result")' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+sync_event dispatch "$TASK" > "$CASE/overlay"
+assert_contains "$(cat "$CASE/overlay")" 'Loop: milestones' 'vague prose never grants an agent loop'
+# Explicit remote finish declarations are accepted without executing them.
+jq '.[0] |= (.labels=["loop-agent"] | .description="Loop finish: a pgTAP check proves the old invite cannot open a room")' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Loop: agent' 'test-decidable check retains agent'
+assert_contains "$out" 'pgTAP check' 'remote finish read'
+pass 'missing test-decidable finish demotes agent to milestones; explicit checks permit agent'
+
+make_case christian-dispatch
+seed_issue
+tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+jq '.[0].labels += ["loop-Christian"]' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+rc=0; sync_event dispatch "$TASK" > "$CASE/overlay" 2> "$CASE/dispatch-error" || rc=$?
+assert_equals 25 "$rc" 'human loop cannot launch a worker'
+assert_equals '' "$(cat "$CASE/overlay")" 'refused dispatch has no worker overlay'
+assert_equals old "$(jq -r '.[0].state.id' "$CASE/issues.json")" 'dispatch read does not start work'
+touch "$CASE/http-error"
+rc=0; sync_event dispatch "$TASK" >/dev/null 2>&1 || rc=$?
+[ "$rc" != 0 ] || fail 'unreadable dispatch metadata was admitted'
+pass 'human loops and unreadable configured metadata refuse launch'
+
+make_case loop-incomplete-labels
+seed_issue
+tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
+touch "$CASE/partial-labels"
+rc=0; sync_event dispatch "$TASK" >/dev/null 2>&1 || rc=$?
+[ "$rc" != 0 ] || fail 'partial Loop labels were treated as complete'
+assert_equals 0 "$(mutations)" 'partial label page never changes the Loop'
+pass 'partial label metadata refuses dispatch without mutation'
 
 make_case lost-response
 touch "$CASE/lost-create"
@@ -408,6 +494,9 @@ for failure in no landed zero-work lookup-failed merge-commit fast-forward yes; 
   fm_test_spawn_brief "$HOME_DIR" "$TASK" 'Exercise automatic issue sync.'
   fm_git_worktree "$CASE/sample" "$CASE/wt" "fm/$TASK"
   [ "$failure" != yes ] || touch "$CASE/error"
+  if [ "$failure" = no ]; then
+    tasks update "$TASK" --body $'Linear priority: 3\nLinear estimate: 1\nLoop: agent' >/dev/null
+  fi
   if [ "$failure" = zero-work ]; then
     # Upstream moved past the local base before spawn.
     upstream=$(git -C "$CASE/sample" -c user.name=Test -c user.email=test@example.invalid \
@@ -417,10 +506,17 @@ for failure in no landed zero-work lookup-failed merge-commit fast-forward yes; 
   out=$(run env FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE/wt" TMUX=fake,1,0 \
     HOME="$HOME_DIR/user-home" CLAUDE_CONFIG_DIR='' \
     bash "$ROOT/bin/fm-spawn.sh" "$TASK" "$CASE/sample" --mode direct-PR --yolo off 2>&1) \
-    || fail "real spawn failed: $out"
+    || { [ "$failure" = yes ] || fail "real spawn failed: $out"; }
+  if [ "$failure" = yes ]; then
+    assert_contains "$out" 'dispatch metadata unreadable' 'preflight failure refuses launch'
+    [ ! -f "$HOME_DIR/state/$TASK.meta" ] || fail 'failed preflight launched worker'
+    continue
+  fi
   assert_contains "$out" 'spawned work' 'spawn succeeds after sync attempt'
   if [ "$failure" = no ]; then
     assert_equals 1 "$(jq length "$CASE/issues.json")" 'actual ship spawn creates ticket'
+    assert_contains "$(cat "$HOME_DIR/data/$TASK/launch-brief.md")" 'Loop: milestones' 'pre-launch guard reaches the real worker brief'
+    assert_equals true "$(jq '.[0].labels | index("loop-milestones") != null' "$CASE/issues.json")" 'pickup intake demotes agent before launch'
     printf 'unlanded change\n' > "$CASE/wt/change"
     git -C "$CASE/wt" add change
     git -C "$CASE/wt" -c user.name=Test -c user.email=test@example.invalid commit -qm 'Test change'
@@ -470,7 +566,7 @@ for failure in no landed zero-work lookup-failed merge-commit fast-forward yes; 
     assert_contains "$out" 'sync failed' 'actual spawn tolerates API failure'
   fi
 done
-pass 'real ship spawn calls sync after dispatch and survives API failure; teardown demotes only unlanded work'
+pass 'real spawn reads Loop metadata before dispatch and syncs after it; unreadable preflight refuses launch; teardown demotes only unlanded work'
 
 for attached in none other same slash; do
   make_case "merge-attach-$attached"

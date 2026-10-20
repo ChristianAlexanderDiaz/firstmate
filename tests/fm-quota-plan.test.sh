@@ -202,6 +202,66 @@ rc=0; "$REFILL" check > "$TMP_ROOT/repeat" || rc=$?
 [ "$rc" = 75 ] || fail 'reopened episode repeated'
 pass 'registered refill reports ready lanes once per transition and PR handoff frees capacity'
 
+# Loop metadata comes from intake/dispatch; refill stays network-free.
+cp "$FM_HOME/data/backlog.md" "$TMP_ROOT/backlog-before-grid"
+cat > "$FM_HOME/data/backlog.md" <<'MD'
+# Backlog
+## Queued
+- [ ] deprioritize - Medium impact high cost (repo: carryrank, kind: ship)
+  Loop: agent
+  Loop finish: benchmark proves p95 under 300ms
+  Linear priority: 3
+  Linear estimate: 3
+  Loop cycle: 2026-10-19
+- [ ] small - Low impact low cost (repo: carryrank, kind: ship)
+  Loop: agent
+  Loop finish: script exits zero and never prints a key
+  Linear priority: 4
+  Linear estimate: 1
+  Loop cycle: 2026-10-19
+- [ ] quick - Medium impact low cost (repo: carryrank, kind: ship)
+  Loop: agent
+  Loop finish: pgTAP denies the expired invite
+  Linear priority: 3
+  Linear estimate: 1
+  Loop cycle: 2026-10-19
+- [ ] strong - High impact medium cost (repo: carryrank, kind: ship)
+  Loop: agent-reviewed
+  Linear priority: 2
+  Linear estimate: 2
+  Loop cycle: 2026-10-19
+- [ ] security - Explicit high priority correction (repo: carryrank, kind: ship)
+  Loop: agent
+  Loop finish: Playwright proves rate limits
+  Linear priority: 2
+  Linear estimate: 1
+  Loop cycle: 2026-10-19
+- [ ] later-cycle - Urgent but next week (repo: carryrank, kind: ship)
+  Loop: agent
+  Loop finish: CI rejects the vulnerable package
+  Linear priority: 1
+  Linear estimate: 1
+  Loop cycle: 2026-10-26
+- [ ] no-check - Vague finish (repo: carryrank, kind: ship)
+  Loop: agent
+- [ ] human - Personal judgment (repo: carryrank, kind: ship)
+  Loop: Christian
+- [ ] milestone - Phone observation (repo: carryrank, kind: ship)
+  Loop: milestones
+## Done
+MD
+"$REFILL" check > "$TMP_ROOT/grid" || fail 'grid refill missing'
+order=$(sed -n 's/^fingerprint: //p' "$TMP_ROOT/grid" | jq -r '.lanes[0].ready | map(.id) | join(",")')
+assert_equals security,strong,quick,small,deprioritize "$order" 'cycle then grid order; Deprioritize last and correction wins'
+if grep -Eq 'no-check@|human@|milestone@|later-cycle@' "$TMP_ROOT/grid"; then fail 'ineligible or later cycle suggested ahead of current cycle'; fi
+# The next wake after a start offers the next ticket in the same sorted queue.
+fm_write_meta "$FM_HOME/state/security.meta" "project=$FM_HOME/projects/carryrank" 'kind=ship'
+"$REFILL" check > "$TMP_ROOT/next-grid" || fail 'next agent not offered'
+assert_contains "$(cat "$TMP_ROOT/next-grid")" 'next ready: carryrank: strong@' 'next eligible agent in grid order'
+mv "$FM_HOME/state/security.meta" "$TMP_ROOT/security-finished.meta"
+mv "$TMP_ROOT/backlog-before-grid" "$FM_HOME/data/backlog.md"
+pass 'refill advances in cycle/grid order, respects priority corrections and excludes human loops and agents without checks'
+
 # Cleanup frees a place even without a PR; expired lanes and empty queues stay quiet.
 fm_write_meta "$FM_HOME/state/another.meta" "project=$FM_HOME/projects/carryrank" 'kind=scout'
 "$REFILL" check > "$TMP_ROOT/result" || fail 'occupancy transition did not fire'
