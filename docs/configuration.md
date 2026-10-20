@@ -1232,8 +1232,10 @@ Per-machine Cursor `cli-config.json` attribution-off is not this contract: it do
 
 ## Project capacity (config/project-capacity)
 
+The separate [per-user host budget](host-budget.md) provides optional shared admission for local compute across projects and homes; `bin/fm-resource-run --help` owns its policy and lease interface.
+
 The optional local, gitignored `config/project-capacity` tells Firstmate how many workers a project can run at once on this machine, for a project whose machine-local resource - a heavy test suite, a local editor stack, a device - only serves a few workers at a time.
-Without it, dispatch stays uncapped as `AGENTS.md` section 7 describes, and a surplus worker is launched only to spend full-context turns waiting for the resource.
+Without it, dispatch has no project-specific worker cap, and a surplus worker can be launched only to spend full-context turns waiting for that project's resource.
 The file lives in the machine's root Firstmate home, so every local secondmate home reads the same limit, and it holds one line per project:
 
 ```text

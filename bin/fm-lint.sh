@@ -41,8 +41,9 @@
 # invocations in the core bin/ and bin/backends/ scripts so every configured
 # backlog backend follows the same tasks-axi lifecycle path.
 #
-# Lint defaults to two concurrency-limited workers over two stable logical
-# shards, and each worker runs ONE canonical root per ShellCheck process, so a
+# Lint defaults to two workers over two stable logical shards, reduced by a
+# configured host-budget worker cap. Each worker runs ONE canonical root per
+# ShellCheck process, so a
 # run holds at most JOBS concurrent ShellCheck processes. Diagnostics replay
 # in stable shard/root order. FM_LINT_JOBS=1 changes concurrency, not diagnostics
 # or exit selection.
@@ -114,6 +115,7 @@
 #   fm-lint.sh --list-files            print the file set that would be linted
 #   fm-lint.sh --help                  print this usage
 set -u
+RESOURCE_ORIGINAL_ARGS=("$@")
 
 REQUIRED_SHELLCHECK=0.11.0
 # Cross-file codes that need --external-sources. No-source checks (local
@@ -910,6 +912,17 @@ if [ "$LIST_FILES" -eq 1 ]; then
   exit 0
 fi
 
+if [ -r "$SELF_DIR/fm-resource-lib.sh" ]; then
+  # shellcheck source=bin/fm-resource-lib.sh
+  . "$SELF_DIR/fm-resource-lib.sh"
+  fm_resource_stage exclusive "$SELF" ${RESOURCE_ORIGINAL_ARGS[@]+"${RESOURCE_ORIGINAL_ARGS[@]}"}
+elif [ -n "${FM_RESOURCE_CONFIG:-}" ]; then
+  echo 'fm-lint.sh: configured host-budget integration is missing' >&2
+  exit 75
+fi
+case "${FM_RESOURCE_CPU_WORKERS:-}" in
+  1|2) [ "$JOBS" -le "$FM_RESOURCE_CPU_WORKERS" ] || JOBS=$FM_RESOURCE_CPU_WORKERS ;;
+esac
 if ! command -v shellcheck >/dev/null 2>&1; then
   printf 'fm-lint.sh: ShellCheck not found; install ShellCheck %s with bin/fm-install-shellcheck.sh <destination-directory> and put that directory on PATH.\n' \
     "$REQUIRED_SHELLCHECK" >&2

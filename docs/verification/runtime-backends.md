@@ -6,6 +6,27 @@ This record contains reusable version-scoped evidence for active runtime guarant
 The backend guides own current setup, safety boundaries, and limitations.
 Exact task chronology, branch names, temporary homes, local paths, process ids, thread ids, and delivery transcripts remain in private reports or PR evidence.
 
+## Host budget launch boundary
+
+Verified on 2026-10-20 with macOS 27.0 (26A428) and Python 3.14.8:
+
+```sh
+bash bin/fm-test-run.sh tests/fm-resource.test.sh
+```
+
+The regression executes a configured dispatch through its saved manifest and observes a bound resident lease from inside the synthetic model CLI.
+It also drives real Unix sockets, kernel process start identities, competing clients, surviving child groups, cancellation, stale sockets, owner restarts, nested upgrades, prepared graph hooks and fixture monitor failures.
+The nineteen cases completed with this runner output:
+
+```text
+FM_TEST_END 2026-10-20T17:55:27Z tests/fm-resource.test.sh exit=0 duration_ms=78317 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=78477
+```
+
+The endpoint and model CLI are synthetic; no vendor session, Herdr lifecycle or thermal calibration is exercised by this regression.
+The shared launch command receives the wrapper before backend delivery, without introducing a harness-rendered classifier or backend-specific restore operation.
+The [host budget guide](../host-budget.md) owns rollout and the explicit composite browser lifetime boundary.
+
 ## Harness detection precedence
 
 Firstmate's own harness comes from two kinds of evidence, and `bin/fm-harness.sh` owns how they combine: an environment marker names its harness, and the nearest harness process in the parent chain proves who owns the process tree.

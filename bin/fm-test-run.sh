@@ -61,7 +61,8 @@
 #                   set (bin/fm-test-isolation-proof.sh --list), or in a family
 #                   carrying a recorded concurrent proof
 #                   (list_concurrent_safe_families below). Overall cap is 8;
-#                   family proofs may impose a lower cap. Individually proven
+#                   family proofs and a configured host-budget worker limit
+#                   may impose a lower cap. Individually proven
 #                   scripts share one phase; scripts admitted only by a family
 #                   proof run in a separate phase for each family. Concurrent
 #                   phases use serial weights, longest-hint-first. Unproven stateful
@@ -151,6 +152,7 @@
 # tests/fixtures/<dir>/ is mapped by that directory instead. Curated family arms
 # above those also name individual tests/ files explicitly.
 set -eu
+RESOURCE_ORIGINAL_ARGS=("$@")
 
 now_ms() {
   if command -v python3 >/dev/null 2>&1; then
@@ -431,7 +433,7 @@ family_for_basename() {
     fm-no-mistakes-required.test.sh|fm-peek-remote.test.sh|\
     fm-pending-reply.test.sh|fm-pi-branch-extension.test.sh|\
     fm-quota-plan.test.sh|fm-procevent-quota.test.sh|fm-procevent-when.test.sh|fm-procevent.test.sh|\
-    fm-live-gate.test.sh|\
+    fm-live-gate.test.sh|fm-resource.test.sh|\
     fm-project-origin.test.sh|fm-public-followup.test.sh|fm-quota-choose.test.sh|\
     fm-remote-entrypoint.test.sh|fm-remote-secondmate-parent-binding.test.sh|\
     fm-send-remote-delivery.test.sh|fm-spawn-pool-base-freshen.test.sh|\
@@ -1418,6 +1420,9 @@ families_for_unmapped_bin() {
 families_for_changed_path() {
   local path=$1 fixture_ref
   case "$path" in
+    bin/fm-resource*|bin/fm_resource.py|tests/fm-resource.test.py|tests/fixtures/resource-owner.py)
+      printf '%s\n' '__script__:fm-resource.test.sh'
+      ;;
     tests/fm-backend-herdr-eventwait.test.py)
       printf '%s\n' real-herdr-gated
       printf '%s\n' backend-dispatch
@@ -2265,6 +2270,13 @@ if [ "${#SCRIPTS[@]}" -eq 0 ]; then
 fi
 
 # Verify selected scripts exist before starting.
+if [ -r "$ROOT/bin/fm-resource-lib.sh" ]; then
+  # shellcheck source=bin/fm-resource-lib.sh
+  . "$ROOT/bin/fm-resource-lib.sh"
+  fm_resource_stage exclusive "$ROOT/bin/fm-test-run.sh" ${RESOURCE_ORIGINAL_ARGS[@]+"${RESOURCE_ORIGINAL_ARGS[@]}"}
+elif [ -n "${FM_RESOURCE_CONFIG:-}" ]; then
+  die "configured host-budget integration is missing"
+fi
 for s in "${SCRIPTS[@]}"; do
   [ -f "$s" ] || die "test script not found: $s"
   [ -x "$s" ] || [ -r "$s" ] || die "test script not readable: $s"
@@ -2294,6 +2306,9 @@ if { [ "$MODE" = changed ] || [ "$MODE" = scripts ]; } && [ "$JOBS_EXPLICIT" -eq
     [ "$JOBS" -eq 1 ] || AUTO_CONCURRENCY=1
   fi
 fi
+case "${FM_RESOURCE_CPU_WORKERS:-}" in
+  1|2) [ "$JOBS" -le "$FM_RESOURCE_CPU_WORKERS" ] || JOBS=$FM_RESOURCE_CPU_WORKERS ;;
+esac
 if [ "$JOBS" -gt 1 ] || [ "$MODE" = changed ] || [ "$MODE" = scripts ]; then
   SELECTION_DESC="${SELECTION_DESC};jobs=$JOBS"
 fi
