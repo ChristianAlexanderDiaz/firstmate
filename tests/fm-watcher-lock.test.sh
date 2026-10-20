@@ -1657,7 +1657,7 @@ test_pid_identity_is_terminal_width_invariant() {
   # the command column to the ambient width unless the fallback pins COLUMNS wide.
   # A truncated command then never equals the recorded one and every fleet command
   # is denied (issue #799). A long sleep argument makes the cut visible on GNU and
-  # BSD ps alike, so both readings must be byte-identical and carry the whole command.
+  # BSD ps alike, so both command columns must match and carry the whole command.
   local live no_proc narrow wide
   local long_arg=300.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
   no_proc="$TMP_ROOT/no-width-proc"
@@ -1672,6 +1672,10 @@ test_pid_identity_is_terminal_width_invariant() {
   kill "$live" 2>/dev/null || true
   wait "$live" 2>/dev/null || true
   [ -n "$wide" ] || fail "fm_pid_identity produced no identity under a wide COLUMNS"
+  # GNU ps reconstructs lstart from the wall clock, which can shift on WSL.
+  # Width affects the command column, so compare that independently of lstart.
+  read -r _ _ _ _ _ narrow <<< "$narrow"
+  read -r _ _ _ _ _ wide <<< "$wide"
   case "$wide" in
     *"sleep $long_arg"*) ;;
     *) fail "fm_pid_identity dropped the full command under a wide COLUMNS (got '$wide')" ;;
