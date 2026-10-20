@@ -506,7 +506,7 @@ class Budget:
                     not matches(lease["controller"], self.table) or
                     self.table[group["pid"]]["pgid"] != group["pid"] or
                     self.table[group["pid"]]["ppid"] != lease["controller"]["pid"]):
-                raise Refusal("group is already bound or is not a fresh session leader")
+                raise Refusal("group is already bound or is not a fresh process-group leader")
             lease["group"], lease["members"] = group, [group]
         elif op == "heartbeat":
             lease["heartbeat"] = time.monotonic()
@@ -694,7 +694,13 @@ def tool_job(args, name, config, digest):
         kind = "test"
     elif args.name in ("playwright", "chrome-devtools-axi"):
         kind = "browser"
-    if argv and (argv[0] in ("--help", "--version", "-h") or args.name == "graphify" and argv[0] in ("query", "stats")):
+    queries = {"npm": ("view", "info", "ls", "list", "outdated", "help"),
+        "pnpm": ("view", "info", "ls", "list", "outdated", "help"),
+        "yarn": ("info", "list", "outdated", "help")}
+    if argv and (argv[0] in ("--help", "--version", "-h") or
+            args.name == "graphify" and argv[0] in ("query", "stats") or
+            argv[0] in queries.get(args.name, ()) or
+            args.name in ("npm", "pnpm") and argv == ["version"]):
         os.execv(args.executable, [args.executable, *argv])
     if args.name == "chrome-devtools-axi" and not (os.environ.get("FM_RESOURCE_LEASE") and os.environ.get("FM_RESOURCE_BROWSER_PROFILE")):
         raise Refusal("persistent browser requests require an outer composite browser/server stage; a short CLI request cannot own its lifetime")
@@ -708,9 +714,7 @@ def tool_job(args, name, config, digest):
 def caps(command, kind, portable):
     workers = 1 if portable else 2
     env = os.environ.copy()
-    env.update({"GRAPHIFY_MAX_WORKERS": str(workers), "RAYON_NUM_THREADS": str(workers),
-        "CARGO_BUILD_JOBS": str(workers), "CMAKE_BUILD_PARALLEL_LEVEL": str(workers),
-        "OMP_NUM_THREADS": str(workers), "GOMAXPROCS": str(workers),
+    env.update({"GRAPHIFY_MAX_WORKERS": str(workers),
         "FM_RESOURCE_CPU_WORKERS": str(workers), "FM_RESOURCE_BROWSER_WORKERS": "1",
         "VITEST_MAX_WORKERS": str(workers), "VITEST_MAX_THREADS": str(workers),
         "VITEST_MAX_FORKS": str(workers), "VITEST_MIN_WORKERS": "1",
@@ -780,6 +784,10 @@ def run_job(args, config_name, config, digest):
     child = None
     released = False
     interrupted = False
+    terminal = sys.stdin.fileno() if sys.stdin.isatty() else None
+    foreground = os.tcgetpgrp(terminal) if terminal is not None else None
+    if foreground != os.getpgrp():
+        terminal = None
 
     def interrupt(_sig, _frame):
         nonlocal interrupted
@@ -812,11 +820,16 @@ def run_job(args, config_name, config, digest):
         read_fd, write_fd = os.pipe()
         try:
             child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "_barrier", str(read_fd), *command],
-                pass_fds=(read_fd,), start_new_session=True, env=env)
+                pass_fds=(read_fd,), start_new_session=terminal is None,
+                preexec_fn=os.setpgrp if terminal is not None else None, env=env)
             os.close(read_fd)
             read_fd = -1
             group = identity(child.pid)
             rpc(config, digest, op="bind", token=token, group=group)
+            if terminal is not None:
+                signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+                os.tcsetpgrp(terminal, child.pid)
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
             os.write(write_fd, b"go\n")
         finally:
             os.close(write_fd)
@@ -837,6 +850,10 @@ def run_job(args, config_name, config, digest):
         returncode = child.wait()
         return 128 - returncode if returncode < 0 else returncode
     finally:
+        if terminal is not None and child is not None:
+            signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+            if os.tcgetpgrp(terminal) == child.pid:
+                os.tcsetpgrp(terminal, foreground)
         if not released:
             try:
                 if child:
@@ -849,12 +866,19 @@ def run_job(args, config_name, config, digest):
                 pass
 
 
+def check_directory(path):
+    directory = Path(path)
+    if not directory.is_absolute() or not directory.is_dir() or directory.is_symlink():
+        raise Refusal("check state directory must be an existing absolute non-symlink directory")
+    return directory
+
+
 def register_check(args, config_name):
-    directory = private_dir(args.directory)
+    directory = check_directory(args.directory)
     check = directory / "host-budget.check.sh"
     command = [sys.executable, str(Path(__file__).resolve()), "--config", config_name,
         "transitions", "--cursor", str(directory / ".host-budget-cursor")]
-    with check.open("x") as stream:
+    with os.fdopen(os.open(check, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700), "w") as stream:
         stream.write("#!/bin/sh\nexec " + shlex.join(command) + "\n")
     check.chmod(0o700)
     subprocess.run(["/bin/bash", str(HERE / "fm-check-register.sh"), "host-budget"],
@@ -863,8 +887,8 @@ def register_check(args, config_name):
 
 def transitions(args, config):
     cursor = Path(args.cursor)
-    private_dir(cursor.parent)
-    with open(str(cursor) + ".lock", "a") as lock:
+    check_directory(cursor.parent)
+    with os.fdopen(os.open(str(cursor) + ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         position = json.loads(cursor.read_text()) if cursor.exists() else 0
         path = Path(config["stateDirectory"]) / "transitions.jsonl"
@@ -881,7 +905,7 @@ def transitions(args, config):
 
 def parser():
     p = argparse.ArgumentParser(description="One per-user atomic host budget. No auto-start or unlimited fallback.",
-        epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; maxHeavyJobs=1, memoryMiB=10240, maxResidentWorkers=12, recoverySeconds=120, graceSeconds=5. All homes must select the same config, via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger and 30-minute metrics ring are private atomic JSON; transitions append to transitions.jsonl. register-check --directory STATE writes and registers a host-budget custom watcher check; transitions --cursor PATH prints each new transition once per cursor. Critical thermal signals latch across boot; clear only after inspecting evidence. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; these are integration boundaries, not an OS sandbox. Direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
+        epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; maxHeavyJobs=1, memoryMiB=10240, maxResidentWorkers=12, recoverySeconds=120, graceSeconds=5. All homes must select the same config, via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger and 30-minute metrics ring are private atomic JSON; transitions append to transitions.jsonl. register-check --directory STATE requires an existing home state directory, creates private files and registers a host-budget custom watcher check; transitions --cursor PATH prints each new transition once per cursor. Critical thermal signals latch across boot; clear only after inspecting evidence. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; these are integration boundaries, not an OS sandbox. Direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
     p.add_argument("--config")
     sub = p.add_subparsers(dest="action", required=True)
     sub.add_parser("serve", help="foreground single owner; operator may supervise it with launchd")

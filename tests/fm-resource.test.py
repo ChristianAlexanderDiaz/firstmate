@@ -4,6 +4,9 @@ import copy
 import importlib.util
 import json
 import os
+import pty
+import select
+import shlex
 from pathlib import Path
 import signal
 import subprocess
@@ -447,6 +450,8 @@ PATH="$fakebin:$PATH" /bin/bash -c "$(cat "$case_root/launch.log")"
 
     def test_registered_check_emits_each_transition_once(self):
         state = self.root / "home-state"
+        state.mkdir(mode=0o755)
+        state.chmod(0o755)
         result = self.call("register-check", "--directory", str(state))
         self.assertEqual(result.returncode, 0, result.stderr)
         check = state / "host-budget.check.sh"
@@ -466,6 +471,126 @@ PATH="$fakebin:$PATH" /bin/bash -c "$(cat "$case_root/launch.log")"
         self.assertEqual(len(lines), 1)
         self.assertIn("serious", lines[0])
         self.assertEqual(poll(), [])
+        self.assertEqual(state.stat().st_mode & 0o777, 0o755)
+        for name, mode in (("host-budget.check.sh", 0o700), ("host-budget.check-trust", 0o600),
+                (".host-budget-cursor", 0o600), (".host-budget-cursor.lock", 0o600)):
+            self.assertEqual((state / name).stat().st_mode & 0o777, mode)
+
+    def test_read_only_package_queries_bypass_compute_veto(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["thermalState"] = "serious"
+        self.write("input.json", sample)
+        wait_for(lambda: "serious" in self.status()["reason"])
+        fake = self.root / "packagebin"
+        fake.mkdir()
+        for name in ("npm", "pnpm", "yarn"):
+            tool = fake / name
+            tool.write_text('#!/bin/sh\nprintf "query:%s" "$*"\n')
+            tool.chmod(0o700)
+        directory = self.root / "package-adapters"
+        result = self.call("prepare", "--directory", str(directory), "--worktree", str(ROOT),
+            "--task", "queries", "--account-label", "default", "--", "true",
+            env=dict(os.environ, PATH=str(fake) + os.pathsep + os.environ["PATH"]))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in ("npm", "pnpm", "yarn"):
+            queries = ["info", "list", "outdated", "help", "--version", "--help"]
+            if name != "yarn":
+                queries += ["view", "ls", "version"]
+            for query in queries:
+                argv = [query] if query in ("version", "--version", "--help", "help") else [query, "package"]
+                with self.subTest(name=name, argv=argv):
+                    result = subprocess.run([str(directory / "bin" / name), *argv],
+                        capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, "query:" + " ".join(argv))
+        self.assertFalse(self.status()["leases"])
+        self.assertFalse(self.status()["queue"])
+        self.stop()
+        for name, argv in (("npm", ["version", "patch"]), ("pnpm", ["run", "test"]),
+                ("yarn", ["version"]), ("yarn", ["build"])):
+            result = subprocess.run([str(directory / "bin" / name), *argv],
+                capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertNotIn("query:", result.stdout)
+
+    def test_unrequested_runner_settings_are_preserved(self):
+        keys = ("RAYON_NUM_THREADS", "CARGO_BUILD_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL",
+            "OMP_NUM_THREADS", "GOMAXPROCS")
+        probe = "import json,os; print(json.dumps({k:os.environ.get(k) for k in " + repr(keys) + "}))"
+        for inherited in (False, True):
+            for configured in (False, True):
+                with self.subTest(inherited=inherited, configured=configured):
+                    env = os.environ.copy()
+                    for key in keys:
+                        env.pop(key, None)
+                    if configured:
+                        env.update({key: "7" for key in keys})
+                    command = [sys.executable, "-c", probe]
+                    if inherited:
+                        command = [CLI, "--config", str(self.root / "config.json"),
+                            "run", "--class", "test", "--", *command]
+                    result = self.call("run", "--class", "exclusive", "--", *command, env=env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(json.loads(result.stdout), {key: "7" if configured else None for key in keys})
+
+    def test_interactive_launch_preserves_foreground_and_interrupts(self):
+        probe = self.root / "terminal-probe.py"
+        probe.write_text('''import json, os, signal, sys
+signal.signal(signal.SIGINT, lambda *_: print("INTERRUPTED", flush=True))
+print("PROBE:" + json.dumps([os.getpid(), os.getpgrp(), os.tcgetpgrp(0)]), flush=True)
+for line in sys.stdin:
+    if line.strip() == "exit":
+        break
+print("EXITED", flush=True)
+''')
+        for kind in ("worker", "test"):
+            with self.subTest(kind=kind):
+                command = [CLI, "--config", str(self.root / "config.json"), "run", "--class", kind,
+                    "--", sys.executable, str(probe)]
+                after = "import os; print('RESTORED:' + str(os.getpgrp() == os.tcgetpgrp(0)), flush=True)"
+                script = shlex.join(command) + "; " + shlex.join([sys.executable, "-c", after])
+                pid, master = pty.fork()
+                if pid == 0:
+                    os.execv("/bin/sh", ["/bin/sh", "-c", script])
+                output = bytearray()
+                def read_until(marker):
+                    def received():
+                        if select.select([master], [], [], 0.05)[0]:
+                            try:
+                                output.extend(os.read(master, 65536))
+                            except OSError:
+                                pass
+                        return marker in output
+                    try:
+                        wait_for(received)
+                    except AssertionError:
+                        self.fail(f"missing {marker!r}; terminal output: {bytes(output)!r}; owner: {self.status()!r}")
+                try:
+                    read_until(b"PROBE:")
+                    read_until(b"]")
+                    record = bytes(output).split(b"PROBE:", 1)[1].splitlines()[0]
+                    child_pid, group, foreground = json.loads(record)
+                    self.assertEqual(child_pid, group)
+                    self.assertEqual(group, foreground)
+                    self.assertNotEqual(group, pid)
+                    self.assertTrue(any(l.get("group", {}).get("pid") == group
+                        for l in self.status()["leases"].values()))
+                    os.write(master, b"\x03")
+                    read_until(b"INTERRUPTED")
+                    self.assertTrue(self.status()["leases"])
+                    os.write(master, b"exit\n")
+                    read_until(b"EXITED")
+                    read_until(b"RESTORED:True")
+                    ended, status = os.waitpid(pid, 0)
+                    self.assertEqual(ended, pid)
+                    self.assertEqual(os.waitstatus_to_exitcode(status), 0)
+                    pid = None
+                    self.assertFalse(self.status()["leases"])
+                finally:
+                    if pid is not None:
+                        os.kill(pid, signal.SIGKILL)
+                        os.waitpid(pid, 0)
+                    os.close(master)
 
 
 if __name__ == "__main__":

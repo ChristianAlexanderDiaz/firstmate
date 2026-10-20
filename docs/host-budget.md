@@ -27,7 +27,8 @@ For a LaunchAgent, use that exact argv, `RunAtLoad`, a conservative restart thro
 Keep the executable and configuration paths stable across Firstmate worktree cleanup.
 `bin/fm-resource-run status` gives the compact exception view, active reservations, pending queue, monitor timestamp and last cause.
 The owner appends each cause change to its private `transitions.jsonl` and also emits it to stdout.
-For each supervising home, run `bin/fm-resource-run register-check --directory /absolute/path/to/home/state` once with the same policy selected.
+For each supervising home with an existing state directory, run `bin/fm-resource-run register-check --directory /absolute/path/to/home/state` once with the same policy selected.
+Existing state-directory permissions are preserved; generated check, trust, cursor and lock files are private.
 This creates `host-budget.check.sh` and authenticates it through `bin/fm-check-register.sh`; the ordinary watcher check sweep prints one line per new transition using that home's durable byte cursor.
 The transition file is append-only so a home that was offline can read its missed events.
 Retire the check with `bin/fm-check-unregister.sh host-budget` in that home before changing its registration.
@@ -44,6 +45,7 @@ bin/fm-resource-stage.sh -- ./unknown-local-validation.sh
 
 When configured, worker dispatch validates a restore manifest before starting the model CLI, reserves resident CLI memory separately from compute, and supplies task-owned PATH adapters for common package, compiler, graph, browser and Nix entry points.
 The wrapper surrounds the existing launch command after account resolution and before backend delivery, so it applies to every harness and runtime backend without driving their lifecycle.
+Interactive launches retain the controlling terminal, transfer foreground ownership to the verified child process group before execution, and restore it after completion; terminal interrupts reach the running CLI normally.
 Existing account authentication and pin validation remain in the account adapter.
 Manifest validation rejects changed directory, branch, task, account configuration or argv rather than choosing another account or directory.
 Recovery never automatically relaunches saved commands.
@@ -53,7 +55,7 @@ PATH adapters catch ordinary graphify launches from commit hooks as well as work
 Unclassified package scripts and local stages reserve exclusive capacity.
 Direct interpreter invocations, absolute executable paths and tools that replace PATH must use `run` or `fm-resource-stage.sh` explicitly.
 These integration boundaries are not an operating-system sandbox; the budget cannot constrain arbitrary unintegrated processes or unrelated desktop applications.
-Read-only queries do not require a compute reservation.
+Supported read-only package queries (`npm`/`pnpm` view, info, ls/list, outdated, help and bare version; `yarn` info, list, outdated and help; version/help flags) do not require a compute reservation.
 
 `fm-test-run.sh` and `fm-lint.sh` acquire exclusive stage reservations when configured, including when called by no-mistakes agents outside the original worker environment.
 Their inspection modes remain available without compute.
@@ -70,6 +72,8 @@ Project server configuration must consume that port and keep reuse disabled by d
 The Chrome adapter rejects short requests outside that composite lifetime and clears ambient auto-connect and browser URL settings when creating it.
 The wrapper exports `FM_RESOURCE_CPU_WORKERS` and `FM_RESOURCE_BROWSER_WORKERS` for project runners, and applies direct Vitest, Node test, Playwright, graphify and Nix caps where the command interface supports them.
 Package-script Vitest runs inherit `VITEST_MAX_WORKERS` and the older thread/fork environment limits, with minimum workers set to one; see [Vitest's environment variable migration](https://vitest.dev/guide/migration.html).
+Approved follow-up: package scripts that run node --test or playwright test are not capped yet.
+They still reserve exclusive global capacity; completing those package-script worker limits is deferred.
 Project configuration still needs to consume the exported values for custom runners and Next compiler settings.
 Neither a generic Node heap limit nor these worker defaults is a process-tree memory ceiling.
 The reservations are planning budgets, with live memory pressure providing the admission veto.
