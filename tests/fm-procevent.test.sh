@@ -903,7 +903,7 @@ assert_contains "$(cat "$HMULTI/state/worker-1.inbox/003.msg" 2>/dev/null || tru
   || fail "worker replies were not posted once per round"
 assert_contains "$(cat "$MULTI_ROOT/replies")" "poll1 reply: reply one" \
   "the reply staged with the arm was not the one the board received"
-printf '%s\n' '127.0.0.1:14387' '127.0.0.1:14387' '127.0.0.1:14387' > "$MULTI_ROOT/expected-routes"
+printf '%s\n' 'unset:14387' 'unset:14387' 'unset:14387' > "$MULTI_ROOT/expected-routes"
 cmp -s "$MULTI_ROOT/expected-routes" "$MULTI_ROOT/routes" \
   || fail "worker replies/polls did not use the opened session server across start and reconcile"
 pass "worker board replies and recovered listeners derive their server from the board session"
@@ -2971,7 +2971,8 @@ HOST_SEEN="$TMP_ROOT/session-route-seen"
 HOST_BIN=$(fm_fakebin "$TMP_ROOT/session-route-bin")
 cat > "$HOST_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
-[ "${1-}" = poll ] || exit 2
+[ "${1-}" != --version ] || { printf '0.1.80\n'; exit 0; }
+case "${1-}" in poll|reply) ;; *) exit 2 ;; esac
 printf '%s:%s\n' "${LAVISH_AXI_HOST-unset}" "${LAVISH_AXI_PORT-unset}" >> "$HOST_SEEN"
 if [ -n "${HOST_RETRY-}" ] && [ "$(wc -l < "$HOST_SEEN" | tr -d ' ')" = 1 ]; then
   rm -f "$HOST_CONFIG_FILE"
@@ -2981,19 +2982,29 @@ else
 fi
 SH
 chmod +x "$HOST_BIN/lavish-axi"
-# Re-reading the session makes its saved endpoint authoritative without a
-# Firstmate route record, even when the same artifact is subsequently reopened.
-for endpoint in '127.0.0.1:14387' 'board.example:24387' '[::1]:34387'; do
+# A saved URL identifies the local server's port, not its listener policy.
+# Even loopback and tailnet URLs must leave automatic Tailscale binding enabled
+# if a poll or synchronous reply has to restart the server.
+for endpoint in '127.0.0.1:14387' 'localhost:14387' '[::1]:34387' \
+    '100.99.161.42:24387' 'board.tailnet.ts.net:24387' 'board.example:24387'; do
   lavish_session "$HOST_ART" "http://$endpoint/session/0123456789abcdef"
   : > "$HOST_SEEN"
   PATH="$HOST_BIN:$PATH" HOST_SEEN="$HOST_SEEN" LAVISH_AXI_HOST=wrong.example \
     LAVISH_AXI_PORT=44387 FM_HOME="$HOST_HOME" \
     "$ROOT/bin/fm-procevent-lavish.sh" poll "$HOST_ART" >/dev/null
-  expected=${endpoint//\[/}; expected=${expected//\]/}
+  expected="unset:${endpoint##*:}"
   [ "$(cat "$HOST_SEEN")" = "$expected" ] \
-    || fail "poll did not derive the endpoint from the Unicode-path board session"
+    || fail "poll pinned the listener host or lost the Unicode-path board session port: $endpoint"
+  : > "$HOST_SEEN"
+  printf 'reply to deliver\n' > "$HOST_HOME/host-reply"
+  PATH="$HOST_BIN:$PATH" HOST_SEEN="$HOST_SEEN" LAVISH_AXI_HOST=wrong.example \
+    LAVISH_AXI_PORT=44387 FM_HOME="$HOST_HOME" \
+    "$ROOT/bin/fm-procevent-lavish.sh" deliver-reply poll "$HOST_ART" \
+    --agent-reply-file "$HOST_HOME/host-reply" >/dev/null
+  [ "$(cat "$HOST_SEEN")" = "$expected" ] \
+    || fail "reply pinned the listener host or lost the board session port: $endpoint"
 done
-pass "poll derives host and port from the artifact session, not ambient or configured routing"
+pass "poll and reply use the saved session port without overriding automatic host discovery"
 
 lavish_session "$HOST_ART"
 : > "$HOST_SEEN"
@@ -3001,7 +3012,7 @@ PATH="$HOST_BIN:$PATH" HOST_SEEN="$HOST_SEEN" HOST_RETRY=1 \
   HOST_CONFIG_FILE="$HOST_HOME/config/lavish-axi-host" LAVISH_AXI_HOST=ambient.example \
   LAVISH_AXI_PORT=44387 FM_LAVISH_POLL_RETRY_DELAY=1 FM_HOME="$HOST_HOME" \
   "$ROOT/bin/fm-procevent-lavish.sh" poll "$HOST_ART" >/dev/null
-printf '%s\n%s\n' '127.0.0.1:14387' '127.0.0.1:14387' > "$HOST_HOME/expected"
+printf '%s\n%s\n' 'unset:14387' 'unset:14387' > "$HOST_HOME/expected"
 cmp -s "$HOST_HOME/expected" "$HOST_SEEN" \
   || fail "a retry switched away from the session server after config removal"
 pass "quiet retries use the board session regardless of configuration changes"
