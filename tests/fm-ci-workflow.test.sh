@@ -5,9 +5,10 @@
 # concurrency deduplication, so every superseded PR head kept its full job
 # fan-out, and four jobs carried no timeout at all. These tests hold both
 # safeguards: PR runs supersede within one PR while main pushes are never
-# cancelled, and every CI job carries a finite hang tripwire drawn from the
-# three-tier timeout policy that docs/fm-test-portable-shards.md "Timeouts"
-# owns (fast, normal, heavy), so no job drifts back to a one-off number.
+# cancelled, and every upstream CI job carries a finite hang tripwire drawn
+# from the three-tier policy in docs/fm-test-portable-shards.md "Timeouts".
+# That document's "Fork runner consolidation" owns the grouped-job exceptions,
+# checked alongside complete partition selection below.
 #
 # The workflow is parsed as YAML and its concurrency expressions are resolved
 # against simulated pull_request and push contexts, so the assertions describe
@@ -118,7 +119,7 @@ puts YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1]).fetch("timeout-minutes
 ' "$CI_WORKFLOW" "$1"
 }
 
-# Tier membership is the executable inventory of the timeout policy: a new job
+# Tier membership is the executable inventory of the upstream timeout policy: a new job
 # must join a tier, and a job-level value outside these tiers is exactly the
 # one-off number the policy removed.
 FAST_TIER_JOBS='test-coverage invariants tests-timing-aggregate'
@@ -194,7 +195,7 @@ end
   pass "every ci.yml job carries a finite timeout"
 }
 
-# Every job sits in exactly one tier, and the workflow carries exactly three
+# Every upstream job sits in exactly one tier, and the resolved workflow carries exactly three
 # distinct job-level timeouts: one per tier, no one-off numbers.
 test_every_job_belongs_to_exactly_one_timeout_tier() {
   local expected actual distinct
@@ -221,7 +222,7 @@ test_fast_tier_shares_one_short_tripwire() {
   pass "fast tier jobs share one $fast minute tripwire"
 }
 
-# Normal tier: every test or lint lane shares ONE fixed 30-minute budget,
+# Upstream normal tier: every member shares ONE fixed 30-minute budget,
 # above the fast tier. That budget is a hang tripwire, not a packing estimate.
 test_normal_tier_shares_one_budget() {
   local fast normal
@@ -236,7 +237,7 @@ test_normal_tier_shares_one_budget() {
   pass "normal tier jobs share one $normal minute budget"
 }
 
-# Heavy tier: Herdr alone carries a job-level last-resort backstop above the
+# Upstream heavy tier: Herdr alone carries a job-level last-resort backstop above the
 # normal tier, while its family-run step owns a tighter tripwire so the
 # always() cleanup and timing upload still run after a hang.
 test_heavy_tier_keeps_a_step_tripwire_under_a_job_backstop() {
