@@ -7,6 +7,7 @@ import os
 import pty
 import select
 import shlex
+import shutil
 from pathlib import Path
 import signal
 import subprocess
@@ -503,6 +504,177 @@ for command in json.loads(sys.argv[1]):
                 self.assertEqual(actual, argv + expected)
                 for key in ("VITEST_MAX_WORKERS", "VITEST_MAX_THREADS", "VITEST_MAX_FORKS"):
                     self.assertEqual(env[key], "1")
+
+    def test_package_scripts_cap_node_and_playwright_workers(self):
+        fake = self.root / "package-runners"
+        fake.mkdir()
+        for name in ("node", "playwright", "probe"):
+            tool = fake / name
+            tool.write_text("#!" + sys.executable + "\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n")
+            tool.chmod(0o700)
+        for name in ("npm", "pnpm", "yarn"):
+            tool = fake / name
+            tool.write_text("#!" + sys.executable + '''
+import json, shlex, subprocess, sys
+args = sys.argv[1:]
+script = args.pop(0)
+if script in ("run", "run-script"):
+    script = args.pop(0)
+if args[:1] == ["--"]:
+    args.pop(0)
+command = json.load(open("package.json"))["scripts"][script]
+sys.exit(subprocess.call(command + " " + shlex.join(args), shell=True))
+''')
+            tool.chmod(0o700)
+        env = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ["PATH"])
+        adapters = self.root / "script-adapters"
+        result = self.call("prepare", "--directory", str(adapters), "--worktree", str(ROOT),
+            "--task", "scripts", "--account-label", "default", "--", "true", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Package managers put project-local executables before the prepared
+        # PATH. Node still resolves through its adapter; Playwright is local.
+        local = self.root / "node_modules" / ".bin"
+        local.mkdir(parents=True)
+        (fake / "playwright").rename(local / "playwright")
+        env["PATH"] = os.pathsep.join((str(local), str(adapters / "bin"), env["PATH"]))
+        for watts, workers in ((140, 2), (65, 1)):
+            sample = copy.deepcopy(SAMPLE)
+            sample["power"]["adapterWatts"] = watts
+            self.write("input.json", sample)
+            wait_for(lambda: self.status().get("telemetry", {}).get("power", {}).get("adapterWatts") == watts)
+            clock = self.root / "clock"
+            clock.write_text(str(int(clock.read_text()) + 121))
+            wait_for(lambda: self.status()["reason"] == "ready")
+            for runner, script, expected in (
+                    ("node", "node --test --test-concurrency=99 sample.test.js",
+                        ["--test", f"--test-concurrency={workers}", "sample.test.js"]),
+                    ("playwright", "playwright test --workers=99 sample.spec.js",
+                        ["test", "--workers=99", "sample.spec.js", "--workers=1"]),
+                    ("other", "probe node --test playwright test", ["node", "--test", "playwright", "test"])):
+                self.write("package.json", {"scripts": {"test": script, "check": script}})
+                for name in ("npm", "pnpm", "yarn"):
+                    for argv in (["run", "check"], ["test"]):
+                        with self.subTest(watts=watts, runner=runner, name=name, argv=argv):
+                            # Exercise both direct leasing and the PATH adapter's
+                            # inherited-lease path through the executable API.
+                            command = [str(fake / name), *argv]
+                            if argv[0] == "test":
+                                command = [CLI, "--config", str(self.root / "config.json"),
+                                    "tool", "--name", name, "--executable", str(fake / name), "--", *argv]
+                            result = self.call("run", "--class", "exclusive", "--", *command,
+                                cwd=self.root, env=env)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            actual = json.loads(result.stdout)
+                            self.assertEqual(actual, expected)
+
+    def test_package_runner_compounds_do_not_silently_escape_limits(self):
+        fake = self.root / "npm"
+        fake.write_text('#!/bin/sh\necho UNCAPPED\n')
+        fake.chmod(0o700)
+        for script in ("playwright test && echo finished", "playwright test; echo finished", "playwright test -- sample.js"):
+            with self.subTest(script=script):
+                self.write("package.json", {"scripts": {"test": script}})
+                result = self.call("run", "--class", "exclusive", "--", str(fake), "test", cwd=self.root)
+                self.assertEqual(result.returncode, 75, result.stderr)
+                self.assertNotIn("UNCAPPED", result.stdout)
+                self.assertIn("simple runner command", result.stderr)
+                self.assertFalse(self.status()["leases"])
+
+    def test_node_adapter_preserves_lower_limits_and_executes_real_node(self):
+        fake = self.root / "node-bin"
+        fake.mkdir()
+        node = fake / "node"
+        node.write_text("#!" + sys.executable + "\nimport json, os, sys\nprint(json.dumps([sys.argv[1:], os.getpid()]))\n")
+        node.chmod(0o700)
+        env = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ["PATH"])
+        adapters = self.root / "node-adapters"
+        result = self.call("prepare", "--directory", str(adapters), "--worktree", str(ROOT),
+            "--task", "node-limits", "--account-label", "default", "--", "true", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        adapter = str(adapters / "bin/node")
+        driver = self.root / "node-driver.py"
+        driver.write_text('''import json, subprocess, sys
+for argv in json.loads(sys.argv[2]):
+    child = subprocess.Popen([sys.argv[1], *argv], text=True, stdout=subprocess.PIPE)
+    output = json.loads(child.communicate(timeout=10)[0])
+    assert child.returncode == 0
+    assert output[1] == child.pid, "adapter must exec real node"
+    print(json.dumps(output[0]))
+''')
+        for watts, cap in ((140, 2), (65, 1)):
+            sample = copy.deepcopy(SAMPLE)
+            sample["power"]["adapterWatts"] = watts
+            self.write("input.json", sample)
+            wait_for(lambda: self.status().get("telemetry", {}).get("power", {}).get("adapterWatts") == watts)
+            clock = self.root / "clock"
+            clock.write_text(str(int(clock.read_text()) + 121))
+            wait_for(lambda: self.status()["reason"] == "ready")
+            cases = [
+                (["--test", "file.js"], ["--test", f"--test-concurrency={cap}", "file.js"]),
+                (["--test", "--test-concurrency=1", "file.js"], ["--test", "--test-concurrency=1", "file.js"]),
+                (["--test-concurrency=99", "--test", "file.js"], [f"--test-concurrency={cap}", "--test", "file.js"]),
+                (["--test-concurrency", "1", "--test", "file.js"], ["--test-concurrency", "1", "--test", "file.js"]),
+                (["--test", "--test-concurrency", "2", "file.js"], ["--test", "--test-concurrency", str(cap), "file.js"]),
+                (["--test", "file.js", "--test-concurrency=99"], ["--test", f"--test-concurrency={cap}", "file.js", f"--test-concurrency={cap}"]),
+                (["script.js", "--test"], ["script.js", "--test"]),
+                (["-e", "console.log('hello')", "--test"], ["-e", "console.log('hello')", "--test"]),
+                (["-r", "setup.js", "--test", "file.js"], ["-r", "setup.js", "--test", f"--test-concurrency={cap}", "file.js"])]
+            result = self.call("run", "--class", "exclusive", "--", sys.executable, str(driver),
+                adapter, json.dumps([argv for argv, _ in cases]))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual([json.loads(line) for line in result.stdout.splitlines()], [expected for _, expected in cases])
+
+    def test_plain_node_passthrough_preserves_exit_and_signal_without_owner(self):
+        fake = self.root / "plain-node-bin"
+        fake.mkdir()
+        node = fake / "node"
+        node.write_text("#!" + sys.executable + '''
+import json, os, sys, time
+print(json.dumps([sys.argv[1:], os.getpid()]), flush=True)
+if sys.argv[1:] == ["sleep.js"]:
+    time.sleep(30)
+sys.exit(23)
+''')
+        node.chmod(0o700)
+        adapters = self.root / "plain-node-adapters"
+        result = self.call("prepare", "--directory", str(adapters), "--worktree", str(ROOT),
+            "--task", "plain-node", "--account-label", "default", "--", "true",
+            env=dict(os.environ, PATH=str(fake) + os.pathsep + os.environ["PATH"]))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.stop()
+        adapter = str(adapters / "bin/node")
+        child = subprocess.Popen([adapter, "script.js", "arg"], text=True, stdout=subprocess.PIPE)
+        self.children.append(child)
+        out, _ = child.communicate(timeout=10)
+        self.assertEqual(child.returncode, 23)
+        self.assertEqual(json.loads(out), [["script.js", "arg"], child.pid])
+        child = subprocess.Popen([adapter, "sleep.js"], text=True, stdout=subprocess.PIPE)
+        self.children.append(child)
+        self.assertEqual(json.loads(child.stdout.readline()), [["sleep.js"], child.pid])
+        child.terminate()
+        child.communicate(timeout=10)
+        self.assertEqual(child.returncode, -signal.SIGTERM)
+
+    @unittest.skipUnless(shutil.which("npm") and shutil.which("node"), "npm and node required")
+    def test_real_npm_node_tests_run_one_file_at_a_time(self):
+        self.write("package.json", {"scripts": {"test": "node --test --test-concurrency=99 first.cjs second.cjs"}})
+        probe = '''const fs = require('node:fs');
+fs.mkdirSync('active-test');
+setTimeout(() => fs.rmdirSync('active-test'), 300);
+'''
+        for name in ("first.cjs", "second.cjs"):
+            (self.root / name).write_text(probe)
+        adapters = self.root / "real-adapters"
+        result = self.call("prepare", "--directory", str(adapters), "--worktree", str(ROOT),
+            "--task", "real-npm", "--account-label", "default", "--", "true")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        env = dict(os.environ, PATH=str(adapters / "bin") + os.pathsep + os.environ["PATH"])
+        for argv in (["run", "test"], ["test"]):
+            with self.subTest(argv=argv):
+                result = self.call("run", "--class", "exclusive", "--", shutil.which("npm"), *argv,
+                    cwd=self.root, env=env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertFalse((self.root / "active-test").exists())
 
     def test_registered_check_emits_each_transition_once(self):
         state = self.root / "home-state"

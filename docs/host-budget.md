@@ -73,8 +73,10 @@ Project server configuration must consume that port and keep reuse disabled by d
 The Chrome adapter rejects short requests outside that composite lifetime and clears ambient auto-connect and browser URL settings when creating it.
 The wrapper exports `FM_RESOURCE_CPU_WORKERS` and `FM_RESOURCE_BROWSER_WORKERS` for project runners, and applies direct Vitest, Node test, Playwright, graphify and Nix caps where the command interface supports them.
 Package-script Vitest runs inherit `VITEST_MAX_WORKERS` and the older thread/fork environment limits, with minimum workers set to one; see [Vitest's environment variable migration](https://vitest.dev/guide/migration.html).
-Approved follow-up: package scripts that run node --test or playwright test are not capped yet.
-They still reserve exclusive global capacity; completing those package-script worker limits is deferred.
+The prepared PATH includes a Node adapter that caps `node --test` before file arguments at two workers on desk power or one on portable power, including npm, pnpm and yarn package scripts.
+Explicit Node concurrency limits at or below the cap are preserved, and other Node invocations pass through unchanged.
+For npm, pnpm and yarn `run <script>` or `test`, simple package scripts invoking `playwright test` receive one worker; shell compounds and script-level `--` terminators are refused when appended arguments cannot safely reach Playwright.
+These package scripts still reserve exclusive global capacity.
 Project configuration still needs to consume the exported values for custom runners and Next compiler settings.
 Neither a generic Node heap limit nor these worker defaults is a process-tree memory ceiling.
 The reservations are planning budgets, with live memory pressure providing the admission veto.

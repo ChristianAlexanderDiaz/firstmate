@@ -668,7 +668,7 @@ def prepare(args, config_name):
     atomic_json(directory / "manifest.json", manifest)
     shims = directory / "bin"
     private_dir(shims)
-    tools = ("npm", "npx", "pnpm", "yarn", "bun", "vitest", "playwright", "graphify",
+    tools = ("node", "npm", "npx", "pnpm", "yarn", "bun", "vitest", "playwright", "graphify",
              "make", "cmake", "ninja", "cargo", "go", "nix", "nix-build", "darwin-rebuild", "nixos-rebuild",
              "chrome-devtools-axi")
     for name in tools:
@@ -685,12 +685,30 @@ def prepare(args, config_name):
     print(str(directory / "manifest.json"))
 
 
+def node_test_index(command):
+    """Find the test switch before a script, eval payload or option terminator."""
+    values = {"-r", "--require", "--import", "--loader", "--experimental-loader", "-C", "--conditions",
+        "--test-concurrency", "--test-reporter", "--test-reporter-destination", "--test-name-pattern",
+        "--test-skip-pattern", "--test-timeout", "--test-shard", "--inspect-port"}
+    index = 1
+    while index < len(command):
+        value = command[index]
+        if value == "--test":
+            return index
+        if not value.startswith("-") or value in ("--", "-", "-e", "--eval", "-p", "--print"):
+            return None
+        index += 2 if value in values else 1
+    return None
+
+
 def tool_job(args, name, config, digest):
     argv = args.argv[1:] if args.argv and args.argv[0] == "--" else args.argv
+    if args.name == "node" and node_test_index([args.executable, *argv]) is None:
+        os.execv(args.executable, [args.executable, *argv])
     kind = "exclusive"
     if args.name == "graphify":
         kind = "graph"
-    elif args.name == "vitest":
+    elif args.name in ("vitest", "node"):
         kind = "test"
     elif args.name in ("playwright", "chrome-devtools-axi"):
         kind = "browser"
@@ -709,6 +727,52 @@ def tool_job(args, name, config, digest):
     return run_job(args, name, config, digest)
 
 
+def package_test_runner(command):
+    """Resolve simple package scripts without executing or changing the project."""
+    name = Path(command[0]).name
+    if name not in ("npm", "pnpm", "yarn") or len(command) < 2:
+        return None
+    if command[1] in ("run", "run-script"):
+        if len(command) < 3 or command[2].startswith("-"):
+            return None
+        script = command[2]
+    elif command[1] == "test":
+        script = "test"
+    else:
+        return None
+    for directory in (Path.cwd(), *Path.cwd().parents):
+        package = directory / "package.json"
+        if not package.exists():
+            continue
+        try:
+            value = json.loads(package.read_text())
+            text = value.get("scripts", {}).get(script, "")
+            lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+            lexer.whitespace_split = True
+            argv = list(lexer)
+        except (OSError, ValueError, AttributeError, TypeError):
+            return None
+        if not argv:
+            return None
+        while argv and "=" in argv[0] and not argv[0].startswith("-"):
+            argv.pop(0)
+        if argv[:1] == ["npx"]:
+            argv.pop(0)
+        if not argv:
+            return None
+        runner = Path(argv[0]).name
+        if runner == "playwright" and argv[1:2] == ["test"]:
+            runner = "playwright"
+        else:
+            return None
+        # Appended package arguments reach only the last shell command. Refuse
+        # compounds rather than accidentally capping a later echo/cleanup step.
+        if "\n" in text or any(token and all(c in "();<>|&" for c in token) for token in argv) or "--" in argv:
+            raise Refusal("package test script needs a simple runner command for worker limits")
+        return runner
+    return None
+
+
 def caps(command, kind, portable):
     workers = 1 if portable else 2
     env = os.environ.copy()
@@ -719,7 +783,12 @@ def caps(command, kind, portable):
         "VITEST_MIN_THREADS": "1", "VITEST_MIN_FORKS": "1"})
     name = Path(command[0]).name
     result = command[:]
-    if name == "vitest":
+    package_runner = package_test_runner(command)
+    if package_runner:
+        if name == "npm" and "--" not in result[2:]:
+            result += ["--"]
+        result += ["--workers=1"]
+    elif name == "vitest":
         result += [f"--maxWorkers={workers}"]
     elif name == "playwright" and len(command) > 1 and command[1] == "test":
         result += ["--workers=1"]
@@ -727,8 +796,30 @@ def caps(command, kind, portable):
         result += ["--workers=1"]
     elif name in ("npx", "npm", "pnpm", "yarn", "bun") and "vitest" in result:
         result += [f"--maxWorkers={workers}"]
-    elif name == "node" and "--test" in command:
-        result.insert(1, f"--test-concurrency={workers}")
+    elif name == "node" and node_test_index(command) is not None:
+        explicit = False
+        test_index = node_test_index(command)
+        # Node stops reading options at the first file. A trailing concurrency
+        # argument must not suppress insertion of an effective leading cap.
+        boundary = next((i for i in range(test_index + 1, len(result))
+            if not result[i].startswith("-") or result[i] == "--"), len(result))
+        for index, value in enumerate(result):
+            if value.startswith("--test-concurrency="):
+                explicit = explicit or index < boundary
+                try:
+                    if not 0 < int(value.split("=", 1)[1]) <= workers:
+                        result[index] = f"--test-concurrency={workers}"
+                except ValueError:
+                    pass  # Let Node report invalid caller options itself.
+            elif value == "--test-concurrency" and index + 1 < len(result):
+                explicit = explicit or index < boundary
+                try:
+                    if not 0 < int(result[index + 1]) <= workers:
+                        result[index + 1] = str(workers)
+                except ValueError:
+                    pass
+        if not explicit:
+            result.insert(test_index + 1, f"--test-concurrency={workers}")
     elif name == "nix-build" or name in ("nix", "darwin-rebuild", "nixos-rebuild") and any(v in command for v in ("build", "switch", "test")):
         result += ["--max-jobs", "1", "--cores", "2"]
     return result, env
