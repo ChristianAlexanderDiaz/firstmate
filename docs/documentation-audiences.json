@@ -549,6 +549,18 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": ".agents/skills/backlog-management/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/crewmate-briefs/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/project-knowledge-management/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/agent-skill-trigger-index/SKILL.md",
       "audience": "agent-runtime"
     },

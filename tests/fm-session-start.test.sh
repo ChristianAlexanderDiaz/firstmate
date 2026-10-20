@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # tests/fm-session-start.test.sh - behavior tests for bin/fm-session-start.sh,
-# the single command that collapses AGENTS.md sections 3 (bootstrap) and 5
-# (recovery) into one ordered digest.
+# the single command that combines AGENTS.md section 3 and session-start-recovery
+# into one ordered digest.
 #
 # Coverage:
 #   - absent-file markers vs empty-but-present files in the context digest
 #   - the lock-refusal read-only path: banner leads, every mutating step is
-#     skipped (including bootstrap's seven mutating sweeps, verified by their
-#     ABSENCE), the digest still completes
+#     skipped (including stale Herdr projection cleanup and bootstrap's six
+#     mutating sweeps, verified by their ABSENCE), the digest still completes
 #   - output section ordering: the safety preamble leads unchanged, live fleet
 #     state precedes the curated memory a truncated tail may take, and the
 #     read-once contract precedes both
