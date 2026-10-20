@@ -132,7 +132,8 @@ Scout teardown calls the read-only `verify` subcommand after checking for the re
 
 On the markdown backend, an entry absent from the active backlog can verify through a Done row in the configured archive only if its body carries a recorded resolution.
 The same origin checks still apply, and an active row takes precedence over an archived namesake.
-This read-only fallback preserves verification after Done retention; `complete` and mutation commands do not use it.
+This read-only fallback also applies when `complete` re-checks an entry already recorded in that origin's inventory.
+Newly added entries require an active backlog row; hold, answer, and reconcile mutations never use the archive.
 
 A keyed status decision opened after the last `complete` makes `verify` fail, and re-running `complete` is the repair.
 The `--force` path remains the explicit captain-approved discard escape hatch.
@@ -532,6 +533,7 @@ The suite does not test the accepted merge-to-cleanup re-hold window or asynchro
 ### Completion and verification
 
 - A report-only unresolved captain call refuses `--none` completion before teardown can erase the source.
+- Re-recording an inventory after Done retention accepts its previously recorded resolved entries, transfers later keyed decisions, and refuses newly added archived or unknown keys and archived entries without a recorded resolution.
 - Non-forced scout teardown always requires the durable inventory verification.
 - The recorded-answer guard holds: a bare `tasks-axi done` close fails `verify` until `answer` records the captain's word, and an ordinary finished task cannot be dressed up as an answered call.
 
