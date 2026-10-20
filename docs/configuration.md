@@ -375,9 +375,10 @@ Its header and `--help` own the metadata lines and event commands.
 Priority represents impact: Urgent means production is broken or an event is at risk, followed by High, Medium and Low.
 Estimate represents cost: 1, 2 and 3 are increasing sizes; 5 means split the work.
 The existing Linear label group named `Loop` supplies exactly one of `agent`, `agent-reviewed`, `milestones` or `Christian`; the sync does not create labels.
-Intake creates an unstarted ticket if necessary and fills only missing priority, estimate and Loop values, preserving existing corrections, other labels and cycle placement.
+Intake creates an unstarted ticket if necessary and fills missing priority, estimate and Loop values from initial declarations only before the first metadata snapshot, preserving later corrections including cleared values, other labels and cycle placement.
 Firstmate judges whether an agent's finish is test-decidable and records the specific check in a `Loop finish:` declaration in the ticket description or backlog body.
 The declaration names the test and the observable pass/fail result; the sync never executes its text or guesses from ordinary prose mentioning tests.
+An initial backlog check is retained separately as `Loop local finish:` until a remote declaration supersedes it; subsequent removal of the remote declaration leaves no effective check.
 Before launch, spawn reads priority, estimate, Loop, cycle start and manual order into the backlog and adds a metadata instruction overlay to the worker brief, outside captain intent.
 Linear values take precedence over intake defaults, so corrections made there win at pickup.
 An `agent` without a nonempty finish declaration is relabeled `milestones`, preserving all labels outside Loop, and receives milestone instructions.

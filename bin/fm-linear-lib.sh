@@ -5,8 +5,11 @@
 #        fm-linear-lib.sh intake|dispatch <task-id>
 # intake uses explicit backlog lines Linear priority: 1..4, Linear estimate:
 # 1|2|3|5 and Loop: agent|agent-reviewed|milestones|Christian as defaults for
-# missing fields, creating an unstarted ticket when needed. Existing values win.
+# missing fields before the first metadata snapshot, creating an unstarted
+# ticket when needed. Existing values win.
 # Loop finish: names a test-decidable check (never executed by this script).
+# An initial local check is retained as Loop local finish: until a remote
+# declaration supersedes it. Loop finish: then records only the effective check.
 # dispatch reads these fields before launch, saves them in the backlog, and
 # prints a worker instruction overlay. Agent without a declared check becomes
 # milestones; Christian records a captain hold and returns 25 without launch.
@@ -179,29 +182,36 @@ fm_linear_body_value() {  # <body> <literal key>
 # shellcheck disable=SC2016
 fm_linear_loop() {  # <event> <issue-json> <body> <data> <task> <team>
   local event=$1 issue=$2 body=$3 data=$4 task=$5 team=$6
-  local loop priority estimate finish labels input='{}' wanted local_loop cycle sort_value updated
+  local loop priority estimate finish labels input='{}' wanted defaults='' local_finish description cycle sort_value updated
   loop=$(printf '%s' "$issue" | jq -er '
     [.labels.nodes[]? | select(.parent.name == "Loop") | .name] |
     if length <= 1 then .[0] // "" else error("multiple Loop labels") end') || return 1
-  local_loop=$(fm_linear_body_value "$body" Loop)
+  if ! printf '%s\n' "$body" | grep '^Loop cycle: ' >/dev/null; then defaults=$body; fi
   case "$loop" in ''|agent|agent-reviewed|milestones|Christian) ;; *) return 1 ;; esac
   priority=$(printf '%s' "$issue" | jq -r '.priority // 0')
   estimate=$(printf '%s' "$issue" | jq -r '.estimate // ""')
   if [ "$event" = intake ]; then
     if [ "$priority" = 0 ]; then
-      wanted=$(fm_linear_body_value "$body" 'Linear priority')
+      wanted=$(fm_linear_body_value "$defaults" 'Linear priority')
       case "$wanted" in 1|2|3|4) priority=$wanted; input=$(printf '%s' "$input" | jq -c --argjson p "$wanted" '.priority=$p') ;; ''|0) ;; *) return 1 ;; esac
     fi
     if [ -z "$estimate" ]; then
-      wanted=$(fm_linear_body_value "$body" 'Linear estimate')
+      wanted=$(fm_linear_body_value "$defaults" 'Linear estimate')
       case "$wanted" in 1|2|3|5) estimate=$wanted; input=$(printf '%s' "$input" | jq -c --argjson e "$wanted" '.estimate=$e') ;; '') ;; *) return 1 ;; esac
     fi
-    [ -n "$loop" ] || loop=$local_loop
+    [ -n "$loop" ] || loop=$(fm_linear_body_value "$defaults" Loop)
   fi
   case "$loop" in ''|agent|agent-reviewed|milestones|Christian) ;; *) return 1 ;; esac
   # A declaration is a reviewed specification, not a keyword guess about prose.
-  finish=$(fm_linear_body_value "$(printf '%s' "$issue" | jq -r '.description // ""')" 'Loop finish')
-  [ -n "$finish" ] || finish=$(fm_linear_body_value "$body" 'Loop finish')
+  description=$(printf '%s' "$issue" | jq -r '.description // ""')
+  finish=$(fm_linear_body_value "$description" 'Loop finish')
+  local_finish=$(fm_linear_body_value "$body" 'Loop local finish')
+  [ -n "$local_finish" ] || local_finish=$(fm_linear_body_value "$defaults" 'Loop finish')
+  if printf '%s\n' "$description" | grep '^Loop finish: ' >/dev/null; then
+    local_finish=''
+  else
+    finish=$local_finish
+  fi
   if [ "$loop" = agent ] && ! printf '%s' "$finish" | grep -q '[^[:space:]]'; then
     loop=milestones
   fi
@@ -224,11 +234,12 @@ fm_linear_loop() {  # <event> <issue-json> <body> <data> <task> <team>
   cycle=$(printf '%s' "$issue" | jq -r '.cycle.startsAt // ""')
   sort_value=$(printf '%s' "$issue" | jq -r '.sortOrder // 0')
   updated=$(fm_backlog_row_show "$data" "$task" --full)
-  updated=$(fm_linear_field "$updated" body | sed '/^Linear priority: /d; /^Linear estimate: /d; /^Loop: /d; /^Loop finish: /d; /^Loop cycle: /d; /^Loop sort: /d')
+  updated=$(fm_linear_field "$updated" body | sed '/^Linear priority: /d; /^Linear estimate: /d; /^Loop: /d; /^Loop finish: /d; /^Loop local finish: /d; /^Loop cycle: /d; /^Loop sort: /d')
   updated="${updated}${updated:+$'\n'}Linear priority: $priority
 Linear estimate: $estimate
 Loop: $loop
 Loop finish: $finish
+Loop local finish: $local_finish
 Loop cycle: $cycle
 Loop sort: $sort_value"
   fm_backlog_mutate "$data" update "$task" --body "$updated"

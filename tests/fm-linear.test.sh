@@ -223,6 +223,38 @@ sync_event intake "$TASK"
 assert_equals 2 "$(jq '.[0].priority' "$CASE/issues.json")" 'later intake preserves correction'
 pass 'intake writes metadata in Todo; dispatch reads corrections and produces worker instructions'
 
+before=$(mutations)
+jq '.[0] |= (.priority=0 | .estimate=null | .labels=["unrelated"] | .description="")' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+for attempt in 1 2; do
+  sync_event intake "$TASK"
+  out=$(sync_event dispatch "$TASK")
+  assert_equals '' "$out" 'cleared Loop stays unclassified after repeated reads'
+done
+assert_equals "$before" "$(mutations)" 'cleared values never restore initial defaults or snapshots'
+assert_equals true "$(jq '.[0] | .priority == 0 and .estimate == null and .labels == ["unrelated"]' "$CASE/issues.json")" 'all remote clears remain authoritative'
+pass 'cleared impact cost and ownership survive repeated intake and dispatch without writes'
+
+make_case local-finish-declaration
+seed_issue
+tasks update "$TASK" --body $'Linear issue: ABC-42\nLoop: agent\nLoop finish: a local test rejects expired invites' >/dev/null
+sync_event intake "$TASK"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Test-decidable finish: a local test rejects expired invites' 'initial local declaration survives intake and dispatch'
+sync_event intake "$TASK"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Test-decidable finish: a local test rejects expired invites' 'explicit local declaration is retained independently of snapshots'
+jq '.[0].description="Loop finish: a remote test rejects expired invites"' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Test-decidable finish: a remote test rejects expired invites' 'remote declaration supersedes local declaration'
+jq '.[0].description=""' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+sync_event intake "$TASK"
+out=$(sync_event dispatch "$TASK")
+assert_contains "$out" 'Loop: milestones' 'removing remote check cannot resurrect prior local declaration'
+pass 'local finish declarations persist until superseded; removed remote checks demote agents'
+
 make_case loop-guard
 seed_issue
 tasks update "$TASK" --body 'Linear issue: ABC-42' >/dev/null
@@ -346,6 +378,26 @@ mv "$CASE/new" "$CASE/issues.json"
 run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/corrected" || fail 'refill failed after remote correction'
 order=$(sed -n 's/^fingerprint: //p' "$CASE/corrected" | jq -r '.lanes[0].ready | map(.id) | join(",")')
 assert_equals work,next "$order" 'current priority estimate and Loop corrections change refill selection'
+before=$(mutations)
+jq 'map(if .identifier == "ABC-42" then .priority=0 | .estimate=null | .labels=["unrelated"] | .description="" else . end)' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+for attempt in 1 2; do
+  sync_event intake "$TASK"
+  run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/cleared-$attempt" || fail 'cleared metadata stalled refill'
+  order=$(sed -n 's/^fingerprint: //p' "$CASE/cleared-$attempt" | jq -r '.lanes[0].ready | map(.id) | join(",")')
+  assert_equals next,work "$order" 'cleared Loop uses unclassified order instead of old grid rank'
+done
+assert_equals "$before" "$(mutations)" 'refill never writes cleared metadata back from snapshots'
+jq 'map(if .identifier == "ABC-43" then .description="" else . end)' "$CASE/issues.json" > "$CASE/new"
+mv "$CASE/new" "$CASE/issues.json"
+for attempt in 1 2; do
+  run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/removed-check-$attempt" || fail 'missing check stalled other work'
+  order=$(sed -n 's/^fingerprint: //p' "$CASE/removed-check-$attempt" | jq -r '.lanes[0].ready | map(.id) | join(",")')
+  assert_equals work "$order" 'removed remote finish excludes agent from refill'
+done
+assert_equals "$((before+1))" "$(mutations)" 'removed finish only demotes once'
+assert_equals true "$(jq -s '[.[] | select(.query | startswith("mutation UpdateIssue"))][-1].variables.input == {addedLabelIds:["loop-milestones"],removedLabelIds:["loop-agent"]}' "$CASE/requests")" 'demotion never rewrites priority estimate or description'
+pass 'remote clears survive repeated refill; removed checks only trigger safe demotion'
 touch "$CASE/http-error"
 rc=0; run bash "$ROOT/bin/fm-procevent-refill.sh" check > "$CASE/unreadable" 2>/dev/null || rc=$?
 assert_equals 75 "$rc" 'unreadable intake defers refill'
