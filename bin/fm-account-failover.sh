@@ -43,7 +43,7 @@
 #      account of the map through `choose`.
 #   4. With no qualifying account, leaves the worker stopped and
 #      appends one home-wide `blocked:` outcome naming each account's quota
-#      and reset time, once until a fresh watcher snapshot finds room for the
+#      and reset time, once until a fresh snapshot finds room for the
 #      recorded model again.
 #   5. For a ship whose own no-mistakes run is still active, aborts that run
 #      through `no-mistakes axi abort --run <id>` and proves it terminal before
@@ -239,7 +239,7 @@ skipped() {
 }
 
 # One notice per launching home and exhaustion episode, shared by every task.
-# The watcher clears the episode when an account qualifies for its recorded model.
+# Fresh quota clears the episode when an account qualifies for its recorded model.
 status_exhausted() {
   local reason=$1 lock="$STATE/.claude-exhausted.lock"
   fm_account_failover_require_current_turn
@@ -432,10 +432,18 @@ fm_account_failover_recover() {
     rm -f "$snapshot"
     status_blocked "Claude usage limit reached ($limit_text); account eligibility could not be checked"
   }
-  rm -f "$snapshot"
   if ! pick=$(choose_print "$choice"); then
+    rm -f "$snapshot"
     status_exhausted "Claude usage limit reached ($limit_text); no other Claude account has room (${pick#none$'\t'}), so the worker was left stopped"
   fi
+  fm_lock_acquire_wait "$STATE/.claude-exhausted.lock"
+  if [ -f "$STATE/.claude-exhausted" ] && cmd_choose \
+    --map "$CONFIG/$FM_WORKER_ACCOUNT_FAILOVER_FILE" --snapshot "$snapshot" \
+    --model "$(cat "$STATE/.claude-exhausted")" >/dev/null 2>&1; then
+    rm -f "$STATE/.claude-exhausted"
+  fi
+  fm_lock_release "$STATE/.claude-exhausted.lock"
+  rm -f "$snapshot"
   to=$(printf '%s' "$pick" | cut -f2)
 
   run_id=

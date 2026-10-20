@@ -1361,6 +1361,41 @@ test_unrelated_model_moves_preserve_exhaustion() {
   pass "exhaustion: unrelated model moves and maintenance preserve the recorded episode"
 }
 
+test_successful_recovery_rearms_before_maintenance() {
+  local kind model out
+  for kind in ship scout secondmate; do
+    for model in opus claude-opus-4-6; do
+      new_case "recovery-episode-$kind-$model" t40 "$kind"
+      printf 'model=%s\n' "$model" >> "$CASE/home/state/t40.meta"
+      printf 'claude %s\n' "$model" > "$CASE/home/config/secondmate-harness"
+      quota_snapshot 0 0 > "$CASE/fake/quota.json"
+      record_limit t40
+      out=$(case_env "$FAILOVER" run t40 2>&1)
+      assert_contains "$out" 'blocked t40' "initial exhaustion emits a notice: $out"
+      assert_equals "$model" "$(cat "$CASE/home/state/.claude-exhausted")" "the model owns its exhaustion episode"
+      quota_snapshot 0 81 > "$CASE/fake/quota.json"
+      case_env "$FAILOVER" tick >/dev/null
+      [ -f "$CASE/home/state/.claude-exhausted" ] || fail "maintenance is still cooling down"
+      : > "$CASE/fake/quota-calls"
+      record_limit t40
+      out=$(case_env "$FAILOVER" run t40 2>&1)
+      assert_contains "$out" 'moved t40 limited spare' "$kind recovers on fresh $model quota: $out"
+      [ ! -e "$CASE/home/state/.claude-exhausted" ] || fail "successful recovery must rearm without maintenance"
+      assert_equals 3 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "rearming reuses selection quota, alongside the two launch readings"
+      quota_snapshot 0 0 > "$CASE/fake/quota.json"
+      record_limit t40
+      out=$(case_env "$FAILOVER" run t40 2>&1)
+      assert_contains "$out" 'blocked t40' "exhaustion after recovery emits a new notice: $out"
+      assert_equals 2 "$(grep -c '^blocked:' "$CASE/home/state/t40.status")" "recovery starts a new exhaustion episode immediately"
+      record_limit t40
+      out=$(case_env "$FAILOVER" run t40 2>&1)
+      assert_contains "$out" 'already reported' "the new episode remains deduplicated: $out"
+      assert_equals 2 "$(grep -c '^blocked:' "$CASE/home/state/t40.status")" "repeated exhaustion emits no duplicate notice"
+    done
+  done
+  pass "exhaustion: successful same-model recovery rearms before the maintenance cooldown"
+}
+
 test_maintenance_rechecks_are_bounded_and_throttled() {
   local mode out
   for mode in failed hung malformed auth-hung; do
@@ -1431,6 +1466,7 @@ PYTEST
 test_secondmate_failover
 test_exhaustion_episode_is_shared
 test_unrelated_model_moves_preserve_exhaustion
+test_successful_recovery_rearms_before_maintenance
 test_maintenance_rechecks_are_bounded_and_throttled
 
 test_record_writes_a_usage_limit_record_only_for_a_rate_limit_with_the_map
