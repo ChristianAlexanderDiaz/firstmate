@@ -91,6 +91,15 @@ case "${1:-}" in
     fi
     exit 0 ;;
   list-windows) cat "$D/windows"; exit 0 ;;
+  new-window)
+    shift
+    name=
+    while [ "$#" -gt 0 ]; do
+      case "$1" in -n) shift; name=$1 ;; esac
+      shift
+    done
+    [ -z "$name" ] || printf '%s\n' "$name" >> "$D/windows"
+    exit 0 ;;
 esac
 exit 0
 SH
@@ -181,6 +190,7 @@ new_case() {
   quota_snapshot 0 81 > "$dir/fake/quota.json"
   if [ "$kind" = secondmate ]; then
     mkdir -p "$dir/wt/state" "$dir/wt/data" "$dir/wt/bin" "$dir/wt/.claude"
+    printf '/config/\n' > "$dir/wt/.gitignore"
     printf '%s\n' "$id" > "$dir/wt/.fm-secondmate-home"
     printf '# agents\n' > "$dir/wt/AGENTS.md"
     printf '# standing charter\n' > "$dir/wt/data/charter.md"
@@ -1258,6 +1268,8 @@ for line in open(sys.argv[1]):
         print(args[args.index('--settings') + 1])
 PY
   )
+  # The merged launcher passes a private settings file for persistent homes.
+  [ ! -f "$settings" ] || settings=$(cat "$settings")
   failure=$(printf '%s' "$settings" | jq -r '.hooks.StopFailure[0].hooks[0].command')
   gen=$(sed -n 's/^busy_gen=//p' "$CASE/home/state/sm33.meta")
   [ -n "$gen" ] || fail "the secondmate must arm a parent generation"
