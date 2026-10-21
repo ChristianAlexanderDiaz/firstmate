@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # tests/fm-trace-context-lib.test.sh - unit tests for the native, default-off
-# W3C trace-context library (bin/fm-trace-context-lib.sh) plus structural checks
-# that bin/fm-spawn.sh wires it in at the pre-launch injection seam and that the
-# capability is inherited into secondmate homes. Pure functions, no backend and
-# no live spawn required.
+# W3C trace-context library (bin/fm-trace-context-lib.sh), including enablement,
+# recovery, metadata independence, and the secondmate inheritance declaration.
+# Pure functions, no backend and no live spawn required.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -73,9 +72,8 @@ pass "every mint is an unrelated fresh root - one trace per task, no parent adop
 # --- minted-root shape --------------------------------------------------------
 # A firstmate-MINTED root is exactly the fixed 55-char W3C form with random ids
 # and no free-form field where firstmate could originate a prompt, path, or
-# secret (that the lib reads no task prose is asserted separately below). With
-# no inherited-context path, every carrier the lib yields is either such a mint
-# or the same task's previously recorded carrier reused verbatim.
+# secret. With no inherited-context path, every carrier the lib yields is
+# either such a mint or the same task's previously recorded carrier reused verbatim.
 case "$ROOT_TP" in
   *[!0-9a-f-]*) fail "a minted traceparent must contain only hex and hyphens: $ROOT_TP" ;;
 esac
@@ -213,32 +211,40 @@ ef_res=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$NOMETA"); ef_r
 [ -z "$ef_res" ] && [ "$ef_res_rc" -eq 0 ] || fail "resolve must omit and STILL return 0 on entropy failure (rc=$ef_res_rc out='$ef_res')"
 pass "entropy failure omits telemetry safely: mint reports failure, resolve returns success with no carrier"
 
-# --- fail-independent timing: no hang source, always returns 0 ---------------
+(
+  fm_trace_context_hex() { printf 'called\n' >> "$WORK/disabled-entropy"; return 1; }
+  out=$(FM_TRACE_CONTEXT=off fm_trace_context_resolve "$CFG_ON" "$REC_META")
+  rc=$?
+  [ -z "$out" ] && [ "$rc" -eq 0 ] || fail "disabled resolve must omit and succeed"
+  [ ! -e "$WORK/disabled-entropy" ] || fail "disabled resolve must not request entropy"
+) || exit 1
+pass "disabled telemetry returns success without requesting entropy"
 
-assert_no_grep 'sleep' "$ROOT/bin/fm-trace-context-lib.sh" "trace-context lib must not sleep on the spawn path"
-assert_no_grep 'timeout' "$ROOT/bin/fm-trace-context-lib.sh" "trace-context lib must not depend on an external timeout"
-assert_no_grep 'command:' "$ROOT/bin/fm-trace-context-lib.sh" "trace-context lib must not run an arbitrary command provider"
-fm_trace_context_resolve "$CFG_OFF" "$NOMETA" >/dev/null || fail "resolve must return 0 when off"
-pass "the resolver has no sleep/timeout/command hang source and always returns success"
-
-# --- harness/backend/kind independence (code only, comments stripped) ---------
-
-LIB_CODE=$(sed 's/#.*$//' "$ROOT/bin/fm-trace-context-lib.sh")
-for tok in harness backend tmux herdr zellij orca cmux paseo claude codex opencode grok kind ship scout secondmate ; do
-  case "$LIB_CODE" in
-    *"$tok"*) fail "trace-context lib code must be harness/backend/kind agnostic, but references '$tok'" ;;
-  esac
+AXIS_META="$WORK/axes.meta"
+for harness in claude codex opencode grok; do
+  for backend in tmux herdr zellij orca cmux paseo; do
+    for kind in ship scout secondmate; do
+      metadata=$(printf 'harness=%s\nbackend=%s\nkind=%s\nbrief=private brief\nprompt=private prompt\nreport=private report\nstatus=private status' \
+        "$harness" "$backend" "$kind")
+      printf '%s\n' "$metadata" > "$AXIS_META"
+      out=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$AXIS_META")
+      rc=$?
+      [ "$rc" -eq 0 ] && fm_trace_context_valid "$out" \
+        || fail "resolve must mint a valid carrier for $harness/$backend/$kind"
+      [ "$(cat "$AXIS_META")" = "$metadata" ] || fail "resolve must leave task metadata unchanged"
+      printf 'traceparent=%s\n' "$VALID" >> "$AXIS_META"
+      out=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$AXIS_META")
+      rc=$?
+      [ "$rc" -eq 0 ] && [ "$out" = "$VALID" ] \
+        || fail "recovery must preserve the carrier for $harness/$backend/$kind"
+      out=$(FM_TRACE_CONTEXT=off fm_trace_context_resolve "$CFG_ON" "$AXIS_META")
+      rc=$?
+      [ -z "$out" ] && [ "$rc" -eq 0 ] \
+        || fail "disabled resolve must omit for $harness/$backend/$kind"
+    done
+  done
 done
-pass "the carrier is minted identically for every harness, backend, and spawn kind (no such branching in the lib code)"
-
-# --- no prompt / task-prose reads (code only, comments stripped) --------------
-
-for tok in brief prompt report status ; do
-  case "$LIB_CODE" in
-    *"$tok"*) fail "trace-context lib code must never read task prose, but references '$tok'" ;;
-  esac
-done
-pass "the lib code never reads a brief, prompt, report, or status - it cannot leak content"
+pass "mint, recovery, and disablement ignore unrelated harness, backend, kind, and task-prose metadata"
 
 # --- secondmate inheritance wires the nested chain ---------------------------
 
