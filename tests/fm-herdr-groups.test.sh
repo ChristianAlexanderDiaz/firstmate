@@ -39,7 +39,7 @@ case "$1 ${2:-}" in
   "status --json") printf '{"client":{"version":"0.9.3","protocol":%s},"server":{"running":true}}\n' "${FAKE_HERDR_PROTOCOL:-22}" ;;
   "workspace list") cat "$FAKE_DIR/workspaces.json" ;;
   "pane list") cat "$FAKE_DIR/panes.json" ;;
-  "session list") printf '{"sessions":[{"name":"s1","running":true,"socket_path":"/tmp/fm-groups-s1.sock"}]}\n' ;;
+  "session list") printf '{"sessions":[{"name":"s1","running":true,"socket_path":"%s"}]}\n' "${FAKE_HERDR_SOCKET:-/tmp/fm-groups-s1.sock}" ;;
   "pane report-metadata"|"workspace report-metadata") ;;
   *) exit 1 ;;
 esac
@@ -246,14 +246,14 @@ test_sync_reports_only_differences_and_sets_the_view() {
   assert_equals "1" "$(printf '%s\n' "$ws_reports" | grep -c 'report-metadata')" "workspace reports"
   assert_contains "$ws_reports" "workspace report-metadata w2 --source firstmate --token fm_group=storefront --token fm_state=running --token fm_group_order=000.storefront" \
     "only the exactly bound projected workspace gets workspace tokens"
-  assert_equals "$(cd /tmp && pwd -P)/fm-groups-s1.sock	set" "$(cat "$FAKE_VIEW_LOG")" "agents view set once for the session"
+  assert_equals "/tmp/fm-groups-s1.sock	set" "$(cat "$FAKE_VIEW_LOG")" "agents view set once for the session"
 
   : > "$FAKE_HERDR_LOG"; : > "$FAKE_VIEW_LOG"
   rm -f "$HOME_DIR/state/flat-task.meta"
   write_live_lists 1
   out=$(groups sync 2>&1) || fail "second sync failed: $out"
   assert_equals "" "$(reports pane)$(reports workspace)" "an unchanged layout reports nothing"
-  assert_equals "$(cd /tmp && pwd -P)/fm-groups-s1.sock	set" "$(cat "$FAKE_VIEW_LOG")" "an unchanged layout reconciles the agents view"
+  assert_equals "/tmp/fm-groups-s1.sock	set" "$(cat "$FAKE_VIEW_LOG")" "an unchanged layout reconciles the agents view"
   : > "$FAKE_VIEW_LOG"
 
   printf 'needs-decision [key=q]: which\n' >> "$HOME_DIR/state/web-run.status"
@@ -262,7 +262,7 @@ test_sync_reports_only_differences_and_sets_the_view() {
     "$(reports pane)" "a status change reports only the changed pane tokens"
   assert_contains "$(reports workspace)" "--token fm_state=needs-captain --session s1" "workspace status token follows"
   assert_not_contains "$(reports workspace)" "fm_group=" "unchanged workspace tokens are not re-reported"
-  assert_equals "$(cd /tmp && pwd -P)/fm-groups-s1.sock	set" "$(cat "$FAKE_VIEW_LOG")" "agents view re-set after a pane change"
+  assert_equals "/tmp/fm-groups-s1.sock	set" "$(cat "$FAKE_VIEW_LOG")" "agents view re-set after a pane change"
   assert_not_contains "$(cat "$FAKE_HERDR_LOG")" $'\x1fmove' "sync never moves anything"
   assert_not_contains "$(cat "$FAKE_HERDR_LOG")" $'\x1fclose' "sync never closes anything"
   assert_not_contains "$(cat "$FAKE_HERDR_LOG")" $'\x1ffocus' "sync never changes focus"
@@ -286,8 +286,73 @@ test_sync_repairs_a_failed_view_after_tokens_converge() {
   : > "$FAKE_VIEW_LOG"
   out=$(groups sync 2>&1) || fail "view recovery failed: $out"
   assert_equals "" "$(reports pane)$(reports workspace)" "converged tokens need no writes"
-  assert_equals "$(cd /tmp && pwd -P)/fm-groups-s1.sock	set" "$(cat "$FAKE_VIEW_LOG")" "the next poll retries the view"
+  assert_equals "/tmp/fm-groups-s1.sock	set" "$(cat "$FAKE_VIEW_LOG")" "the next poll retries the view"
   pass "sync: a failed view is repaired after tokens converge"
+}
+
+test_sync_and_clear_preserve_the_advertised_socket_address() {
+  command -v python3 >/dev/null 2>&1 || { pass "socket address: skipped, python3 not found"; return 0; }
+  new_home socket-symlink
+  printf 'on\n' > "$HOME_DIR/config/herdr-project-groups"
+  add_task web-run ship /p/storefront w2 'working: go'
+  # Tokens already agree: view reconciliation must still connect on every poll.
+  write_live_lists 1
+  env FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE="$HOME_DIR/state" \
+    FM_CONFIG_OVERRIDE="$HOME_DIR/config" PATH="$FAKEBIN:$PATH" \
+    FAKE_DIR="$FAKE_DIR" FAKE_HERDR_LOG="$FAKE_HERDR_LOG" \
+    python3 - "$ROOT" "$FAKE_DIR" <<'PY' || fail "view transport changed the advertised socket address"
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+
+root, fixture = map(Path, sys.argv[1:])
+# Keep the advertised address below macOS's 103-byte limit, while its real
+# directory exceeds even Linux's 107-byte limit. Bind through the symlink.
+with tempfile.TemporaryDirectory(prefix="fmg-", dir="/tmp") as short:
+    target = fixture / ("long-directory-" * 10)
+    target.mkdir()
+    alias = Path(short) / "c"
+    alias.symlink_to(target, target_is_directory=True)
+    address = str(alias / "s")
+    assert len(os.fsencode(address)) < 103
+    assert len(os.fsencode(os.path.realpath(address))) > 107
+    env = dict(os.environ, FAKE_HERDR_SOCKET=address,
+               FM_HERDR_GROUPS_AGENT_VIEW=str(root / "bin/backends/herdr-agent-view.py"))
+    for action, method in (("sync", "agent.view.set"), ("clear", "agent.view.clear")):
+        requests = []
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(address)
+            server.listen(1)
+            server.settimeout(5)
+
+            def reply():
+                try:
+                    conn, _ = server.accept()
+                except socket.timeout:
+                    return
+                with conn, conn.makefile("rb") as stream:
+                    conn.settimeout(5)
+                    request = json.loads(stream.readline())
+                    requests.append(request)
+                    conn.sendall((json.dumps({"id": request["id"], "result": {"type": "ok"}}) + "\n").encode())
+
+            worker = threading.Thread(target=reply)
+            worker.start()
+            result = subprocess.run([str(root / "bin/fm-herdr-groups.sh"), action],
+                                    env=env, capture_output=True, text=True, timeout=20)
+            worker.join()
+        os.unlink(address)
+        assert result.returncode == 0, result.stderr
+        assert len(requests) == 1, requests
+        assert requests[0]["method"] == method, requests
+        assert requests[0]["params"]["source"] == "firstmate", requests
+PY
+  pass "sync and clear: connect through a short advertised symlink despite a long canonical path"
 }
 
 test_sync_skips_an_unverified_protocol_with_one_warning() {
@@ -313,7 +378,7 @@ test_clear_removes_tokens_and_the_view_even_when_off() {
   add_v2_journal web-run w2
   write_live_lists 1
   out=$(groups clear 2>&1) || fail "clear failed: $out"
-  assert_equals "$(cd /tmp && pwd -P)/fm-groups-s1.sock	clear" "$(cat "$FAKE_VIEW_LOG")" "agents view cleared"
+  assert_equals "/tmp/fm-groups-s1.sock	clear" "$(cat "$FAKE_VIEW_LOG")" "agents view cleared"
   assert_contains "$(reports pane)" "pane report-metadata w2:p2 --source firstmate --clear-token fm_group --clear-token fm_state --clear-token fm_task --clear-token fm_sort" \
     "pane tokens cleared"
   assert_contains "$(reports workspace)" "workspace report-metadata w2 --source firstmate --clear-token fm_group --clear-token fm_state --clear-token fm_group_order" \
@@ -416,6 +481,7 @@ test_rules_order_groups_and_prefer_task_over_repo_over_catch_all
 test_all_invalid_rules_leave_empty_rule_group_and_still_plan
 test_sync_reports_only_differences_and_sets_the_view
 test_sync_repairs_a_failed_view_after_tokens_converge
+test_sync_and_clear_preserve_the_advertised_socket_address
 test_sync_skips_an_unverified_protocol_with_one_warning
 test_clear_removes_tokens_and_the_view_even_when_off
 test_sidebar_config_apply_backs_up_and_refuses_twice

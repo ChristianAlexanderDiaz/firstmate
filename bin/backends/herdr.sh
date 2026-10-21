@@ -827,11 +827,6 @@ fm_backend_herdr_presentation_lock_namespace_valid() {
   [ "$owner" = "$expected_uid" ] && [ "$mode" = 700 ]
 }
 
-# Resolve the one verified running named-session socket path as an absolute
-# string. Requires JSON string type and non-empty length (jq -r is never used:
-# it would turn JSON null into the literal string "null"). Canonicalizes the
-# parent directory when that directory exists so symlink parents such as /tmp
-# -> /private/tmp cannot yield two lock identities for the same socket.
 # fm_backend_herdr_canonical_socket_path: normalize one absolute Unix-socket
 # path so two spellings of the same socket compare equal. Refuses a relative
 # or empty path. An unresolvable directory is left as-is rather than treated as
@@ -856,7 +851,10 @@ fm_backend_herdr_canonical_socket_path() {  # <socket-path>
   printf '%s' "$socket"
 }
 
-fm_backend_herdr_presentation_session_socket_path() {  # <session>
+# Preserve the advertised absolute address for connections: expanding a symlink
+# can exceed AF_UNIX's path limit even when the advertised address fits.
+# Require exactly one running session with a nonempty JSON string address.
+fm_backend_herdr_session_socket_address() {  # <session>
   local session=$1 sessions socket
   [ -n "$session" ] || return 1
   sessions=$(fm_backend_herdr_cli "$session" session list --json 2>/dev/null) || return 1
@@ -868,6 +866,14 @@ fm_backend_herdr_presentation_session_socket_path() {  # <session>
       | .socket_path]
     | if length == 1 then .[0] else empty end
   ' 2>/dev/null) || return 1
+  case "$socket" in /*) printf '%s' "$socket" ;; *) return 1 ;; esac
+}
+
+# Canonicalize only for identity comparisons and presentation locks, so symlink
+# parents cannot yield two identities for the same socket.
+fm_backend_herdr_presentation_session_socket_path() {  # <session>
+  local socket
+  socket=$(fm_backend_herdr_session_socket_address "$1") || return 1
   fm_backend_herdr_canonical_socket_path "$socket"
 }
 
