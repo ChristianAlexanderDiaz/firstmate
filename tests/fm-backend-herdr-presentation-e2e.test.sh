@@ -1567,18 +1567,21 @@ assert_no_projection_mutation_since "$START" "agent-free duplicate-token recover
 lab workspace get "$DUP1_WSID" >/dev/null 2>&1 || fail "duplicate-token recovery removed the first quarantined workspace"
 lab workspace get "$DUP2_WSID" >/dev/null 2>&1 || fail "duplicate-token recovery removed the second quarantined workspace"
 
-lab pane report-agent "$DUP1_PANE" --source fm-projection-e2e --agent test-agent --state idle >/dev/null \
-  || fail "could not register the duplicate-live-agent risk fixture"
 # A registration over an idle shell is stale under the fork's process proof.
-# Keep real non-shell work foregrounded so this case models live duplicate risk.
+# Starting a new command clears that registration, so register after the real
+# non-shell foreground work has started to model live duplicate risk.
 lab pane run "$DUP1_PANE" 'sleep 300' >/dev/null \
   || fail "could not start the duplicate-live-agent foreground fixture"
-DUP_LIVE_STATE=
+DUP_PROCESS_STATE=
 for _ in $(seq 1 50); do
-  DUP_LIVE_STATE=$(fm_backend_herdr_pane_agent_state "$HERDR_LAB_SESSION" "$DUP1_PANE")
-  [ "$DUP_LIVE_STATE" != live ] || break
+  DUP_PROCESS_STATE=$(fm_backend_herdr_pane_process_state "$HERDR_LAB_SESSION" "$DUP1_PANE")
+  [ "$DUP_PROCESS_STATE" != other ] || break
   sleep 0.1
 done
+[ "$DUP_PROCESS_STATE" = other ] || fail "duplicate foreground fixture never started: $DUP_PROCESS_STATE"
+lab pane report-agent "$DUP1_PANE" --source fm-projection-e2e --agent test-agent --state idle >/dev/null \
+  || fail "could not register the duplicate-live-agent risk fixture"
+DUP_LIVE_STATE=$(fm_backend_herdr_pane_agent_state "$HERDR_LAB_SESSION" "$DUP1_PANE")
 [ "$DUP_LIVE_STATE" = live ] || fail "duplicate agent fixture never became live: $DUP_LIVE_STATE"
 START=$(log_line_count)
 if fm_backend_herdr_projection_recovery_allows_flat "$HERDR_LAB_SESSION" "$DUP_JOURNAL" duplicate1; then
