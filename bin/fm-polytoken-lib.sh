@@ -189,6 +189,7 @@ fm_polytoken_write_config() {  # <config-dir>
 # tools are absent from GET /tools/effective), not a call-time fence.
 fm_polytoken_write_facet() {  # <worktree> <inbox-path>
   local wt=$1 inbox=$2 facet
+  fm_polytoken_require_facet_free "$wt" || return 1
   facet=$(fm_polytoken_facet_file "$wt") || return 1
   mkdir -p "$(dirname "$facet")" || return 1
   cat >"$facet" <<EOF
@@ -264,6 +265,15 @@ fm_polytoken_require_hooks_free() {  # <worktree>
   hooks=$(fm_polytoken_hooks_file "$1") || return 1
   if [ -e "$hooks" ] || [ -L "$hooks" ]; then
     echo "error: $hooks already exists; a project's own polytoken hook layer is not firstmate's to clobber, so this task cannot be launched on polytoken into this worktree. Select another harness for this task." >&2
+    return 1
+  fi
+}
+
+fm_polytoken_require_facet_free() {
+  local facet
+  facet=$(fm_polytoken_facet_file "$1") || return 1
+  if [ -e "$facet" ] || [ -L "$facet" ]; then
+    echo "error: $facet already exists; a project's own polytoken facet is not firstmate's to clobber, so this task cannot be launched on polytoken into this worktree. Select another harness for this task." >&2
     return 1
   fi
 }

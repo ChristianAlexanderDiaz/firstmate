@@ -49,7 +49,7 @@ SH
   cat > "$fakebin/agent-view" <<'SH'
 #!/usr/bin/env bash
 printf '%s\t%s\n' "$1" "$2" >> "$FAKE_VIEW_LOG"
-exit 0
+[ ! -e "$FAKE_DIR/view-fails" ]
 SH
   chmod +x "$fakebin/agent-view"
   printf '%s\n' "$fakebin"
@@ -253,7 +253,8 @@ test_sync_reports_only_differences_and_sets_the_view() {
   write_live_lists 1
   out=$(groups sync 2>&1) || fail "second sync failed: $out"
   assert_equals "" "$(reports pane)$(reports workspace)" "an unchanged layout reports nothing"
-  assert_equals "" "$(cat "$FAKE_VIEW_LOG")" "an unchanged layout leaves the agents view alone"
+  assert_equals "$(cd /tmp && pwd -P)/fm-groups-s1.sock	set" "$(cat "$FAKE_VIEW_LOG")" "an unchanged layout reconciles the agents view"
+  : > "$FAKE_VIEW_LOG"
 
   printf 'needs-decision [key=q]: which\n' >> "$HOME_DIR/state/web-run.status"
   out=$(groups sync web-run 2>&1) || fail "status-change sync failed: $out"
@@ -265,7 +266,28 @@ test_sync_reports_only_differences_and_sets_the_view() {
   assert_not_contains "$(cat "$FAKE_HERDR_LOG")" $'\x1fmove' "sync never moves anything"
   assert_not_contains "$(cat "$FAKE_HERDR_LOG")" $'\x1fclose' "sync never closes anything"
   assert_not_contains "$(cat "$FAKE_HERDR_LOG")" $'\x1ffocus' "sync never changes focus"
-  pass "sync: reports only drifted tokens, workspace tokens only on the exact projection, view set on change"
+  pass "sync: reports only drifted tokens, workspace tokens only on the exact projection, view reconciled on every sync"
+}
+
+test_sync_repairs_a_failed_view_after_tokens_converge() {
+  local out rc=0
+  new_home view-retry
+  printf 'on\n' > "$HOME_DIR/config/herdr-project-groups"
+  add_task web-run ship /p/storefront w2 'working: go'
+  add_v2_journal web-run w2
+  write_live_lists 0
+  touch "$FAKE_DIR/view-fails"
+  out=$(groups sync 2>&1) || rc=$?
+  expect_code 1 "$rc" "a failed view request must be reported"
+  assert_contains "$(reports pane)" "report-metadata" "tokens were reported before the view failure"
+  write_live_lists 1
+  rm "$FAKE_DIR/view-fails"
+  : > "$FAKE_HERDR_LOG"
+  : > "$FAKE_VIEW_LOG"
+  out=$(groups sync 2>&1) || fail "view recovery failed: $out"
+  assert_equals "" "$(reports pane)$(reports workspace)" "converged tokens need no writes"
+  assert_equals "$(cd /tmp && pwd -P)/fm-groups-s1.sock	set" "$(cat "$FAKE_VIEW_LOG")" "the next poll retries the view"
+  pass "sync: a failed view is repaired after tokens converge"
 }
 
 test_sync_skips_an_unverified_protocol_with_one_warning() {
@@ -393,6 +415,7 @@ test_on_groups_by_project_and_sorts_by_status_rank
 test_rules_order_groups_and_prefer_task_over_repo_over_catch_all
 test_all_invalid_rules_leave_empty_rule_group_and_still_plan
 test_sync_reports_only_differences_and_sets_the_view
+test_sync_repairs_a_failed_view_after_tokens_converge
 test_sync_skips_an_unverified_protocol_with_one_warning
 test_clear_removes_tokens_and_the_view_even_when_off
 test_sidebar_config_apply_backs_up_and_refuses_twice

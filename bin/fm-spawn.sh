@@ -5475,6 +5475,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
 fi
 if [ "$HARNESS" = polytoken ] && [ "$RAW_LAUNCH" -eq 0 ]; then
   fm_polytoken_require_hooks_free "$WT" || exit 1
+  fm_polytoken_require_facet_free "$WT" || exit 1
   fm_polytoken_require_handler_path "$(fm_polytoken_busy_script "$STATE_REAL" "$ID")" || exit 1
 fi
 [ "$RELAUNCH" -eq 1 ] || [ "$HARNESS" != polytoken ] || SPAWN_FRESH_WIRING_PENDING=1
@@ -5973,9 +5974,9 @@ EOF
     # response - verified mid-turn, between tool phases - so closing on it
     # would flap the record idle while a long tool call still runs. The
     # worktree files stay out of git's view so they never block teardown's
-    # dirty check or leak into a commit; an existing `.polytoken/hooks.json`
-    # refused the spawn above, before any wiring or relaunch cleanup was armed,
-    # rather than clobbering a project's own hook layer.
+    # dirty check or leak into a commit; existing project hooks or worker facets
+    # refuse the spawn above, before any wiring or relaunch cleanup is armed,
+    # rather than clobbering a project's own wiring.
     # Gated on the canonical template like gemini and devin, because a raw
     # launch command never carries this wiring's flags or cwd contract.
     if [ "$RAW_LAUNCH" -eq 0 ]; then

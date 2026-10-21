@@ -762,6 +762,37 @@ SH
   pass "fm-control relaunch: a refused relaunch onto polytoken keeps the project's own hook layer and the running agent"
 }
 
+test_refused_relaunch_onto_polytoken_keeps_the_project_facet() {
+  local dir out rc
+  dir=$(new_case polytokenownfacet rl45)
+  add_ship_task "$dir" rl45 claude
+  mkdir -p "$dir/wt/.polytoken/facets"
+  printf -- '---\nname: firstmate-worker\n---\nproject facet\n' \
+    > "$dir/wt/.polytoken/facets/firstmate-worker.md"
+  printf 'polytoken' > "$dir/fake/becomes"
+  cat > "$dir/fakebin/polytoken" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  'print models') printf '%s\n' 'zai/glm-5.3-flash' 'zai/glm-5.3-flash(low)' ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$dir/fakebin/polytoken"
+  out=$(run_control "$dir" rl45 relaunch --harness polytoken \
+    --model zai/glm-5.3-flash --effort low --note "switching runtime"); rc=$?
+  [ "$rc" -ne 0 ] || fail "a relaunch onto polytoken over a project facet must refuse"$'\n'"$out"
+  assert_contains "$out" "not firstmate's to clobber" \
+    "the refusal must come from the polytoken arm"$'\n'"$out"
+  assert_absent "$dir/wt/.polytoken/hooks.json" "a refused relaunch must write no hooks"
+  assert_contains "$(cat "$dir/wt/.polytoken/facets/firstmate-worker.md" 2>/dev/null)" "project facet" \
+    "an aborted relaunch must leave a facet it did not generate in place"
+  [ "$(meta_field "$dir" rl45 harness)" = claude ] \
+    || fail "a refused relaunch must keep the prior record"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch onto polytoken must send nothing"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused relaunch onto polytoken must not stop the agent"
+  pass "fm-control relaunch: a refused relaunch onto polytoken keeps the project's own facet and the running agent"
+}
+
 test_refused_polytoken_profile_leaves_the_running_agent() {
   local dir out rc
   dir=$(new_case polytokenprofile rl47)
@@ -3020,6 +3051,7 @@ test_relaunch_note_inbox_listing_is_safe_on_empty_inbox
 test_relaunch_requires_a_note_for_a_ship_task
 test_harness_switch_moves_the_record_and_clears_prior_wiring
 test_refused_relaunch_onto_polytoken_keeps_the_project_hook_layer
+test_refused_relaunch_onto_polytoken_keeps_the_project_facet
 test_refused_polytoken_profile_leaves_the_running_agent
 test_relaunch_from_a_raw_polytoken_launch_keeps_the_project_layers
 test_harness_switch_does_not_carry_the_old_profile_axes

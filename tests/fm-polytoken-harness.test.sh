@@ -34,7 +34,7 @@
 #      strict unknown through the identity conjunction.
 #   7. polytoken is a crewmate/scout adapter only: a secondmate launch is
 #      refused, and a worktree that already carries a project polytoken hook
-#      layer is refused rather than clobbered.
+#      layer or worker facet is refused rather than clobbered.
 #
 # The fake plumbing variables carry the PTFAKE_ prefix deliberately: the
 # launch command under test clears every ORCA_*/FM_* name the pane carries,
@@ -1087,6 +1087,38 @@ test_polytoken_existing_project_hook_layer_refuses() {
   pass "fm-spawn: a project's own polytoken hook layer is refused, not clobbered"
 }
 
+test_polytoken_existing_project_facet_refuses() {
+  local id rec out rc
+  id="pt-ownfacet-z5-$$"
+  rec=$(make_polytoken_spawn_case ownfacet "$id")
+  read_polytoken_spawn_record "$rec"
+  mkdir -p "$PROJ_DIR/.polytoken/facets"
+  printf 'project-owned instructions\n' > "$PROJ_DIR/.polytoken/facets/firstmate-worker.md"
+  git -C "$PROJ_DIR" add .polytoken/facets/firstmate-worker.md
+  git -C "$PROJ_DIR" -c user.email=fixture@firstmate.test -c user.name=fixture \
+    commit -q -m "fixture: project polytoken facet"
+  git -C "$PROJ_DIR" push -q origin main
+  rc=0
+  out=$(run_polytoken_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "a spawn into a worktree with its own facet should refuse"
+  assert_contains "$out" "not firstmate's to clobber" \
+    "the refusal must name the project's own facet"
+  assert_equals "project-owned instructions" "$(cat "$WT_DIR/.polytoken/facets/firstmate-worker.md")" \
+    "the refusal must leave the project's own facet untouched"
+  assert_absent "$WT_DIR/.polytoken/hooks.json" \
+    "the refusal must not leave a generated hook layer in the worktree"
+  assert_absent "$HOME_DIR/state/$id.polytoken-busy.sh" \
+    "the refusal must not leave a generated busy writer in state"
+  assert_absent "$HOME_DIR/state/$id.polytoken-config" \
+    "the refusal must not leave a mirrored config dir in state"
+  [ -z "$(git -C "$WT_DIR" status --porcelain)" ] \
+    || fail "the refusal must leave the worktree clean: $(git -C "$WT_DIR" status --porcelain)"
+  grep -q "^kill-window .*fm-$id" "$CASE_DIR/tmux-calls.log" \
+    || fail "the refusal must close the window it opened so its slot returns to the pool"
+  assert_absent "$HOME_DIR/state/$id.meta" "the refusal must not leave a task record"
+  pass "fm-spawn: a project's own polytoken facet is refused, not clobbered"
+}
+
 test_polytoken_whitespace_state_dir_refuses() {
   local id rec out rc spaced
   id="pt-wsstate-z8-$$"
@@ -1216,6 +1248,7 @@ test_polytoken_missing_axes_refuse_before_pane_creation
 test_polytoken_unlisted_model_refuses_before_pane_creation
 test_polytoken_secondmate_is_refused
 test_polytoken_existing_project_hook_layer_refuses
+test_polytoken_existing_project_facet_refuses
 test_polytoken_whitespace_state_dir_refuses
 test_polytoken_readiness_failure_fails_loudly_and_cleans_up
 test_polytoken_post_launch_failure_drops_its_slot_claim

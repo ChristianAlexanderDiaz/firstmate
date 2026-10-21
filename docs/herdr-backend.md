@@ -600,7 +600,7 @@ Herdr's own agent status dot stays live beside it.
 
 The watcher reconciles every task once per poll cycle, and a spawn tags its new task at once.
 A reconcile reads each session's workspace and pane lists once and reports only tokens whose live value differs.
-Whenever it reports a pane token, it also sets the agents view: `agent.view.set` with source `firstmate`, label `projects`, and sort by the `fm_sort` token, then workspace order.
+Every sync also sets the agents view: `agent.view.set` with source `firstmate`, label `projects`, and sort by the `fm_sort` token, then workspace order.
 Herdr keeps neither tokens nor the agents view across a server restart, so the next reconcile after a restart reports them again.
 Agents without an `fm_sort` token, such as Firstmate itself or another tool's agents, sort after the tagged ones.
 Herdr exposes no CLI for the agents view, so `bin/backends/herdr-agent-view.py` sends only those two whitelisted requests over the named session socket.
