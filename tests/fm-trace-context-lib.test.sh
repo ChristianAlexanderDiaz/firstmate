@@ -212,6 +212,7 @@ ef_res=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$NOMETA"); ef_r
 pass "entropy failure omits telemetry safely: mint reports failure, resolve returns success with no carrier"
 
 (
+  # shellcheck disable=SC2329 # Overrides the entropy provider called by resolve.
   fm_trace_context_hex() { printf 'called\n' >> "$WORK/disabled-entropy"; return 1; }
   out=$(FM_TRACE_CONTEXT=off fm_trace_context_resolve "$CFG_ON" "$REC_META")
   rc=$?
@@ -229,8 +230,9 @@ for harness in claude codex opencode grok; do
       printf '%s\n' "$metadata" > "$AXIS_META"
       out=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$AXIS_META")
       rc=$?
-      [ "$rc" -eq 0 ] && fm_trace_context_valid "$out" \
-        || fail "resolve must mint a valid carrier for $harness/$backend/$kind"
+      if [ "$rc" -ne 0 ] || ! fm_trace_context_valid "$out"; then
+        fail "resolve must mint a valid carrier for $harness/$backend/$kind"
+      fi
       [ "$(cat "$AXIS_META")" = "$metadata" ] || fail "resolve must leave task metadata unchanged"
       printf 'traceparent=%s\n' "$VALID" >> "$AXIS_META"
       out=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CFG_ON" "$AXIS_META")
