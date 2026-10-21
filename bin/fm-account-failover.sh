@@ -252,6 +252,7 @@ status_exhausted() {
     fm_lock_release "$lock"
     die "could not append the account exhaustion outcome"
   fi
+  # shellcheck disable=SC2153 # META is set by bin/fm-control.sh, which sources this file.
   printf '%s\n' "$(fm_meta_get "$META" model)" > "$STATE/.claude-exhausted"
   fm_lock_release "$lock"
   printf 'blocked %s %s\n' "$ID" "$reason"
@@ -322,6 +323,7 @@ current_account() {
 # it has none, and returns 1 when that cannot be established.
 nm_active_run() {
   local branch overview selection id detail
+  # shellcheck disable=SC2153 # KIND is set by bin/fm-control.sh, which sources this file.
   [ "$KIND" = ship ] || return 0
   command -v no-mistakes >/dev/null 2>&1 || return 0
   branch=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 0

@@ -1136,7 +1136,7 @@ LIB_OUT=$(
     fm_remote_job_worker_identity_matches() { return 0; }
     FM_REMOTE_JOB_REPAIRED=0
     fm_remote_job_start_linux_worker "$WORKER_ROOT" "$HOME" && echo "adopted repaired=$FM_REMOTE_JOB_REPAIRED"
-    echo "adopted-calls=$(wc -l < "$FM_FAKE_STATE/systemctl.log")"
+    echo "adopted-calls=$(wc -l < "$FM_FAKE_STATE/systemctl.log" | tr -d "[:space:]")"
     # A live stale worker is stopped through its tree, then the unit restarts.
     fm_remote_job_worker_identity_matches() { return 1; }
     fm_remote_job_start_linux_worker "$WORKER_ROOT" "$HOME" || echo "stale-failed: $FM_REMOTE_JOB_ERROR"

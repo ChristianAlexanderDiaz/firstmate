@@ -11,7 +11,7 @@ HERDR_LAB_HELPER=${HERDR_LAB_HELPER:-$ROOT/bin/fm-herdr-lab.sh}
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$ROOT/bin/fm-timeout-lib.sh"
 
-fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
+fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
 
 command -v herdr >/dev/null 2>&1 || { echo "skip: herdr not found"; exit 0; }
@@ -145,6 +145,18 @@ if [ "${1:-} ${2:-}" = "pane get" ] && [ -d "$ACTIVE_SEEDED_CONTROL" ] \
 fi
 before=
 [ -z "$mutation" ] || before=$(focus_snapshot || printf ambiguous/ambiguous)
+# Interactive shell startup may replace the server's PATH. Pin the abort
+# fixture's fake Treehouse for its staged command, without changing that script.
+if [ "${1:-} ${2:-}" = "pane run" ] && [ -d "$POST_CREATE_ABORT_CONTROL" ]; then
+  for task_dir in "$POST_CREATE_ABORT_CONTROL"/abort-*; do
+    [ -d "$task_dir" ] || continue
+    [ "${3:-}" = "$(cat "$task_dir/task-pane" 2>/dev/null || true)" ] || continue
+    fixture_path="$TMP_ROOT/fakebin:$HERDR_ORIGINAL_PATH"
+    fixture_path=${fixture_path//\'/\'\\\'\'}
+    set -- "$1" "$2" "$3" "PATH='$fixture_path' $4" "${@:5}"
+    break
+  done
+fi
 if out=$(env PATH="$HERDR_ORIGINAL_PATH" "$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" "$@"); then
   status=0
 else
@@ -283,7 +295,8 @@ LOCK_CONTENTION_OWNER_PID=
 LOCK_REFUSE_HOLDER_PID=
 LOCK_WAIT_HOLDER_PID=
 cleanup_all() {
-  local wt pid
+  local rc=$? wt pid cleanup_rc=0
+  trap - EXIT
   for pid in "$LOCK_CONTENTION_OWNER_PID" "$LOCK_REFUSE_HOLDER_PID" "$LOCK_WAIT_HOLDER_PID"; do
     [ -n "$pid" ] || continue
     kill "$pid" 2>/dev/null || true
@@ -301,10 +314,13 @@ $RECORDED_WORKTREES
 EOF
   if [ "$LAB_READY" -eq 1 ]; then
     PATH="$HERDR_ORIGINAL_PATH" \
-      "$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION" >/dev/null 2>&1 || true
+      "$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION" || cleanup_rc=1
     LAB_READY=0
   fi
-  rm -rf "$TMP_ROOT"
+  find "$TMP_ROOT" -type d -exec chmod u+rwx {} +
+  rm -rf "$TMP_ROOT" || cleanup_rc=1
+  [ "$cleanup_rc" -eq 0 ] || return 1
+  return "$rc"
 }
 trap cleanup_all EXIT
 
@@ -805,7 +821,7 @@ ORDER_LIST=$(lab workspace list) || fail "could not inspect concurrent presentat
 CREATED_LABELS=$(projection_labels_from_log "$PROJECTION_ORDER_START")
 # With no second mate covering their project, primary workers sort below the
 # second mates in Herdr's actual create order.
-EXPECTED_LABELS=$(printf 'firstmate\n2ndmate-alpha\n2ndmate-bravo\n%s\n%s' "$PROJECTED_LABEL" "$CREATED_LABELS")
+EXPECTED_LABELS=$(printf 'firstmate\n2ndmate-alpha\n2ndmate-bravo\nfm-anchor\n%s\n%s' "$PROJECTED_LABEL" "$CREATED_LABELS")
 ACTUAL_LABELS=$(printf '%s' "$ORDER_LIST" | jq -r '.result.workspaces[].label')
 [ "$ACTUAL_LABELS" = "$EXPECTED_LABELS" ] || fail "workspace order was not firstmate, secondmates, stable primary workers: $ACTUAL_LABELS"
 # Each worker is created last, which is already its sorted place.
@@ -877,9 +893,9 @@ finish_concurrent_expected_abort abort-b "$ABORT_B_STATUS" "$TMP_ROOT/abort-b.ou
 # The fixture returns successfully without entering a worktree. Completion
 # itself must refuse promptly, even with exit status zero, and retain the pane.
 grep -F "treehouse get exited with status 0 before entering an isolated worktree" "$TMP_ROOT/abort-a.err" >/dev/null 2>&1 \
-  || fail "post-create abort fixture A did not reach the armed validation failure"
+  || fail "post-create abort fixture A did not reach the armed validation failure: $(cat "$TMP_ROOT/abort-a.err")"
 grep -F "treehouse get exited with status 0 before entering an isolated worktree" "$TMP_ROOT/abort-b.err" >/dev/null 2>&1 \
-  || fail "post-create abort fixture B did not reach the armed validation failure"
+  || fail "post-create abort fixture B did not reach the armed validation failure: $(cat "$TMP_ROOT/abort-b.err")"
 ABORT_A_PANE=$(cat "$POST_CREATE_ABORT_CONTROL/abort-a/task-pane")
 ABORT_B_PANE=$(cat "$POST_CREATE_ABORT_CONTROL/abort-b/task-pane")
 ABORT_SEQUENCE=$(sed -n "$((ABORT_FOCUS_START + 1)),\$p" "$FOCUS_AUDIT_LOG" | awk -F '\t' -v a="$ABORT_A_PANE" -v b="$ABORT_B_PANE" '
@@ -979,7 +995,7 @@ for ROUND in 1 2 3; do
   finish_concurrent_teardown "focus-$ROUND-b" "$WAVE_B_TEARDOWN_STATUS" "$TMP_ROOT/focus-$ROUND-b-teardown.out" "$TMP_ROOT/focus-$ROUND-b-teardown.err"
   assert_focus_is "$CAPTAIN_FOCUS" "focus wave $ROUND concurrent teardowns"
   WAVE_REMAINING=$(lab workspace list | jq -r '.result.workspaces[].label')
-  [ "$WAVE_REMAINING" = $'firstmate\n2ndmate-alpha\n2ndmate-bravo' ] \
+  [ "$WAVE_REMAINING" = $'firstmate\n2ndmate-alpha\n2ndmate-bravo\nfm-anchor' ] \
     || fail "focus wave $ROUND cleanup left a projected workspace behind: $WAVE_REMAINING"
 done
 pass "real Herdr lab: three repeated concurrent create/order/cleanup waves have zero active workspace or tab drift"
@@ -1551,8 +1567,22 @@ assert_no_projection_mutation_since "$START" "agent-free duplicate-token recover
 lab workspace get "$DUP1_WSID" >/dev/null 2>&1 || fail "duplicate-token recovery removed the first quarantined workspace"
 lab workspace get "$DUP2_WSID" >/dev/null 2>&1 || fail "duplicate-token recovery removed the second quarantined workspace"
 
+# A registration over an idle shell is stale under the fork's process proof.
+# Starting a new command clears that registration, so register after the real
+# non-shell foreground work has started to model live duplicate risk.
+lab pane run "$DUP1_PANE" 'sleep 300' >/dev/null \
+  || fail "could not start the duplicate-live-agent foreground fixture"
+DUP_PROCESS_STATE=
+for _ in $(seq 1 50); do
+  DUP_PROCESS_STATE=$(fm_backend_herdr_pane_process_state "$HERDR_LAB_SESSION" "$DUP1_PANE")
+  [ "$DUP_PROCESS_STATE" != other ] || break
+  sleep 0.1
+done
+[ "$DUP_PROCESS_STATE" = other ] || fail "duplicate foreground fixture never started: $DUP_PROCESS_STATE"
 lab pane report-agent "$DUP1_PANE" --source fm-projection-e2e --agent test-agent --state idle >/dev/null \
   || fail "could not register the duplicate-live-agent risk fixture"
+DUP_LIVE_STATE=$(fm_backend_herdr_pane_agent_state "$HERDR_LAB_SESSION" "$DUP1_PANE")
+[ "$DUP_LIVE_STATE" = live ] || fail "duplicate agent fixture never became live: $DUP_LIVE_STATE"
 START=$(log_line_count)
 if fm_backend_herdr_projection_recovery_allows_flat "$HERDR_LAB_SESSION" "$DUP_JOURNAL" duplicate1; then
   fail "a duplicate token match with a registered agent should refuse fallback"

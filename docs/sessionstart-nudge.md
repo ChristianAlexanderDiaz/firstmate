@@ -239,6 +239,9 @@ Claude is a run-tier harness.
 The wrapper reads `source` from the hook payload.
 Native stdout context injection is supported.
 A separate `SessionEnd` hook matched to `clear` leaves a pending-stow record that the next digest lists; `bin/fm-stow-on-clear.sh` owns that record.
+Claude caps one hook output string at 10,000 characters.
+Above the cap the model receives a preview of the first 2,000 characters plus the path of a saved file, and is not asked to read that file.
+A context re-emit therefore prints a short `RE-EMIT CUE` first, which tells the model to read the saved file.
 
 ### Codex exec
 

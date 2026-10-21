@@ -874,7 +874,7 @@ SH
     "$ROOT/bin/fm-procevent.sh" register lavish idle-lavish -- "$source" "$trigger" \
     >/dev/null || fail "could not register the Lavish fixture source"
   FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
-    FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=1 \
+    FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=10 \
     "$ROOT/bin/fm-procevent.sh" reconcile >/dev/null \
     || fail "could not start the Lavish fixture source"
   printf 'pending:downtime:idle-lavish.1.fixture\n' > "$state/.watcher-down"

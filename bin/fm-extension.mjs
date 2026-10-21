@@ -2057,8 +2057,15 @@ async function claimInheritedLifecycleLock(home) {
 async function releaseLifecycleLock() {
   await assertLifecycleLockOwned();
   const { lockPath, ownerPath } = activeLifecycleLock;
+  const identityPath = path.join(ownerPath, "lock-identity");
+  const identityInfo = await maybeLstat(identityPath);
+  if (identityInfo && (!identityInfo.isFile() || identityInfo.isSymbolicLink()
+      || identityInfo.nlink !== 1 || identityInfo.uid !== currentUid())) {
+    fail("lifecycle-lock-invalid", "retirement lifecycle lock identity is unsafe");
+  }
   await unlink(lockPath);
   await unlink(path.join(ownerPath, "pid"));
+  if (identityInfo) await unlink(identityPath);
   await rmdir(ownerPath);
   activeLifecycleLock = null;
 }

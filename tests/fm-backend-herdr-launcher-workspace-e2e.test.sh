@@ -325,6 +325,9 @@ pass "real herdr E2E: the duplicate-labeled sibling workspace is left entirely u
 # --- 3b. presentation spaces ON with a duplicated parent label: the projection
 #         still hangs off the launcher's exact workspace ---------------------
 
+# Exact-parent insertion is opt-in; the default whole-session ordering keeps
+# existing worker creation order, covered by the presentation lifecycle suite.
+printf 'on\n' > "$PRES_HOME/config/herdr-project-groups"
 spawn_from_launcher "$LAUNCH_DUP_PANE" "$PRES_HOME" presD "$PROJ" --mode no-mistakes --yolo off
 [ "$SPAWN_RC" -eq 0 ] || fail "a projected spawn under a duplicated parent label failed"$'\n'"$(cat "$SPAWN_ERR")"
 PRESD_META="$PRES_HOME/state/presD.meta"
@@ -349,6 +352,7 @@ PRESD_ORDER=$(lab workspace list 2>/dev/null | jq -r --arg dup "$WS_PRIMARY_DUP"
   || fail "the other same-labeled workspace was mutated by a projected spawn"
 [ "$(focused_workspace)" = "$WS_OTHER" ] || fail "a projected spawn stole focus from the captain's workspace"
 pass "real herdr E2E: with a duplicated home label, a projected worker still hangs off the launcher's exact workspace and the sibling stays untouched"
+rm -f "$PRES_HOME/config/herdr-project-groups"
 
 # --- 4. duplicate home labels do not prevent an independent worker ----------
 spawn_from_launcher "" "$PRIMARY_HOME" dupD "$PROJ" --mode no-mistakes --yolo off
