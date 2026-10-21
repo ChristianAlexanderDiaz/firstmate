@@ -20,7 +20,7 @@ The adapter prefers `command -v paseo` and otherwise uses `/Applications/Paseo.a
 
 No socket-access configuration is needed.
 The daemon listens on `127.0.0.1:6767` by default, and `paseo status` reports its reachability.
-The adapter starts the daemon with `paseo start` only when it is simply not up yet, and fails fast with a pointer here when a started daemon does not become reachable.
+The adapter tries `paseo start` when the status probe cannot establish daemon reachability, and fails fast with a pointer here if starting fails or the daemon remains unreachable.
 
 Select Paseo with local `config/backend` containing `paseo`, `FM_BACKEND=paseo` for one launch, or an explicit request to Firstmate.
 It is never runtime auto-detected; see "Selection is explicit" below.

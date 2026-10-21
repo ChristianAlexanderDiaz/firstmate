@@ -3,7 +3,7 @@
 # every shape a verified harness draws, every glyph, every container proof, and
 # the empty|pending|pending-unproven|unknown verdict, shared by every
 # session-provider adapter (tmux via bin/fm-tmux-lib.sh, and
-# bin/backends/{herdr,orca,cmux,zellij}.sh) and by fm-spawn.sh's kimi
+# bin/backends/{herdr,orca,cmux,zellij,paseo}.sh) and by fm-spawn.sh's kimi
 # launch-readiness check.
 #
 # WHY THIS EXISTS (tasks fm-composer-shellglyph-safety and
@@ -23,7 +23,7 @@
 # judged; they never change what the shapes ARE:
 #   styled=1    the capture preserves ANSI styling, so ghost/placeholder text
 #               is detectable and can be stripped (tmux -e, herdr --format
-#               ansi, zellij dump-screen --ansi). With styled=0 (cmux, orca)
+#               ansi, zellij dump-screen --ansi). With styled=0 (cmux, orca, paseo)
 #               ghost text is unreadable, so a bare glyph row or left-bar row
 #               carrying trailing non-idle text degrades to `unknown` rather
 #               than `pending`: the text may be the harness's own idle
@@ -32,8 +32,8 @@
 #               anchors shape selection: the shape containing the cursor is the
 #               composer. Without it, the bottom-most shape wins.
 #   identity=1  a native agent identity/state probe exists (herdr `agent get`;
-#               the tmux pi foreground-process probe). Identity is what makes
-#               Pi's blank separated composer provable; with identity=0 that
+#               the tmux foreground-process probe). Identity is what makes
+#               Pi's and Polytoken's blank separated composers provable; with identity=0 that
 #               shape stays `unknown`.
 #   rows=<n>    the capture's bounded row count (informational).
 #
@@ -67,9 +67,9 @@
 #   left-bar   - opencode: rows prefixed by a heavy left bar `┃` with no
 #                closing border, holding the idle hint, blank rows, and a
 #                mode/model footer line.
-#   separated  - pi: content rows between two solid horizontal `─` rules, no
+#   separated  - pi and polytoken: content rows between two solid horizontal `─` rules, no
 #                glyph and no side border. Provable only with a live agent
-#                identity reporting an idle/done pi (herdr `agent
+#                identity reporting an idle/done pi or polytoken (herdr `agent
 #                get`; the tmux foreground-process probe), because a blank
 #                region between two transcript rules is otherwise exactly the
 #                strict rule's unidentifiable blank row.
@@ -1490,13 +1490,6 @@ _fm_composer_leftbar_cwd_start() {  # <screen> <first-row> <last-row>
   return 1
 }
 
-# _fm_composer_classify_leftbar: opencode's left-bar composer. Blank rows and
-# the idle hint read empty; the run's LAST row may be the mode/model footer
-# (composer furniture, never typed text), and the right-aligned
-# cwd:branch furniture OpenCode draws there since 1.18.0 (the rows
-# immediately above that footer, recognised by
-# _fm_composer_leftbar_cwd_start) is composer furniture too. Real content is
-# pending when styling can prove it real, unknown otherwise.
 # _fm_composer_row_is_leftbar_footer: 0 when the run's LAST row is opencode's
 # own mode/model/branch line (FM_COMPOSER_LEFTBAR_FOOTER_RE_DEFAULT above)
 # rather than typed text. Proved from BOTH forms of that row - the ghost-
@@ -1544,6 +1537,13 @@ _fm_composer_leftbar_plain_content() {  # <raw-row> -> plain content on stdout
   printf '%s' "$plain"
 }
 
+# _fm_composer_classify_leftbar: opencode's left-bar composer. Blank rows and
+# the idle hint read empty; the run's LAST row may be the mode/model footer
+# (composer furniture, never typed text), and the right-aligned
+# cwd:branch furniture OpenCode draws there since 1.18.0 (the rows
+# immediately above that footer, recognised by
+# _fm_composer_leftbar_cwd_start) is composer furniture too. Real content is
+# pending when styling can prove it real, unknown otherwise.
 _fm_composer_classify_leftbar() {  # <screen> <styled> <first-row> <last-row>
   local screen=$1 styled=$2 first=$3 last=$4
   local row raw content pending_seen=0 footer_re leading_blank=1 placeholder_position=0 cwd_start

@@ -218,7 +218,7 @@
 #   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
-#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|devin|commandcode)
+#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|devin|commandcode|polytoken)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
 #   new adapters. For pi and pi-signed, fm-spawn resolves the selected executable
@@ -573,7 +573,7 @@
 # resolver because `cursor` is not the CLI name. A cursor SECONDMATE instead runs
 # the tracked project-scope .cursor/hooks.json in its own home, whose stop-hook
 # park owns that home's supervision (docs/supervision-protocols/cursor.md).
-# claude is the one harness whose pre-launch setup can REFUSE the spawn: before
+# Claude workspace-trust registration can REFUSE the spawn: before
 # any per-task state exists, and before its busy hooks are written, every
 # claude launch pre-registers the directory the pane
 # starts in - the task worktree, or the secondmate home for a --secondmate spawn -
@@ -1811,8 +1811,8 @@ clear_relaunch_harness_wiring() {
   # unrecognized value resolves to no adapter, which is also the case in which
   # no wiring was armed to begin with.
   harness=$(fm_control_harness_family "$harness") || harness=
-  # Claude secondmates receive parent hooks inline, never in their own local
-  # settings. Those settings belong to the persistent supervisor home.
+  # Claude secondmates receive parent hooks through a per-task --settings file,
+  # never in their own local settings, which belong to the persistent home.
   [ "$KIND" != secondmate ] || [ "$harness" != claude ] || return 0
   token_path=$(fm_control_harness_turnend_token_path "$harness" "$state" "$id") || return 1
   token=
@@ -2479,7 +2479,7 @@ launch_template() {
   # alone disables the feature; keep both so a managed override of one still
   # leaves the other in force. Both are per-launch, scoped to this invocation only,
   # and never touch the captain's global ~/.claude/settings.json.
-  # Unless config/keep-ai-trailers is present, the same inline --settings JSON
+  # Unless config/keep-ai-trailers is present, the same per-launch --settings JSON
   # also carries the attribution policy
   # ("attribution": {"commit": "", "pr": "", "sessionUrl": false}), which
   # suppresses Claude Code's Co-Authored-By trailer, Claude-Session link, and
@@ -5680,8 +5680,9 @@ EOF
 // reports activity (the worker's main session - a subagent child session can
 // only start while the main session is already busy) and ignores other
 // sessions' status until the latched session settles, so a child's idle can
-// never clear the worker's busy state. The session.idle touch stays the
-// watcher's wake NOTIFICATION, never current-state truth.
+// never clear the worker's busy state. For ordinary workers, session.idle
+// touches the watcher's wake NOTIFICATION, never current-state truth;
+// secondmates update busy state without a parent turn-end notification.
 import { execFile } from "node:child_process";
 const notifyTurnEnd = $busy_notify_turnend;
 const busyEvent = (state, event) =>
@@ -5739,8 +5740,8 @@ EOF
 // loops, and queued continuations all keep the run un-settled, and a settle
 // that raced another extension's fresh run keeps state busy via isIdle().
 // "turn_end" fires at every inner turn boundary (one LLM response plus its
-// tool calls) and stays a wake NOTIFICATION touch for the watcher, never
-// current-state truth.
+// tool calls) and, for ordinary workers, touches the watcher's wake
+// NOTIFICATION, never current-state truth. Secondmates omit that parent touch.
 import { execFile } from "node:child_process";
 import { appendFileSync } from "node:fs";
 const notifyTurnEnd = $busy_notify_turnend;
@@ -5807,8 +5808,8 @@ EOF
 // deliberately NOT consulted: at a natural TUI agent_end it still reads false
 // because session_stop is awaited before the session settles, so gating on it
 // would leave every completed turn recorded busy. "turn_end" fires at every
-// inner turn boundary and stays a wake NOTIFICATION touch for the watcher,
-// never current-state truth.
+// inner turn boundary and, for ordinary workers, touches the watcher's wake
+// NOTIFICATION, never current-state truth. Secondmates omit that parent touch.
 import { execFile } from "node:child_process";
 const notifyTurnEnd = $busy_notify_turnend;
 const busyEvent = (state: string, event: string) =>
@@ -5975,7 +5976,7 @@ EOF
     # would flap the record idle while a long tool call still runs. The
     # worktree files stay out of git's view so they never block teardown's
     # dirty check or leak into a commit; existing project hooks or worker facets
-    # refuse the spawn above, before any wiring or relaunch cleanup is armed,
+    # refuse the spawn above, before replacement wiring is armed,
     # rather than clobbering a project's own wiring.
     # Gated on the canonical template like gemini and devin, because a raw
     # launch command never carries this wiring's flags or cwd contract.

@@ -26,8 +26,10 @@
 #              keeps running. Postcondition: delivery succeeded, the endpoint
 #              still exists, and the agent is still alive where the backend can
 #              classify that. Cancellation is confirmed only from an adapter-
-#              owned acknowledgement and otherwise reported unconfirmed. Busy
-#              state is never rewritten as proof of the action. Devin
+#              owned acknowledgement and otherwise reported unconfirmed.
+#              Polytoken confirms through its REST API and closes the busy
+#              record after the turn settles, unless a queued prompt reopened it.
+#              Other adapters never rewrite busy state as proof of the action. Devin
 #              cancellation invalidates it to unknown because its native hooks
 #              emit no cancellation close; this is not a success claim.
 #              An adapter whose repeated interrupt key does something else on

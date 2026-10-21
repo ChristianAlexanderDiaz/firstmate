@@ -31,9 +31,9 @@ concurrency:
 # Fork opt-out: a fork sets the repository variable FM_CI_SKIP_PUSH to 1 to
 # skip the push run, and FM_CI_SKIP_MACOS to 1 to skip the macOS job, without
 # a tracked edit that drifts from upstream; with neither set, every job runs
-# exactly as before. The skip is a job-level condition, repeated per job
-# because workflow syntax has no shared anchor, and never a trigger filter: a
-# job skipped by its condition reports success, while a workflow filtered out
+# exactly as before. The skip is a job-level condition repeated per job,
+# never a trigger filter: a job skipped by its condition reports success,
+# while a workflow filtered out
 # at the trigger stays pending and blocks the merge. CONTRIBUTING.md documents
 # the variables.
 jobs:

@@ -203,8 +203,8 @@ fm_backend_paseo_daemon_state() {
   esac
 }
 
-# fm_backend_paseo_ensure_running: start the daemon via `paseo start` only
-# when it is simply not up yet, mirroring the CLI's own start path. A daemon
+# fm_backend_paseo_ensure_running: start the daemon via `paseo start` when
+# reachability is not established, mirroring the CLI's own start path. A daemon
 # that starts but never becomes reachable fails fast with a pointer to
 # docs/paseo-backend.md instead of retry-looping.
 fm_backend_paseo_ensure_running() {

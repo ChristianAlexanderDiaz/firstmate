@@ -47,7 +47,8 @@
 # Firstmate-owned sources accepted for every converted adapter:
 #   fm-spawn         the launch-brief turn seeded at spawn
 #   fm-interrupt     the legacy Claude fm-send --key Escape idle event, and the
-#                    unknown invalidation fm-control writes after a Devin interrupt
+#                    unknown invalidation after a Devin interrupt or the
+#                    settled-turn close after a Polytoken REST interrupt
 #   fm-recovery      a documented recovery reset after relaunch
 # Classifier-only sources (never written into a record):
 #   endpoint-gone, herdr-native, grok-regex, rovo-regex, agy-regex, muse-session-log,

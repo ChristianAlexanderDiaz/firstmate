@@ -1375,9 +1375,9 @@ test_stuck_generation_claim_is_superseded_and_rearms() {
 # A session restart mid-cycle: the dying session's Stop hook armed
 # a cycle and then the session exited, leaving the hook alive but orphaned - no
 # parent to deliver its exit 2 to. The replacement session's first Stop must NOT
-# defer to that claim: a claim is open only while its owner still descends from
-# the pid in state/.lock, so the replacement takes the next generation, attaches
-# to the same cycle, and is the hook that delivers the actionable close. The
+# defer to that claim: the orphan no longer belongs to the replacement's lock
+# holder, so the replacement takes the next generation, attaches to the same
+# cycle, and is the hook that delivers the actionable close. The
 # orphan is superseded and goes silent. Without this the home stays deaf until a
 # captain turn, and the orphan's banner write into its dead parent's pipe leaves
 # a stranded state/.claude-autoarm-output.* holding the reason line.

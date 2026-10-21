@@ -109,9 +109,10 @@ fm_cursor_path_is_cursor() {  # <path>
   return 1
 }
 
-# True when running `$1 --help` produces Cursor's own CLI identity. Bounded and
-# fail-closed: a timeout, a non-zero exit, or output without a Cursor-specific
-# marker is a refusal. Never called during a process scan.
+# Run a candidate with the supplied arguments under the shared timeout and
+# return its stdout. A timeout or non-zero exit fails; launch identity is
+# checked separately by fm_cursor_verify_executable. Never used during a
+# process scan.
 fm_cursor_bounded_output() {  # <path> <args...>
   local path=$1
   shift

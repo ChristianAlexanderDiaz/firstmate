@@ -7,7 +7,7 @@
 # backend dispatch, while bin/fm-composer-lib.sh owns the shared verdict.
 #
 # Composer shapes and verdicts are owned by bin/fm-composer-lib.sh.
-# This file owns only tmux's styled capture, cursor and Pi identity primitives,
+# This file owns only tmux's styled capture, cursor and agent identity primitives,
 # delivery busy read, and submit conversions that consume the shared verdict.
 # Styled captures remain internal; fm-peek and every human-facing capture stay
 # plain.
@@ -37,7 +37,7 @@
 # bin/fm-composer-lib.sh (fm_composer_classify_screen), sourced below and
 # reused by every backend adapter so the decision cannot drift. This file
 # keeps only tmux's genuine capture-side primitives - the styled pane
-# capture, the #{cursor_y} cursor read, the pi foreground-process identity
+# capture, the #{cursor_y} cursor read, the agent foreground-process identity
 # probe, and the capability descriptor - plus the busy detection and submit
 # cores that consume the shared verdict.
 
@@ -65,7 +65,7 @@ fm_tmux_strip_ghost() { fm_composer_strip_ghost; }
 #
 # These four functions are the ONLY tmux-specific composer knowledge left:
 # how to capture a styled screen, how to read the cursor row, how to probe a
-# live pi agent, and the static capability facts. Every shape, glyph, border
+# live shape-owner agent, and the static capability facts. Every shape, glyph, border
 # family, and verdict decision lives in the shared owner
 # (bin/fm-composer-lib.sh, fm_composer_classify_screen), so a new harness
 # shape is taught there once and never here.
@@ -98,7 +98,8 @@ fm_tmux_composer_caps() {
 #     shape-owner process (pi, pi-signed, pi-launcher - docs/verification/
 #     runtime-backends.md "Agent liveness name sources"; polytoken, whose
 #     TUI pane foreground is comm `polytoken`, verified live on 0.8.19),
-#     falling back to tmux's own foreground-derived #{pane_current_command}.
+#     falling back for Pi and Polytoken to tmux's own foreground-derived
+#     #{pane_current_command}.
 #     A pane whose agent died to a shell has no shape-owner foreground
 #     process and gets NO identity, which is exactly what keeps the strict
 #     blank-row rule honest: a blank row between two stale rules stays

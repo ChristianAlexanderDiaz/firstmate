@@ -251,15 +251,11 @@ EOF
   chmod 700 "$script" || return 1
 }
 
-# fm_polytoken_write_hooks: the worktree hook layer. Hooks are self-contained
-# (a project hook that negates a global hook by name fails daemon startup -
-# verified by the scout), so this file only registers firstmate's own three
-# events and negates nothing.
 # fm_polytoken_require_hooks_free: refuse a worktree that already carries a
 # `.polytoken/hooks.json` - a project's own hook layer is never firstmate's to
-# clobber. fm-spawn runs this before writing any wiring or arming a relaunch's
-# abort cleanup, and fm-control runs it before stopping a relaunch's running
-# agent, so a refusal leaves the worktree, state, and agent untouched.
+# clobber. fm-spawn checks after retiring prior generated wiring and before
+# writing replacement wiring. fm-control checks project-owned layers before
+# stopping a relaunch's running agent, so that preflight refusal leaves it running.
 fm_polytoken_require_hooks_free() {  # <worktree>
   local hooks
   hooks=$(fm_polytoken_hooks_file "$1") || return 1
@@ -291,6 +287,10 @@ fm_polytoken_require_handler_path() {  # <busy-script>
   esac
 }
 
+# fm_polytoken_write_hooks: the worktree hook layer. Hooks are self-contained
+# (a project hook that negates a global hook by name fails daemon startup -
+# verified by the scout), so this file only registers firstmate's own three
+# events and negates nothing.
 fm_polytoken_write_hooks() {  # <worktree> <busy-script>
   local wt=$1 script=$2 hooks
   fm_polytoken_require_hooks_free "$wt" || return 1

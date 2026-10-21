@@ -379,11 +379,9 @@ EOF
   done
 }
 
-# A spawn that fails after Orca accepted the launch leaves the terminal open,
-# and that pane may still be about to source the launch file, so abort cleanup
-# must not delete it out from under the pending source. The fake Orca accepts
-# input without executing it, and a failed backlog transition aborts the spawn
-# after delivery.
+# A slow pane must consume the launch file before spawn proceeds to the
+# backlog transition. The fake Orca delays its consumption, then the failed
+# transition aborts the spawn after the pane has copied and unlinked the file.
 test_orca_spawn_waits_for_a_slow_pane_before_a_later_failure() {
   local case_dir home id=orca-env-unsourced fb out status staged real_axi
   real_axi=$(command -v tasks-axi) || { pass "skipped live-terminal launch file case (tasks-axi is not installed)"; return 0; }

@@ -1292,7 +1292,7 @@ wait_record() {  # <kind> <subject> <whom> <action> <age-record>
 
 # The evidence that a quiet pane is a BOUNDED WAIT rather than a wedge suspect,
 # read at the one moment it decides anything: when an escalation is about to
-# fire. Two records answer it, and they are independent: the worker's own status
+# fire. Independent records answer it: the worker's own status
 # line - a declared `paused:` external wait, or a verified `captain-held`
 # transfer - and, when that line explains nothing, the crew's authoritative
 # current state. Between them sits the backlog record of the same captain hold

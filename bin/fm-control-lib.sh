@@ -13,11 +13,11 @@
 # here rather than improvised per harness in agent prose.
 #
 # This file owns three capability tables plus their pure artifact-path tables,
-# and ONE named exception to that purity - fm_control_endpoint_absence_verdict,
-# the single owner of the per-backend endpoint-absence proof, which does run
-# backend reads. Everything else has no side effects, runs no backend command,
-# and reads no state, so sourcing this file is still free and the tables can be
-# read by a test as a pure contract:
+# and two read-only exceptions: fm_control_endpoint_absence_verdict owns the
+# per-backend endpoint-absence proof and runs backend reads;
+# fm_control_harness_wiring_paths reads Polytoken worktree layers to establish
+# ownership before naming them for cleanup. The remaining tables perform no
+# backend commands or state reads, and sourcing this file has no side effects:
 #
 #   1. Verb allowlist. There is no arbitrary-text and no generic raw-key entry
 #      point on the control plane; a caller either names an allowlisted verb or
@@ -138,7 +138,7 @@ fm_control_interrupt_transport() {  # <harness>
   esac
 }
 
-# The key that cancels a running turn. Escape for every adapter except grok,
+# The key that cancels a running turn for keyplane adapters. Escape except grok,
 # whose Esc only moves focus to the scrollback; grok cancels on Ctrl+C.
 # gemini names its own key in the running turn's status row
 # (`(esc to cancel, <n>s)`), and a single Escape was verified to cancel it.
@@ -157,7 +157,7 @@ fm_control_interrupt_key() {  # <harness>
 }
 
 # How many times the interrupt key must be delivered. OpenCode and Devin need a double
-# Escape; every other verified adapter interrupts on a single press. Command Code
+# Escape; every other keyplane adapter interrupts on a single press. Command Code
 # cancels a running turn on one Escape (verified live, Command Code 1.74.1), and a
 # second press is exactly what opens its rewind picker, so it gets one.
 fm_control_interrupt_repeat() {  # <harness>

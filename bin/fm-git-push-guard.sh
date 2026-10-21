@@ -25,7 +25,8 @@
 #   (b) any destination ref equal to refs/heads/<task-branch>, or under
 #       refs/heads/<task-prefix> when that prefix is non-empty, on any remote;
 #   (c) on the backup remote, any destination outside refs/heads/<backup-prefix>.
-# An unreadable or malformed guard file refuses every push.
+# An unreadable guard, an invalid header, a missing task branch, or a backup
+# remote without a backup prefix refuses every push.
 #
 # ACCEPTED RESIDUAL. `git push --no-verify` skips every hook, a tool that
 # writes refs without running git never reaches one, and an alias URL spelled
