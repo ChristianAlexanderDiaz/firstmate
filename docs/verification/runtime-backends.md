@@ -12,6 +12,27 @@ Verified on 2026-10-14 with Polytoken 0.9.0 on macOS arm64 using the tmux worker
 [Polytoken verification](polytoken.md) owns the commands, session-model proof, and lifecycle output; its credentialed live guard refreshes the evidence.
 This does not verify a Polytoken primary, secondmate, or native Herdr pane.
 
+## Host budget launch boundary
+
+Verified on 2026-10-20 with macOS 27.0 (26A428) and Python 3.14.8:
+
+```sh
+bash bin/fm-test-run.sh tests/fm-resource.test.sh
+```
+
+The regression executes a configured dispatch through its saved manifest and observes a bound resident lease from inside the synthetic model CLI.
+It also drives real Unix sockets, kernel process start identities, competing clients, surviving child groups, cancellation, stale sockets, owner restarts, nested upgrades, prepared graph hooks and fixture monitor failures.
+The nineteen cases completed with this runner output:
+
+```text
+FM_TEST_END 2026-10-20T17:55:27Z tests/fm-resource.test.sh exit=0 duration_ms=78317 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=78477
+```
+
+The endpoint and model CLI are synthetic; no vendor session, Herdr lifecycle or thermal calibration is exercised by this regression.
+The shared launch command receives the wrapper before backend delivery, without introducing a harness-rendered classifier or backend-specific restore operation.
+The [host budget guide](../host-budget.md) owns rollout and the explicit composite browser lifetime boundary.
+
 ## Harness detection precedence
 
 Firstmate's own harness comes from two kinds of evidence, and `bin/fm-harness.sh` owns how they combine: an environment marker names its harness, and the nearest harness process in the parent chain proves who owns the process tree.
@@ -1637,6 +1658,43 @@ The portable fallback checks below cover the changed placement protocol without 
 That suite's headline case runs `bin/fm-spawn.sh` inside a real Herdr pane, so the parent identity comes from Herdr's own injection rather than a composed environment.
 Cross-session and contradictory bindings are covered deterministically in `tests/fm-backend-herdr.test.sh`, which can script a second server's socket without provisioning one.
 
+### Custom launcher labels and restart bindings
+
+Verified on 2026-10-20 on macOS with Herdr client/server 0.9.3, protocol 22.
+In a guarded named-session lab, the production launcher-identity and projection functions published a version 2 journal for a parent labeled `launcher = custom` while the home label remained `firstmate`.
+A canonical-label workspace and an earlier same-labeled parent were both present.
+After guarded stop/provision, production reclaim used the recorded parent label and replaced the old pane inside the same workspace, preserving focus and both parent panes.
+The named-session presentation lock covered publication and reclaim, and the default-session teardown tripwire passed.
+
+The measured production calls, with the endpoint variables taken from the lab's create responses, were:
+
+```sh
+fm_backend_herdr_launcher_identity "$HERDR_LAB_SESSION"
+parent_label=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_LABEL
+fm_backend_herdr_projection_create_task "$ROOT" "$label" "fm-$id"
+fm_backend_herdr_projection_live_binding_matches "$HERDR_LAB_SESSION" "$token" "$workspace" "$tab" "$pane" "$parent" "$parent_label" "$label" "fm-$id"
+fm_backend_herdr_projection_journal_bind "$journal" "$id" "$FM_HOME" "$HERDR_LAB_SESSION" "$workspace" "$tab" "$pane" "$parent" "$parent_label" "$label" "fm-$id"
+"$HERDR_LAB_HELPER" stop "$HERDR_LAB_SESSION"
+"$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION"
+fm_backend_herdr_projection_recovery_allows_flat "$HERDR_LAB_SESSION" "$journal" "$id"
+fm_backend_herdr_projection_reclaim_task "$HERDR_LAB_SESSION" "$journal" "$id" "$FM_HOME" "$workspace" "$tab" "$pane" "fm-$id" "$ROOT"
+```
+
+Every library CLI call was routed through the lab helper, including the otherwise session-independent version read.
+Observed output:
+
+```text
+PASS: exact launcher parent=w3 observed_label=launcher = custom computed_label=firstmate
+PASS: custom-label publication version=2 workspace=w4 pane=w4:p2 focus-preserved=1
+PASS: restart reclaim workspace=w4 old_pane=w4:p2 new_pane=w4:p3 recorded_label=launcher = custom focus-preserved=1
+PASS: guarded lab teardown; default-session tripwire unchanged
+```
+
+This measurement exercised the production libraries rather than a full harness launch or worktree allocation.
+`tests/fm-backend-herdr-launcher-workspace-e2e.test.sh` contains the full-spawn custom-label publication regression followed by guarded restart and exact-husk reclaim; that complete suite was not run for this measurement.
+`bash bin/fm-test-run.sh tests/fm-backend-herdr.test.sh` passed, including canonical/custom labels, duplicate parents, non-journalable labels, parent rename or disappearance, extra tabs, and exact replacement.
+Other runtime backends do not use this Herdr-specific label path; all harnesses on Herdr share it.
+
 ### Allocation errors and unprojected worker workspaces
 
 Verified on 2026-10-18 with Bash 5.2.21, tmux 3.4, Python 3.12.3, and jq 1.7 on Linux.
@@ -2219,6 +2277,27 @@ The feature does not inspect harness output or introduce harness-specific state 
 Non-Herdr backends return before any viewer mutation.
 Task teardown cleanup of a recorded viewer, including one beside a chat pane from before a relaunch, is covered through the real `bin/fm-teardown.sh` by `test_herdr_flat_teardown_closes_recorded_viewer` in `tests/fm-teardown.test.sh`; this record does not include an observed run of that case.
 Live Herdr lifecycle verification was unavailable on this host because the lab helper could not establish its required running-default-session tripwire; this record makes no live-backend claim for the new pane behavior.
+
+### Secondmate retirement record guard
+
+Verified on 2026-10-20 on macOS arm64 with Herdr 0.9.3, protocol 22.
+The named-lab guard exercises the real teardown executable: queued intent refuses before endpoint closure, and a drained retry closes the exact pane, removes the home, and preserves the independent focus anchor.
+The test routes every CLI operation through `bin/fm-herdr-lab.sh` and verifies the live default session is unchanged at cleanup.
+The focused command belongs to the required `real-herdr-gated` lane:
+
+```sh
+bash bin/fm-test-run.sh tests/fm-herdr-session-cleanup-e2e.test.sh
+```
+
+The run selected the production helper through `HERDR_LAB_HELPER` and a private label through `HERDR_LAB_LABEL`.
+Observed output:
+
+```text
+evidence: herdr=0.9.3 protocol=22 default-session-tripwire=armed
+ok - real named lab retirement refuses open records before close and removes a drained home through endpoint guards
+```
+
+This is a shell endpoint fixture; it makes no harness-specific agent-liveness claim.
 
 ## Zellij
 

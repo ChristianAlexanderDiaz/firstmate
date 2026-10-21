@@ -36,6 +36,8 @@
 #   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   fm-captain-hold.sh reconcile note <task-id> --note-file <path>
 #
+# FM_CAPTAIN_HOLD_CONTROL_LOCK_HELD=<task-id> lets a synchronous caller retain
+# its already-held task control lock while invoking hold.
 # `hold` places an existing task under an active captain hold, or creates the
 # task first when no work item exists to hold (--title required to create; the
 # optional --origin records provenance in the new task's body and supplies the
@@ -139,8 +141,9 @@
 # It attests, in the origin task's metadata, the reviewed inventory of
 # captain-held tasks that carry the origin's unresolved captain calls.
 # `--none` is an explicit semantic attestation that the just-reviewed surface
-# has no unresolved captain call, and is refused while the origin still has an
-# open keyed status decision. With a non-empty inventory, every listed task is
+# has no new unresolved captain call; it preserves any prior inventory and is
+# refused if that inventory is empty while a keyed status decision is open.
+# With a non-empty inventory, every listed task is
 # verified durable (captain-held, or carrying a recorded resolution),
 # is never the origin itself, and, when `hold --origin` recorded one, was held
 # for this origin; a hold with no recorded origin is accepted on durability
@@ -148,14 +151,17 @@
 # the inventory is unioned idempotently into the metadata, and every still-open
 # keyed status decision is transferred to its durable owner with a
 # `captain-held [key=...]` status close naming the inventory. Later review
-# passes may add ids. A post-teardown visual review can complete against the
+# passes may add ids; only previously recorded entries may use the archive
+# lookup below during a re-check. Newly added entries require an active row.
+# A post-teardown visual review can complete against the
 # surviving report and tasks without recreating task state.
 # `verify` is read-only and is called by scout teardown, so teardown cannot
 # erase a source before this gate has succeeded: every recorded inventory
 # entry must still satisfy the same durability and origin checks as `complete`,
 # and no keyed status decision may be open. An absent markdown row may be
 # read from the configured Done archive only when it carries a recorded
-# resolution; an active row always wins, and mutation commands never fall back.
+# resolution; an active row always wins, and hold/answer/reconcile mutations
+# never fall back.
 # Metadata compatibility: the attestation keeps the historical
 # `decisions_reviewed=1` and `decision_keys=` keys, and an inventory entry that
 # names no existing task resolves through the legacy `<origin>-decision-<entry>`
@@ -431,7 +437,7 @@ task_show() {  # <id>; sets TASK_SHOW_OUTPUT
   return "$status"
 }
 
-# Verification alone can read a retained resolution. Feed the archive through
+# Inventory verification can read a retained resolution. Feed the archive through
 # stdin so tasks-axi parses its normal row format without addressing the archive
 # as its own active backlog (which its archive-path safety guard refuses).
 task_show_archived() {  # <resolved-data-dir> <id>; sets TASK_SHOW_OUTPUT
@@ -1016,7 +1022,9 @@ command_hold() {
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) : ;;
     *) fail "FM_CAPTAIN_HOLD_NOW must be a UTC YYYY-MM-DDTHH:MM:SSZ timestamp" ;;
   esac
-  acquire_task_control_lock "$id"
+  if [ "${FM_CAPTAIN_HOLD_CONTROL_LOCK_HELD:-}" != "$id" ]; then
+    acquire_task_control_lock "$id"
+  fi
   require_tasks_axi
   if task_show "$id"; then
     show=$TASK_SHOW_OUTPUT
@@ -1828,7 +1836,7 @@ reconcile_note() {
 
 command_complete() {
   local origin=${1:-} meta previous='' supplied='' keys='' entry key status_file open has_meta=0 transfer_rc transfers=() resolved
-  local resolved_how attested_by_prefix='' origin_state unrecorded_origin=''
+  local resolved_how attested_by_prefix='' origin_state unrecorded_origin='' archive_recheck
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   validate_slug origin-id "$origin"
   shift
@@ -1859,7 +1867,12 @@ command_complete() {
   if [ -n "$keys" ]; then
     while IFS= read -r entry; do
       [ -n "$entry" ] || continue
-      resolved=$(verify_entry_durable "$origin" "$entry") || exit $?
+      # Only entries attested before this pass may read retained resolutions.
+      # Scope the fallback to this verification so newly added inventory entries and
+      # every mutation keep using the active backlog alone.
+      archive_recheck=0
+      if list_has_key "$previous" "$entry"; then archive_recheck=1; fi
+      resolved=$(VERIFY_ARCHIVE=$archive_recheck verify_entry_durable "$origin" "$entry") || exit $?
       origin_state=${resolved##* }
       resolved=${resolved% *}
       resolved_how=${resolved##* }

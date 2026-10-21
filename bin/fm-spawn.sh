@@ -423,6 +423,12 @@
 #   docs/configuration.md "Worker tool exclusions" owns config/crew-exclude-tools
 #   and its operator contract. Resolve it with bin/fm-exclude-tools-lib.sh
 #   before provisioning; __PIEXCLUDE__ below owns the Pi launch substitution.
+# Host budget: when a per-user policy is selected (docs/host-budget.md),
+# all harness/backend launch commands receive the same resident
+# lease, restore manifest and PATH adapters (fm-resource-run --help owns these).
+# This never starts a service, drives a backend restore or changes an account.
+# Missing service refuses execution; direct interpreter/absolute heavy commands
+# still require an explicit stage lease, as documented in docs/host-budget.md.
 # Worker account pin (config/claude-account, config/pi-account):
 #   Opt-in. With no file, a Claude or Pi launch is unchanged: Claude still
 #   receives this process's own CLAUDE_CONFIG_DIR when it is set, and Pi the
@@ -442,13 +448,13 @@
 #   Claude's `paced` value fixes no account; see account pacing below.
 #   bin/fm-worker-account-lib.sh owns parsing, the check, and the shed list.
 # Claude account failover (config/claude-failover; --claude-account <name>):
-#   Opt-in, relaunch only. `--relaunch --claude-account <name>` moves a ship or
-#   scout Claude worker onto one named account of config/claude-failover,
+#   Opt-in, relaunch only. `--relaunch --claude-account <name>` moves a ship, scout, or
+#   local secondmate Claude worker onto one named account of config/claude-failover,
 #   sign-in, paid-usage, and model-quota checked before any endpoint changes,
 #   launched like a pinned root, and recorded as claude_account= in the task record and on the spawned
 #   line; later relaunches retain it unless another literal account name, a
 #   harness change, or pacing overrides it. It refuses beside a
-#   config/claude-account that fixes one account. Every Claude ship and scout StopFailure hook also runs
+#   config/claude-account that fixes one account. Every Claude ship, scout, and local secondmate StopFailure hook runs
 #   bin/fm-account-failover.sh record, which writes nothing without the map;
 #   that script owns the move.
 # Claude account pacing (config/claude-account `paced`): every canonical
@@ -459,8 +465,8 @@
 #   claude_account= plus a one-line claude_account_reason= naming each
 #   account's week left, reset, and pace. When no account is choosable it
 #   refuses before creating an endpoint, local copy, or task record, naming
-#   each account's week left and reset when available. A raw launch and a
-#   secondmate keep their ambient launch account.
+#   each account's week left and reset when available. Raw launches are not
+#   paced; secondmate account retention follows the failover contract above.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode
@@ -1805,6 +1811,9 @@ clear_relaunch_harness_wiring() {
   # unrecognized value resolves to no adapter, which is also the case in which
   # no wiring was armed to begin with.
   harness=$(fm_control_harness_family "$harness") || harness=
+  # Claude secondmates receive parent hooks inline, never in their own local
+  # settings. Those settings belong to the persistent supervisor home.
+  [ "$KIND" != secondmate ] || [ "$harness" != claude ] || return 0
   token_path=$(fm_control_harness_turnend_token_path "$harness" "$state" "$id") || return 1
   token=
   if [ -n "$token_path" ] && [ -f "$token_path" ]; then
@@ -2077,6 +2086,24 @@ if [ "$RELAUNCH" -eq 0 ]; then
   SPAWN_TASK_SET_LOCK_HELD=1
   spawn_refuse_if_away_spend_cap
   spawn_require_relocated_queued_work
+  if [ "$KIND" != secondmate ] && { [ -e "$FM_HOME/.fm-secondmate-parent" ] || [ -L "$FM_HOME/.fm-secondmate-parent" ]; }; then
+    # shellcheck source=bin/fm-secondmate-parent-lib.sh
+    . "$SCRIPT_DIR/fm-secondmate-parent-lib.sh"
+    # shellcheck source=bin/fm-handoff-record-lib.sh
+    . "$SCRIPT_DIR/fm-handoff-record-lib.sh"
+    fm_secondmate_parent_record_parse "$FM_HOME/.fm-secondmate-parent" || {
+      echo 'error: cannot verify source transfer reservations: invalid parent binding' >&2
+      exit 1
+    }
+    if [ "$FM_SECONDMATE_PARENT_ROUTE" = local ]; then
+      spawn_handoff_parent=$(cd "$FM_SECONDMATE_PARENT_HOME" && pwd -P) || exit 1
+      fm_handoff_file "$FM_HOME/.fm-secondmate-home" || exit 1
+      spawn_handoff_source_id=$(cat "$FM_HOME/.fm-secondmate-home") || exit 1
+      spawn_handoff_reserved=0
+      fm_handoff_source_key_reserved "$spawn_handoff_parent/data" "$spawn_handoff_source_id" "$FM_HOME" "$ID" || spawn_handoff_reserved=$?
+      [ "$spawn_handoff_reserved" = 1 ] || exit 1
+    fi
+  fi
 fi
 if [ "$KIND" = secondmate ]; then
   if spawn_remote_secondmate "$ID"; then
@@ -2994,6 +3021,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
   elif [ "$HARNESS" = claude ] && [ "$CLAUDE_ACCOUNT_PACED" = 0 ]; then
     CLAUDE_ACCOUNT=${CLAUDE_ACCOUNT_PRIOR:-}
   fi
+elif [ "$KIND" = secondmate ] && [ "$HARNESS" = claude ] && [ -f "$STATE/$ID.meta" ] \
+  && { [ ! -e "$CONFIG/claude-account" ] || fm_worker_account_paced "$CONFIG"; }; then
+  # Endpoint-dead recovery uses --secondmate, rather than --relaunch. Retain
+  # the account selected by the same control path on that recovery too.
+  CLAUDE_ACCOUNT=$(fm_meta_get "$STATE/$ID.meta" claude_account)
 fi
 if [ "$CLAUDE_ACCOUNT_PACED" = 1 ]; then
   # Claude account pacing (header above): a fresh choice on every launch.
@@ -3016,9 +3048,9 @@ elif [ -n "$CLAUDE_ACCOUNT" ]; then
     exit 1
   fi
   case "$KIND" in
-  ship | scout) ;;
+  ship | scout | secondmate) ;;
   *)
-    echo "error: Claude account failover moves ship and scout workers only; a $KIND keeps its home's launch account" >&2
+    echo "error: Claude account failover does not support a $KIND" >&2
     exit 1
     ;;
   esac
@@ -3760,11 +3792,25 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   # Use the existing launch-brief overlay for every worker kind, including
   # pre-scope briefs and relaunches. Charters never enter this worker path.
   SOURCE_BRIEF=$BRIEF
+  LINEAR_DISPATCH_METADATA=''
+  if [ "$KIND" = ship ] && [ -f "$CONFIG/linear" ]; then
+    FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
+      FM_LINEAR_CONTROL_LOCK_HELD=$RELAUNCH \
+      bash "$SCRIPT_DIR/fm-linear-lib.sh" intake "$ID" || exit $?
+    LINEAR_DISPATCH_METADATA=$(FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
+      FM_LINEAR_CONTROL_LOCK_HELD=$RELAUNCH \
+      bash "$SCRIPT_DIR/fm-linear-lib.sh" dispatch "$ID") || exit $?
+    if printf '%s\n' "$LINEAR_DISPATCH_METADATA" | grep -qx 'Loop: agent' && [ "$MODE" != no-mistakes ]; then
+      echo "error: $(printf '%s\n' "$LINEAR_DISPATCH_METADATA" | sed -n 's/^Linear issue: //p') has Loop: agent and requires mode=no-mistakes; received mode=$MODE" >&2
+      exit 1
+    fi
+  fi
   BRIEF="$DATA/$ID/launch-brief.md"
   BRIEF_TMP="$DATA/$ID/.launch-brief.md.${BASHPID:-$$}"
   {
     fm_brief_worker_role "$STATE" "$ID" "$FM_ROOT" &&
       printf '\n' &&
+      printf '%s\n' "$LINEAR_DISPATCH_METADATA" &&
       cat "$SOURCE_BRIEF" &&
       if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
         fm_brief_intent_overlay "$CAPTAIN_INTENT"
@@ -4458,7 +4504,7 @@ else
           FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_projection_reclaim_task \
             "$HERDR_SES" "$HERDR_PRESENTATION_JOURNAL" "$ID" "$HERDR_LABEL_HOME" \
             "$HERDR_RECOVERY_WORKSPACE_ID" "$HERDR_RECOVERY_TAB_ID" "$HERDR_RECOVERY_PANE_ID" \
-            "$HERDR_PARENT_LABEL" "$W" "$PROJ_ABS"
+            "$W" "$PROJ_ABS"
           HERDR_RECLAIM_STATUS=$?
           set -e
           case "$HERDR_RECLAIM_STATUS" in
@@ -4501,7 +4547,10 @@ else
           HERDR_LAUNCHER_STATUS=$?
           set -e
           case "$HERDR_LAUNCHER_STATUS" in
-          0) HERDR_PARENT_WORKSPACE_ID=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID ;;
+          0)
+            HERDR_PARENT_WORKSPACE_ID=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID
+            HERDR_PARENT_LABEL=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_LABEL
+            ;;
           2) HERDR_PARENT_WORKSPACE_ID=$(fm_backend_herdr_projection_parent_workspace_exact \
             "$HERDR_SES" "$HERDR_PARENT_LABEL" 2>/dev/null || true) ;;
           *)
@@ -4509,8 +4558,8 @@ else
             exit 1
             ;;
           esac
-          if [ -z "$HERDR_PARENT_WORKSPACE_ID" ]; then
-            echo "warning: herdr presentation parent is absent or ambiguous; using the ordinary flat layout without projection" >&2
+          if [ -z "$HERDR_PARENT_WORKSPACE_ID" ] || [ -z "$HERDR_PARENT_LABEL" ]; then
+            echo "warning: herdr presentation parent is absent, ambiguous, or has no journalable label; using the ordinary flat layout without projection" >&2
             spawn_herdr_presentation_order_lock_release
           else
             HERDR_PROJECTION_ID=$(fm_backend_herdr_projection_journal_create "$STATE" "$ID") || exit 1
@@ -6360,6 +6409,59 @@ esac
 # A home's worker account pin replaces that forwarding: the launch names the
 # pinned root (or unsets the variable for the ordinary Claude account) and
 # sheds the environment credentials Claude ranks above the root's login.
+RESOURCE_CONFIG=${FM_RESOURCE_CONFIG:-}
+if [ -z "$RESOURCE_CONFIG" ] && [ -e "$CONFIG/host-budget.json" ]; then
+  RESOURCE_CONFIG="$CONFIG/host-budget.json"
+fi
+if [ -z "$RESOURCE_CONFIG" ] && [ -e "$HOME/.config/firstmate/host-budget.json" ]; then
+  RESOURCE_CONFIG="$HOME/.config/firstmate/host-budget.json"
+fi
+if [ -n "$RESOURCE_CONFIG" ]; then
+  "$SCRIPT_DIR/fm-resource-run" --config "$RESOURCE_CONFIG" status >/dev/null || exit 1
+  RESOURCE_DIR="$DATA/$ID/resource-$SPAWN_GEN"
+  resource_accounts=()
+  case "$HARNESS" in
+  claude)
+    resource_account_root=${CLAUDE_CONFIG_DIR:-}
+    if [ -n "$WORKER_ACCOUNT" ]; then
+      resource_account_root=$WORKER_ACCOUNT_ROOT
+    elif [ -n "$CLAUDE_ACCOUNT" ]; then
+      resource_account_root=$CLAUDE_ACCOUNT_ROOT
+    fi
+    resource_accounts+=(--account-env "CLAUDE_CONFIG_DIR=$resource_account_root")
+    ;;
+  pi | pi-signed)
+    resource_account_root=${PI_CODING_AGENT_DIR:-}
+    [ -z "$WORKER_ACCOUNT" ] || resource_account_root=$WORKER_ACCOUNT_ROOT
+    resource_accounts+=(--account-env "PI_CODING_AGENT_DIR=$resource_account_root")
+    ;;
+  codex)
+    resource_accounts+=(--account-env "CODEX_HOME=${CODEX_HOME:-}")
+    ;;
+  opencode)
+    resource_accounts+=(--account-env "OPENCODE_CONFIG_DIR=${OPENCODE_CONFIG_DIR:-}")
+    ;;
+  esac
+  RESOURCE_MANIFEST=$("$SCRIPT_DIR/fm-resource-run" --config "$RESOURCE_CONFIG" prepare \
+    --directory "$RESOURCE_DIR" --worktree "$WT" --task "$ID" \
+    --account-label "${WORKER_ACCOUNT:-${CLAUDE_ACCOUNT:-default-$HARNESS}}" \
+    ${resource_accounts[@]+"${resource_accounts[@]}"} -- /bin/sh -c "$LAUNCH") || exit 1
+  # Account prefixes below remain outside the wrapper, so validation sees the
+  # actual selected config environment before any model CLI can start.
+  resource_transport="env"
+  if [ "${#resource_accounts[@]}" -gt 0 ]; then
+    resource_pair=${resource_accounts[1]}
+    resource_key=${resource_pair%%=*}
+    resource_value=${resource_pair#*=}
+    if [ -z "$resource_value" ]; then
+      resource_transport="$resource_transport -u $resource_key"
+    else
+      resource_value=$(cd -- "$resource_value" && pwd -P) || exit 1
+      resource_transport="$resource_transport $resource_key=$(shell_quote "$resource_value")"
+    fi
+  fi
+  LAUNCH="$resource_transport FM_RESOURCE_CONFIG=$(shell_quote "$RESOURCE_CONFIG") PATH=$(shell_quote "$RESOURCE_DIR/bin")\":\$PATH\" $(shell_quote "$SCRIPT_DIR/fm-resource-run") --config $(shell_quote "$RESOURCE_CONFIG") run --class worker --task $(shell_quote "$ID") --manifest $(shell_quote "$RESOURCE_MANIFEST") -- /bin/sh -c $(shell_quote "$LAUNCH")"
+fi
 if [ -n "$WORKER_ACCOUNT" ]; then
   case "$HARNESS" in
   claude)

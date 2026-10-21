@@ -370,8 +370,25 @@ exclude_task=research-*
 
 Scouts and secondmates never sync.
 Map only projects whose backlog titles and bodies may be sent to Linear, and exclude any private tasks within them with `exclude_task`.
-A successful ship spawn creates a ticket when no linkage exists, then selects the team's started state named `In Progress`, falling back to the first started state returned by Linear.
-Creation specifies that state explicitly, avoiding Linear's default Triage intake for teams with Triage enabled.
+At intake, Firstmate declares impact, cost and loop ownership in the backlog body, then runs the existing sync's `intake` event before dispatch.
+Its header and `--help` own the metadata lines and event commands.
+Priority represents impact: Urgent means production is broken or an event is at risk, followed by High, Medium and Low.
+Estimate represents cost: 1, 2 and 3 are increasing sizes; 5 means split the work.
+The existing Linear label group named `Loop` supplies exactly one of `agent`, `agent-reviewed`, `milestones` or `Christian`; the sync does not create labels.
+Intake creates an unstarted ticket if necessary and fills missing priority, estimate and Loop values from initial declarations only before the first metadata snapshot, preserving later corrections including cleared values, other labels and cycle placement.
+Firstmate judges whether an agent's finish is test-decidable and records the specific check in a `Loop finish:` declaration in the ticket description or backlog body.
+The declaration names the test and the observable pass/fail result; the sync never executes its text or guesses from ordinary prose mentioning tests.
+An initial backlog check remains effective until a remote declaration supersedes it; subsequent removal of the remote declaration leaves no effective check.
+Before launch, spawn reads priority, estimate, Loop, cycle start and manual order into the backlog and adds a metadata instruction overlay to the worker brief, outside captain intent.
+Linear values take precedence over intake defaults, so corrections made there win at pickup.
+An `agent` without a nonempty finish declaration is relabeled `milestones`, preserving all labels outside Loop, and receives milestone instructions.
+An `agent` with a finish declaration requires spawn mode `no-mistakes`; any other mode refuses launch and names the ticket and mode.
+An `agent-reviewed` receives rubric and screenshot instructions; a `Christian` ticket refuses worker launch and records a captain hold on its existing task, naming the Linear ticket.
+Firstmate prepares those calls together on the existing daily Bearings board and Captain's Call digest, then files the work after Christian answers.
+Configured dispatch metadata that cannot be read refuses launch for retry; lifecycle updates after a successful action retain their best-effort behavior.
+Normal ship launches create any missing ticket during intake, then the successful spawn selects the team's started state named `In Progress`, falling back to the first started state returned by Linear.
+The standalone spawn sync event can also create a missing ticket directly in that started state.
+Both creation paths specify the state explicitly, avoiding Linear's default Triage intake for teams with Triage enabled.
 A recorded PR merge, including one detected from the forge, selects the completed state named `Done`, falling back to the first completed state, and attaches the PR URL unless the issue already has an attachment for it, as Linear's own GitHub integration usually adds one first.
 That integration also moves a ticket to its review state when a PR opens, so this sync does not.
 A captain hold adds the configured label without changing workflow status; its answer, release or reconciled close removes only that label.
@@ -400,19 +417,19 @@ Sync never mutates a Triage issue, deletes an issue, or writes a cycle field.
 Linear's own cycle behavior still applies to status changes.
 
 Existing linkage is found in the task id, backlog title/body, or, on merge or closed-PR reconciliation, an identifier following `fixes`, `closes` or `resolves` (case-insensitive) in the complete PR record from GitHub or GitLab.
-Only identifiers belonging to mapped teams are eligible, and ambiguous references are skipped.
+Only identifiers belonging to mapped teams are eligible; ambiguous references skip lifecycle sync and refuse intake or dispatch.
 The saved backlog linkage takes precedence over incidental references elsewhere.
-A completed or canceled issue changes only through saved linkage; an incidental reference to one is skipped and never saved.
-Only spawn creates tickets; other events without a linked or previously created issue are skipped.
+A completed or canceled issue changes only through saved linkage; an incidental reference to one is never saved and skips lifecycle sync or refuses intake and dispatch.
+Only intake and spawn create tickets; dispatch refuses a missing mapped issue, while other events without a linked or previously created issue are skipped.
 A failed forge read never causes ticket creation.
 GitHub PR-body and branch-merge reads use `gh-axi`; closure checks use the shared PR reader, which prefers `gh` and falls back to `gh-axi`.
 GitLab reads use `glab`.
 Other forges can sync through task/backlog linkage but do not supply PR-body discovery.
 
-Every attempt is best effort and has a ten-second total bound covering secret lookup, backlog reads/writes, forge discovery and Linear requests.
+Every attempt has a ten-second total bound covering secret lookup, backlog reads/writes, forge discovery and Linear requests.
 A failure emits one generic diagnostic and leaves the successful lifecycle action successful.
 No raw API response or credential-command error is logged, and the API key is passed to curl through header stdin rather than a command argument or temporary file.
-There is no new daemon, background queue, backfill, webhook or two-way reconciliation.
+There is no new daemon, background queue, backfill or webhook.
 Dependency and idle observation records stay in the owning home's private `state/` directory.
 Periodic dependency checks retry while their private tracking record exists.
 A missed sync can be retried through the event command documented by `bin/fm-linear-lib.sh --help`; its header owns linkage storage and retry identity mechanics.
@@ -465,11 +482,11 @@ An unreadable backend configuration can refuse lifecycle work before the no-back
 
 ### Handoffs between homes
 
-Secondmate handoffs bypass that routine-backend choice: `fm-backlog-handoff.sh` keeps only its own fleet-level validation and delegates the item move to `tasks-axi mv`; its [script header](../bin/fm-backlog-handoff.sh) owns route-specific wake outcomes and remote outbox release.
+Legacy main-to-mate handoffs bypass that routine-backend choice; source-secondmate eligibility and transfer mechanics are owned by the [`fm-backlog-handoff.sh` header](../bin/fm-backlog-handoff.sh).
 It moves in-scope `## Queued` items only and refuses `## In flight` and historical `## Done` records, which stay with their home for pruning or archiving.
 
 Handoff item bodies must use at least two leading spaces, and the helper refuses a selected item with a single-space or tab-indented continuation rather than risk orphaning it.
-Because bootstrap requires `tasks-axi` on `PATH` on every profile, that delegation works fleet-wide, and the `config/backlog-backend=manual` knob governs firstmate's own hand-editing of its backlog, not this validated helper.
+Bootstrap requires compatible `tasks-axi` on `PATH` on every profile for delegated moves.
 
 ### Required tools and manual mode
 
@@ -1199,7 +1216,7 @@ Blank lines and lines starting with `#` are ignored, names are unique, and a con
 
 ### What happens at a usage limit
 
-Every Claude ship and scout records its turn end through Claude's `StopFailure` hook, and a `rate_limit` turn end counts as a usage limit when either the rendered prompt shows both "Stop and wait for limit to reset" and "Esc to cancel", or the recorded message starts with "You've hit your <window> limit" (with a straight or typographic apostrophe).
+Every Claude ship, scout, and local secondmate records its turn end through Claude's `StopFailure` hook, and a `rate_limit` turn end counts as a usage limit when either the rendered prompt shows both "Stop and wait for limit to reset" and "Esc to cancel", or the recorded message starts with "You've hit your <window> limit" (with a straight or typographic apostrophe).
 Claude can report a repeat account limit with that verified wording without reopening the menu.
 Without a rendered limit menu, other hook text, including "API Error: Rate limit reached", never triggers an account move or validation cancellation.
 Firstmate's monitoring then, within one cycle:
@@ -1214,11 +1231,16 @@ Prompt caching does not carry across accounts, so resuming would resend the whol
 
 The task record then carries `claude_account=<name>`; later relaunches retain it unless an explicit account or harness change overrides it, or [pacing](#claude-account-pacing-configclaude-account-paced) chooses afresh.
 Every selected account name, including `default`, resolves literally through the map.
-When no account qualifies, the worker stays stopped and its status gets one `blocked:` line naming each account's remaining quota and reset time.
+When no account qualifies, the worker stays stopped; the launching home emits one `blocked:` outcome naming each account's remaining quota and reset time across all affected tasks.
+A fresh failover snapshot or the watcher's periodic maintenance re-arms that notice only when an account qualifies for the model recorded at exhaustion; room for an unrelated model alone does not re-arm it.
+Maintenance checks are throttled and time-bounded so quota or sign-in outages do not repeatedly delay ordinary watcher notifications; [`bin/fm-account-failover.sh`](../bin/fm-account-failover.sh)'s `tick` implementation owns those bounds.
 
 ### Limits
 
-Secondmates are never moved: they carry no `StopFailure` hook, and their workers use their own home's [worker account configuration](#worker-account-pin-configclaude-account-configpi-account).
+Local secondmates use the same failover path and retain their home, charter, child state, and steering inbox; launch-only hooks merge with their own supervision hooks without changing home settings.
+Endpoint-dead recovery retains the selected account.
+Their workers still use their own home's [worker account configuration](#worker-account-pin-configclaude-account-configpi-account).
+Remote secondmate routes remain a follow-up: local control refuses endpoints on another host.
 A `config/claude-account` that names one account pins every Claude worker to it, so a home with both files leaves limited workers stopped and says so; the `paced` value pins nothing, and failover moves its workers as usual.
 Accounts with a paid credits window or unknown paid usage status never qualify, even when their plan has room.
 Selection, control, and spawn require an unreused vendor reading and run their quota queries with `QUOTA_AXI_MAX_AGE` unset before launching a worker on a mapped account; disable paid extra usage in the account itself before using it for failover.
@@ -1253,7 +1275,8 @@ Control checks a fresh pacing choice before stopping the current worker, and spa
 When no account is choosable, the launch refuses with an `error: Claude account pacing:` line saying why and naming each account's week left and reset when available.
 A fresh spawn refuses before creating an endpoint, local copy, or task record; a relaunch whose pre-stop pacing check fails leaves the current worker running.
 A home with `paced` but no `config/claude-failover` refuses Claude ship and scout launches and names the missing file.
-Raw Claude launch commands and secondmate agents are not paced and keep their ambient launch account.
+Raw Claude launch commands are not paced and keep their ambient launch account.
+Secondmate agents are not paced; their account retention follows the [failover limits](#limits).
 A worker that later reaches a usage limit still moves through [Claude account failover](#claude-account-failover-configclaude-failover).
 [`bin/fm-worker-account-lib.sh`](../bin/fm-worker-account-lib.sh) owns the choice and its checks.
 
@@ -1382,8 +1405,10 @@ Per-machine Cursor `cli-config.json` attribution-off is not this contract: it do
 
 ## Project capacity (config/project-capacity)
 
+The separate [per-user host budget](host-budget.md) provides optional shared admission for local compute across projects and homes; `bin/fm-resource-run --help` owns its policy and lease interface.
+
 The optional local, gitignored `config/project-capacity` tells Firstmate how many workers a project can run at once on this machine, for a project whose machine-local resource - a heavy test suite, a local editor stack, a device - only serves a few workers at a time.
-Without it, dispatch stays uncapped as `AGENTS.md` section 7 describes, and a surplus worker is launched only to spend full-context turns waiting for the resource.
+Without it, dispatch has no project-specific worker cap, and a surplus worker can be launched only to spend full-context turns waiting for that project's resource.
 The file lives in the machine's root Firstmate home, so every local secondmate home reads the same limit, and it holds one line per project:
 
 ```text
@@ -1436,9 +1461,15 @@ Running work and spending on other machines can cross the line after a successfu
 Root-home bootstrap registers the refill source through `bin/fm-procevent.sh` when a plan exists.
 The source checks every ten minutes and promptly after PR handoff or cleanup, using the existing capacity accounting and canonical backlog snapshot.
 It reports open places and up to five ready ticket ids per active lane, qualified by home, only when some provider's gate is open and ready work exists.
+Within a lane, Loop-classified work is ordered by cycle start, then build-first grid cell using the impact and cost snapshots, then Linear manual order and backlog order to break ties.
+The grid visits High/low, High/medium, High/high, Medium/low, Medium/medium, Low/low, Low/medium, Low/high, then Medium/high (Deprioritize last); Urgent shares High's row.
+Only `agent` with a finish declaration and `agent-reviewed` enter refill from classified work, with complete impact and cost values below the split threshold; milestone and personal-judgment tickets stay outside automatic refill.
+Unclassified backlog work retains its existing order as a fallback.
+Before filtering by Loop or ranking, the source refreshes eligible queued ships in active lanes through each owning home's Linear intake, then re-reads the backlog; unreadable configured metadata defers the sample.
+Spawn reads current corrections again before launch.
 An uncapped lane's reported places equal its ready ticket count, rather than implying a machine concurrency limit.
 Notices include the current Claude admission verdict for a possible Codex-to-Claude validation fallback; they do not change validation policy or select work, credentials or models.
-Firstmate makes each dispatch decision, and spawn rechecks admission.
+Firstmate starts the next eligible ticket in the reported grid order under ordinary dispatch authority, honoring explicit task-order instructions and dependencies, and spawn rechecks admission.
 [`bin/fm-procevent-refill.sh`](../bin/fm-procevent-refill.sh) owns registration, polling, trigger and deduplication mechanics; the [process-event skill](../.agents/skills/process-event-sources/SKILL.md) owns wake handling.
 
 ## Crew dispatch profiles (config/crew-dispatch.json)

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "stateDirectory": "/Users/you/Library/Application Support/firstmate-host-budget",
+  "socketPath": "/private/tmp/firstmate-resource-501/owner.sock",
+  "monitorPath": "/Users/you/Library/Application Support/mac-workload/status.json",
+  "maxHeavyJobs": 1,
+  "memoryMiB": 10240,
+  "maxResidentWorkers": 12,
+  "recoverySeconds": 120,
+  "graceSeconds": 5
+}

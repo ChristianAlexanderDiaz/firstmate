@@ -318,6 +318,9 @@
 # ledger. It runs before the task branch it attributes runs by is deleted and
 # before state/<id>.meta is removed, and is best effort: a failure warns and
 # never blocks cleanup.
+# Non-forced secondmate retirement applies fm-handoff-record-lib.sh to the
+# actual target home and configured parent record paths under the target
+# task-set lock, then rechecks immediately before removing the stopped home.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -356,6 +359,8 @@ for _teardown_source in \
   fm-classify-lib.sh \
   fm-gate-refuse-lib.sh \
   fm-pr-lib.sh \
+  fm-procevent-lib.sh \
+  fm-handoff-record-lib.sh \
   fm-public-followup-lib.sh \
   fm-x-lib.sh \
   fm-env-lib.sh \
@@ -392,6 +397,10 @@ unset _teardown_source
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-procevent-lib.sh
+. "$SCRIPT_DIR/fm-procevent-lib.sh"
+# shellcheck source=bin/fm-handoff-record-lib.sh
+. "$SCRIPT_DIR/fm-handoff-record-lib.sh"
 # shellcheck source=bin/fm-public-followup-lib.sh
 . "$SCRIPT_DIR/fm-public-followup-lib.sh"
 # shellcheck source=bin/fm-secondmate-registry-lib.sh
@@ -3474,6 +3483,10 @@ fi
 
 if [ "$KIND" = secondmate ] && [ "$FORCE" != "--force" ]; then
   SUB_STATE="$HOME_PATH/state"
+  RETIRE_TASK_SET_LOCK=$(fm_task_set_lock_path "$SUB_STATE") || exit 1
+  fm_lock_try_acquire "$RETIRE_TASK_SET_LOCK" || { echo 'REFUSED: secondmate is publishing work; retirement changed nothing' >&2; exit 1; }
+  DESCENDANT_LOCK_PATHS+=("$RETIRE_TASK_SET_LOCK")
+  fm_handoff_retirement_clear "$HOME_PATH" "$FM_HOME" "$ID" "$STATE" "$DATA" || exit 1
   if [ -d "$SUB_STATE" ]; then
     for child_meta in "$SUB_STATE"/*.meta; do
       [ -e "$child_meta" ] || continue
@@ -3892,6 +3905,10 @@ if [ "$KIND" = secondmate ]; then
     || { echo "error: receiver wake cleanup could not be staged; preserving the secondmate home and route" >&2; exit 1; }
   pending_replies_recovery_validate recheck \
     || { echo "error: local pending-reply recovery paths changed; preserving the secondmate home and route" >&2; exit 1; }
+  if [ "$FORCE" != --force ]; then
+    fm_handoff_retirement_clear "$HOME_PATH" "$FM_HOME" "$ID" "$STATE" "$DATA" || exit 1
+    secondmate_unresolved_pending_replies_refuse || exit 1
+  fi
   if remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID"; then
     :
   else

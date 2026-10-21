@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# One per-user host budget client and service. Requires Python 3 (stdlib only).
+# Usage and the versioned configuration/protocol owner: fm-resource-run --help.
+# No automatic service start and no fallback to unleased compute.
+set -eu
+exec python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/fm_resource.py" "$@"

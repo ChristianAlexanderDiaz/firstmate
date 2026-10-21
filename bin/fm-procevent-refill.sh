@@ -16,7 +16,12 @@
 #
 # Candidates use fm-fleet-snapshot.sh --contribution-input for each local home,
 # excluding held, blocked, already-dispatched and non-worker rows. Active lanes
-# are ordered as declared, then backlog order, with at most five ids per lane.
+# are ordered as declared. Loop-classified tickets use cycle then build-first
+# grid order (Deprioritize last), then Linear manual order and backlog order.
+# Only agent and agent-reviewed enter automatic refill; an agent also needs a
+# Loop finish declaration. Unclassified work retains ordinary backlog order.
+# Linear intake refreshes eligible ships before ranking the body snapshots.
+# At most five ids are reported per lane.
 # Occupancy uses fm-project-capacity-lib.sh. An uncapped lane reports places
 # equal to its ready count, never an invented machine capacity. Capacity shared
 # by same-origin clones is counted once. Each id is qualified by its home.
@@ -78,21 +83,52 @@ notify() {
 }
 
 # Observe queued work with the existing canonical parser, never a second parser.
+queued_rows() {
+  local state=$1 home=${1%/state} snapshot
+  snapshot=$(FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$home/data" \
+    FM_CONFIG_OVERRIDE="$home/config" FM_PROJECTS_OVERRIDE="$home/projects" \
+    fm_run_timed 30 "$SCRIPT_DIR/fm-fleet-snapshot.sh" --contribution-input) || return 1
+  printf '%s\n' "$snapshot" | jq -ce --argjson plan "$FM_QUOTA_PLAN_JSON" --arg today "$(date -u +%Y-%m-%d)" '
+    [.tasks[].id] as $live | [.backlog.records[] |
+      select(.structured and .state == "queued" and (.kind == "ship" or .kind == "scout") and
+        .hold_reason == null and .hold_kind == null and
+        (.unresolved_blocker_ids|length) == 0) |
+      select(.id as $id | $live | index($id) | not) |
+      select(.repo as $repo | any($plan.lanes[];
+        .project == $repo and (.until == null or .until >= $today)))]'
+}
+
 ready_rows() {
-  local state home snapshot all='[]' rows
+  local state home candidates task all='[]' rows
   fm_local_firstmate_state_dirs "$STATE" || return 1
   for state in "${FM_LOCAL_FIRSTMATE_STATES[@]}"; do
     home=${state%/state}
-    snapshot=$(FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$home/data" \
-      FM_CONFIG_OVERRIDE="$home/config" FM_PROJECTS_OVERRIDE="$home/projects" \
-      fm_run_timed 30 "$SCRIPT_DIR/fm-fleet-snapshot.sh" --contribution-input) || return 1
-    rows=$(printf '%s\n' "$snapshot" | jq -ce --arg home "$home" '
-      [.tasks[].id] as $live | [.backlog.records[] |
-        select(.structured and .state == "queued" and (.kind == "ship" or .kind == "scout") and
-          .hold_reason == null and .hold_kind == null and
-          (.unresolved_blocker_ids|length) == 0) |
-        select(.id as $id | $live | index($id) | not) |
-        {id,repo,home:$home}]') || return 1
+    candidates=$(queued_rows "$state") || return 1
+    if [ -f "$home/config/linear" ]; then
+      while IFS= read -r task; do
+        [ -n "$task" ] || continue
+        FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$home/data" \
+          FM_CONFIG_OVERRIDE="$home/config" FM_PROJECTS_OVERRIDE="$home/projects" \
+          bash "$SCRIPT_DIR/fm-linear-lib.sh" intake "$task" >/dev/null || return 1
+      done < <(printf '%s\n' "$candidates" | jq -r '.[] | select(.kind == "ship") | .id')
+      candidates=$(queued_rows "$state") || return 1
+    fi
+    rows=$(printf '%s\n' "$candidates" | jq -ce --arg home "$home" '[.[] |
+        def field($key): [.body_lines[]? | select(startswith($key + ": ")) | ltrimstr($key + ": ")][0] // "";
+        (field("Loop")) as $loop |
+        select($loop == "" or $loop == "agent-reviewed" or
+          ($loop == "agent" and (field("Loop finish") | test("\\S")))) |
+        (field("Linear priority") | tonumber? // 0) as $impact |
+        (field("Linear estimate") | tonumber? // 0) as $cost |
+        select($loop == "" or (($impact >= 1 and $impact <= 4) and
+          ($cost == 1 or $cost == 2 or $cost == 3))) |
+        # High and Urgent share the high-impact row. Cost 5 needs splitting.
+        (if $impact == 1 or $impact == 2 then 0 elif $impact == 3 then 1 else 2 end) as $row |
+        (if $cost == 1 then 0 elif $cost == 2 then 1 else 2 end) as $column |
+        ($row * 3 + $column + 1) as $cell |
+        {id,repo,home:$home,loop:$loop,cycle:field("Loop cycle"),
+          grid:(if $loop == "" then 99 elif $cell == 6 then 10 else $cell end),
+          manual:(field("Loop sort") | tonumber? // 0),order}]') || return 1
     all=$(jq -cn --argjson a "$all" --argjson b "$rows" '$a+$b') || return 1
   done
   printf '%s\n' "$all"
@@ -139,7 +175,9 @@ refill_sample() {
     ready=$(ready_rows) || return 75
     while IFS= read -r lane; do
       [ -n "$lane" ] || continue
-      ids=$(printf '%s\n' "$ready" | jq -c --arg p "$lane" '[.[] | select(.repo == $p)]') || return 75
+      ids=$(printf '%s\n' "$ready" | jq -c --arg p "$lane" '[.[] | select(.repo == $p)] |
+        sort_by(if .loop == "" then [1,.order] else [0,.cycle,.grid,.manual,.order] end) |
+        map({id,repo,home})') || return 75
       count=$(printf '%s\n' "$ids" | jq length)
       [ "$count" -gt 0 ] || continue
       # Any local clone of the lane suffices for same-origin occupancy.

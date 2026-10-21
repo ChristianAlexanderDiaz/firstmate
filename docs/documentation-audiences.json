@@ -110,6 +110,14 @@
   ],
   "surfaces": [
     {
+      "path": "docs/host-budget.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/examples/host-budget.json",
+      "audience": "operator-example"
+    },
+    {
       "path": ".agents/skills/afk/SKILL.md",
       "audience": "agent-runtime"
     },
