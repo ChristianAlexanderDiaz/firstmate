@@ -234,6 +234,7 @@ EOF
 # these executions of the real staged spawn command.
 test_orca_launch_uses_controlled_tmux_environment() {
   local setting case_dir home id fb out status staged staged_content result expected value pane_shell failbin delivered
+  local -a pane_shell_args
   for setting in absent enabled empty unavailable malformed nonregular missing sendfail; do
     id="orca-env-$setting"
     case_dir="$TMP_ROOT/$id"
@@ -331,11 +332,14 @@ EOF
       empty) expected=$'unset\nunset\nunset\nunset\nunset\n1\npersonal-lang' ;;
     esac
     for pane_shell in /bin/sh /bin/bash /bin/zsh; do
+      pane_shell_args=(-i -c)
+      # Keep host-wide zsh startup files from replacing the hermetic fixture PATH.
+      [ "$pane_shell" != /bin/zsh ] || pane_shell_args=(-f -i -c)
       [ -x "$pane_shell" ] || continue
       (umask 077; printf '%s\n' "$staged_content" > "$staged")
       # shellcheck disable=SC2016 # The child pane expands the source path and its failure status.
       result=$(env -i HOME="$case_dir/user-home" PATH="$failbin:$PATH" TERM=xterm \
-        "$pane_shell" -i -c '. "$1"; fm_status=$?; [ "$fm_status" -ne 0 ] || exit 2; printf "\nSHELL-STILL-ALIVE\n"' _ "$staged" 2>&1)
+        "$pane_shell" "${pane_shell_args[@]}" '. "$1"; fm_status=$?; [ "$fm_status" -ne 0 ] || exit 2; printf "\nSHELL-STILL-ALIVE\n"' _ "$staged" 2>&1)
       expect_code 0 "$?" "failed deletion must preserve the interactive $pane_shell pane"
       assert_contains "$result" 'cannot remove private launch file' "deletion failure must refuse before worker execution"
       assert_contains "$result" SHELL-STILL-ALIVE "deletion refusal killed the interactive $pane_shell pane"
@@ -343,7 +347,7 @@ EOF
       mv "$staged" "$staged.reclaimed"
       # shellcheck disable=SC2016 # The child pane expands the source path and its failure status.
       result=$(env -i HOME="$case_dir/user-home" PATH="$PATH" TERM=xterm \
-        "$pane_shell" -i -c '. "$1"; fm_status=$?; [ "$fm_status" -ne 0 ] || exit 2; printf "\nSHELL-STILL-ALIVE\n"' _ "$staged.reclaimed" 2>&1)
+        "$pane_shell" "${pane_shell_args[@]}" '. "$1"; fm_status=$?; [ "$fm_status" -ne 0 ] || exit 2; printf "\nSHELL-STILL-ALIVE\n"' _ "$staged.reclaimed" 2>&1)
       expect_code 0 "$?" "a launch file reclaimed before the pane unlinked it must refuse the worker in $pane_shell"
       assert_contains "$result" 'cannot remove private launch file' "a reclaimed launch file must refuse before worker execution"
       assert_contains "$result" SHELL-STILL-ALIVE "a reclaimed launch file killed the interactive $pane_shell pane"
@@ -352,14 +356,14 @@ EOF
       # its unlink fails and when the file was reclaimed before the pane opened it.
       delivered=$(grep "/launch\." "$case_dir/terminal.log" | tail -1)
       result=$(env -i HOME="$case_dir/user-home" PATH="$failbin:$PATH" TERM=xterm \
-        "$pane_shell" -i -c "set -e; $delivered; printf '\nSHELL-STILL-ALIVE\n'" 2>&1)
+        "$pane_shell" "${pane_shell_args[@]}" "set -e; $delivered; printf '\nSHELL-STILL-ALIVE\n'" 2>&1)
       expect_code 0 "$?" "failed deletion must preserve an errexit $pane_shell pane"
       assert_contains "$result" 'cannot remove private launch file' "deletion failure under errexit must refuse before worker execution"
       assert_contains "$result" SHELL-STILL-ALIVE "deletion refusal killed the errexit $pane_shell pane"
       assert_not_contains "$result" 'launch file still contains credentials' "deletion refusal under errexit ran the worker in $pane_shell"
       mv "$staged" "$staged.reclaimed"
       result=$(env -i HOME="$case_dir/user-home" PATH="$PATH" TERM=xterm \
-        "$pane_shell" -i -c "set -e; $delivered; printf '\nSHELL-STILL-ALIVE\n'" 2>&1)
+        "$pane_shell" "${pane_shell_args[@]}" "set -e; $delivered; printf '\nSHELL-STILL-ALIVE\n'" 2>&1)
       expect_code 0 "$?" "a launch file reclaimed before the pane opened it must preserve an errexit $pane_shell pane"
       assert_contains "$result" SHELL-STILL-ALIVE "a launch file reclaimed before sourcing killed the errexit $pane_shell pane"
       mv "$staged.reclaimed" "$staged"

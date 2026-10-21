@@ -634,7 +634,8 @@ Colors can be added with Herdr's inline token styles.
 
 With project groups on, a new projected task is placed inside its owning parent's child block right after the last child whose `fm_group_order` token sorts at or before its own, instead of at the block end.
 A child without that token counts as sorting before it, so untagged children never move behind a new task.
-Everything else is [Ordering](#ordering) unchanged: one verified move of the new workspace only, never an existing child, a parent, or a foreign workspace, and every ambiguity leaves the new task where Herdr created it.
+The group insertion moves only the new workspace, and every ambiguity leaves it where Herdr created it.
+The separate whole-session pass follows [Ordering](#ordering).
 A task whose group changes later keeps its position until it ends.
 
 ### Verification status

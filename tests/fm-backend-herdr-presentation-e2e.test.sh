@@ -805,7 +805,7 @@ ORDER_LIST=$(lab workspace list) || fail "could not inspect concurrent presentat
 CREATED_LABELS=$(projection_labels_from_log "$PROJECTION_ORDER_START")
 # With no second mate covering their project, primary workers sort below the
 # second mates in Herdr's actual create order.
-EXPECTED_LABELS=$(printf 'firstmate\n2ndmate-alpha\n2ndmate-bravo\n%s\n%s' "$PROJECTED_LABEL" "$CREATED_LABELS")
+EXPECTED_LABELS=$(printf 'firstmate\n2ndmate-alpha\n2ndmate-bravo\nfm-anchor\n%s\n%s' "$PROJECTED_LABEL" "$CREATED_LABELS")
 ACTUAL_LABELS=$(printf '%s' "$ORDER_LIST" | jq -r '.result.workspaces[].label')
 [ "$ACTUAL_LABELS" = "$EXPECTED_LABELS" ] || fail "workspace order was not firstmate, secondmates, stable primary workers: $ACTUAL_LABELS"
 # Each worker is created last, which is already its sorted place.
@@ -877,9 +877,9 @@ finish_concurrent_expected_abort abort-b "$ABORT_B_STATUS" "$TMP_ROOT/abort-b.ou
 # The fixture returns successfully without entering a worktree. Completion
 # itself must refuse promptly, even with exit status zero, and retain the pane.
 grep -F "treehouse get exited with status 0 before entering an isolated worktree" "$TMP_ROOT/abort-a.err" >/dev/null 2>&1 \
-  || fail "post-create abort fixture A did not reach the armed validation failure"
+  || fail "post-create abort fixture A did not reach the armed validation failure: $(cat "$TMP_ROOT/abort-a.err")"
 grep -F "treehouse get exited with status 0 before entering an isolated worktree" "$TMP_ROOT/abort-b.err" >/dev/null 2>&1 \
-  || fail "post-create abort fixture B did not reach the armed validation failure"
+  || fail "post-create abort fixture B did not reach the armed validation failure: $(cat "$TMP_ROOT/abort-b.err")"
 ABORT_A_PANE=$(cat "$POST_CREATE_ABORT_CONTROL/abort-a/task-pane")
 ABORT_B_PANE=$(cat "$POST_CREATE_ABORT_CONTROL/abort-b/task-pane")
 ABORT_SEQUENCE=$(sed -n "$((ABORT_FOCUS_START + 1)),\$p" "$FOCUS_AUDIT_LOG" | awk -F '\t' -v a="$ABORT_A_PANE" -v b="$ABORT_B_PANE" '

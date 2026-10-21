@@ -990,8 +990,8 @@ test_real_gh_errors_drive_retry_and_summary() {
   why='core read exited 1 with Ns of budget left: gh: HTTP 404'
   [ "$(printf '%s\n' "$out" | mask_budget)" = "contributions: observation unavailable for https://github.com/o/r/pull/8 - $why" ] \
     || fail "bare gh HTTP 404 did not print one unavailable line: $out"
-  [ "$(grep -cFx 'api repos/o/r/pulls/8' "$home/forge/calls")" = 1 ] \
-    || fail 'bare gh HTTP 404 was retried'
+  [ "$(grep -cFx 'api repos/o/r/pulls/8' "$home/forge/calls")" = 2 ] \
+    || fail 'bare gh HTTP 404 did not receive the fork retry'
   [ "$(jq -r .records[0].error "$home/data/delivery/contributions.json" | mask_budget)" = "forge observation unavailable: $why" ] \
     || fail 'bare gh HTTP 404 lost its error'
 
@@ -1032,8 +1032,8 @@ test_real_gh_errors_drive_retry_and_summary() {
   why='core read exited 137 with Ns of budget left: process killed outside the read bound'
   [ "$(printf '%s\n' "$out" | mask_budget)" = "contributions: observation unavailable for https://github.com/o/r/pull/8 - $why" ] \
     || fail "an external exit 137 was treated as budget refusal: $out"
-  [ "$(grep -cFx 'api repos/o/r/pulls/8' "$home/forge/calls")" = 1 ] \
-    || fail 'an external exit 137 was retried'
+  [ "$(grep -cFx 'api repos/o/r/pulls/8' "$home/forge/calls")" = 2 ] \
+    || fail 'an external exit 137 did not receive the fork retry'
   [ "$(jq -r .records[0].error "$home/data/delivery/contributions.json" | mask_budget)" = "forge observation unavailable: $why" ] \
     || fail 'an external exit 137 left no error evidence'
   pass 'real gh error shapes drive the intended retry decision and keep their error'

@@ -242,6 +242,7 @@ process_start_identity_case() (
     esac
   }
   function /bin/ps() { identity_ps "$@"; }
+  # shellcheck disable=SC2329 # Intercepts the absolute ps path used by production.
   function /usr/bin/ps() { identity_ps "$@"; }
   # Fields 4-21 are deliberately different from field 22. The command has
   # whitespace, a newline, and embedded closing parentheses.

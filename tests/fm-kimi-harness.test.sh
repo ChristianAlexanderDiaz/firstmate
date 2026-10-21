@@ -125,6 +125,9 @@ case "${1:-}" in
       case "$literal" in
         ". '"*"'") staged=${literal#". '"}; staged=${staged%"'"}; [ ! -f "$staged" ] || literal=$(cat "$staged") ;;
       esac
+      # The fork stages a sleep guard around the harness command.
+      literal=${literal#*$'\nelse\n'}
+      literal=${literal%$'\nfi'}
       case "$literal" in
         *' --auto')
           printf '%s\n' "$literal" >> "$FM_FAKE_LAUNCH_LOG"

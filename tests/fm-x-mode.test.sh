@@ -2979,7 +2979,8 @@ test_followup_post_record_failure_clears_link() {
 if [ -n "${FAKE_MV_FAIL_AFTER_FLAG:-}" ] \
   && [ -f "$FAKE_MV_FAIL_AFTER_FLAG" ] \
   && [ -n "${FAKE_MV_FAILED_ONCE:-}" ] \
-  && [ ! -f "$FAKE_MV_FAILED_ONCE" ]; then
+  && [ ! -f "$FAKE_MV_FAILED_ONCE" ] \
+  && [ "${!#}" = "${FAKE_MV_META_TARGET:-}" ]; then
   : > "$FAKE_MV_FAILED_ONCE"
   exit 2
 fi
@@ -2991,7 +2992,7 @@ SH
   meta="$home/state/task-rf.meta"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_NOW_OVERRIDE=1700003600 FAKE_FOLLOWUP_CODE=200 FAKE_CURL_TOUCH_AFTER_POST="$flag" \
-    FAKE_MV_FAIL_AFTER_FLAG="$flag" FAKE_MV_FAILED_ONCE="$mvflag" \
+    FAKE_MV_FAIL_AFTER_FLAG="$flag" FAKE_MV_FAILED_ONCE="$mvflag" FAKE_MV_META_TARGET="$meta" \
     "$ROOT/bin/fm-x-followup.sh" task-rf - <<<"posted but local state write fails" 2>"$err"); rc=$?
   expect_code 0 "$rc" "followup post state-record failure exit"
   [ "$out" = "req-rf" ] || fail "posted followup with tombstoned state must echo the request_id (got: $out)"

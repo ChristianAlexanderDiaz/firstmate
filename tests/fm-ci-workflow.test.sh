@@ -41,23 +41,9 @@ def repository_value(raw, repo, context = {})
   expression = raw.sub(/\A\$\{\{\s*/, "").sub(/\s*\}\}\z/, "").strip
   json = expression.start_with?("fromJSON(")
   expression = expression[9...-1] if json
-  expression = expression.gsub(/github\.repository\s*(==|!=)\s*'([^']+)'/) do
-    equal = repo == Regexp.last_match(2)
-    (Regexp.last_match(1) == "==" ? equal : !equal).to_s
-  end
-  expression = expression.gsub("!cancelled()", "true").gsub("always()", "true")
-  atom = lambda do |token|
-    token = token.strip
-    next true if token == "true"
-    next false if token == "false"
-    next token.to_i if token.match?(/\A[0-9]+\z/)
-    next token[1...-1] if token.start_with?("'") && token.end_with?("'")
-    context.fetch(token) { raise "unsupported expression #{token}" }
-  end
-  value = expression.split("||").map do |part|
-    part.split("&&").reduce(true) { |result, token| result && atom.call(token) }
-  end.find { |part| part != false && part != nil }
-  value = false if value.nil?
+  context = {"github.repository" => repo, "github.event_name" => "pull_request",
+             "vars.FM_CI_SKIP_PUSH" => "", "vars.FM_CI_SKIP_MACOS" => ""}.merge(context)
+  value = Expression.evaluate(expression, context)
   json ? JSON.parse(value) : value
 end
 
@@ -72,10 +58,6 @@ def repository_workflow(path, repo)
   doc
 end
 RUBY
-ruby -r"$WORKFLOW_TMP/resolve.rb" -e '
-puts YAML.dump(repository_workflow(ARGV[0], "kunchenguid/firstmate"))
-' "$ORIGINAL_CI_WORKFLOW" > "$WORKFLOW_TMP/upstream.yml" || fail "resolve upstream CI"
-CI_WORKFLOW="$WORKFLOW_TMP/upstream.yml"
 # Evaluate the subset of GitHub's expression language that ci.yml uses -
 # string literals, context lookups, the status functions, !, ==, !=, &&,
 # ||, and parentheses - against a simulated context hash, following the
@@ -118,6 +100,7 @@ class Expression
     until scanner.eos?
       next if scanner.skip(/\s+/)
       if scanner.scan(/\x27([^\x27]*)\x27/) then @tokens << [:string, scanner[1]]
+      elsif scanner.scan(/[0-9]+/) then @tokens << [:number, scanner.matched.to_i]
       elsif scanner.scan(/\|\||&&|==|!=|[()!]/) then @tokens << [:operator, scanner.matched]
       elsif scanner.scan(/[A-Za-z_][\w.\-]*(?:\(\))?/) then @tokens << [:name, scanner.matched]
       else raise "unsupported expression syntax at: #{scanner.rest}"
@@ -187,8 +170,9 @@ class Expression
       return inner
     end
     kind, value = @tokens.shift
-    raise "expected an operand, got #{kind.inspect}" unless kind == :string || kind == :name
-    return value if kind == :string
+    raise "expected an operand, got #{kind.inspect}" unless [:string, :number, :name].include?(kind)
+    return value if kind == :string || kind == :number
+    return value == "true" if ["true", "false"].include?(value)
     if STATUS_FUNCTIONS.include?(value)
       status = @context.fetch("needs.status", "success")
       return value == "always()" || value == "#{status}()"
@@ -198,6 +182,11 @@ class Expression
   end
 end
 '
+printf '%s\n' "$EXPRESSION_RUBY" >> "$WORKFLOW_TMP/resolve.rb"
+ruby -r"$WORKFLOW_TMP/resolve.rb" -e '
+puts YAML.dump(repository_workflow(ARGV[0], "kunchenguid/firstmate"))
+' "$ORIGINAL_CI_WORKFLOW" > "$WORKFLOW_TMP/upstream.yml" || fail "resolve upstream CI"
+CI_WORKFLOW="$WORKFLOW_TMP/upstream.yml"
 
 # Resolve the workflow's concurrency contract under one simulated event and
 # print "<group><TAB><cancel-in-progress>".

@@ -806,14 +806,17 @@ case "$cmd" in
     rm -f "$world/$w.id" "$world/$w.path"
     ;;
   send-keys)
-    if [ "$text" = "treehouse get Enter" ]; then
+    # The fork reports allocation completion from a staged get.sh command.
+    case "$text" in
+      "treehouse get Enter"|". '"*"/get.sh' Enter")
       w=$(window_name "$target")
       for slot in "$slots"/*/project; do
         grep -qxF -- "$slot" "$world"/*.path 2>/dev/null && continue
         printf '%s\n' "$slot" > "$world/$w.path"
         break
       done
-    fi
+      ;;
+    esac
     ;;
 esac
 exit 0

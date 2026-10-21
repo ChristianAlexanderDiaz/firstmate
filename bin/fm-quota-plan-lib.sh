@@ -160,6 +160,7 @@ fm_quota_plan_admit() {
   root=$(fm_firstmate_root_home "$home") || return 75
   mkdir -p "$root/state" || return 75
   if ! fm_lock_acquire_wait_max "$root/state/.quota-plan-admission.lock" 45; then
+    # shellcheck disable=SC2034 # Diagnostic retained for callers.
     FM_QUOTA_PLAN_ERROR='another quota admission is still in progress; retry the queued ticket'
     return 75
   fi
