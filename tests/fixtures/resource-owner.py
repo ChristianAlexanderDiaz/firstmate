@@ -20,6 +20,13 @@ spec.loader.exec_module(resource)
 root = Path(sys.argv[2])
 real_time = time
 real_uptime = resource.uptime
+wall_epoch = real_time.time() - real_time.monotonic()
+
+
+def wall_time():
+    # Keep the synthetic monitor and owner on one stable wall-clock basis.
+    # Host clock corrections must not restart this fixture's policy recovery.
+    return wall_epoch + real_time.monotonic()
 
 
 def awake_uptime():
@@ -40,7 +47,7 @@ def offset():
         return 0
 
 
-resource.time = types.SimpleNamespace(time=real_time.time, monotonic=lambda: real_time.monotonic() + offset(), sleep=real_time.sleep)
+resource.time = types.SimpleNamespace(time=wall_time, monotonic=lambda: real_time.monotonic() + offset(), sleep=real_time.sleep)
 
 
 def publish():
@@ -53,9 +60,9 @@ def publish():
                 (root / "monitor.json").write_text("{")
             else:
                 sample.setdefault("bootSessionUUID", resource.boot_id())
-                sample.setdefault("timestamp", real_time.time())
+                sample.setdefault("timestamp", wall_time())
                 sample.setdefault("uptimeSeconds", resource.uptime())
-                sample.setdefault("sequence", int(real_time.time() * 100))
+                sample.setdefault("sequence", int(real_time.monotonic() * 100))
                 target = root / "monitor.tmp"
                 target.write_text(json.dumps(sample))
                 os.replace(target, root / "monitor.json")

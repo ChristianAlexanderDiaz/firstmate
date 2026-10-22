@@ -253,8 +253,10 @@ fm_lock_holder_alive() {
   if [ "$comparable" -eq 1 ]; then
     # Only the start time is compared: the holder's command changes when it
     # execs while holding the lock, and that is still the genuine holder.
-    [ "$(_fm_identity_start "$rec_identity")" = "$(_fm_identity_start "$cur_identity")" ]
-    return
+    # A bare return inside an EXIT trap can reuse the status that invoked the
+    # trap, even after a successful comparison. Keep a live holder protected.
+    [ "$(_fm_identity_start "$rec_identity")" = "$(_fm_identity_start "$cur_identity")" ] && return 0
+    return 1
   fi
   ! fm_boot_id_differs "$rec_boot" "$cur_boot"
 }
