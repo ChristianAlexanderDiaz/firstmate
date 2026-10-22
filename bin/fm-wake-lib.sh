@@ -783,8 +783,8 @@ fm_lock_mid_acquire_is_fresh() {
     ''|*[!0-9]*)
       mid_acquire_stale=$FM_LOCK_STALE_AFTER
       [ "$mid_acquire_stale" -lt 2 ] && mid_acquire_stale=2
-      [ "$(fm_path_age "$lockdir")" -lt "$mid_acquire_stale" ]
-      return
+      [ "$(fm_path_age "$lockdir")" -lt "$mid_acquire_stale" ] && return 0
+      return 1
       ;;
   esac
   return 1
