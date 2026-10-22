@@ -17,6 +17,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=tests/remote-herdr-fixture.sh
 . "$(dirname "${BASH_SOURCE[0]}")/remote-herdr-fixture.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-remote-job-lib.sh"
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 TMP_ROOT=$(fm_test_tmproot fm-remote-compact-adviser)
@@ -25,22 +27,21 @@ TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
 PARENT="$TMP_ROOT/parent"
 REMOTE_ROOT="$TMP_ROOT/remote-root"
 REMOTE_HOME="$TMP_ROOT/remote-home"
+ACCOUNT_HOME="$TMP_ROOT/account"
 FAKEBIN=$(fm_fakebin "$TMP_ROOT/fake")
 PROBEBIN="$TMP_ROOT/probebin"
 HERDR_LOG="$TMP_ROOT/remote-herdr.log"
 HERDR_STATE="$TMP_ROOT/remote-herdr.state"
 CLAIMS="$TMP_ROOT/claims"
 mkdir -p "$PARENT/data" "$PARENT/state" "$PARENT/config" "$PARENT/projects" \
-  "$REMOTE_ROOT" "$CLAIMS" "$PROBEBIN" "$TMP_ROOT/pane-home"
+  "$REMOTE_ROOT" "$CLAIMS" "$PROBEBIN" "$TMP_ROOT/pane-home" "$ACCOUNT_HOME"
+WORKER_PID=
 cleanup() {
-  local worker_pid=''
   FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
     "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
-  if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
-    worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid")
-    # Stop the detached restart supervisor as well as its serving child.
-    . "$ROOT/bin/fm-remote-job-lib.sh"
-    fm_remote_job_stop_worker_tree "$worker_pid" || true
+  if [ -n "$WORKER_PID" ]; then
+    fm_remote_job_stop_worker_tree "$WORKER_PID" || true
+    wait "$WORKER_PID" 2>/dev/null || true
   fi
   # The spawn's immutable Git-hook directory needs the shared writable-tree
   # cleanup; plain rm leaves it behind and can race a restarted worker.
@@ -70,11 +71,44 @@ SH
 chmod +x "$REMOTE_ROOT/bin/tmux"
 install_remote_herdr_fixture "$REMOTE_ROOT" "$HERDR_STATE" "$HERDR_LOG" \
   "$TMP_ROOT/herdr-send-fail" "$TMP_ROOT/herdr.sock"
+# Cover both the incoming entrypoint and env -i job commands: the former gets
+# the absolute systemctl override, while the latter rebuild PATH from the
+# remote root and account bin directories. Unit writes also stay private.
+mkdir -p "$ACCOUNT_HOME/.local/bin" "$ACCOUNT_HOME/.config/systemd/user" "$ACCOUNT_HOME/run"
+chmod 700 "$ACCOUNT_HOME/run"
+cat > "$FAKEBIN/systemctl" <<SH
+#!/usr/bin/env bash
+printf '%s %s\\n' "\${0##*/}" "\$*" >> '$TMP_ROOT/host-manager-calls'
+exit 70
+SH
+chmod +x "$FAKEBIN/systemctl"
+for manager in systemctl loginctl; do
+  cp "$FAKEBIN/systemctl" "$REMOTE_ROOT/bin/$manager"
+  cp "$FAKEBIN/systemctl" "$ACCOUNT_HOME/.local/bin/$manager"
+done
+cp "$FAKEBIN/systemctl" "$FAKEBIN/loginctl"
+export PATH="$FAKEBIN:$PATH"
+export FM_REMOTE_SYSTEMCTL="$FAKEBIN/systemctl"
+export FM_REMOTE_SYSTEMD_UNIT_DIR="$ACCOUNT_HOME/.config/systemd/user"
+export XDG_CONFIG_HOME="$ACCOUNT_HOME/.config" XDG_RUNTIME_DIR="$ACCOUNT_HOME/run"
 git -C "$REMOTE_ROOT" init -q -b main
 git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test
 git -C "$REMOTE_ROOT" add .
 git -C "$REMOTE_ROOT" commit -qm 'remote fixture root'
+
+# The entrypoint intentionally ignores caller HOME and resolves the SSH
+# account from passwd. Start our private account worker directly, as the lane
+# transport fixture does, and keep these requests inside that existing worker.
+HOME="$ACCOUNT_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+  FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/remote-jobs" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" > "$TMP_ROOT/worker.log" 2>&1 &
+WORKER_PID=$!
+for _ in $(seq 1 200); do
+  [ -f "$TMP_ROOT/remote-jobs/worker.ready" ] && break
+  sleep 0.1
+done
+assert_present "$TMP_ROOT/remote-jobs/worker.ready" "private remote worker did not report ready"
 
 cat > "$FAKEBIN/fake-ssh" <<'SH'
 #!/usr/bin/env bash
@@ -94,7 +128,7 @@ if printf '%s' "$4" | base64 --decode 2>/dev/null | tr '\0' '\n' | head -1 | gre
   printf 'ok: remote second-mate readiness confirmed on this host\n'
   exit 0
 fi
-exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
+FM_REMOTE_JOB_ACTIVE=1 exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
 SH
 chmod +x "$FAKEBIN/fake-ssh"
 
@@ -113,6 +147,8 @@ printf '## In flight\n\n## Queued\n\n## Done\n' > "$PARENT/data/backlog.md"
 printf '%s\n' "$$" > "$PARENT/state/.lock"
 
 remote_env() {
+  HOME="$ACCOUNT_HOME" \
+  FM_REMOTE_SYSTEMCTL="$FAKEBIN/systemctl" \
   FM_HOME="$PARENT" \
   FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
   FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
@@ -202,5 +238,8 @@ SEEN=$(replay_remote_launch bare) \
 assert_equals 1 "$SEEN" \
   "a remote second mate launched under the cleared allowlisted environment must still start with the compact adviser disabled"
 pass "the remote route keeps the compact-adviser switch through the cleared allowlisted environment"
+
+assert_absent "$TMP_ROOT/host-manager-calls" "the isolated remote account contacted the host's user manager"
+pass "the remote fixture never contacts the host's systemd user manager"
 
 echo "ALL TESTS PASSED"
