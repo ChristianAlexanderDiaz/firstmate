@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Fixture only: fresh synthetic dotfiles monitor and controllable policy clock.
 
-The production owner and every real client/socket/process path remain intact.
+The production owner and every real client/socket path remain intact.
+An optional orphan-controller marker reports one live process as parented by
+process 1; an optional legacy-owner marker models an owner that predates
+portable status and browser bridge recovery.
 No thermal load, machine settings, user daemon or runtime backend is involved.
 """
 import importlib.util
@@ -20,6 +23,7 @@ spec.loader.exec_module(resource)
 root = Path(sys.argv[2])
 real_time = time
 real_uptime = resource.uptime
+real_process_table = resource.process_table
 wall_epoch = real_time.time() - real_time.monotonic()
 
 
@@ -27,6 +31,34 @@ def wall_time():
     # Keep the synthetic monitor and owner on one stable wall-clock basis.
     # Host clock corrections must not restart this fixture's policy recovery.
     return wall_epoch + real_time.monotonic()
+
+
+def process_table():
+    rows = real_process_table()
+    try:
+        orphan = int((root / "orphan-controller").read_text())
+        if orphan in rows:
+            rows[orphan]["ppid"] = 1
+    except (OSError, ValueError):
+        pass
+    return rows
+
+
+resource.process_table = process_table
+real_handle = resource.Budget.handle
+
+
+def handle(budget, request):
+    legacy = (root / "legacy-owner").exists() and isinstance(request, dict)
+    if legacy and request.get("op") == "inherit-browser":
+        raise resource.Refusal("invalid request nonce")
+    result = real_handle(budget, request)
+    if legacy and request.get("op") == "status":
+        result.pop("portable", None)
+    return result
+
+
+resource.Budget.handle = handle
 
 
 def awake_uptime():

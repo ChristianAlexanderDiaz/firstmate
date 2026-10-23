@@ -33,6 +33,24 @@ The endpoint and model CLI are synthetic; no vendor session, Herdr lifecycle or 
 The shared launch command receives the wrapper before backend delivery, without introducing a harness-rendered classifier or backend-specific restore operation.
 The [host budget guide](../host-budget.md) owns rollout and the explicit composite browser lifetime boundary.
 
+Verified again on 2026-10-23 with Python 3.12.3 on Linux 6.6.87.2 (WSL2):
+
+```sh
+bash bin/fm-test-run.sh --jobs 2 --per-script-timeout-secs 1800 tests/fm-resource.test.sh
+```
+
+All 54 cases passed, including warning-pressure admission, resident worker admission under fair thermal from warning through nominal recovery while heavy work waits, queue bypass, dead controllers, orphan cleanup only after a controller's parent changes to process 1, admission of controllers already parented by process 1, legacy queued clients without parent metadata across an owner restart, persistent stuck-request notifications without false self-held alerts from resident leases, supervisor launch exemption, browser bridge inheritance through the detached `chrome-devtools-axi` bridge with and without lease environment filtering, standalone bridge queuing with no queue entry left after timeout, and power classification where a 94 W AC adapter is desk power unless the battery drains, plus new clients served by an owner that predates the portable status field or browser bridge recovery.
+The orphan cases supply the parent-1 observation through the fixture while retaining a real live kernel process identity, making them independent of the test host's subreaper behavior.
+The browser bridge cases use synthetic detached transports and executables through the real adapter, socket and lease interfaces.
+
+```text
+Ran 54 tests in 400.063s
+
+OK
+FM_TEST_END 2026-10-23T04:18:18Z tests/fm-resource.test.sh exit=0 duration_ms=400182 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=400319
+```
+
 ## Harness detection precedence
 
 Firstmate's own harness comes from two kinds of evidence, and `bin/fm-harness.sh` owns how they combine: an environment marker names its harness, and the nearest harness process in the parent chain proves who owns the process tree.
