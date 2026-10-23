@@ -4,12 +4,16 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/remote-job-fixture.sh
+. "$(dirname "${BASH_SOURCE[0]}")/remote-job-fixture.sh"
 # shellcheck source=tests/remote-herdr-fixture.sh
 . "$(dirname "${BASH_SOURCE[0]}")/remote-herdr-fixture.sh"
 # shellcheck source=tests/herdr-client-pair-fixture.sh
 . "$(dirname "${BASH_SOURCE[0]}")/herdr-client-pair-fixture.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
+command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
+command -v node >/dev/null 2>&1 || { echo "skip: node not found"; exit 0; }
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 TMP_ROOT=$(fm_test_tmproot fm-remote-secondmate-e2e)
 mkdir -p "$TMP_ROOT"
@@ -31,7 +35,7 @@ PARENT_ROUTE_INBOX="$REMOTE_HOME/state/parent-route/ios.inbox"
 CLAIMS="$TMP_ROOT/claims"
 mkdir -p "$PARENT/data" "$PARENT/state" "$PARENT/config" "$PARENT/projects" "$REMOTE_ROOT" "$CLAIMS"
 cleanup() {
-  local worker_pid=''
+  local child
   touch "$TMP_ROOT/provision.release" "$TMP_ROOT/seed.release" "$TMP_ROOT/handoff.release" \
     "$TMP_ROOT/inherit.release" "$TMP_ROOT/launch.release" "$TMP_ROOT/race-clone.release" 2>/dev/null || true
   # A watcher leg cut short by a failed assertion is still polling the root.
@@ -39,16 +43,25 @@ cleanup() {
     kill "$watch_pid" 2>/dev/null || true
     wait "$watch_pid" 2>/dev/null || true
   fi
+  if [ -n "${liveness_holder_pid:-}" ]; then
+    kill "$liveness_holder_pid" 2>/dev/null || true
+    wait "$liveness_holder_pid" 2>/dev/null || true
+  fi
   FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
     "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
-  if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
-    worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid")
-    # The published pid is the serving child; killing it alone lets its
-    # detached supervisor restart it while the fixture root is being removed.
-    . "$ROOT/bin/fm-remote-job-lib.sh"
-    fm_remote_job_stop_worker_tree "$worker_pid" || true
+  # Released spawn/config operations can still submit jobs. Drain those
+  # callers before stopping their worker or removing its fixture root.
+  for child in $(jobs -pr); do
+    [ "$child" != "${FM_TEST_REMOTE_WORKER_PID:-}" ] || continue
+    wait "$child" 2>/dev/null || true
+  done
+  FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
+    "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
+  if [ -n "${FM_TEST_REMOTE_GUARDS:-}" ]; then
+    fm_test_remote_stop_worker "$TMP_ROOT/remote-jobs"
+    fm_test_remote_assert_isolated
   fi
-  rm -rf -- "$TMP_ROOT"
+  fm_test_cleanup
 }
 trap cleanup EXIT
 
@@ -104,6 +117,11 @@ SH
 chmod +x "$REMOTE_ROOT/bin/tmux"
 install_remote_herdr_fixture "$REMOTE_ROOT" "$HERDR_STATE" "$HERDR_LOG" \
   "$TMP_ROOT/herdr-send-fail" "$TMP_ROOT/herdr.sock"
+fm_test_remote_isolate "$TMP_ROOT" "$REMOTE_ROOT"
+# The worker composes PATH from its private account, including for retirement's
+# backlog reads. Expose executables without inheriting the operator's home.
+ln -s "$(command -v tasks-axi)" "$FM_TEST_REMOTE_ACCOUNT_HOME/.local/bin/tasks-axi"
+ln -s "$(command -v node)" "$FM_TEST_REMOTE_ACCOUNT_HOME/.local/bin/node"
 git -C "$REMOTE_ROOT" init -q -b main
 git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test
@@ -133,6 +151,8 @@ printf 'codex\n' > "$PARENT/config/secondmate-harness"
 printf 'tmux\n' > "$PARENT/config/backend"
 printf 'primary harness defaults\n' > "$PARENT/config/crew-harness"
 
+fm_test_remote_start_worker "$REMOTE_ROOT" "$TMP_ROOT/remote-jobs"
+
 cat > "$FAKEBIN/fake-ssh" <<'SH'
 #!/usr/bin/env bash
 count=$(cat "$FM_FAKE_SSH_COUNT" 2>/dev/null || echo 0)
@@ -145,6 +165,10 @@ entry=$2
 shift 2
 [ "$host" = remote-mac ] || exit 91
 [ "$entry" = fm-remote-entrypoint.sh ] || exit 92
+export HOME="$FM_TEST_REMOTE_ACCOUNT_HOME"
+# shellcheck source=/dev/null
+. "$FM_TEST_REMOTE_HELPERS"
+fm_test_remote_ssh_worker "$@" || exit $?
 cd "$FM_FAKE_REMOTE_CWD" || exit 93
 argv_b64=$4
 command_fields=$(perl -MMIME::Base64=decode_base64 -e '
@@ -992,11 +1016,11 @@ FM_FAKE_SSH_MODE=inherit-block remote_env "$ROOT/bin/fm-spawn.sh" ios --secondma
 spawn_concurrent=$!
 spawn_inherit_wait=0
 # Earlier inherited files traverse the worker before captain-shared.md, so give
-# a loaded portable runner 30 seconds to reach this deliberately blocked write.
+# a loaded portable runner two minutes to reach this deliberately blocked write.
 while [ ! -f "$TMP_ROOT/inherit.entered" ]; do
   kill -0 "$spawn_concurrent" 2>/dev/null || fail "remote spawn exited before its blocked inheritance write"
   spawn_inherit_wait=$((spawn_inherit_wait + 1))
-  [ "$spawn_inherit_wait" -le 1500 ] || fail "remote spawn never reached its blocked inheritance write"
+  [ "$spawn_inherit_wait" -le 6000 ] || fail "remote spawn never reached its blocked inheritance write: $(cat "$TMP_ROOT/spawn-concurrent.out")"
   sleep 0.02
 done
 cat > "$PARENT/data/captain-shared.md" <<'EOF'
@@ -1107,7 +1131,7 @@ while [ ! -f "$TMP_ROOT/inherit.entered" ]; do
   inherit_wait=$((inherit_wait + 1))
   # Match the earlier spawn/inheritance wait: a loaded portable runner can
   # spend several seconds in the remote entrypoint before reaching this write.
-  [ "$inherit_wait" -le 1500 ] || fail "first inheritance transaction never reached its blocked write: $(cat "$TMP_ROOT/config-concurrent-first.out")"
+  [ "$inherit_wait" -le 6000 ] || fail "first inheritance transaction never reached its blocked write: $(cat "$TMP_ROOT/config-concurrent-first.out")"
   sleep 0.02
 done
 cat > "$PARENT/data/captain-shared.md" <<'EOF'
@@ -1159,6 +1183,21 @@ remote_env "$ROOT/bin/fm-procevent-remote-reply.sh" handle ios 3 "$CONFIG_RESULT
   || fail "remote config reread acknowledgement was not ingested"
 pass "remote inherited config retains and retries a failed live reread nudge"
 
+newest_reply_result() {
+  local result seq newest='' newest_seq=-1
+  for result in "$PARENT/state/procevent-inbox/$SID".*.result; do
+    [ -f "$result" ] || continue
+    seq=${result%.result}
+    seq=${seq##*.}
+    case "$seq" in ''|*[!0-9]*) continue ;; esac
+    if [ "$seq" -gt "$newest_seq" ]; then
+      newest_seq=$seq
+      newest=$result
+    fi
+  done
+  printf '%s\n' "$newest"
+}
+
 resolve_ios_pending() {
   local pending_record pending_corr pending_result pending_seq before_results now_results pending_seen
   for pending_record in "$PARENT/state/pending-replies"/*; do
@@ -1175,7 +1214,7 @@ resolve_ios_pending() {
     pending_seen=0
     for _ in $(seq 1 800); do
       now_results=$(find "$PARENT/state/procevent-inbox" -name "$SID.*.result" 2>/dev/null | wc -l | tr -d ' ')
-      pending_result=$(find "$PARENT/state/procevent-inbox" -name "$SID.*.result" -print 2>/dev/null | sort | tail -1)
+      pending_result=$(newest_reply_result)
       if [ "$now_results" -gt "$before_results" ] && [ -n "$pending_result" ] \
         && [ -f "${pending_result%.result}.handled" ]; then
         pending_seen=1
@@ -1185,11 +1224,13 @@ resolve_ios_pending() {
     done
     [ "$pending_seen" -eq 1 ] \
       || fail "remote reply source did not capture a concurrent inheritance acknowledgment"
-    pending_result=$(find "$PARENT/state/procevent-inbox" -name "$SID.*.result" -print | sort | tail -1)
+    pending_result=$(newest_reply_result)
     pending_seq=${pending_result%.result}
     pending_seq=${pending_seq##*.}
     remote_env "$ROOT/bin/fm-procevent-remote-reply.sh" handle ios "$pending_seq" "$pending_result" >/dev/null \
       || fail "concurrent inheritance acknowledgment was not ingested"
+    [ "$(grep '^phase=' "$pending_record" | cut -d= -f2-)" = resolved ] \
+      || fail "the newest inheritance acknowledgment did not resolve its routed reply"
   done
 }
 resolve_ios_pending
@@ -1310,7 +1351,8 @@ FM_STATE_OVERRIDE="$WATCH_STATE" FM_SECONDMATE_LIVENESS_SECS=1 FM_POLL=1 \
   > "$TMP_ROOT/watch-liveness.out" 2> "$TMP_ROOT/watch-liveness.err" &
 watch_pid=$!
 watch_wait=0
-while kill -0 "$watch_pid" 2>/dev/null && [ "$watch_wait" -lt 1500 ]; do
+# Allow five minutes for the full serialized inheritance and readiness sequence.
+while kill -0 "$watch_pid" 2>/dev/null && [ "$watch_wait" -lt 15000 ]; do
   sleep 0.02
   watch_wait=$((watch_wait + 1))
 done
@@ -1501,7 +1543,8 @@ rm -f "$REMOTE_HOME/state/child.meta"
 if remote_env "$ROOT/bin/fm-teardown.sh" ios > "$TMP_ROOT/retire-unread-steering.out" 2>&1; then
   fail 'remote retirement discarded unread parent steering'
 fi
-assert_grep 'unread steering' "$TMP_ROOT/retire-unread-steering.out" 'remote retirement did not inspect its configured route inbox'
+assert_grep 'unread steering' "$TMP_ROOT/retire-unread-steering.out" \
+  "remote retirement did not inspect its configured route inbox: $(cat "$TMP_ROOT/retire-unread-steering.out")"
 assert_present "$REMOTE_HOME" 'unread steering refusal removed the actual remote home'
 mkdir -p "$PARENT_ROUTE_INBOX/handled"
 for message in "$PARENT_ROUTE_INBOX"/*.msg; do
@@ -1592,11 +1635,11 @@ FM_FAKE_SSH_MODE=launch-block remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmat
 spawn_retirement_pid=$!
 launch_wait=0
 # The respawn performs readiness and inheritance jobs before launch, so allow
-# the same 30-second loaded-runner bound as the earlier blocked worker path.
+# the same two-minute loaded-runner bound as the earlier blocked worker path.
 while [ ! -f "$TMP_ROOT/launch.entered" ]; do
   kill -0 "$spawn_retirement_pid" 2>/dev/null || fail "remote respawn exited before its blocked launch"
   launch_wait=$((launch_wait + 1))
-  [ "$launch_wait" -le 1500 ] || fail "remote respawn never reached its blocked launch"
+  [ "$launch_wait" -le 6000 ] || fail "remote respawn never reached its blocked launch: $(cat "$TMP_ROOT/spawn-retirement.out")"
   sleep 0.02
 done
 FM_FAKE_SSH_MODE=retire-lost-slot remote_env "$ROOT/bin/fm-teardown.sh" ios \
