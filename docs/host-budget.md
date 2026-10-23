@@ -79,7 +79,7 @@ The wrapper exports `FM_RESOURCE_CPU_WORKERS` and `FM_RESOURCE_BROWSER_WORKERS` 
 Package-script Vitest runs inherit `VITEST_MAX_WORKERS` and the older thread/fork environment limits, with minimum workers set to one; see [Vitest's environment variable migration](https://vitest.dev/guide/migration.html).
 Prepared launches and direct leased package-test runs install a Node PATH adapter that caps `node --test` before file arguments at two workers on desk power or one on portable power, including npm and pnpm package scripts.
 Portable power means a non-AC source, or AC while the owner's recent battery history shows the charge falling; AC that holds its charge is desk power whatever the adapter wattage.
-A client served by an owner that predates this classification applies the portable caps; one served by an owner without bridge recovery queues the bridge for its own browser reservation.
+A client served by an owner that predates this classification applies the portable caps; one served by an owner without bridge recovery queues a bridge that lacks lease variables for its own browser reservation.
 Explicit Node concurrency limits at or below the cap are preserved, and other Node invocations pass through unchanged.
 For npm, pnpm and yarn `run <script>` or `test`, simple package scripts invoking `playwright test` receive one worker, while simple Node test scripts rely on the prepared Node adapter subject to the PATH limitations below.
 Scripts containing `playwright test` or `node --test` tokens anywhere are refused unless they are recognized as a simple runner command; this includes shell compounds with setup or cleanup commands and script-level `--` terminators.

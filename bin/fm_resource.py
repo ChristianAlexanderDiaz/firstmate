@@ -836,8 +836,9 @@ def tool_job(args, name, config, digest):
             args.name in ("npm", "pnpm") and argv == ["version"]):
         os.execv(args.executable, [args.executable, *argv])
     if args.name == "npx" and any(v.split("@", 1)[0] == "chrome-devtools-mcp" for v in argv):
-        # MCP's stdio transport keeps PATH but strips lease variables. Recover
-        # a verified ancestor browser reservation, else queue a browser lease.
+        # MCP's stdio transport keeps PATH but may strip lease variables.
+        # Recover a verified ancestor browser reservation, else queue a
+        # browser lease.
         try:
             inherited = rpc(config, digest, op="inherit-browser", controller=identity(os.getpid()))
         except Refusal as error:

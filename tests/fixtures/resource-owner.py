@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Fixture only: fresh synthetic dotfiles monitor and controllable policy clock.
 
-The production owner and every real client/socket/process path remain intact.
-An optional legacy-owner marker models an owner that predates portable status
-and browser bridge recovery.
+The production owner and every real client/socket path remain intact.
+An optional orphan-controller marker reports one live process as parented by
+process 1; an optional legacy-owner marker models an owner that predates
+portable status and browser bridge recovery.
 No thermal load, machine settings, user daemon or runtime backend is involved.
 """
 import importlib.util
