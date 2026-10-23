@@ -147,6 +147,28 @@ class ResourceTests(unittest.TestCase):
                 result = self.call("run", "--class", "worker", "--wait-seconds", "0.1", "--", "true")
                 self.assertEqual(result.returncode, 75, result.stderr)
 
+    def test_fair_thermal_admits_workers_from_warning_through_nominal_recovery(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["thermalState"] = "fair"
+        sample["memory"]["pressure"] = "warning"
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"] == resource.MEMORY_WARNING)
+        self.assertEqual(self.acquire("worker")[1], "leased")
+        heavy, state = self.acquire("test")
+        self.assertEqual(state, "queued")
+        sample["memory"]["pressure"] = "normal"
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"] == "nominal thermal recovery required")
+        self.assertEqual(self.acquire("worker")[1], "leased")
+        self.assertIn(heavy, [q["token"] for q in self.status()["queue"]])
+        sample["thermalState"] = "nominal"
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis"))
+        self.assertIn(heavy, [q["token"] for q in self.status()["queue"]])
+        clock = self.root / "clock"
+        clock.write_text(str(int(clock.read_text()) + 121))
+        wait_for(lambda: heavy in self.status()["leases"])
+
     def test_unfittable_exclusive_does_not_block_workers_or_other_classes(self):
         self.assertEqual(self.acquire("worker", memory=6656)[1], "leased")
         exclusive, state = self.acquire("exclusive")

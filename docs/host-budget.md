@@ -117,6 +117,7 @@ Unknown or corrupt recovery state fails closed; preserve it for inspection rathe
 
 Missing, stale, unavailable, wrong-boot or malformed monitor samples hold new compute and resident workers.
 Resident workers may start under warning memory pressure, subject to the resident count, actual memory reservations and other telemetry checks; critical or unknown pressure holds new workers.
+Fair thermal awaiting nominal recovery also admits resident workers after warning pressure clears; serious or critical thermal holds them.
 Heavy and exclusive jobs remain held under warning pressure.
 The queue admits requests that fit the available capacity without reserving memory for waiting requests, so a queued exclusive job cannot block workers or smaller compute jobs behind it.
 Reconciliation drops queued requests whose controller identity is dead or whose controller was reparented to process 1 after it started waiting; such a controller cannot queue again.
