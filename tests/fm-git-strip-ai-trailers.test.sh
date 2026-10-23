@@ -259,14 +259,20 @@ test_unresolvable_project_hookspath_still_refuses() {
   make_repo "$repo"
   printf 'note\n' >>"$repo/README.md"
   git -C "$repo" add README.md
-  git -C "$repo" config core.hooksPath '~fm-no-such-user-6171/hooks'
-  hooks="$TMP_ROOT/hooks-unresolvable"
-  "$STRIP" install "$hooks" "$repo" || fail "install should succeed with an unresolvable core.hooksPath"
   head=$(git -C "$repo" rev-parse HEAD)
+  hooks="$TMP_ROOT/hooks-unresolvable"
+  "$STRIP" install "$hooks" "$repo" || fail "install should succeed before the invalid hooksPath is written"
+  git -C "$repo" config core.hooksPath '~fm-no-such-user-6171/hooks'
   err=$(with_hooks_env "$hooks" git -C "$repo" commit -q -m 'fix: unresolvable hooksPath' 2>&1) &&
     fail "a commit succeeded although the repository's hooks directory cannot be resolved"
-  assert_contains "$err" "refusing to skip its pre-commit hook" "the refusal did not name the skipped hook"
+  # Older Git rejects this value while reading repository config, before any
+  # hook can run; newer Git lets the wrapper report the same unsafe lookup.
+  case "$err" in
+    *"refusing to skip its pre-commit hook"*|*"fatal: failed to expand user dir"*) ;;
+    *) fail "the commit did not explain its hooks-directory refusal: $err" ;;
+  esac
   assert_equals 1 "$(printf '%s\n' "$err" | grep -c 'failed to expand user dir')" "git's lookup error was not shown exactly once"
+  git config --file "$repo/.git/config" --unset core.hooksPath
   assert_equals "$head" "$(git -C "$repo" rev-parse HEAD)" "a refused commit still moved HEAD"
   pass "an unresolvable project core.hooksPath still refuses the commit"
 }
@@ -283,9 +289,13 @@ test_valueless_project_hookspath_still_refuses() {
   printf '[core]\n\thooksPath\n' >>"$repo/.git/config"
   err=$(with_hooks_env "$hooks" git -C "$repo" commit -q -m 'fix: valueless hooksPath' 2>&1) &&
     fail "a commit succeeded although core.hooksPath has no value"
-  assert_contains "$err" "refusing to skip its pre-commit hook" "the refusal did not name the skipped hook"
+  case "$err" in
+    *"refusing to skip its pre-commit hook"*|*"fatal: bad config variable 'core.hookspath'"*) ;;
+    *) fail "the commit did not explain its valueless hooksPath refusal: $err" ;;
+  esac
   assert_equals 1 "$(printf '%s\n' "$err" | grep -c "missing value for 'core.hookspath'")" "git's lookup error was not shown exactly once"
-  assert_equals "$head" "$(git -C "$repo" -c core.hooksPath=x rev-parse HEAD)" "a refused commit still moved HEAD"
+  git config --file "$repo/.git/config" --unset core.hooksPath
+  assert_equals "$head" "$(git -C "$repo" rev-parse HEAD)" "a refused commit still moved HEAD"
   pass "a valueless project core.hooksPath still refuses the commit"
 }
 

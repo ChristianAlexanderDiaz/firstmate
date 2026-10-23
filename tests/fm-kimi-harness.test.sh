@@ -1038,6 +1038,9 @@ SH
   case "$(cat "$home/state/.lock")" in
     ''|*[!0-9]*) fail "fm-lock did not record the Kimi harness ancestor" ;;
   esac
+  # Status installs a different, live legacy holder. The previous process's
+  # identity would correctly make that replacement look like PID reuse.
+  rm -f "$home/state/.lock-identity"
   printf '%s\n' "$$" > "$home/state/.lock"
   out=$(FM_HOME="$home" PATH="$fakebin:$BASE_PATH" "$ROOT/bin/fm-lock.sh" status)
   assert_contains "$out" "lock: held by live harness pid" \

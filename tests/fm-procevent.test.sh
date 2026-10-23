@@ -2847,6 +2847,10 @@ if [ "\${1-}" = -p ] && [ "\${2-}" = "$POST_TERM_RUNNER" ] \
     exit 0
   fi
   [ ! -s "$POST_TERM_SIGNALS" ] || exit 1
+  # This stopped fixture cannot exec. Keep its claimed identity stable when
+  # GNU ps re-renders lstart after a host clock correction.
+  sed -n '4p' "\$FM_PROCEVENT_CLAIM_ROOT/post-term-src.claim" || exit 1
+  exit 0
 fi
 if [ "\${1-}" = -o ] && [ "\${2-}" = pgid= ] \
   && [ "\${3-}" = -p ] && [ "\${4-}" = "$POST_TERM_RUNNER" ]; then
@@ -4001,10 +4005,13 @@ ORPHAN_PID=$(cat "$HORPHAN/state/procevent/orphan-src.runner")
 KEEP_PID=$(cat "$HKEEP/state/procevent/keep-src.runner")
 ORPHAN_DESCENDANT=$(cat "$TMP_ROOT/orphan-dead.descendant")
 
-# The reproduction condition itself: the listener is already an orphan in the
-# kernel's sense before anything is asserted about reaping it.
+# The listener must be detached before testing reaping. Linux may reparent it
+# to a child subreaper instead of init.
 orphan_ppid=$(ps -o ppid= -p "$ORPHAN_PID" 2>/dev/null | tr -d '[:space:]')
-[ "$orphan_ppid" = 1 ] \
+case "$orphan_ppid" in
+  ''|0|*[!0-9]*) fail "the detached listener disappeared before its parent could be checked" ;;
+esac
+[ "$orphan_ppid" != "$$" ] \
   || fail "the listener under test was not reparented away from its session (ppid $orphan_ppid)"
 kill -0 -"$ORPHAN_PID" 2>/dev/null \
   || fail "the listener's process group was not running"
