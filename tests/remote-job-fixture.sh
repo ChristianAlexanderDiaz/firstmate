@@ -56,9 +56,14 @@ SH
 fm_test_remote_start_worker() { # <remote-root> <state-root>
   local remote=$1 state=$2 i
   set -m
-  HOME="$FM_TEST_REMOTE_ACCOUNT_HOME" FM_ROOT_OVERRIDE="$remote" \
-    FM_REMOTE_JOB_STATE_ROOT="$state" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
-    "$remote/bin/fm-remote-job-worker.sh" > "$state.worker.log" 2>&1 &
+  # Like an SSH login, the worker starts in the account home: its env -i
+  # children must not inherit a caller checkout such as a gate worktree.
+  (
+    cd "$FM_TEST_REMOTE_ACCOUNT_HOME" || exit 1
+    HOME="$FM_TEST_REMOTE_ACCOUNT_HOME" FM_ROOT_OVERRIDE="$remote" \
+      FM_REMOTE_JOB_STATE_ROOT="$state" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+      exec "$remote/bin/fm-remote-job-worker.sh"
+  ) > "$state.worker.log" 2>&1 &
   FM_TEST_REMOTE_WORKER_PID=$!
   set +m
   for ((i = 0; i < 200; i++)); do
@@ -73,6 +78,7 @@ fm_test_remote_start_worker() { # <remote-root> <state-root>
 fm_test_remote_ssh_worker() (
   local command_name remote
   export HOME="$FM_TEST_REMOTE_ACCOUNT_HOME"
+  cd "$HOME" || exit 1
   command_name=$(perl -MMIME::Base64=decode_base64 -e \
     '($c)=split(/\0/,decode_base64($ARGV[0])); print $c' "$4") || exit 1
   [ "$command_name" != fm-remote-doctor.sh ] || exit 0
