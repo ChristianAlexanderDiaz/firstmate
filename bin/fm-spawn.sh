@@ -1811,9 +1811,6 @@ clear_relaunch_harness_wiring() {
   # unrecognized value resolves to no adapter, which is also the case in which
   # no wiring was armed to begin with.
   harness=$(fm_control_harness_family "$harness") || harness=
-  # Claude secondmates receive parent hooks through a per-task --settings file,
-  # never in their own local settings, which belong to the persistent home.
-  [ "$KIND" != secondmate ] || [ "$harness" != claude ] || return 0
   token_path=$(fm_control_harness_turnend_token_path "$harness" "$state" "$id") || return 1
   token=
   if [ -n "$token_path" ] && [ -f "$token_path" ]; then

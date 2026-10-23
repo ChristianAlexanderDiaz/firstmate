@@ -16,7 +16,7 @@ FM_LOCK_STALE_AFTER="${FM_LOCK_STALE_AFTER:-2}"
 # confirm and 0.5s attach polls, and forking uname per call is a measurable cost on
 # the platform (Git Bash/MSYS) that already pays the highest fork price.
 _FM_UNAME=$(uname 2>/dev/null || echo unknown)
-mkdir -p "$STATE"
+(umask 077; mkdir -p "$STATE")
 
 # Sleep is an overlay on away/quiet, owned by fm-sleep.sh. Presence fails
 # closed even for an incomplete record. Remote mate inboxes use parent-route

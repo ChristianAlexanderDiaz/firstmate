@@ -63,6 +63,7 @@ order_register_pid=
 order_reconcile_pid=
 order_release=
 section_coordinator_pid=
+remote_worker_pid=
 extension_test_cleanup() {
   [ -z "$concurrent_release" ] || touch "$concurrent_release" 2>/dev/null || true
   [ -z "$race_release" ] || touch "$race_release" 2>/dev/null || true
@@ -104,15 +105,13 @@ extension_test_cleanup() {
     kill -TERM "$section_coordinator_pid" 2>/dev/null || true
     wait "$section_coordinator_pid" 2>/dev/null || true
   fi
-  if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ] && [ -f "${REMOTE_ROOT:-}/bin/fm-remote-job-lib.sh" ]; then
+  if [ -n "$remote_worker_pid" ]; then
     (
-      # worker.pid names the serving child; the copied remote helper stops its
-      # known isolated supervisor tree so it cannot respawn during teardown.
-      # Production libraries are linted independently by fm-lint.sh.
       # shellcheck source=/dev/null
       . "$REMOTE_ROOT/bin/fm-remote-job-lib.sh"
-      fm_remote_job_stop_worker_tree "$(cat "$TMP_ROOT/remote-jobs/worker.pid")"
+      fm_remote_job_stop_worker_tree "$remote_worker_pid"
     ) 2>/dev/null || true
+    wait "$remote_worker_pid" 2>/dev/null || true
   fi
   if [ -n "$first_bind_pid" ]; then
     kill -CONT "$first_bind_pid" 2>/dev/null || true
@@ -1880,6 +1879,7 @@ chmod 0644 "$P_REMOTE/nested/evidence.txt"
 H_REMOTE_CONTROL="$HOMES/remote-control"
 H_REMOTE="$HOMES/remote-home"
 REMOTE_ROOT="$TMP_ROOT/remote-root"
+REMOTE_ACCOUNT="$TMP_ROOT/remote-account"
 REMOTE_FAKEBIN=$(fm_fakebin "$TMP_ROOT/remote-fakebin")
 REMOTE_SSH_COUNT="$TMP_ROOT/remote-ssh.count"
 mkdir -p "$H_REMOTE_CONTROL/data" "$H_REMOTE" "$REMOTE_ROOT/bin"
@@ -1891,11 +1891,46 @@ for remote_file in \
   cp "$ROOT/bin/$remote_file" "$REMOTE_ROOT/bin/$remote_file"
 done
 chmod +x "$REMOTE_ROOT/bin"/fm-*.sh "$REMOTE_ROOT/bin/fm-extension.mjs" "$REMOTE_ROOT/bin/fm-extension-launch-barrier.mjs"
+# The entrypoint resets HOME, and jobs reconstruct PATH under env -i.
+# Guard both paths and keep account files and the serving worker private.
+mkdir -p "$REMOTE_ACCOUNT/.local/bin" "$REMOTE_ACCOUNT/.config/systemd/user"
+cat > "$REMOTE_FAKEBIN/systemctl" <<SH
+#!/usr/bin/env bash
+printf '%s %s\\n' "\${0##*/}" "\$*" >> '$TMP_ROOT/host-manager-calls'
+exit 70
+SH
+chmod +x "$REMOTE_FAKEBIN/systemctl"
+cp "$REMOTE_FAKEBIN/systemctl" "$REMOTE_FAKEBIN/loginctl"
+export PATH="$REMOTE_FAKEBIN:$PATH"
+for manager in systemctl loginctl; do
+  cp "$REMOTE_FAKEBIN/systemctl" "$REMOTE_ROOT/bin/$manager"
+  cp "$REMOTE_FAKEBIN/systemctl" "$REMOTE_ACCOUNT/.local/bin/$manager"
+done
+ln -s "$(command -v node)" "$REMOTE_ACCOUNT/.local/bin/node"
+export FM_REMOTE_SYSTEMCTL="$REMOTE_FAKEBIN/systemctl"
+export FM_REMOTE_SYSTEMD_UNIT_DIR="$REMOTE_ACCOUNT/.config/systemd/user"
+cat > "$REMOTE_ROOT/bin/fm-account-fixture.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$HOME"
+SH
+chmod +x "$REMOTE_ROOT/bin/fm-account-fixture.sh"
 git -C "$REMOTE_ROOT" init -q -b main
 git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test
 git -C "$REMOTE_ROOT" add AGENTS.md bin
 git -C "$REMOTE_ROOT" commit -qm 'remote extension fixture'
+(
+  umask 0002
+  HOME="$REMOTE_ACCOUNT" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+    FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/remote-jobs" \
+    exec "$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
+) > "$TMP_ROOT/remote-worker.log" 2>&1 &
+remote_worker_pid=$!
+for _ in $(seq 1 200); do
+  [ -f "$TMP_ROOT/remote-jobs/worker.ready" ] && break
+  sleep 0.1
+done
+assert_present "$TMP_ROOT/remote-jobs/worker.ready" "private remote worker did not report ready"
 cat > "$H_REMOTE_CONTROL/data/secondmates.md" <<EOF
 - ios - remote extension home (host: remote-mac; root: $REMOTE_ROOT; home: $H_REMOTE; scope: extension test; projects: none; added 2026-08-27)
 EOF
@@ -1911,7 +1946,7 @@ entry=$2
 shift 2
 [ "$host" = remote-mac ] || exit 91
 [ "$entry" = fm-remote-entrypoint.sh ] || exit 92
-exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
+FM_REMOTE_JOB_ACTIVE=1 exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
 SH
 chmod +x "$REMOTE_FAKEBIN/fake-ssh"
 remote_on() {
@@ -1942,7 +1977,7 @@ remote_receive_file() {
 remote_direct() {
   local command=$1
   shift
-  FM_HOME="$H_REMOTE" \
+  HOME="$REMOTE_ACCOUNT" FM_HOME="$H_REMOTE" \
   FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
   FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
   FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/remote-jobs" \
@@ -1953,6 +1988,12 @@ remote_receive_file_direct() {
   remote_direct fm-extension.sh receive-transfer-bind \
     --adapter "$adapter" --trust-same-user-code < "$file"
 }
+remote_account=$(remote_on fm-account-fixture.sh) || fail "remote account probe failed"
+[ "$remote_account" = "$REMOTE_ACCOUNT" ] || fail "remote jobs escaped the private account: $remote_account"
+remote_on fm-procevent.sh list >/dev/null \
+  || fail "a permissive account umask made new process-event state unsafe"
+[ ! -e "$TMP_ROOT/host-manager-calls" ] || fail "remote fixture attempted to use an account service manager"
+printf '0\n' > "$REMOTE_SSH_COUNT"
 
 if section_enabled remote-envelope; then
 REMOTE_TRANSFER="$TMP_ROOT/remote-transfer.json"
@@ -2197,6 +2238,7 @@ remote_direct fm-extension.sh retire-transfer org.example.remote-other \
 assert_absent "$H_REMOTE_CONTROL/config/extensions.d/org.example.remote.json" "remote binding was published into the local control home"
 pass "remote retirement and refusal checks run against an isolated addressed home"
 fi
+[ ! -e "$TMP_ROOT/host-manager-calls" ] || fail "remote fixture attempted to use an account service manager"
 fi
 
 # --- shipped runnable example ------------------------------------------------

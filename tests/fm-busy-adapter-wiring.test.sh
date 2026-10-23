@@ -486,8 +486,10 @@ case "\${1:-}" in
 esac
 SH
   chmod +x "$fakebin/tmux"
+  # Keep endpoint recovery separate from this busy-record fixture.
   PATH="$fakebin:$PATH" FM_HOME="$primary" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_BACKEND=tmux \
+    FM_SECONDMATE_LIVENESS_SECS=1000000 \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 \
     FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     "$ROOT/bin/fm-watch-checkpoint.sh" --seconds "$seconds" \

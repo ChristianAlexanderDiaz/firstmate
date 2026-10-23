@@ -8,6 +8,11 @@ NOW=2026-09-16T08:00:00Z
 HEAD_A=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 HEAD_B=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
+# Elapsed budgets must survive corrections to the host's wall clock.
+monotonic_seconds() {
+  python3 -c 'import time; print(int(time.monotonic()))'
+}
+
 new_home() {
   local home="$TMP_ROOT/$1"
   mkdir -p "$home/data" "$home/state" "$home/config" "$home/projects" "$home/fakebin"
@@ -1344,10 +1349,10 @@ test_unmeasured_url_does_not_starve_the_tail() {
   printf 'slow-wave\n' > "$home/forge/fault"
   for cycle in 0 1 2; do
     at=$(jq -nr --arg now "$NOW" --argjson cycle "$cycle" '(($now | fromdateiso8601) + ($cycle + 1) * 300) | todateiso8601')
-    started=$(/bin/date +%s)
+    started=$(monotonic_seconds)
     out=$(with_home "$home" env FM_CONTRIBUTIONS_NOW="$at" FM_CONTRIBUTIONS_BUDGET=20 "$ROOT/bin/fm-contributions.sh" poll) \
       || fail 'poll failed after an unmeasured first URL'
-    elapsed=$(( $(/bin/date +%s) - started ))
+    elapsed=$(( $(monotonic_seconds) - started ))
     [ -z "$out" ] || fail "a poll after an unmeasured URL printed a wake: $out"
     [ "$elapsed" -le 23 ] || fail "poll exceeded its elapsed budget: $elapsed seconds"
     if [ "$cycle" -eq 0 ]; then
@@ -1383,10 +1388,10 @@ test_unmeasured_url_does_not_starve_the_tail() {
   printf 'latency\n' > "$home/forge/fault"
   for cycle in 0 1 2 3 4 5; do
     at=$(jq -nr --arg now "$NOW" --argjson cycle "$cycle" '(($now | fromdateiso8601) + $cycle * 300) | todateiso8601')
-    started=$(/bin/date +%s)
+    started=$(monotonic_seconds)
     out=$(with_home "$home" env FM_CONTRIBUTIONS_NOW="$at" FM_CONTRIBUTIONS_BUDGET=20 FORGE_LATENCY=3 "$ROOT/bin/fm-contributions.sh" poll) \
       || fail 'sustained slow-read poll failed'
-    elapsed=$(( $(/bin/date +%s) - started ))
+    elapsed=$(( $(monotonic_seconds) - started ))
     [ "$elapsed" -ge 9 ] && [ "$elapsed" -le 23 ] \
       || fail "slow successful poll did not respect its elapsed budget: $elapsed seconds"
     [ -z "$out" ] || fail "slow successful reads printed a wake: $out"
