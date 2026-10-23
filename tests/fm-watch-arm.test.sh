@@ -1431,9 +1431,14 @@ test_watcher_exits_when_its_state_directory_is_removed() {
   touch "$state/home-summary.json"
   make_lock_wait_observer "$fakebin"
   lock="$state/.wake-queue.lock"
-  if [ "$phase" = pr-poll ]; then
+  if [ "$phase" = pr-poll ] || [ "$phase" = merge-outcome ]; then
     lock="$state/.control-fixture.lock"
-    # Publish a valid poll, then prevent its check from reaching the forge.
+    if [ "$phase" = merge-outcome ]; then
+      lock="$state/fixture.pr-poll-merge-notified.lock"
+      printf '#!/usr/bin/env bash\nprintf "MERGED\\n"\n' > "$fakebin/gh"
+      chmod +x "$fakebin/gh"
+    fi
+    # Publish a valid poll, then hold its control lock or merge-outcome lock.
     FM_STATE_OVERRIDE="$state" bash -c '
       . "$1/bin/fm-pr-lib.sh"
       printf "pr=https://github.com/o/r/pull/1\n" > "$2/fixture.meta"
@@ -1798,6 +1803,7 @@ test_arm_refuses_a_disposable_validation_checkout
 test_watcher_exits_when_its_state_directory_is_removed
 test_wake_append_exits_when_its_state_directory_is_removed
 test_watcher_exits_when_its_state_directory_is_removed pr-poll
+test_watcher_exits_when_its_state_directory_is_removed merge-outcome
 test_watcher_exits_when_its_home_is_removed
 test_reaper_stops_a_tracked_watcher
 test_attached_arm_still_fails_on_a_wake_it_did_not_deliver

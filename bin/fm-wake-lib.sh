@@ -957,7 +957,7 @@ _fm_wake_append_recovery_restore_locked() {
 _fm_recovery_marker_begin_handling() {
   local marker=$1 expected_generation=${2:-} lock line generation
   lock="${marker}.lock"
-  fm_lock_acquire_wait "$lock" "$STATE" || return 1
+  fm_lock_acquire_wait "$lock" || return 1
   if ! fm_recovery_marker_read "$marker"; then
     fm_lock_release "$lock"
     return 1
@@ -1004,7 +1004,7 @@ fm_recovery_marker_snapshot() {
   local marker=$1 lock
   FM_RECOVERY_MARKER_TOKEN=
   lock="${marker}.lock"
-  fm_lock_acquire_wait "$lock" "$STATE" || return 1
+  fm_lock_acquire_wait "$lock" || return 1
   fm_recovery_marker_read "$marker" || true
   fm_lock_release "$lock"
 }
