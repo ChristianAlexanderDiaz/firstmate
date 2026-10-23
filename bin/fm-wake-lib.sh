@@ -880,7 +880,7 @@ _fm_recovery_marker_publish() {
   if [ -n "$bound" ]; then
     fm_lock_acquire_wait_max "$lock" "$bound" || return 1
   else
-    fm_lock_acquire_wait "$lock" || return 1
+    fm_lock_acquire_wait "$lock" "$STATE" || return 1
   fi
   if [ -d "$marker" ] && [ ! -L "$marker" ]; then
     fm_lock_release "$lock"
@@ -939,7 +939,7 @@ _fm_wake_append_recovery_restore_locked() {
   local marker="$STATE/.watcher-down" lock previous=$FM_WAKE_APPEND_RECOVERY_PREVIOUS_TOKEN
   [ -n "$previous" ] || return 0
   lock="${marker}.lock"
-  fm_lock_acquire_wait "$lock" || return 1
+  fm_lock_acquire_wait "$lock" "$STATE" || return 1
   if ! fm_recovery_marker_read "$marker" \
     || [ "$FM_RECOVERY_MARKER_TOKEN" != "$FM_WAKE_APPEND_RECOVERY_PUBLISHED_TOKEN" ]; then
     fm_lock_release "$lock"
@@ -957,7 +957,7 @@ _fm_wake_append_recovery_restore_locked() {
 _fm_recovery_marker_begin_handling() {
   local marker=$1 expected_generation=${2:-} lock line generation
   lock="${marker}.lock"
-  fm_lock_acquire_wait "$lock" || return 1
+  fm_lock_acquire_wait "$lock" "$STATE" || return 1
   if ! fm_recovery_marker_read "$marker"; then
     fm_lock_release "$lock"
     return 1
@@ -1004,7 +1004,7 @@ fm_recovery_marker_snapshot() {
   local marker=$1 lock
   FM_RECOVERY_MARKER_TOKEN=
   lock="${marker}.lock"
-  fm_lock_acquire_wait "$lock" || return 1
+  fm_lock_acquire_wait "$lock" "$STATE" || return 1
   fm_recovery_marker_read "$marker" || true
   fm_lock_release "$lock"
 }
@@ -1013,7 +1013,7 @@ _fm_recovery_marker_ack() {
   local marker=$1 expected_generation=$2 lock tmp line
   [ -n "$expected_generation" ] || return 2
   lock="${marker}.lock"
-  fm_lock_acquire_wait "$lock" || return 1
+  fm_lock_acquire_wait "$lock" "$STATE" || return 1
   if ! fm_recovery_marker_read "$marker" \
     || [ "${FM_RECOVERY_MARKER_TOKEN##*:}" != "$expected_generation" ]; then
     fm_lock_release "$lock"
@@ -1116,8 +1116,8 @@ _fm_recovery_marker_arm_check() {
 _fm_recovery_marker_reopen_announced() {
   local marker=$1 lock
   lock="${marker}.lock"
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
-  if ! fm_lock_acquire_wait "$lock"; then
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" "$STATE" || return 1
+  if ! fm_lock_acquire_wait "$lock" "$STATE"; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     return 1
   fi
@@ -1153,8 +1153,8 @@ fm_recovery_marker_handover_snapshot() {  # <marker>
   FM_RECOVERY_HANDOVER_TOKEN=
   FM_RECOVERY_HANDOVER_SEQ=
   lock="${marker}.lock"
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
-  if ! fm_lock_acquire_wait "$lock"; then
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" "$STATE" || return 1
+  if ! fm_lock_acquire_wait "$lock" "$STATE"; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     return 1
   fi
@@ -1172,8 +1172,8 @@ _fm_recovery_marker_handover_restore() {
   local marker=$1 token=$2 seq=$3 lock status=0
   case "$token" in acked:*) ;; *) return 0 ;; esac
   lock="${marker}.lock"
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
-  if ! fm_lock_acquire_wait "$lock"; then
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" "$STATE" || return 1
+  if ! fm_lock_acquire_wait "$lock" "$STATE"; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     return 1
   fi
@@ -1221,7 +1221,7 @@ fm_recovery_transition() {
       if [ -n "$bound" ]; then
         fm_lock_acquire_wait_max "$lock" "$bound" || return 1
       else
-        fm_lock_acquire_wait "$lock" || return 1
+        fm_lock_acquire_wait "$lock" "$STATE" || return 1
       fi
       if ! fm_recovery_marker_read "$marker"; then
         fm_lock_release "$lock"
@@ -1419,13 +1419,11 @@ fm_lock_try_acquire() {
   return "$rc"
 }
 
-# A removed lock parent cancels the wait because acquisition cannot succeed.
-# The optional required directory also cancels when its owner's world is removed.
+# The optional required directory cancels a wait when its owner's world is
+# removed, without changing ordinary waits on a live foreign lock holder.
 fm_lock_acquire_wait() {  # <lockdir> [required-directory]
-  local lockdir=$1 required_dir=${2:-} lock_parent
-  fm_dirname_to lock_parent "$lockdir"
+  local lockdir=$1 required_dir=${2:-}
   while ! fm_lock_try_acquire "$lockdir"; do
-    [ -d "$lock_parent" ] || return 1
     [ -z "$required_dir" ] || [ -d "$required_dir" ] || return 1
     sleep 0.1
   done
@@ -2415,7 +2413,7 @@ fm_wake_clean_field() {
 
 fm_wake_append() {
   local status=0
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" "$STATE" || return 1
   fm_wake_append_locked "$@" || status=$?
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   return "$status"
@@ -2475,7 +2473,7 @@ fm_wake_queued_keys() {
     signal|stale|check|heartbeat) ;;
     *) printf 'fm_wake_queued_keys: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
   esac
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" "$STATE" || return 1
   fm_wake_queued_keys_locked "$kind"
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
 }

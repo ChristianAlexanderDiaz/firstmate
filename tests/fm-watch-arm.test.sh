@@ -1401,11 +1401,6 @@ wait_for_pid_gone() {  # <pid> <polls>
   return 1
 }
 
-# A running watcher whose state directory is deleted (a torn-down temporary
-# home) must exit after noticing the deletion with a logged reason, not run on
-# as an orphan (upstream #4760). Allow for a slow CI runner finishing the cycle
-# already in progress before its next FM_POLL=1 tick. A busy poll may spend
-# longer than ten seconds in subprocesses on a contended CI runner.
 make_lock_wait_observer() {  # <fakebin>
   cat > "$1/cat" <<'SH'
 #!/usr/bin/env bash
@@ -1419,6 +1414,11 @@ SH
   chmod +x "$1/cat"
 }
 
+# A running watcher whose state directory is deleted (a torn-down temporary
+# home) must exit after noticing the deletion, not run on as an orphan; the
+# per-poll check logs its reason (upstream #4760). Allow for a slow CI runner
+# finishing the cycle already in progress before its next FM_POLL=1 tick. A busy
+# poll may spend longer than ten seconds in subprocesses on a contended CI runner.
 test_watcher_exits_when_its_state_directory_is_removed() {
   local phase=${1:-recovery} dir home state fakebin armout lock i held=0
   dir=$(make_case "state-dir-removed-$phase")
@@ -1486,8 +1486,13 @@ test_wake_append_exits_when_its_state_directory_is_removed() {
   printf '%s\n' "$$" > "$lock/pid"
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_TEST_WAIT_LOCK="$lock" \
     FM_TEST_QUEUE_WAITING="$dir/queue-waiting" FM_TEST_REAL_CAT="$(command -v cat)" \
-    bash -c '. "$1"; fm_wake_append signal fixture.status "signal: fixture.status"' \
-      _ "$ROOT/bin/fm-wake-lib.sh" > "$dir/append.out" 2>&1 &
+    bash -c '
+      . "$1"
+      # Model a concurrent writer recreating state before the queue section runs.
+      eval "_fm_test_real_$(declare -f fm_wake_append_locked)"
+      fm_wake_append_locked() { mkdir -p "$STATE"; _fm_test_real_fm_wake_append_locked "$@"; }
+      fm_wake_append signal fixture.status "signal: fixture.status"
+    ' _ "$ROOT/bin/fm-wake-lib.sh" > "$dir/append.out" 2>&1 &
   pid=$!
   wait_for_file_text "$dir/queue-waiting" waiting \
     || fail "wake append did not reach the held queue lock"
@@ -1495,7 +1500,8 @@ test_wake_append_exits_when_its_state_directory_is_removed() {
   wait_for_exit "$pid" 100 || rc=$?
   [ "$rc" -ne 124 ] || fail "wake append outlived its deleted state directory"
   [ "$rc" -ne 0 ] || fail "wake append succeeded after state deletion"
-  [ ! -d "$state" ] || fail "wake append recreated its deleted state directory"
+  [ ! -e "$state/.wake-queue" ] || fail "wake append queued a row without its queue lock"
+  [ ! -d "$state" ] || fail "wake append entered its queue section after its lock wait failed"
   pass "wake append fails promptly when state is removed during its queue lock wait"
 }
 
