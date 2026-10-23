@@ -20,6 +20,7 @@ spec.loader.exec_module(resource)
 root = Path(sys.argv[2])
 real_time = time
 real_uptime = resource.uptime
+real_process_table = resource.process_table
 wall_epoch = real_time.time() - real_time.monotonic()
 
 
@@ -27,6 +28,20 @@ def wall_time():
     # Keep the synthetic monitor and owner on one stable wall-clock basis.
     # Host clock corrections must not restart this fixture's policy recovery.
     return wall_epoch + real_time.monotonic()
+
+
+def process_table():
+    rows = real_process_table()
+    try:
+        orphan = int((root / "orphan-controller").read_text())
+        if orphan in rows:
+            rows[orphan]["ppid"] = 1
+    except (OSError, ValueError):
+        pass
+    return rows
+
+
+resource.process_table = process_table
 
 
 def awake_uptime():

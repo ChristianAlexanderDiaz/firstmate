@@ -33,6 +33,24 @@ The endpoint and model CLI are synthetic; no vendor session, Herdr lifecycle or 
 The shared launch command receives the wrapper before backend delivery, without introducing a harness-rendered classifier or backend-specific restore operation.
 The [host budget guide](../host-budget.md) owns rollout and the explicit composite browser lifetime boundary.
 
+Verified again on 2026-10-23 with Python 3.12.3 on Linux 6.6.87.2 (WSL2):
+
+```sh
+bash bin/fm-test-run.sh --jobs 2 --per-script-timeout-secs 1800 tests/fm-resource.test.sh
+```
+
+All 47 cases passed, including warning-pressure admission, queue bypass, dead and orphaned controllers, persistent stuck-request notifications, supervisor launch exemption and browser bridge inheritance after environment filtering and timeout.
+The orphan case supplies the parent-1 observation through the fixture while retaining a real live kernel process identity, making it independent of the test host's subreaper behavior.
+The browser bridge case uses a synthetic detached transport and executable through the real adapter, socket and lease interfaces.
+
+```text
+Ran 47 tests in 364.657s
+
+OK
+FM_TEST_END 2026-10-23T02:16:45Z tests/fm-resource.test.sh exit=0 duration_ms=345958 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=346101
+```
+
 ## Harness detection precedence
 
 Firstmate's own harness comes from two kinds of evidence, and `bin/fm-harness.sh` owns how they combine: an environment marker names its harness, and the nearest harness process in the parent chain proves who owns the process tree.

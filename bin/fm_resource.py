@@ -30,6 +30,8 @@ import uuid
 
 CLASSES = {"test": 1024, "build": 3072, "browser": 2048, "graph": 512,
            "exclusive": 4096, "worker": 512}
+MEMORY_WARNING = "memory warning: heavy compute held"
+STUCK_QUEUE_SECONDS = 10 * 60
 HERE = Path(__file__).resolve().parent
 BOOT = None
 
@@ -123,6 +125,14 @@ def identity(pid, table=None):
 def matches(owner, table):
     return (owner.get("boot") == boot_id() and owner.get("pid") in table and
             table[owner["pid"]]["start"] == owner.get("start"))
+
+
+def ancestors(pid, table):
+    result = set()
+    while pid in table and pid not in result:
+        result.add(pid)
+        pid = table[pid]["ppid"]
+    return result
 
 
 def group_exists(pgid):
@@ -252,14 +262,17 @@ class Budget:
     def event(self, reason):
         if reason != self.exception:
             self.exception = reason
-            self.data["events"].append({"timestamp": time.time(), "reason": reason})
-            self.data["events"] = self.data["events"][-100:]
-            record = json.dumps({"event": "host-budget-transition", "reason": reason})
-            with open(self.root / "transitions.jsonl", "a") as stream:
-                stream.write(record + "\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            print(record, flush=True)
+            self.record_event("host-budget-transition", reason)
+
+    def record_event(self, event, reason):
+        self.data["events"].append({"timestamp": time.time(), "reason": reason})
+        self.data["events"] = self.data["events"][-100:]
+        record = json.dumps({"event": event, "reason": reason})
+        with open(self.root / "transitions.jsonl", "a") as stream:
+            stream.write(record + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        print(record, flush=True)
 
     def cleanup_browser(self, token, lease):
         directory = self.root / "browser-jobs" / token
@@ -275,7 +288,8 @@ class Budget:
 
     def reconcile(self):
         self.table = process_table()
-        self.data["queue"] = [r for r in self.data["queue"] if matches(r["controller"], self.table)]
+        self.data["queue"] = [r for r in self.data["queue"] if matches(r["controller"], self.table)
+            and self.table[r["controller"]["pid"]]["ppid"] != 1]
         for token, lease in list(self.data["leases"].items()):
             group = lease.get("group")
             if lease["controller"].get("boot") != boot_id():
@@ -283,16 +297,28 @@ class Budget:
                 del self.data["leases"][token]
                 continue
             if group:
-                pgid = group["pid"]
                 # Keep known descendants, adding group members only while a
                 # verified member anchors that group. Unknown groups quarantine.
                 known = [member for member in lease.get("members", [group]) if matches(member, self.table)]
-                members = [pid for pid, row in self.table.items() if row["pgid"] == pgid]
-                if known:
+                members = set()
+                quarantined = False
+                browser_groups = []
+                for tracked in [group, *lease.get("browserGroups", [])]:
+                    pgid = tracked["pid"]
+                    current = [pid for pid, row in self.table.items() if row["pgid"] == pgid]
+                    if any(self.table[owner["pid"]]["pgid"] == pgid for owner in known):
+                        members.update(current)
+                        if tracked != group:
+                            browser_groups.append(tracked)
+                    elif current or group_exists(pgid):
+                        quarantined = True
+                        if tracked != group:
+                            browser_groups.append(tracked)
+                if members or quarantined:
                     lease["members"] = [identity(pid, self.table) for pid in members]
-                    lease["quarantined"] = False
-                elif members or group_exists(pgid):
-                    lease["quarantined"] = True
+                    lease["quarantined"] = quarantined
+                    if "browserGroups" in lease:
+                        lease["browserGroups"] = browser_groups
                 else:
                     self.cleanup_browser(token, lease)
                     del self.data["leases"][token]
@@ -342,11 +368,11 @@ class Budget:
                 raise Refusal("negotiated AC supply is unavailable")
             if thermal == "critical" or pressure == "critical" or battery < 15:
                 cancel = True
-            if thermal not in ("nominal", "fair") or pressure != "normal":
+            if thermal not in ("nominal", "fair") or pressure not in ("normal", "warning"):
                 raise Refusal(f"thermal={thermal} memory={pressure}")
             if sample["lidClosed"] is not False:
                 raise Refusal("portable lid is closed or unknown")
-            if battery < 30:
+            if battery < 30 and pressure == "normal":
                 raise Refusal("battery below 30% admission reserve")
             if sample.get("performanceWarning", False) or sample.get("thermalWarning", False):
                 raise Refusal("secondary OS performance/thermal warning")
@@ -368,6 +394,10 @@ class Budget:
                 raise Refusal("sustained AC battery discharge")
             if self.data["emergency"]:
                 raise Refusal("persistent emergency latch requires inspected evidence and explicit clear")
+            # Validate the whole sample before allowing resident workers under
+            # warning pressure; heavy compute still requires normal pressure.
+            if pressure == "warning":
+                raise Refusal(MEMORY_WARNING)
             # Fair allows one but never satisfies post-warning nominal recovery.
             if thermal == "nominal":
                 if self.healthy_since is None:
@@ -421,30 +451,54 @@ class Budget:
 
     def admit(self):
         leases = self.data["leases"]
-        # FIFO within heavy work; a waiting large reservation blocks smaller
-        # work from jumping ahead. Resident cloud CLIs have a separate cap.
-        heavy_waiting = False
+        # Scan for work that fits; queued reservations do not consume capacity
+        # or prevent another class from using its independently available cap.
         for request in list(self.data["queue"]):
             worker = request["class"] == "worker"
-            if not worker and (heavy_waiting or self.reason != "ready"):
-                heavy_waiting = True
+            if not worker and self.reason != "ready":
                 continue
             active_heavy = sum(l["class"] != "worker" for l in leases.values())
             resident = sum(l["class"] == "worker" for l in leases.values())
             memory = sum(l["memoryMiB"] for l in leases.values())
-            reserved = max((q["memoryMiB"] for q in self.data["queue"] if q["class"] != "worker"), default=0) if worker else 0
-            if (worker and resident >= self.config["maxResidentWorkers"]) or (not worker and active_heavy >= 1) or memory + request["memoryMiB"] + reserved > self.config["memoryMiB"]:
-                if not worker:
-                    heavy_waiting = True
+            if (worker and resident >= self.config["maxResidentWorkers"]) or (not worker and active_heavy >= 1) or memory + request["memoryMiB"] > self.config["memoryMiB"]:
                 continue
             # Resident CLIs need their own admission check even without compute;
-            # unknown or warning memory cannot admit more resident CLI memory.
-            if worker and (self.telemetry is None or self.telemetry["memory"]["pressure"] != "normal" or self.reason not in ("ready", "battery below 30% admission reserve") and not self.reason.startswith("recovery hysteresis")):
+            # Warning pressure permits residents, but never unknown telemetry.
+            if worker and (self.telemetry is None or self.telemetry["memory"]["pressure"] not in ("normal", "warning") or self.reason not in ("ready", MEMORY_WARNING, "battery below 30% admission reserve") and not self.reason.startswith("recovery hysteresis")):
                 continue
             lease = dict(request, acquired=time.monotonic(), heartbeat=time.monotonic())
             leases[request["token"]] = lease
             self.data["queue"].remove(request)
             self.save()  # Reservation reaches durable storage before response.
+        self.notify_stuck()
+
+    def notify_stuck(self):
+        leases = list(self.data["leases"].values())
+        for request in self.data["queue"]:
+            if request.get("stuckNotified"):
+                continue
+            worker = request["class"] == "worker"
+            memory_full = sum(l["memoryMiB"] for l in leases) + request["memoryMiB"] > self.config["memoryMiB"]
+            resident_full = worker and sum(l["class"] == "worker" for l in leases) >= self.config["maxResidentWorkers"]
+            holders = [l for l in leases if memory_full or
+                (resident_full and l["class"] == "worker") or (not worker and l["class"] != "worker")]
+            # A nested wrapper has a different PID from its parent stage.
+            # Follow kernel ancestry as well as exact process identities.
+            lineage = ancestors(request["controller"]["pid"], self.table)
+            self_held = any(matches(owner, self.table) and owner["pid"] in lineage
+                for lease in holders for owner in [lease["controller"], *lease.get("members", [])])
+            waited = max(0, time.monotonic() - request["queued"])
+            if waited <= STUCK_QUEUE_SECONDS and not self_held:
+                continue
+            names = "; ".join(f"pid={owner['pid']} task={l.get('task', 'unknown')} class={l['class']}"
+                for l in holders for owner in ([l["group"], *l.get("browserGroups", [])]
+                    if l.get("group") else [l["controller"]])) or "none (admission policy: " + self.reason + ")"
+            cause = "self-held lease" if self_held else "queue wait exceeded 10 minutes"
+            reason = (f"request={request['token']} task={request['task']} class={request['class']} "
+                f"waited={int(waited)}s: {cause}; holder: {names}")
+            self.record_event("host-budget-stuck", reason)
+            request["stuckNotified"] = True
+            self.save()
 
     def handle(self, request):
         if not isinstance(request, dict):
@@ -474,6 +528,28 @@ class Budget:
             self.event("emergency cleared after inspection: " + request["evidence"])
             self.save()
             return {"ok": True}
+        if op == "inherit-browser":
+            owner = request["controller"]
+            if not matches(owner, self.table):
+                raise Refusal("browser controller boot/start identity does not match")
+            lineage = ancestors(owner["pid"], self.table)
+            for token, lease in self.data["leases"].items():
+                manifest = self.root / "browser-jobs" / token / "manifest.json"
+                if ("cancelAt" in lease or lease.get("quarantined") or not manifest.is_file() or
+                        not any(matches(member, self.table) and member["pid"] in lineage
+                            for member in lease.get("members", []))):
+                    continue
+                pgid = self.table[owner["pid"]]["pgid"]
+                if pgid not in [g["pid"] for g in [lease["group"], *lease.get("browserGroups", [])]]:
+                    if pgid not in lineage:
+                        raise Refusal("browser bridge group is outside the caller's ancestry")
+                    group = identity(pgid, self.table)
+                    lease.setdefault("browserGroups", []).append(group)
+                    lease["members"].append(group)
+                self.save()
+                return {"ok": True, "token": token, "task": lease["task"],
+                    "manifest": json.loads(manifest.read_text())}
+            raise Refusal("browser bridge requires a live ancestor composite browser lease")
         token = request.get("token")
         if not isinstance(token, str) or len(token) != 32 or any(c not in "0123456789abcdef" for c in token):
             raise Refusal("invalid request nonce")
@@ -481,6 +557,8 @@ class Budget:
             controller = request["controller"]
             if not matches(controller, self.table):
                 raise Refusal("controller boot/start identity does not match")
+            if self.table[controller["pid"]]["ppid"] == 1:
+                raise Refusal("orphaned controller cannot acquire a lease")
             existing = self.data["leases"].get(token) or next((q for q in self.data["queue"] if q["token"] == token), None)
             if existing is None:
                 kind = request["class"]
@@ -519,10 +597,11 @@ class Budget:
             self.cleanup_browser(token, lease)
             del self.data["leases"][token]
         elif op == "inherit":
-            if lease["class"] == "worker" or "cancelAt" in lease:
-                raise Refusal("resident/cancelled leases cannot cover local compute")
+            if lease["class"] == "worker" or "cancelAt" in lease or lease.get("quarantined"):
+                raise Refusal("resident/cancelled/unverified leases cannot cover local compute")
             owner = request["controller"]
-            if not matches(owner, self.table) or self.table[owner["pid"]]["pgid"] != lease.get("group", {}).get("pid"):
+            groups = [lease.get("group", {}), *lease.get("browserGroups", [])]
+            if not matches(owner, self.table) or self.table[owner["pid"]]["pgid"] not in [g.get("pid") for g in groups]:
                 raise Refusal("inherited lease caller is outside its owned process group")
             if request["memoryMiB"] > lease["memoryMiB"]:
                 # Atomic in-place upgrade, never acquire a second slot while
@@ -742,6 +821,14 @@ def tool_job(args, name, config, digest):
             argv[0] in queries.get(args.name, ()) or
             args.name in ("npm", "pnpm") and argv == ["version"]):
         os.execv(args.executable, [args.executable, *argv])
+    if args.name == "npx" and any(v.split("@", 1)[0] == "chrome-devtools-mcp" for v in argv):
+        # MCP's stdio transport keeps PATH but strips lease variables. Recover
+        # only a verified ancestor browser reservation, never queue a new one.
+        inherited = rpc(config, digest, op="inherit-browser", controller=identity(os.getpid()))
+        os.environ.update(FM_RESOURCE_LEASE=inherited["token"], FM_RESOURCE_CONFIG=name,
+            FM_TASK_ID=inherited["task"])
+        restore_browser_environment(config, inherited["token"], inherited["manifest"], os.environ)
+        kind = "browser"
     args.argv = [args.executable, *argv]
     args.resource_class, args.memory_mib = kind, None
     args.manifest, args.wait_seconds = None, 0
@@ -922,14 +1009,20 @@ def browser_environment(config, token, env):
         bridge_port = bridge_probe.getsockname()[1]
     session = "fm-resource-" + token
     revision = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    atomic_json(directory / "manifest.json", {"schemaVersion": 1, "lease": token,
+    manifest = {"schemaVersion": 1, "lease": token,
         "boot": boot_id(), "worktree": str(Path.cwd().resolve()), "commit": revision,
         "profile": str(profile), "serverPort": server_port, "bridgePort": bridge_port,
-        "session": session, "reuseServer": False})
-    env.update(FM_RESOURCE_BROWSER_PROFILE=str(profile), FM_RESOURCE_SERVER_PORT=str(server_port),
-        FM_RESOURCE_BROWSER_MANIFEST=str(directory / "manifest.json"), FM_RESOURCE_REUSE_SERVER="0",
-        CHROME_DEVTOOLS_AXI_SESSION=session, CHROME_DEVTOOLS_AXI_PORT=str(bridge_port),
-        CHROME_DEVTOOLS_AXI_USER_DATA_DIR=str(profile), CHROME_DEVTOOLS_AXI_AUTO_CONNECT="0")
+        "session": session, "reuseServer": False}
+    atomic_json(directory / "manifest.json", manifest)
+    restore_browser_environment(config, token, manifest, env)
+
+
+def restore_browser_environment(config, token, manifest, env):
+    env.update(FM_RESOURCE_BROWSER_PROFILE=manifest["profile"], FM_RESOURCE_SERVER_PORT=str(manifest["serverPort"]),
+        FM_RESOURCE_BROWSER_MANIFEST=str(Path(config["stateDirectory"]) / "browser-jobs" / token / "manifest.json"),
+        FM_RESOURCE_REUSE_SERVER="0", CHROME_DEVTOOLS_AXI_SESSION=manifest["session"],
+        CHROME_DEVTOOLS_AXI_PORT=str(manifest["bridgePort"]),
+        CHROME_DEVTOOLS_AXI_USER_DATA_DIR=manifest["profile"], CHROME_DEVTOOLS_AXI_AUTO_CONNECT="0")
     env.pop("CHROME_DEVTOOLS_AXI_BROWSER_URL", None)
     env.pop("CHROME_DEVTOOLS_AXI_WS_HEADERS", None)
 

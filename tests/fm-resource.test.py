@@ -86,6 +86,9 @@ class ResourceTests(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.wait()
+            for stream in (child.stdout, child.stderr):
+                if stream is not None:
+                    stream.close()
         self.stop()
         self.log.close()
         self.temp.cleanup()
@@ -106,6 +109,111 @@ class ResourceTests(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
         self.children.append(child)
         return child
+
+    def request(self, op, **values):
+        return resource.rpc(self.config, resource.load_config(str(self.root / "config.json"))[2],
+            op=op, **values)
+
+    def acquire(self, kind, memory=None, controller=None, task="fixture"):
+        token = uuid.uuid4().hex
+        result = self.request("acquire", token=token, controller=controller or resource.identity(os.getpid()),
+            **{"class": kind, "memoryMiB": memory or resource.CLASSES[kind], "task": task})
+        return token, result["state"]
+
+    def poll_transitions(self):
+        result = self.call("transitions", "--cursor", str(self.root / "cursor"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.splitlines()
+
+    def test_warning_admits_residents_but_not_compute_and_unknown_holds_residents(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["memory"]["pressure"] = "warning"
+        self.write("input.json", sample)
+        wait_for(lambda: "warning" in self.status()["reason"])
+        token, state = self.acquire("worker")
+        self.assertEqual(state, "leased")
+        self.request("release", token=token)
+        for kind in ("test", "build", "browser", "graph", "exclusive"):
+            token, state = self.acquire(kind)
+            self.assertEqual(state, "queued", kind)
+            self.request("cancel-queued", token=token)
+        for changed in ({"memory": {"pressure": "critical", "swapUsedBytes": 0}},
+                {"memory": {"pressure": "unknown", "swapUsedBytes": 0}},
+                {"_missing": True}, {"unavailable": ["power.source"]}, {"lidClosed": True}):
+            with self.subTest(changed=changed):
+                self.write("input.json", dict(copy.deepcopy(sample), **changed))
+                wait_for(lambda: self.status()["reason"] != resource.MEMORY_WARNING)
+                result = self.call("run", "--class", "worker", "--wait-seconds", "0.1", "--", "true")
+                self.assertEqual(result.returncode, 75, result.stderr)
+
+    def test_unfittable_exclusive_does_not_block_workers_or_other_classes(self):
+        self.assertEqual(self.acquire("worker", memory=6656)[1], "leased")
+        exclusive, state = self.acquire("exclusive")
+        self.assertEqual(state, "queued")
+        self.assertEqual(self.acquire("worker")[1], "leased")
+        self.assertEqual(self.acquire("graph")[1], "leased")
+        self.assertEqual([q["token"] for q in self.status()["queue"]], [exclusive])
+
+    def test_dead_controller_request_is_dropped_on_reconcile(self):
+        self.assertEqual(self.acquire("exclusive")[1], "leased")
+        controller = subprocess.Popen(["/bin/sleep", "30"])
+        self.children.append(controller)
+        token, state = self.acquire("exclusive", controller=resource.identity(controller.pid))
+        self.assertEqual(state, "queued")
+        controller.terminate()
+        controller.wait(timeout=5)
+        self.assertNotIn(token, [q["token"] for q in self.status()["queue"]])
+
+    def test_orphaned_controller_request_is_dropped_on_reconcile(self):
+        self.assertEqual(self.acquire("exclusive")[1], "leased")
+        controller = subprocess.Popen(["/bin/sleep", "30"])
+        self.children.append(controller)
+        owner = resource.identity(controller.pid)
+        token, state = self.acquire("exclusive", controller=owner)
+        self.assertEqual(state, "queued")
+        # Some test hosts adopt orphans through a subreaper, so supply only the
+        # parent-1 observation while retaining the real live kernel identity.
+        (self.root / "orphan-controller").write_text(str(controller.pid))
+        self.assertNotIn(token, [q["token"] for q in self.status()["queue"]])
+        self.assertIsNone(controller.poll())
+        with self.assertRaisesRegex(resource.Refusal, "orphaned controller"):
+            self.acquire("exclusive", controller=owner)
+        self.assertFalse(self.status()["queue"])
+
+    def test_long_queued_request_emits_one_wake_naming_the_holder(self):
+        self.job("sleep 30", kind="exclusive")
+        lease = wait_for(lambda: next((l for l in self.status().get("leases", {}).values() if l.get("group")), None))
+        token, state = self.acquire("test", task="waiting-task")
+        self.assertEqual(state, "queued")
+        self.assertFalse(any("host-budget-stuck" in line for line in self.poll_transitions()))
+        (self.root / "clock").write_text("722")
+        lines = wait_for(lambda: [line for line in self.poll_transitions() if "host-budget-stuck" in line])
+        self.assertEqual(len(lines), 1)
+        for expected in (token, "waiting-task", "class=test", f"pid={lease['group']['pid']}", f"task={lease['task']}"):
+            self.assertIn(expected, lines[0])
+        self.assertGreater(int(lines[0].split("waited=")[1].split("s:")[0]), 600)
+        self.assertIn("stuckNotified", next(q for q in self.status()["queue"] if q["token"] == token))
+        self.stop()
+        self.start()
+        # The request marker survives recovery and repeated admission attempts.
+        self.acquire("worker")
+        self.assertFalse(any("host-budget-stuck" in line for line in self.poll_transitions()))
+
+    def test_self_held_request_emits_one_wake_without_waiting_ten_minutes(self):
+        holder, state = self.acquire("exclusive", task="holding-task")
+        self.assertEqual(state, "leased")
+        token, state = self.acquire("test", task="nested-task")
+        self.assertEqual(state, "queued")
+        lines = [line for line in self.poll_transitions() if "host-budget-stuck" in line]
+        self.assertEqual(len(lines), 1)
+        for expected in (token, "class=test", "waited=0s", "self-held lease", f"pid={os.getpid()}", "task=holding-task"):
+            self.assertIn(expected, lines[0])
+        self.request("acquire", **self.status()["queue"][0])
+        self.stop()
+        self.start()
+        self.request("acquire", **self.status()["queue"][0])
+        self.assertFalse(any("host-budget-stuck" in line for line in self.poll_transitions()))
+        self.request("release", token=holder)
 
     def test_atomic_races_are_serial_across_homes(self):
         lock = self.root / "exclusive"
@@ -346,6 +454,46 @@ PATH="$fakebin:$PATH" /bin/bash -c "$(cat "$case_root/launch.log")"
         status = json.loads(result.stdout.split("\n", 1)[1])
         self.assertTrue(any(lease["class"] == "worker" and lease.get("group") for lease in status["leases"].values()))
 
+    def test_supervisor_dispatch_bypasses_full_budget_and_critical_pressure(self):
+        self.assertEqual(self.acquire("worker", memory=10240)[1], "leased")
+        sample = copy.deepcopy(SAMPLE)
+        sample["memory"]["pressure"] = "critical"
+        self.write("input.json", sample)
+        wait_for(lambda: "critical" in self.status()["reason"])
+        script = self.root / "supervisor.sh"
+        script.write_text('''#!/usr/bin/env bash
+set -eu
+. "$1/tests/fixtures.sh"
+case_root=$2/supervisor
+task_home=$case_root/home
+sm=$case_root/secondmate
+fakebin=$(fm_test_make_spawn_fakebin "$case_root/fake" make)
+fm_test_spawn_home "$task_home" codex
+fm_test_spawn_home "$sm" codex
+mkdir -p "$sm/bin"
+printf '# Firstmate\\n' > "$sm/AGENTS.md"
+printf 'budget-supervisor\\n' > "$sm/.fm-secondmate-home"
+printf 'Supervise local tasks.\\n' > "$sm/data/charter.md"
+printf '%s\\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$sm/.gitignore"
+git -C "$sm" init -q -b main
+git -C "$sm" add AGENTS.md .gitignore
+git -C "$sm" -c user.name=Tests -c user.email=tests@example.invalid commit -qm initial
+fm_test_spawn_brief "$task_home" budget-supervisor
+printf '#!/bin/sh\\ntest -n "$FM_RESOURCE_CONFIG" || exit 19\\ncase "$(command -v make)" in */resource-*/bin/make) ;; *) exit 20 ;; esac\\nprintf "supervisor-probe\\\\n"\\nexec "%s/bin/fm-resource-run" status\\n' "$ROOT" > "$fakebin/codex"
+chmod +x "$fakebin/codex"
+export FM_FAKE_LAUNCH_LOG=$case_root/launch.log
+FM_RESOURCE_CONFIG=$2/config.json fm_test_run_spawn "$task_home" "$sm" "$fakebin" budget-supervisor "$sm" --secondmate > "$case_root/spawn.out"
+cd "$sm"
+PATH="$fakebin:$PATH" /bin/bash -c "$(cat "$case_root/launch.log")"
+''')
+        result = subprocess.run(["/bin/bash", str(script), str(ROOT), str(self.root)],
+            text=True, capture_output=True, timeout=40)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("supervisor-probe", result.stdout)
+        status = json.loads(result.stdout.split("\n", 1)[1])
+        self.assertEqual(len(status["leases"]), 1)
+        self.assertFalse(status["queue"])
+
     def test_browser_stage_isolates_profile_session_and_server(self):
         env = dict(os.environ, CHROME_DEVTOOLS_AXI_AUTO_CONNECT="1",
             CHROME_DEVTOOLS_AXI_BROWSER_URL="http://unrelated.invalid", CHROME_DEVTOOLS_AXI_SESSION="default")
@@ -415,6 +563,70 @@ for command in json.loads(sys.argv[1]):
             result = self.call("run", "--class", "exclusive", "--", *command, env=env)
             self.assertEqual(result.returncode, 75, result.stderr)
             self.assertEqual(result.stdout, "")
+
+    def test_browser_bridge_inherits_after_environment_filtering_and_timeout_leaves_no_queue(self):
+        fake = self.root / "mcp-bin"
+        fake.mkdir()
+        npx = fake / "npx"
+        npx.write_text("#!" + sys.executable + '''
+import json, os, subprocess, sys, time
+state = json.loads(subprocess.check_output([os.environ["CLIENT_RESOURCE_CLI"],
+    "--config", os.environ["FM_RESOURCE_CONFIG"], "status"], text=True))
+print(json.dumps({"token": os.environ["FM_RESOURCE_LEASE"], "queue": state["queue"],
+    "leases": list(state["leases"]), "groups": list(state["leases"].values())[0]["browserGroups"]}), flush=True)
+if "--fixture-timeout" in sys.argv:
+    time.sleep(30)
+''')
+        npx.chmod(0o700)
+        env = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ["PATH"])
+        directory = self.root / "mcp-adapters"
+        result = self.call("prepare", "--directory", str(directory), "--worktree", str(ROOT),
+            "--task", "browser-bridge", "--account-label", "default", "--", "true", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        adapter = str(directory / "bin/npx")
+        driver = self.root / "bridge-driver.py"
+        # The real MCP transport filters out FM_RESOURCE_* but preserves PATH;
+        # the bridge itself is detached from the caller's process group.
+        driver.write_text('''import json, os, signal, subprocess, sys
+bridge = "import os,subprocess,sys; env={k:v for k,v in os.environ.items() if k in ('HOME','PATH')}; env['CLIENT_RESOURCE_CLI']=sys.argv[1]; sys.exit(subprocess.call(['npx','-y','chrome-devtools-mcp@latest',*sys.argv[2:]],env=env))"
+for timeout in (False, True):
+    child = subprocess.Popen([sys.executable, "-c", bridge, sys.argv[1], *(["--fixture-timeout"] if timeout else [])],
+        start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        if timeout:
+            line = child.stdout.readline()
+            try:
+                child.wait(timeout=0.1)
+                raise AssertionError("fixture bridge should still be running")
+            except subprocess.TimeoutExpired:
+                os.killpg(child.pid, signal.SIGTERM)
+            child.communicate(timeout=5)
+            print(line, end="")
+        else:
+            out, err = child.communicate(timeout=8)
+            assert child.returncode == 0, err
+            print(out, end="")
+    finally:
+        if child.poll() is None:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.communicate(timeout=5)
+''')
+        result = self.call("run", "--class", "browser", "--", sys.executable, str(driver), CLI,
+            env=dict(env, PATH=str(directory / "bin") + os.pathsep + env["PATH"]))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(len(records), 2)
+        for record in records:
+            self.assertEqual(record["leases"], [record["token"]])
+            self.assertFalse(record["queue"])
+            self.assertTrue(record["groups"])
+        self.assertEqual(records[0]["token"], records[1]["token"])
+        wait_for(lambda: not self.status()["leases"])
+        self.assertFalse(self.status()["queue"])
+        result = subprocess.run([adapter, "-y", "chrome-devtools-mcp@latest"],
+            env=env, text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertFalse(self.status()["queue"])
 
     def test_recovery_requires_continuous_nominal_observations(self):
         sample = copy.deepcopy(SAMPLE)

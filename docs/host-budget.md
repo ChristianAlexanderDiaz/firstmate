@@ -45,9 +45,11 @@ bin/fm-resource-stage.sh -- ./unknown-local-validation.sh
 
 When configured, worker dispatch validates a restore manifest before starting the model CLI, reserves resident CLI memory separately from compute, and supplies task-owned PATH adapters for common package, compiler, graph, browser and Nix entry points.
 The wrapper surrounds the existing launch command after account resolution and before backend delivery, so it applies to every harness and runtime backend without driving their lifecycle.
+Supervisor sessions do not acquire resident worker leases: primary sessions start outside this wrapper, and persistent second mates keep the compute adapters and selected policy without waiting for resident capacity.
+Their local compute commands still require stage reservations.
 Interactive launches retain the controlling terminal, transfer foreground ownership to the verified child process group before execution, and restore it after completion; terminal interrupts reach the running CLI normally.
 Existing account authentication and pin validation remain in the account adapter.
-Manifest validation rejects changed directory, branch, task, account configuration or argv rather than choosing another account or directory.
+Worker manifest validation rejects changed directory, branch, task, account configuration or argv rather than choosing another account or directory.
 Recovery never automatically relaunches saved commands.
 Relaunch preparation creates a new manifest from the supervisor's validated task record.
 
@@ -71,6 +73,8 @@ A browser stage creates a private profile, named Chrome automation session, serv
 Nested browser stages initialize these resources if the outer compute reservation has none; otherwise they reuse the inherited profile and composite lifetime.
 Project server configuration must consume that port and keep reuse disabled by default; a bind collision must fail rather than attach to a different server.
 The Chrome adapter rejects short requests outside that composite lifetime and clears ambient auto-connect and browser URL settings when creating it.
+The `npx chrome-devtools-mcp` adapter recovers the caller's existing browser reservation from verified process ancestry when the MCP transport filters lease environment variables.
+It restores the owned browser context and attaches the bridge process group to that reservation without queuing a second job; a launch without a live ancestor browser reservation refuses immediately.
 The wrapper exports `FM_RESOURCE_CPU_WORKERS` and `FM_RESOURCE_BROWSER_WORKERS` for project runners, and applies direct Vitest, Node test, Playwright, graphify and Nix caps where the command interface supports them.
 Package-script Vitest runs inherit `VITEST_MAX_WORKERS` and the older thread/fork environment limits, with minimum workers set to one; see [Vitest's environment variable migration](https://vitest.dev/guide/migration.html).
 Prepared launches and direct leased package-test runs install a Node PATH adapter that caps `node --test` before file arguments at two workers on desk power or one on portable power, including npm and pnpm package scripts.
@@ -94,7 +98,7 @@ An oversized project must request a larger `--memory-mib` reservation.
 Nested stages inherit and, if necessary, atomically upgrade the outer reservation.
 An upgrade that cannot fit refuses instead of holding one slot while waiting for another.
 Do not launch independent parallel stages behind a single composite token.
-Keep the parent stage alive until all owned resources finish; detached sessions that escape its process group need their own explicit leased lifetime.
+Keep the parent stage alive until all owned resources finish; detached sessions other than verified browser bridge groups need their own explicit leased lifetime.
 In particular, a browser automation CLI's short connection request is not proof that its persistent browser or bridge stopped.
 Launch the browser/server under the composite stage and connect the client to that owned instance; never attach the budget to an unrelated existing browser.
 
@@ -104,20 +108,27 @@ An unanchored surviving group is quarantined, retaining capacity without signali
 Cancellation sends TERM to verified members, then KILL after the configured grace, and never kills by executable name or port.
 Stopping the owner preserves live reservations for reconciliation by its replacement.
 Once a lease's verified process group has drained, the owner checks the browser manifest's lease, boot and profile identity and removes the token directory, including its profile and caches.
-The same reconciliation handles completion, cancellation, inherited browser stages and owner recovery.
+The same reconciliation handles completion, cancellation, inherited browser stages, attached bridge groups and owner recovery.
 Unknown or corrupt recovery state fails closed; preserve it for inspection rather than deleting it to regain slots.
 
 ## Exceptions and rollout
 
-Missing, stale, unavailable, wrong-boot or malformed monitor samples hold new compute.
+Missing, stale, unavailable, wrong-boot or malformed monitor samples hold new compute and resident workers.
+Resident workers may start under warning memory pressure, subject to the resident count, actual memory reservations and other telemetry checks; critical or unknown pressure holds new workers.
+Heavy and exclusive jobs remain held under warning pressure.
+The queue admits requests that fit the available capacity without reserving memory for waiting requests, so a queued exclusive job cannot block workers or smaller compute jobs behind it.
+Reconciliation drops queued requests whose controller identity is dead or whose controller has been orphaned to process 1.
 The owner uses the monitor's observation time and uptime, restarts recovery after source or monitor-instance changes, observed suspension or gaps longer than ten seconds, and persists its last blocking cause.
 An explicit `emergency --evidence` records an observed emergency sleep; a critical thermal reading also latches conservatively without asserting that sleep occurred.
 Dotfiles schema 1 does not report historical emergency sleeps, so an emergency that happened while both monitor and coordinator were absent must be recorded from inspected OS evidence before restoring work.
 Clear the latch only with `clear-emergency --evidence` after inspecting that evidence.
-Fresh healthy telemetry must still satisfy continuous nominal recovery hysteresis after a clear, warning, wake or owner restart.
+Heavy compute must still satisfy continuous nominal recovery hysteresis after a clear, warning, wake or owner restart.
 
 The bounded private metrics ring records telemetry and numeric resource usage by lease, without prompts, cookies or environment contents.
 Transition history, current cause and quarantine status provide the Firstmate exception summary; there is no permanent AI health watcher.
+A request waiting more than ten minutes, or waiting on capacity held by its own process or an ancestor stage, emits one stuck-request notification through the registered transition check.
+The notification names the request, task, workload class, wait duration and blocking lease holders with their process and task identities, or the admission policy when no lease holds the requested capacity.
+Its notification marker survives owner recovery, preventing repeated notifications for the same queued request.
 Indexing and backup policies stay with the opted-in dotfiles helper; this implementation never excludes worktrees or deletes unique work.
 
 Use `bin/fm-test-run.sh tests/fm-resource.test.sh` to exercise socket admission, process ownership and fixture policy failures without generating thermal load.

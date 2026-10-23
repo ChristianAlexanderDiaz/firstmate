@@ -424,8 +424,9 @@
 #   and its operator contract. Resolve it with bin/fm-exclude-tools-lib.sh
 #   before provisioning; __PIEXCLUDE__ below owns the Pi launch substitution.
 # Host budget: when a per-user policy is selected (docs/host-budget.md),
-# all harness/backend launch commands receive the same resident
-# lease, restore manifest and PATH adapters (fm-resource-run --help owns these).
+# all harness/backend worker launches receive the same resident lease,
+# restore manifest and PATH adapters (fm-resource-run --help owns these).
+# Secondmates retain compute adapters but never queue for a resident lease.
 # This never starts a service, drives a backend restore or changes an account.
 # Missing service refuses execution; direct interpreter/absolute heavy commands
 # still require an explicit stage lease, as documented in docs/host-budget.md.
@@ -6459,7 +6460,11 @@ if [ -n "$RESOURCE_CONFIG" ]; then
       resource_transport="$resource_transport $resource_key=$(shell_quote "$resource_value")"
     fi
   fi
-  LAUNCH="$resource_transport FM_RESOURCE_CONFIG=$(shell_quote "$RESOURCE_CONFIG") PATH=$(shell_quote "$RESOURCE_DIR/bin")\":\$PATH\" $(shell_quote "$SCRIPT_DIR/fm-resource-run") --config $(shell_quote "$RESOURCE_CONFIG") run --class worker --task $(shell_quote "$ID") --manifest $(shell_quote "$RESOURCE_MANIFEST") -- /bin/sh -c $(shell_quote "$LAUNCH")"
+  resource_admission=""
+  if [ "$KIND" != secondmate ]; then
+    resource_admission="$(shell_quote "$SCRIPT_DIR/fm-resource-run") --config $(shell_quote "$RESOURCE_CONFIG") run --class worker --task $(shell_quote "$ID") --manifest $(shell_quote "$RESOURCE_MANIFEST") --"
+  fi
+  LAUNCH="$resource_transport FM_RESOURCE_CONFIG=$(shell_quote "$RESOURCE_CONFIG") PATH=$(shell_quote "$RESOURCE_DIR/bin")\":\$PATH\" $resource_admission /bin/sh -c $(shell_quote "$LAUNCH")"
 fi
 if [ -n "$WORKER_ACCOUNT" ]; then
   case "$HARNESS" in
