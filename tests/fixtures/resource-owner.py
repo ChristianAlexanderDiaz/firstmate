@@ -2,6 +2,8 @@
 """Fixture only: fresh synthetic dotfiles monitor and controllable policy clock.
 
 The production owner and every real client/socket/process path remain intact.
+An optional legacy-owner marker models an owner that predates portable status
+and browser bridge recovery.
 No thermal load, machine settings, user daemon or runtime backend is involved.
 """
 import importlib.util
@@ -42,6 +44,20 @@ def process_table():
 
 
 resource.process_table = process_table
+real_handle = resource.Budget.handle
+
+
+def handle(budget, request):
+    legacy = (root / "legacy-owner").exists() and isinstance(request, dict)
+    if legacy and request.get("op") == "inherit-browser":
+        raise resource.Refusal("invalid request nonce")
+    result = real_handle(budget, request)
+    if legacy and request.get("op") == "status":
+        result.pop("portable", None)
+    return result
+
+
+resource.Budget.handle = handle
 
 
 def awake_uptime():

@@ -838,7 +838,12 @@ def tool_job(args, name, config, digest):
     if args.name == "npx" and any(v.split("@", 1)[0] == "chrome-devtools-mcp" for v in argv):
         # MCP's stdio transport keeps PATH but strips lease variables. Recover
         # a verified ancestor browser reservation, else queue a browser lease.
-        inherited = rpc(config, digest, op="inherit-browser", controller=identity(os.getpid()))
+        try:
+            inherited = rpc(config, digest, op="inherit-browser", controller=identity(os.getpid()))
+        except Refusal as error:
+            if str(error) != "invalid request nonce":
+                raise
+            inherited = {"token": None}
         if inherited["token"]:
             os.environ.update(FM_RESOURCE_LEASE=inherited["token"], FM_RESOURCE_CONFIG=name,
                 FM_TASK_ID=inherited["task"])
@@ -1093,7 +1098,7 @@ def run_job(args, config_name, config, digest):
                 break
             time.sleep(0.2)
         state = rpc(config, digest, op="status")
-        portable = state["portable"]
+        portable = state.get("portable", True)
         command, env = caps(command, kind, portable, config_name, config)
         env.update(FM_RESOURCE_CONFIG=config_name, FM_RESOURCE_PORTABLE="1" if portable else "0")
         if kind == "browser":

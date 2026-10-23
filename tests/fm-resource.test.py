@@ -240,6 +240,20 @@ class ResourceTests(unittest.TestCase):
         result = self.call("run", "--class", "test", *probe)
         self.assertEqual((result.returncode, result.stdout), (0, "0"), result.stderr)
 
+    def test_legacy_owner_status_without_portable_keeps_portable_caps(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["power"].update(source="ac", adapterWatts=140, isCharging=True)
+        self.write("input.json", sample)
+        wait_for(lambda: self.status().get("telemetry", {}).get("power") == sample["power"])
+        clock = self.root / "clock"
+        clock.write_text(str(int(clock.read_text()) + 121))
+        wait_for(lambda: self.status()["reason"] == "ready")
+        self.assertFalse(self.status()["portable"])
+        (self.root / "legacy-owner").write_text("")
+        self.assertNotIn("portable", self.status())
+        result = self.call("run", "--class", "test", "--", "/bin/sh", "-c", 'printf %s "$FM_RESOURCE_PORTABLE"')
+        self.assertEqual((result.returncode, result.stdout), (0, "1"), result.stderr)
+
     def test_long_queued_request_emits_one_wake_naming_the_holder(self):
         self.job("sleep 30", kind="exclusive")
         lease = wait_for(lambda: next((l for l in self.status().get("leases", {}).values() if l.get("group")), None))
@@ -714,6 +728,15 @@ for timeout in (False, True):
         record = json.loads(result.stdout)
         self.assertEqual(record["leases"], [record["token"]])
         self.assertFalse(record["groups"])
+        wait_for(lambda: not self.status()["leases"])
+        self.assertFalse(self.status()["queue"])
+        # An owner that predates bridge recovery still admits a browser lease.
+        (self.root / "legacy-owner").write_text("")
+        result = subprocess.run([adapter, "-y", "chrome-devtools-mcp@latest"],
+            env=env, text=True, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = json.loads(result.stdout)
+        self.assertEqual(record["leases"], [record["token"]])
         wait_for(lambda: not self.status()["leases"])
         self.assertFalse(self.status()["queue"])
 
