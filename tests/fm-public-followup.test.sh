@@ -15,6 +15,8 @@ set -u
 # shellcheck source=tests/lib.sh
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/remote-job-fixture.sh
+. "$(dirname "${BASH_SOURCE[0]}")/remote-job-fixture.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$ROOT/bin/fm-timeout-lib.sh"
 
@@ -27,6 +29,7 @@ SESSION_START="$ROOT/bin/fm-session-start.sh"
 TMP_ROOT=$(fm_test_tmproot fm-public-followup)
 PF_TEST_NOW=1787539200
 PF_TEST_LOCK_HOLDER=
+fm_test_remote_isolate "$TMP_ROOT" "$TMP_ROOT/remote-root"
 
 write_promotion_brief() {  # <home> <id>
   local home=$1 id=$2
@@ -53,8 +56,9 @@ pf_test_cleanup() {
   fi
   if [ -f "$pid_file" ]; then
     pid=$(cat "$pid_file" 2>/dev/null) || pid=
-    [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
+    [ -z "$pid" ] || fm_test_remote_stop_worker "${REMOTE_FIXTURE_JOBS:-$TMP_ROOT/remote-jobs}"
   fi
+  fm_test_remote_assert_isolated
   fm_test_cleanup
 }
 trap pf_test_cleanup EXIT
@@ -2435,6 +2439,8 @@ remote_fixture_prepare() {
   git -C "$REMOTE_FIXTURE_ROOT" add AGENTS.md bin
   git -C "$REMOTE_FIXTURE_ROOT" commit -qm 'tracked remote fixture'
 
+  fm_test_remote_start_worker "$REMOTE_FIXTURE_ROOT" "$REMOTE_FIXTURE_JOBS"
+
   fakebin=$(fm_fakebin "$TMP_ROOT/remote-transport")
   cat > "$fakebin/fake-ssh" <<'SH'
 #!/usr/bin/env bash
@@ -2450,6 +2456,10 @@ entry=$2
 shift 2
 [ "$host" = remote-mac ] || exit 91
 [ "$entry" = fm-remote-entrypoint.sh ] || exit 92
+export HOME="$FM_TEST_REMOTE_ACCOUNT_HOME"
+# shellcheck source=/dev/null
+. "$FM_TEST_REMOTE_HELPERS"
+fm_test_remote_ssh_worker "$@" || exit $?
 case "${FM_FAKE_SSH_MODE:-normal}" in
   unreachable) exit 255 ;;
   *) exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@" ;;

@@ -4,6 +4,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/remote-job-fixture.sh
+. "$(dirname "${BASH_SOURCE[0]}")/remote-job-fixture.sh"
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 TMP_ROOT=$(fm_test_tmproot fm-remote-reply)
@@ -13,6 +15,19 @@ PARENT="$TMP_ROOT/parent"
 REMOTE="$TMP_ROOT/remote"
 FAKEBIN=$(fm_fakebin "$TMP_ROOT/fake")
 CLAIMS="$TMP_ROOT/claims"
+REMOTE_ROOT="$TMP_ROOT/remote-root"
+mkdir -p "$REMOTE_ROOT/bin"
+cp "$ROOT/bin/fm-remote-entrypoint.sh" "$ROOT/bin/fm-remote-job-lib.sh" \
+  "$ROOT/bin/fm-remote-job-worker.sh" "$ROOT/bin/fm-remote-delta-read.sh" \
+  "$ROOT/bin/fm-remote-file.sh" "$ROOT/bin/fm-wake-lib.sh" \
+  "$ROOT/bin/fm-path-lib.sh" "$REMOTE_ROOT/bin/"
+printf "fixture\n" > "$REMOTE_ROOT/AGENTS.md"
+fm_test_remote_isolate "$TMP_ROOT" "$REMOTE_ROOT"
+git -C "$REMOTE_ROOT" init -q -b main
+git -C "$REMOTE_ROOT" config user.email test@example.com
+git -C "$REMOTE_ROOT" config user.name Test
+git -C "$REMOTE_ROOT" add .
+git -C "$REMOTE_ROOT" commit -qm "remote reply fixture"
 mkdir -p "$PARENT/data" "$PARENT/state" "$REMOTE/state" "$REMOTE/data/reply" "$CLAIMS"
 # shellcheck source=bin/fm-remote-job-lib.sh
 . "$ROOT/bin/fm-remote-job-lib.sh"
@@ -20,19 +35,17 @@ mkdir -p "$PARENT/data" "$PARENT/state" "$REMOTE/state" "$REMOTE/data/reply" "$C
 # stopping that pid alone leaves the supervisor to respawn - the leak
 # tests/fm-remote-job-orphan-reap.test.sh pins. Stop the whole worker tree.
 cleanup() {
-  local worker_pid=''
   FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
     "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
-  if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
-    worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid")
-    fm_remote_job_stop_worker_tree "$worker_pid" || true
-  fi
+  fm_test_remote_stop_worker "$TMP_ROOT/remote-jobs"
+  fm_test_remote_assert_isolated
   rm -rf -- "$TMP_ROOT"
 }
 trap cleanup EXIT
+fm_test_remote_start_worker "$REMOTE_ROOT" "$TMP_ROOT/remote-jobs"
 
 cat > "$PARENT/data/secondmates.md" <<EOF
-- ios - iOS delivery (host: remote-mac; root: $ROOT; home: $REMOTE; scope: iOS work; projects: alpha; added 2026-08-02)
+- ios - iOS delivery (host: remote-mac; root: $REMOTE_ROOT; home: $REMOTE; scope: iOS work; projects: alpha; added 2026-08-02)
 EOF
 printf '# Detailed remote answer\n\nThe build is green.\n' > "$REMOTE/data/reply/report.md"
 printf '# Mentioned but never offered\n' > "$REMOTE/data/reply/prose-only.md"
@@ -58,6 +71,10 @@ entry=$2
 shift 2
 [ "$host" = remote-mac ] || exit 91
 [ "$entry" = fm-remote-entrypoint.sh ] || exit 92
+export HOME="$FM_TEST_REMOTE_ACCOUNT_HOME"
+# shellcheck source=/dev/null
+. "$FM_TEST_REMOTE_HELPERS"
+fm_test_remote_ssh_worker "$@" || exit $?
 exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
 SH
 chmod +x "$FAKEBIN/fake-ssh"
@@ -67,7 +84,7 @@ remote_env() {
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
   FM_SSH_BIN="$FAKEBIN/fake-ssh" \
-  FM_FAKE_REMOTE_ENTRYPOINT="$ROOT/bin/fm-remote-entrypoint.sh" \
+  FM_FAKE_REMOTE_ENTRYPOINT="$REMOTE_ROOT/bin/fm-remote-entrypoint.sh" \
   FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
   FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/remote-jobs" \
   FM_REMOTE_REPLY_WAIT_SECONDS="${FM_REMOTE_REPLY_WAIT_SECONDS:-10}" \
