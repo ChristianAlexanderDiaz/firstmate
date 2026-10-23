@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Private account, service-manager guards, and scoped process scans for remote
-# transport fixtures. Source after lib.sh; install after copying the remote bin/.
+# transport fixtures. Source after lib.sh; install before committing the remote
+# checkout, so its bin/ guard copies are tracked, and before starting its worker.
 # No production entrypoint is changed: it still resolves the real SSH account.
 # A private worker is ready before SSH enters that path, including after a test
 # deliberately stops it. Bootstrap doctor calls remain read-only and guarded.
