@@ -48,6 +48,17 @@ SLEEPER=$(mktemp "${TMPDIR:-/tmp}/fm-afk-sleeper.XXXXXX")
 printf '#!/usr/bin/env bash\nexec sleep 600\n' > "$SLEEPER"
 chmod +x "$SLEEPER"
 TRACK_TMUX_SESSIONS=""
+TMUX_TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-launch-tmux.XXXXXX")
+REAL_TMUX=$(command -v tmux || true)
+if [ -n "$REAL_TMUX" ]; then
+  mkdir -p "$TMUX_TEST_ROOT/bin"
+  cat > "$TMUX_TEST_ROOT/bin/tmux" <<SH
+#!/usr/bin/env bash
+exec "$REAL_TMUX" -f /dev/null -S "$TMUX_TEST_ROOT/socket" "\$@"
+SH
+  chmod +x "$TMUX_TEST_ROOT/bin/tmux"
+  export PATH="$TMUX_TEST_ROOT/bin:$PATH"
+fi
 GLOBAL_CLEANUP() {
   rm -f "$SLEEPER" 2>/dev/null || true
   rm -rf "$OFF_CONFIG" 2>/dev/null || true
@@ -55,6 +66,10 @@ GLOBAL_CLEANUP() {
   for s in $TRACK_TMUX_SESSIONS; do
     tmux kill-session -t "$s" 2>/dev/null || true
   done
+  if [ -n "$REAL_TMUX" ]; then
+    "$REAL_TMUX" -S "$TMUX_TEST_ROOT/socket" kill-server 2>/dev/null || true
+  fi
+  rm -rf "$TMUX_TEST_ROOT"
 }
 trap GLOBAL_CLEANUP EXIT
 
