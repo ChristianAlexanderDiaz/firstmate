@@ -1406,9 +1406,22 @@ wait_for_pid_gone() {  # <pid> <polls>
 # as an orphan (upstream #4760). Allow for a slow CI runner finishing the cycle
 # already in progress before its next FM_POLL=1 tick. A busy poll may spend
 # longer than ten seconds in subprocesses on a contended CI runner.
+make_lock_wait_observer() {  # <fakebin>
+  cat > "$1/cat" <<'SH'
+#!/usr/bin/env bash
+for arg do
+  if [ "$arg" = "$FM_TEST_WAIT_LOCK/pid" ]; then
+    printf 'waiting\n' > "$FM_TEST_QUEUE_WAITING"
+  fi
+done
+exec "$FM_TEST_REAL_CAT" "$@"
+SH
+  chmod +x "$1/cat"
+}
+
 test_watcher_exits_when_its_state_directory_is_removed() {
-  local dir home state fakebin armout i held=0
-  dir=$(make_case state-dir-removed)
+  local phase=${1:-recovery} dir home state fakebin armout lock i held=0
+  dir=$(make_case "state-dir-removed-$phase")
   home="$dir/home"
   state="$dir/state"
   fakebin="$dir/fakebin"
@@ -1416,42 +1429,74 @@ test_watcher_exits_when_its_state_directory_is_removed() {
   mkdir -p "$home/data"
   # Keep the summary helper from recreating state and masking the deletion.
   touch "$state/home-summary.json"
-  cat > "$fakebin/cat" <<'SH'
-#!/usr/bin/env bash
-for arg do
-  case "$arg" in
-    */.wake-queue.lock/pid) printf 'waiting\n' > "$FM_TEST_QUEUE_WAITING" ;;
-  esac
-done
-exec "$FM_TEST_REAL_CAT" "$@"
-SH
-  chmod +x "$fakebin/cat"
-  FM_TEST_QUEUE_WAITING="$dir/queue-waiting" FM_TEST_REAL_CAT="$(command -v cat)" \
+  make_lock_wait_observer "$fakebin"
+  lock="$state/.wake-queue.lock"
+  if [ "$phase" = pr-poll ]; then
+    lock="$state/.control-fixture.lock"
+    # Publish a valid poll, then prevent its check from reaching the forge.
+    FM_STATE_OVERRIDE="$state" bash -c '
+      . "$1/bin/fm-pr-lib.sh"
+      printf "pr=https://github.com/o/r/pull/1\n" > "$2/fixture.meta"
+      fm_pr_poll_prepare "$2" fixture github https://github.com/o/r/pull/1 github.com o/r 1 \
+        "$1/bin/fm-pr-poll.sh" && fm_pr_poll_publish_prepared
+    ' _ "$ROOT" "$state" || fail "could not prepare the deletion poll fixture"
+    mkdir "$lock"
+    printf '%s\n' "$$" > "$lock/pid"
+    held=1
+  fi
+  FM_TEST_WAIT_LOCK="$lock" FM_TEST_QUEUE_WAITING="$dir/queue-waiting" FM_TEST_REAL_CAT="$(command -v cat)" \
     start_owned_watcher "$home" "$state" "$fakebin" "$armout"
 
-  # Hold a live legacy queue lock until the watcher enters recovery's acquire.
-  # Deleting state there used to strand that acquire before the next poll.
+  # Hold a live legacy lock until the watcher enters the selected acquire.
+  # Observe the blocked acquisition before deleting state.
   i=0
-  while [ "$i" -lt 300 ]; do
-    if mkdir "$state/.wake-queue.lock" 2>/dev/null; then held=1; break; fi
+  while [ "$held" -eq 0 ] && [ "$i" -lt 300 ]; do
+    if mkdir "$lock" 2>/dev/null; then held=1; break; fi
     sleep 0.1
     i=$((i + 1))
   done
-  [ "$held" -eq 1 ] || fail "could not hold the queue lock before deleting state"
-  printf '%s\n' "$$" > "$state/.wake-queue.lock/pid"
-  : > "$dir/queue-waiting"
+  [ "$held" -eq 1 ] || fail "could not hold the $phase lock before deleting state"
+  printf '%s\n' "$$" > "$lock/pid"
+  [ "$phase" != recovery ] || : > "$dir/queue-waiting"
   wait_for_file_text "$dir/queue-waiting" waiting \
-    || fail "watcher did not reach the held queue lock before state deletion"
+    || fail "watcher did not reach the held $phase lock before state deletion"
 
   rm -rf "$state"
   wait_for_pid_gone "$WATCH_PID" 400 \
     || { kill -TERM "$WATCH_PID" 2>/dev/null; fail "watcher pid $WATCH_PID outlived its deleted state directory"; }
   wait_for_exit "$ARM_PID" 100 >/dev/null 2>&1 || true
-  grep -qF 'watcher: exiting - state directory' "$armout" \
-    || fail "watcher did not log the state-gone exit reason: $(cat "$armout")"
+  if [ "$phase" = recovery ]; then
+    grep -qF 'watcher: exiting - state directory' "$armout" \
+      || fail "watcher did not log the state-gone exit reason: $(cat "$armout")"
+  fi
   ! grep -q '^signal:\|^check:\|^stale:\|^heartbeat' "$armout" \
     || fail "a state-gone exit was reported as an actionable wake: $(cat "$armout")"
-  pass "watch-arm: a watcher exits when its state directory is removed"
+  [ ! -d "$state" ] || fail "watcher recreated its deleted state directory"
+  pass "watch-arm: a watcher exits when state is removed during a $phase lock wait"
+}
+
+test_wake_append_exits_when_its_state_directory_is_removed() {
+  local dir state fakebin lock pid rc=0
+  dir=$(make_case append-state-dir-removed)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  lock="$state/.wake-queue.lock"
+  make_lock_wait_observer "$fakebin"
+  mkdir "$lock"
+  printf '%s\n' "$$" > "$lock/pid"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_TEST_WAIT_LOCK="$lock" \
+    FM_TEST_QUEUE_WAITING="$dir/queue-waiting" FM_TEST_REAL_CAT="$(command -v cat)" \
+    bash -c '. "$1"; fm_wake_append signal fixture.status "signal: fixture.status"' \
+      _ "$ROOT/bin/fm-wake-lib.sh" > "$dir/append.out" 2>&1 &
+  pid=$!
+  wait_for_file_text "$dir/queue-waiting" waiting \
+    || fail "wake append did not reach the held queue lock"
+  rm -rf "$state"
+  wait_for_exit "$pid" 100 || rc=$?
+  [ "$rc" -ne 124 ] || fail "wake append outlived its deleted state directory"
+  [ "$rc" -ne 0 ] || fail "wake append succeeded after state deletion"
+  [ ! -d "$state" ] || fail "wake append recreated its deleted state directory"
+  pass "wake append fails promptly when state is removed during its queue lock wait"
 }
 
 # The same for a deleted home whose state directory still exists elsewhere: the
@@ -1745,6 +1790,8 @@ test_attached_arm_reports_the_delivered_wake_after_drain
 test_arm_refuses_an_unusable_launch_confirm_window
 test_arm_refuses_a_disposable_validation_checkout
 test_watcher_exits_when_its_state_directory_is_removed
+test_wake_append_exits_when_its_state_directory_is_removed
+test_watcher_exits_when_its_state_directory_is_removed pr-poll
 test_watcher_exits_when_its_home_is_removed
 test_reaper_stops_a_tracked_watcher
 test_attached_arm_still_fails_on_a_wake_it_did_not_deliver

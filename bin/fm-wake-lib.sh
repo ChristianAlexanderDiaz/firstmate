@@ -1419,11 +1419,13 @@ fm_lock_try_acquire() {
   return "$rc"
 }
 
-# The optional required directory cancels a wait when its owner's world is
-# removed, without changing ordinary waits on a live foreign lock holder.
+# A removed lock parent cancels the wait because acquisition cannot succeed.
+# The optional required directory also cancels when its owner's world is removed.
 fm_lock_acquire_wait() {  # <lockdir> [required-directory]
-  local lockdir=$1 required_dir=${2:-}
+  local lockdir=$1 required_dir=${2:-} lock_parent
+  fm_dirname_to lock_parent "$lockdir"
   while ! fm_lock_try_acquire "$lockdir"; do
+    [ -d "$lock_parent" ] || return 1
     [ -z "$required_dir" ] || [ -d "$required_dir" ] || return 1
     sleep 0.1
   done
