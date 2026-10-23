@@ -114,9 +114,10 @@ class ResourceTests(unittest.TestCase):
         return resource.rpc(self.config, resource.load_config(str(self.root / "config.json"))[2],
             op=op, **values)
 
-    def acquire(self, kind, memory=None, controller=None, task="fixture"):
+    def acquire(self, kind, memory=None, controller=None, task="fixture", parent=None):
         token = uuid.uuid4().hex
         result = self.request("acquire", token=token, controller=controller or resource.identity(os.getpid()),
+            parent=parent or (os.getpid() if controller else os.getppid()),
             **{"class": kind, "memoryMiB": memory or resource.CLASSES[kind], "task": task})
         return token, result["state"]
 
@@ -180,6 +181,22 @@ class ResourceTests(unittest.TestCase):
             self.acquire("exclusive", controller=owner)
         self.assertFalse(self.status()["queue"])
 
+    def test_controller_with_parent_one_at_enqueue_is_admitted_normally(self):
+        holder, state = self.acquire("exclusive")
+        self.assertEqual(state, "leased")
+        controller = subprocess.Popen(["/bin/sleep", "30"])
+        self.children.append(controller)
+        owner = resource.identity(controller.pid)
+        # A launchd-started controller observes parent 1 before it first queues.
+        (self.root / "orphan-controller").write_text(str(controller.pid))
+        token, state = self.acquire("exclusive", controller=owner, parent=1)
+        self.assertEqual(state, "queued")
+        self.assertIn(token, [q["token"] for q in self.status()["queue"]])
+        self.request("release", token=holder)
+        result = self.request("acquire", **self.status()["queue"][0])
+        self.assertEqual(result["state"], "leased")
+        self.assertIn(token, self.status()["leases"])
+
     def test_long_queued_request_emits_one_wake_naming_the_holder(self):
         self.job("sleep 30", kind="exclusive")
         lease = wait_for(lambda: next((l for l in self.status().get("leases", {}).values() if l.get("group")), None))
@@ -214,6 +231,20 @@ class ResourceTests(unittest.TestCase):
         self.request("acquire", **self.status()["queue"][0])
         self.assertFalse(any("host-budget-stuck" in line for line in self.poll_transitions()))
         self.request("release", token=holder)
+
+    def test_resident_lease_is_not_self_held_under_ordinary_contention(self):
+        self.assertEqual(self.acquire("worker", memory=6144, task="resident-task")[1], "leased")
+        self.job("sleep 30", kind="exclusive")
+        lease = wait_for(lambda: next((l for l in self.status().get("leases", {}).values()
+            if l["class"] == "exclusive" and l.get("group")), None))
+        token, state = self.acquire("test", task="waiting-task")
+        self.assertEqual(state, "queued")
+        self.assertFalse(any("host-budget-stuck" in line for line in self.poll_transitions()))
+        (self.root / "clock").write_text("722")
+        lines = wait_for(lambda: [line for line in self.poll_transitions() if "host-budget-stuck" in line])
+        self.assertEqual(len(lines), 1)
+        for expected in (token, "queue wait exceeded 10 minutes", f"pid={lease['group']['pid']}", "class=exclusive"):
+            self.assertIn(expected, lines[0])
 
     def test_atomic_races_are_serial_across_homes(self):
         lock = self.root / "exclusive"
@@ -412,7 +443,7 @@ class ResourceTests(unittest.TestCase):
         digest = resource.load_config(str(self.root / "config.json"))[2]
         token = uuid.uuid4().hex
         result = resource.rpc(self.config, digest, op="acquire", token=token,
-            controller=resource.identity(os.getpid()), **{"class": "test", "memoryMiB": 1024})
+            controller=resource.identity(os.getpid()), parent=os.getppid(), **{"class": "test", "memoryMiB": 1024})
         self.assertEqual(result["state"], "leased")
         # A direct child is valid. A forged start identity is never valid, even
         # when its PID still belongs to this user's live process.
@@ -573,7 +604,7 @@ import json, os, subprocess, sys, time
 state = json.loads(subprocess.check_output([os.environ["CLIENT_RESOURCE_CLI"],
     "--config", os.environ["FM_RESOURCE_CONFIG"], "status"], text=True))
 print(json.dumps({"token": os.environ["FM_RESOURCE_LEASE"], "queue": state["queue"],
-    "leases": list(state["leases"]), "groups": list(state["leases"].values())[0]["browserGroups"]}), flush=True)
+    "leases": list(state["leases"]), "groups": list(state["leases"].values())[0].get("browserGroups", [])}), flush=True)
 if "--fixture-timeout" in sys.argv:
     time.sleep(30)
 ''')
@@ -623,9 +654,24 @@ for timeout in (False, True):
         self.assertEqual(records[0]["token"], records[1]["token"])
         wait_for(lambda: not self.status()["leases"])
         self.assertFalse(self.status()["queue"])
+        # Without an ancestor browser reservation the bridge queues for its own.
+        env["CLIENT_RESOURCE_CLI"] = CLI
+        holder, _ = self.acquire("exclusive")
+        bridge = subprocess.Popen([adapter, "-y", "chrome-devtools-mcp@latest"],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(bridge)
+        wait_for(lambda: [q for q in self.status()["queue"] if q["class"] == "browser"])
+        bridge.terminate()
+        self.assertEqual(bridge.wait(timeout=5), 130)
+        self.assertFalse(self.status()["queue"])
+        self.request("release", token=holder)
         result = subprocess.run([adapter, "-y", "chrome-devtools-mcp@latest"],
-            env=env, text=True, capture_output=True, timeout=5)
-        self.assertEqual(result.returncode, 75, result.stderr)
+            env=env, text=True, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = json.loads(result.stdout)
+        self.assertEqual(record["leases"], [record["token"]])
+        self.assertFalse(record["groups"])
+        wait_for(lambda: not self.status()["leases"])
         self.assertFalse(self.status()["queue"])
 
     def test_recovery_requires_continuous_nominal_observations(self):

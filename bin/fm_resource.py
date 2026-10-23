@@ -274,6 +274,9 @@ class Budget:
             os.fsync(stream.fileno())
         print(record, flush=True)
 
+    def orphaned(self, controller, parent):
+        return parent != 1 and self.table[controller["pid"]]["ppid"] == 1
+
     def cleanup_browser(self, token, lease):
         directory = self.root / "browser-jobs" / token
         if not directory.exists():
@@ -289,7 +292,7 @@ class Budget:
     def reconcile(self):
         self.table = process_table()
         self.data["queue"] = [r for r in self.data["queue"] if matches(r["controller"], self.table)
-            and self.table[r["controller"]["pid"]]["ppid"] != 1]
+            and not self.orphaned(r["controller"], r.get("parent"))]
         for token, lease in list(self.data["leases"].items()):
             group = lease.get("group")
             if lease["controller"].get("boot") != boot_id():
@@ -486,7 +489,8 @@ class Budget:
             # Follow kernel ancestry as well as exact process identities.
             lineage = ancestors(request["controller"]["pid"], self.table)
             self_held = any(matches(owner, self.table) and owner["pid"] in lineage
-                for lease in holders for owner in [lease["controller"], *lease.get("members", [])])
+                for lease in holders if worker or lease["class"] != "worker"
+                for owner in [lease["controller"], *lease.get("members", [])])
             waited = max(0, time.monotonic() - request["queued"])
             if waited <= STUCK_QUEUE_SECONDS and not self_held:
                 continue
@@ -549,7 +553,7 @@ class Budget:
                 self.save()
                 return {"ok": True, "token": token, "task": lease["task"],
                     "manifest": json.loads(manifest.read_text())}
-            raise Refusal("browser bridge requires a live ancestor composite browser lease")
+            return {"ok": True, "token": None}
         token = request.get("token")
         if not isinstance(token, str) or len(token) != 32 or any(c not in "0123456789abcdef" for c in token):
             raise Refusal("invalid request nonce")
@@ -557,7 +561,10 @@ class Budget:
             controller = request["controller"]
             if not matches(controller, self.table):
                 raise Refusal("controller boot/start identity does not match")
-            if self.table[controller["pid"]]["ppid"] == 1:
+            parent = request.get("parent")
+            if type(parent) is not int:
+                raise Refusal("acquire requires the controller's starting parent pid")
+            if self.orphaned(controller, parent):
                 raise Refusal("orphaned controller cannot acquire a lease")
             existing = self.data["leases"].get(token) or next((q for q in self.data["queue"] if q["token"] == token), None)
             if existing is None:
@@ -566,8 +573,8 @@ class Budget:
                 if kind not in CLASSES or type(memory) is not int or not CLASSES[kind] <= memory <= self.config["memoryMiB"]:
                     raise Refusal("invalid or oversized reservation")
                 self.data["queue"].append({"token": token, "controller": controller,
-                    "class": kind, "memoryMiB": memory, "task": request.get("task", "ad-hoc"),
-                    "queued": time.monotonic()})
+                    "parent": parent, "class": kind, "memoryMiB": memory,
+                    "task": request.get("task", "ad-hoc"), "queued": time.monotonic()})
             elif existing["controller"] != controller:
                 raise Refusal("nonce belongs to another controller")
             self.admit()
@@ -823,11 +830,12 @@ def tool_job(args, name, config, digest):
         os.execv(args.executable, [args.executable, *argv])
     if args.name == "npx" and any(v.split("@", 1)[0] == "chrome-devtools-mcp" for v in argv):
         # MCP's stdio transport keeps PATH but strips lease variables. Recover
-        # only a verified ancestor browser reservation, never queue a new one.
+        # a verified ancestor browser reservation, else queue a browser lease.
         inherited = rpc(config, digest, op="inherit-browser", controller=identity(os.getpid()))
-        os.environ.update(FM_RESOURCE_LEASE=inherited["token"], FM_RESOURCE_CONFIG=name,
-            FM_TASK_ID=inherited["task"])
-        restore_browser_environment(config, inherited["token"], inherited["manifest"], os.environ)
+        if inherited["token"]:
+            os.environ.update(FM_RESOURCE_LEASE=inherited["token"], FM_RESOURCE_CONFIG=name,
+                FM_TASK_ID=inherited["task"])
+            restore_browser_environment(config, inherited["token"], inherited["manifest"], os.environ)
         kind = "browser"
     args.argv = [args.executable, *argv]
     args.resource_class, args.memory_mib = kind, None
@@ -1045,6 +1053,7 @@ def run_job(args, config_name, config, digest):
     if memory < CLASSES[kind]:
         raise Refusal("reservation cannot be smaller than its workload class")
     owner = identity(os.getpid())
+    parent = os.getppid()
     if inherited and kind != "worker":
         rpc(config, digest, op="inherit", token=inherited, controller=owner, memoryMiB=memory)
         command, env = caps(command, kind, os.environ.get("FM_RESOURCE_PORTABLE") == "1", config_name, config)
@@ -1071,7 +1080,7 @@ def run_job(args, config_name, config, digest):
             if interrupted or deadline and time.monotonic() >= deadline:
                 rpc(config, digest, op="cancel-queued", token=token)
                 return 130 if interrupted else 75
-            result = rpc(config, digest, op="acquire", token=token, controller=owner,
+            result = rpc(config, digest, op="acquire", token=token, controller=owner, parent=parent,
                 **{"class": kind, "memoryMiB": memory, "task": args.task})
             if result["state"] == "leased":
                 break
