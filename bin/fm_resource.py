@@ -473,7 +473,8 @@ class Budget:
             if (worker and resident >= self.config["maxResidentWorkers"]) or (not worker and active_heavy >= 1) or memory + request["memoryMiB"] > self.config["memoryMiB"]:
                 continue
             # Resident CLIs need their own admission check even without compute;
-            # Warning pressure permits residents, but never unknown telemetry.
+            # Warning pressure and fair thermal awaiting nominal recovery permit
+            # residents, but never unknown telemetry.
             if worker and (self.telemetry is None or self.telemetry["memory"]["pressure"] not in ("normal", "warning") or self.reason not in ("ready", MEMORY_WARNING, "nominal thermal recovery required", "battery below 30% admission reserve") and not self.reason.startswith("recovery hysteresis")):
                 continue
             lease = dict(request, acquired=time.monotonic(), heartbeat=time.monotonic())
