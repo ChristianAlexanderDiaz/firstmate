@@ -182,14 +182,11 @@
 #   what lets teardown leave a slot reassigned since untouched; bin/fm-wake-lib.sh
 #   owns the claim and bin/fm-teardown.sh owns what it protects. A slot that
 #   cannot be claimed refuses the spawn rather than launching a worker whose slot
-#   could later be released out from under its successor. A spawn that aborts
-#   while it still holds the allocation lock drops its own claim; an abort after
-#   metadata publication has released that lock leaves the claim in place, and
-#   the next spawn's claim replaces it. A fresh polytoken spawn that fails and
-#   leaves no task record restores the pool as it found it: it retakes that lock
-#   once to drop its claim after metadata publication too, and before its launch
-#   is delivered it closes the endpoint whose `treehouse get` shell leases the
-#   slot and removes the wiring, task temp root, and staged launch file it wrote.
+#   could later be released out from under its successor. An aborted allocation
+#   returns its clean, unlaunched lease while still holding that lock; otherwise
+#   it preserves the lease and claim and reports the recovery path. A fresh
+#   polytoken spawn additionally closes its unlaunched endpoint and removes
+#   the wiring, task temp root, and staged launch file it wrote.
 #   The local root is whatever bin/fm-wake-lib.sh's
 #   fm_firstmate_root_home resolves, so a home seeded from another machine anchors
 #   that lock itself rather than failing to resolve one;
@@ -302,8 +299,9 @@
 #   command refuses immediately with its exit status, naming pool exhaustion
 #   when a non-zero exit accompanies Treehouse's exhaustion refusal; status
 #   JSON only adds context about slots it would not reuse. At the deadline the
-#   pane is interrupted, and a Treehouse subshell already opened there is exited
-#   so its slot returns to the pool.
+#   pane is interrupted. Ship and scout slots use `treehouse get --lease`, so
+#   stopping an agent or closing its endpoint cannot free its slot; teardown
+#   returns it after the task's work is accounted for.
 #   Each attempt stages its command and atomic exit-status record under
 #   data/<id>/treehouse.<random>/; failure saves pane.log there and retains the
 #   pane, including a projected pane, so the allocation output stays readable.
@@ -1491,6 +1489,7 @@ SPAWN_TASK_SET_LOCK_HELD=0
 SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
 SPAWN_SLOT_CLAIMED=0
+SPAWN_TREEHOUSE_LEASE_PATH=
 SPAWN_FRESH_ENDPOINT_OPENED=0
 SPAWN_FRESH_WIRING_PENDING=0
 SPAWN_TASK_TMP_CREATED=0
@@ -1647,8 +1646,8 @@ spawn_abort_cleanup() {
   fi
   # A fresh polytoken spawn that fails and leaves no record must leave the pool
   # as it found it. Before its launch is delivered, the endpoint it opened holds nothing but
-  # the shell whose `treehouse get` leases the slot, so closing it returns the
-  # slot to the pool and leaves no window or tab for a retry to trip over; the
+  # the shell in the leased slot. Closing it leaves no window or tab for a retry
+  # to trip over; the durable lease is handled below. The
   # Firstmate wiring, task temp root, and staged launch file it wrote go with it.
   # Once a launch was delivered into an endpoint still open, a worker may be
   # running there, so those stay for the operator, as the refusal says.
@@ -1664,7 +1663,7 @@ spawn_abort_cleanup() {
       if fm_backend_kill "$BACKEND" "$T" "$abort_tab_id" "fm-$ID" 2>/dev/null; then
         SPAWN_ENDPOINT_CLOSED=1
       else
-        echo "warning: could not close endpoint $T after the failed spawn of $ID; close it by hand so its slot returns to the pool" >&2
+        echo "warning: could not close endpoint $T after the failed spawn of $ID; the slot lease remains reserved" >&2
       fi
     fi
     # These paths are per task id, so the per-id spawn lock is retaken for them
@@ -1693,6 +1692,27 @@ spawn_abort_cleanup() {
       else
         echo "warning: another spawn of $ID holds its spawn lock; leaving its $HARNESS wiring, temp root, and staged launch file in place" >&2
       fi
+    fi
+  fi
+  # A durable acquire can finish before cwd settles or metadata is published.
+  # Return only an isolated, clean copy from an attempt that delivered no agent;
+  # otherwise retain the lease and its claim as recovery evidence, never discard
+  # work or free a slot where a launch might still be running.
+  if [ "$status" -ne 0 ] && [ -n "$SPAWN_TREEHOUSE_LEASE_PATH" ] &&
+    [ -f "$SPAWN_TREEHOUSE_LEASE_PATH" ] && [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ]; then
+    local leased_path leased_status
+    leased_path=$(cat "$SPAWN_TREEHOUSE_LEASE_PATH")
+    if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ] &&
+      { [ "$SPAWN_LAUNCH_SENT" = 0 ] || [ "$SPAWN_ENDPOINT_CLOSED" = 1 ]; } &&
+      spawn_worktree_isolated "$leased_path" &&
+      fm_treehouse_pool_slot "$PROJ_ABS" "$leased_path" &&
+      leased_status=$(git -C "$leased_path" status --porcelain --untracked-files=all) &&
+      [ -z "$leased_status" ] &&
+      (cd "$PROJ_ABS" && treehouse return --force --if-lease-holder "$ID" "$leased_path"); then
+      fm_treehouse_slot_owner_release "$leased_path" "$ID" || true
+    else
+      echo "warning: task $ID's Treehouse lease is retained at $leased_path after the failed spawn; inspect its work before returning it with treehouse return --if-lease-holder '$ID'" >&2
+      SPAWN_SLOT_CLAIMED=0
     fi
   fi
   # A spawn that aborts after claiming its slot but before its record survives
@@ -2293,6 +2313,9 @@ if [ "$RELAUNCH" -eq 1 ]; then
     fi
   fi
   RELAUNCH_WT=$(fm_meta_get "$RELAUNCH_META" worktree)
+  if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+    fm_treehouse_require_task_slot "$RELAUNCH_WT" "$ID" || exit 1
+  fi
   [ -n "$RELAUNCH_WT" ] && [ -d "$RELAUNCH_WT" ] || {
     echo "error: task $ID's recorded worktree '${RELAUNCH_WT:-none}' is missing; refusing to relaunch without the local copy its work lives in" >&2
     exit 1
@@ -4084,7 +4107,7 @@ spawn_endpoint_closes_on_abort() {
 
 spawn_endpoint_hint() {
   if spawn_endpoint_closes_on_abort; then
-    printf 'window %s is closed on exit, returning any pool slot it held' "$T"
+    printf 'window %s is closed on exit; slot recovery is reported separately' "$T"
   else
     printf 'inspect window %s' "$T"
   fi
@@ -4762,7 +4785,7 @@ spawn_send_key() { # <target> <key>
 
 # Enter the exact copy recorded for this task immediately before trust setup and
 # launch. Herdr restores a pane's shell cwd from its durable tab layout, so a
-# treehouse subshell's foreground cwd is not enough to keep a later pane restart
+# foreground shell's cwd is not enough to keep a later pane restart
 # out of the primary checkout. The same explicit cd gives every backend one
 # launch boundary and makes a dropped or ignored cwd change a refusal.
 spawn_enter_recorded_worktree() {
@@ -5221,20 +5244,26 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # failed fetch) exits immediately and leaves the pane in the project, which
   # is indistinguishable from a still-running allocation by cwd alone.
   # Each attempt owns a private directory so delayed shell completion cannot
-  # overwrite a retry's result. Source the script in the pane's shell, as for
-  # the launch command, preserving Treehouse's terminal and job control.
+  # overwrite a retry's result. Acquire durably, then cd in the pane's shell;
+  # a process lease would make a stopped task's copy eligible for reuse.
   SPAWN_TREEHOUSE_ATTEMPT=$(mktemp -d "$DATA/$ID/treehouse.XXXXXX") || exit 1
   SPAWN_TREEHOUSE_RESULT="$SPAWN_TREEHOUSE_ATTEMPT/exit-status"
+  SPAWN_TREEHOUSE_LEASE_PATH="$SPAWN_TREEHOUSE_ATTEMPT/lease-path"
   # The attempt marker stays set in the pane's own shell and is never exported,
   # so the deadline can tell that shell from a Treehouse subshell.
   # shellcheck disable=SC2016 # Status variables expand in the pane's shell.
   {
     printf '_fm_treehouse_attempt=%s\n' "$(shell_quote "$SPAWN_TREEHOUSE_ATTEMPT")"
     printf '_fm_treehouse_status=0\n'
-    printf 'treehouse get || _fm_treehouse_status=$?\n'
+    printf '_fm_treehouse_path=$(treehouse get --lease --lease-holder %s) || _fm_treehouse_status=$?\n' "$(shell_quote "$ID")"
+    printf 'if [ "$_fm_treehouse_status" = 0 ]; then\n'
+    printf '  printf '\''%%s\\n'\'' "$_fm_treehouse_path" > %s\n' "$(shell_quote "$SPAWN_TREEHOUSE_LEASE_PATH.tmp")"
+    printf '  mv -- %s %s\n' "$(shell_quote "$SPAWN_TREEHOUSE_LEASE_PATH.tmp")" "$(shell_quote "$SPAWN_TREEHOUSE_LEASE_PATH")"
+    printf '  cd -- "$_fm_treehouse_path" || _fm_treehouse_status=$?\n'
+    printf 'fi\n'
     printf 'printf '\''%%s\\n'\'' "$_fm_treehouse_status" > %s\n' "$(shell_quote "$SPAWN_TREEHOUSE_RESULT.tmp")"
     printf 'mv -- %s %s\n' "$(shell_quote "$SPAWN_TREEHOUSE_RESULT.tmp")" "$(shell_quote "$SPAWN_TREEHOUSE_RESULT")"
-    printf 'unset _fm_treehouse_status\n'
+    printf 'unset _fm_treehouse_status _fm_treehouse_path\n'
   } > "$SPAWN_TREEHOUSE_ATTEMPT/get.sh"
 
   spawn_treehouse_failure() {
@@ -5268,7 +5297,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     exit 1
   fi
 
-  # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
+  # Wait for the pane's shell to enter the durably leased worktree.
   # Target the stable window id, not the name: if the name is ever lost (e.g. an
   # automatic-rename slips through), display-message -t <bad-name> falls back to the
   # active client's window, which would misread firstmate's OWN pane path as the
@@ -5301,7 +5330,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   last_seen=""
   last_reason="the pane reported no path"
   for _ in $(seq 1 60); do
-    if [ -f "$SPAWN_TREEHOUSE_RESULT" ]; then
+    if [ -f "$SPAWN_TREEHOUSE_RESULT" ] && [ "$(cat "$SPAWN_TREEHOUSE_RESULT")" != 0 ]; then
       spawn_treehouse_failure "treehouse get exited with status $(cat "$SPAWN_TREEHOUSE_RESULT") before entering an isolated worktree"
       exit 1
     fi
@@ -5322,8 +5351,8 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     sleep 1
   done
   if [ -z "$WT" ]; then
-    # Stop a still-running allocation, and leave a Treehouse subshell that has
-    # just opened so Treehouse returns its slot, before keeping the pane.
+    # Stop a still-running allocation. Leave any legacy interactive subshell;
+    # durable leases are accounted for by spawn_abort_cleanup.
     spawn_send_key "$WT_TARGET" C-c || true
     # shellcheck disable=SC2016 # The guard expands in the pane's shell.
     spawn_send_text_line "$WT_TARGET" '[ -z "${TREEHOUSE_DIR-}" ] || [ "${_fm_treehouse_attempt-}" = '"$(shell_quote "$SPAWN_TREEHOUSE_ATTEMPT")"' ] || exit' || true
@@ -5337,12 +5366,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     validate_spawn_worktree "treehouse get" "$T"
   fi
 
-  # Claim the pool slot for this task. The interactive `treehouse get` sent to
-  # the pane above records only a process lease (Treehouse's durable
-  # `get --lease --lease-holder`, which bin/fm-home-seed.sh uses for secondmate
-  # homes, is not this path), so Treehouse cannot say which task a slot belongs
-  # to once that task's worker exits - and that is exactly when the slot is
-  # handed on and this task's worktree= line goes stale. The claim is what lets
+  # Claim the pool slot for this task as well as durably leasing it. The claim lets
   # bin/fm-teardown.sh leave a slot that has since been reassigned untouched, so
   # a slot that cannot be claimed is refused here, at the cheapest point, rather
   # than launching a worker whose slot teardown could later release out from

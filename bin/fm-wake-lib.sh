@@ -1766,10 +1766,10 @@ fm_treehouse_pool_slot() {  # <project-dir> <worktree>
 #
 # Treehouse can record ownership durably: `treehouse get --lease --lease-holder`
 # reserves a slot under a label until `treehouse return --if-lease-holder`
-# releases it, and Firstmate uses exactly that for secondmate homes
-# (bin/fm-home-seed.sh). Crewmate spawns do not take that path: they acquire
-# their slot through the interactive pane-driven `treehouse get`, whose state
-# entry is a live process lease (owner_pid plus owner_started_at, and `treehouse
+# releases it. Both worker slots (bin/fm-spawn.sh) and secondmate homes
+# (bin/fm-home-seed.sh) use durable leases. Legacy worker slots acquired
+# through interactive pane-driven `treehouse get` have a live process lease
+# in their state entry (owner_pid plus owner_started_at, and `treehouse
 # status` reports in-use from the processes actually running under the path).
 # That answers "is anything running here", never "which task owns this", and it
 # is released by the very event that makes a task record stale - the worker
@@ -1777,8 +1777,7 @@ fm_treehouse_pool_slot() {  # <project-dir> <worktree>
 # this task's or has since been handed to another one. Firstmate therefore keeps
 # its own claim on top: one file naming the task that took the slot, written by
 # bin/fm-spawn.sh under the same project lock that allocates the slot and
-# released by bin/fm-teardown.sh when the slot goes back to the pool. Moving
-# crewmate spawns onto the durable lease is separate follow-up work.
+# released by bin/fm-teardown.sh when the slot goes back to the pool.
 #
 # The claim lives at <pool>/<slot>/.fm-slot-owner - a sibling of the repo
 # checkout rather than a file inside it - so claiming a slot can never dirty the
@@ -1847,6 +1846,21 @@ fm_treehouse_slot_owner_state() {  # <worktree> <task-id>
   else
     FM_TREEHOUSE_SLOT_OWNER=other
   fi
+}
+
+# Relaunch must not adopt a legacy record's reassigned slot. Teardown has a
+# separate records-only path for that state; launch has no safe use for it.
+fm_treehouse_require_task_slot() {  # <worktree> <task-id>
+  local worktree=$1 id=$2
+  fm_treehouse_slot_owner_state "$worktree" "$id"
+  case "$FM_TREEHOUSE_SLOT_OWNER" in
+    mine|absent) return 0 ;;
+    other)
+      echo "error: task $id's Treehouse slot $worktree was reassigned to task $FM_TREEHOUSE_SLOT_OWNER_ID; refusing to relaunch in another task's copy" >&2 ;;
+    *)
+      echo "error: task $id's Treehouse slot $worktree has an unreadable owner claim; refusing to relaunch without proof of ownership" >&2 ;;
+  esac
+  return 1
 }
 
 # Drop a task's own claim once its slot is back in the pool. Never removes
