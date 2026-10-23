@@ -4006,12 +4006,26 @@ KEEP_PID=$(cat "$HKEEP/state/procevent/keep-src.runner")
 ORPHAN_DESCENDANT=$(cat "$TMP_ROOT/orphan-dead.descendant")
 
 # The listener must be detached before testing reaping. Linux may reparent it
-# to a child subreaper instead of init.
+# to a child subreaper instead of init, and only an ancestor of this shell can be
+# that subreaper.
 orphan_ppid=$(ps -o ppid= -p "$ORPHAN_PID" 2>/dev/null | tr -d '[:space:]')
 case "$orphan_ppid" in
   ''|0|*[!0-9]*) fail "the detached listener disappeared before its parent could be checked" ;;
 esac
-[ "$orphan_ppid" != "$$" ] \
+orphan_adopter_ok=0
+if [ "$orphan_ppid" = 1 ]; then
+  orphan_adopter_ok=1
+else
+  ancestor=$(ps -o ppid= -p "$$" 2>/dev/null | tr -d '[:space:]')
+  while [ -n "$ancestor" ] && [ "$ancestor" -gt 1 ] 2>/dev/null; do
+    if [ "$ancestor" = "$orphan_ppid" ]; then
+      orphan_adopter_ok=1
+      break
+    fi
+    ancestor=$(ps -o ppid= -p "$ancestor" 2>/dev/null | tr -d '[:space:]')
+  done
+fi
+[ "$orphan_adopter_ok" = 1 ] \
   || fail "the listener under test was not reparented away from its session (ppid $orphan_ppid)"
 kill -0 -"$ORPHAN_PID" 2>/dev/null \
   || fail "the listener's process group was not running"

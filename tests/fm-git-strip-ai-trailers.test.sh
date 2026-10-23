@@ -254,23 +254,29 @@ test_empty_project_hookspath_runs_no_repository_hook() {
 }
 
 test_unresolvable_project_hookspath_still_refuses() {
-  local repo hooks head err
+  local repo hooks head err probe refusal
   repo="$TMP_ROOT/unresolvable-hookspath"
   make_repo "$repo"
   printf 'note\n' >>"$repo/README.md"
   git -C "$repo" add README.md
   head=$(git -C "$repo" rev-parse HEAD)
   hooks="$TMP_ROOT/hooks-unresolvable"
-  "$STRIP" install "$hooks" "$repo" || fail "install should succeed before the invalid hooksPath is written"
   git -C "$repo" config core.hooksPath '~fm-no-such-user-6171/hooks'
+  # Older Git rejects this value while reading repository config, before any
+  # hook can run; newer Git reaches the wrapper, which must refuse.
+  if probe=$(git -C "$repo" rev-parse HEAD 2>&1); then
+    refusal="refusing to skip its pre-commit hook"
+    "$STRIP" install "$hooks" "$repo" || fail "install should succeed with an unresolvable core.hooksPath"
+  else
+    refusal="fatal: failed to expand user dir"
+    assert_contains "$probe" "$refusal" "plain git failed for a reason other than the unresolvable hooksPath"
+    git config --file "$repo/.git/config" --unset core.hooksPath
+    "$STRIP" install "$hooks" "$repo" || fail "install should succeed before the invalid hooksPath is written"
+    git config --file "$repo/.git/config" core.hooksPath '~fm-no-such-user-6171/hooks'
+  fi
   err=$(with_hooks_env "$hooks" git -C "$repo" commit -q -m 'fix: unresolvable hooksPath' 2>&1) &&
     fail "a commit succeeded although the repository's hooks directory cannot be resolved"
-  # Older Git rejects this value while reading repository config, before any
-  # hook can run; newer Git lets the wrapper report the same unsafe lookup.
-  case "$err" in
-    *"refusing to skip its pre-commit hook"*|*"fatal: failed to expand user dir"*) ;;
-    *) fail "the commit did not explain its hooks-directory refusal: $err" ;;
-  esac
+  assert_contains "$err" "$refusal" "the commit did not explain its hooks-directory refusal"
   assert_equals 1 "$(printf '%s\n' "$err" | grep -c 'failed to expand user dir')" "git's lookup error was not shown exactly once"
   git config --file "$repo/.git/config" --unset core.hooksPath
   assert_equals "$head" "$(git -C "$repo" rev-parse HEAD)" "a refused commit still moved HEAD"
@@ -278,7 +284,7 @@ test_unresolvable_project_hookspath_still_refuses() {
 }
 
 test_valueless_project_hookspath_still_refuses() {
-  local repo hooks head err
+  local repo hooks head err probe refusal
   repo="$TMP_ROOT/valueless-hookspath"
   make_repo "$repo"
   hooks="$TMP_ROOT/hooks-valueless"
@@ -287,12 +293,15 @@ test_valueless_project_hookspath_still_refuses() {
   printf 'note\n' >>"$repo/README.md"
   git -C "$repo" add README.md
   printf '[core]\n\thooksPath\n' >>"$repo/.git/config"
+  if probe=$(git -C "$repo" rev-parse HEAD 2>&1); then
+    refusal="refusing to skip its pre-commit hook"
+  else
+    refusal="fatal: bad config variable 'core.hookspath'"
+    assert_contains "$probe" "$refusal" "plain git failed for a reason other than the valueless hooksPath"
+  fi
   err=$(with_hooks_env "$hooks" git -C "$repo" commit -q -m 'fix: valueless hooksPath' 2>&1) &&
     fail "a commit succeeded although core.hooksPath has no value"
-  case "$err" in
-    *"refusing to skip its pre-commit hook"*|*"fatal: bad config variable 'core.hookspath'"*) ;;
-    *) fail "the commit did not explain its valueless hooksPath refusal: $err" ;;
-  esac
+  assert_contains "$err" "$refusal" "the commit did not explain its valueless hooksPath refusal"
   assert_equals 1 "$(printf '%s\n' "$err" | grep -c "missing value for 'core.hookspath'")" "git's lookup error was not shown exactly once"
   git config --file "$repo/.git/config" --unset core.hooksPath
   assert_equals "$head" "$(git -C "$repo" rev-parse HEAD)" "a refused commit still moved HEAD"
