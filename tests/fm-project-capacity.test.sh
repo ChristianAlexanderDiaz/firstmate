@@ -429,6 +429,7 @@ test_capacity_is_shared_by_every_local_home() {
   mate_project="$mate/projects/project"
   git clone -q "$(git -C "$case_dir/project" remote get-url origin)" "$mate_project"
   printf '%s\n' schema=fm-secondmate-parent.v1 route=local "parent_home=$root" > "$mate/.fm-secondmate-parent"
+  printf 'mate\n' > "$mate/.fm-secondmate-home"
   printf -- '- mate - a local mate (home: %s; scope: project work; projects: project; added 2026-09-01)\n' "$mate" \
     > "$root/data/secondmates.md"
   printf -- '- far - a remote mate (host: far.example; root: /srv/fm; home: %s/remote-home; scope: other; projects: project; added 2026-09-01)\n' "$case_dir" \
@@ -463,6 +464,7 @@ test_unreadable_holders_refuse_admission() {
   mate="$case_dir/mate"
   make_home "$mate"
   printf '%s\n' schema=fm-secondmate-parent.v1 route=local "parent_home=$root" > "$mate/.fm-secondmate-parent"
+  printf 'mate\n' > "$mate/.fm-secondmate-home"
   printf -- '- mate - a local mate (home: %s; scope: project work; projects: project; added 2026-09-01)\n' "$mate" \
     > "$root/data/secondmates.md"
   declare_capacity "$root" "project 2"
@@ -571,6 +573,7 @@ test_inaccessible_declarations_refuse_admission() {
     home="$case_dir/mate"
     make_home "$home" task-ship task-scout
     printf '%s\n' schema=fm-secondmate-parent.v1 route=local "parent_home=$root" > "$home/.fm-secondmate-parent"
+    printf 'mate\n' > "$home/.fm-secondmate-home"
     printf -- '- mate - fixture (home: %s; scope: test; projects: project; added 2026-10-10)\n' \
       "$home" > "$root/data/secondmates.md"
     declare_capacity "$root" 'project 1'
