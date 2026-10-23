@@ -409,8 +409,7 @@ Only the watcher process touches `state/.last-watcher-beat`.
 No helper process can make a wedged watcher appear healthy.
 An arm whose own script path sits under a disposable no-mistakes validation checkout (`.no-mistakes/worktrees/`) refuses with the typed failure line before touching any state, because a watcher started there outlives the validation step and keeps writing the real home's state from a checkout about to be deleted.
 Once per poll the watcher checks that its home, its state directory, and its own code root still exist, and exits with a logged reason when one is gone, scoped to itself alone, so a torn-down temporary home or a discarded checkout never leaves an orphan watcher behind.
-The watcher's queue publication and read, recovery transition, PR-poll control and publish, and merge-authority and merge-outcome lock waits stop once the state directory is removed, and the interrupted step does not run; recovery arm checks take the same logged exit.
-Pending-reply tick and process-event reconciliation lock waits do not yet stop this way.
+The watcher's queue publication and read, recovery transition, PR-poll control and publish, merge-authority and merge-outcome, pending-reply tick, and process-event reconciliation lock waits stop once the state directory is removed, and the interrupted step does not run; recovery arm checks take the same logged exit.
 The watcher uses bash's native fatal handling for HUP and TERM, including during a blocked check or a blocked `fm_backend_capture` pane read, so both run its EXIT cleanup and stop that read.
 `watcher_stop_signals` in `bin/fm-watch.sh` owns the signal-handling rationale.
 The EXIT cleanup bounds its wait for `state/.watcher-down.lock` while persisting recovery state with `FM_WATCHER_CLEANUP_LOCK_BOUND` (default 2 seconds).
@@ -466,7 +465,7 @@ They also prove that a legacy or handoff-phase watcher marker from an absent rep
 - The manual-restart generation churn that makes a confirmation for the churned generation report a mismatch, which an arm check without a reopen leaves in place.
 - A take-over that stays quiet after a confirmed TERM, still surfaces queued work and self-exit downtime, and attaches without stopping a cycle the named arm does not own.
 - The disposable-checkout arm refusal.
-- The home-gone and state-gone watcher exits, including state removed during a recovery, PR-poll control, or merge-outcome lock wait, and a wake append whose queue lock wait fails on removed state.
+- The home-gone and state-gone watcher exits, including state removed during a recovery, PR-poll control, merge-outcome, pending-reply tick, or process-event reconciliation lock wait, and a wake append whose queue lock wait fails on removed state.
 - The test reaper that stops a watcher armed for a temporary home.
 
 `tests/fm-watch-recovery-loop.test.sh` covers:

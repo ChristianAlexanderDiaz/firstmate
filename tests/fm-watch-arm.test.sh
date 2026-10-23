@@ -1420,7 +1420,7 @@ SH
 # finishing the cycle already in progress before its next FM_POLL=1 tick. A busy
 # poll may spend longer than ten seconds in subprocesses on a contended CI runner.
 test_watcher_exits_when_its_state_directory_is_removed() {
-  local phase=${1:-recovery} dir home state fakebin armout lock i held=0
+  local phase=${1:-recovery} dir home state fakebin armout lock corr i held=0
   dir=$(make_case "state-dir-removed-$phase")
   home="$dir/home"
   state="$dir/state"
@@ -1431,6 +1431,22 @@ test_watcher_exits_when_its_state_directory_is_removed() {
   touch "$state/home-summary.json"
   make_lock_wait_observer "$fakebin"
   lock="$state/.wake-queue.lock"
+  if [ "$phase" = pending-reply ]; then
+    corr=$(FM_HOME="$home" FM_STATE_OVERRIDE="$state" bash -c '
+      . "$1/bin/fm-pending-reply-lib.sh"
+      fm_pending_reply_create "$2" "$3" fixture "report requested"
+    ' _ "$ROOT" "$home" "$state") || fail "could not prepare the pending-reply fixture"
+    lock="$state/.pending-reply-$corr.lock"
+  elif [ "$phase" = procevent ]; then
+    # Claims live outside the removed state directory, just as shared claims do.
+    mkdir -p "$dir/claims"
+    lock="$dir/claims/fixture.lock"
+  fi
+  if [ "$phase" = pending-reply ] || [ "$phase" = procevent ]; then
+    mkdir "$lock"
+    printf '%s\n' "$$" > "$lock/pid"
+    held=1
+  fi
   if [ "$phase" = pr-poll ] || [ "$phase" = merge-outcome ]; then
     lock="$state/.control-fixture.lock"
     if [ "$phase" = merge-outcome ]; then
@@ -1449,8 +1465,14 @@ test_watcher_exits_when_its_state_directory_is_removed() {
     printf '%s\n' "$$" > "$lock/pid"
     held=1
   fi
-  FM_TEST_WAIT_LOCK="$lock" FM_TEST_QUEUE_WAITING="$dir/queue-waiting" FM_TEST_REAL_CAT="$(command -v cat)" \
+  FM_PROCEVENT_CLAIM_ROOT="$dir/claims" \
+    FM_TEST_WAIT_LOCK="$lock" FM_TEST_QUEUE_WAITING="$dir/queue-waiting" FM_TEST_REAL_CAT="$(command -v cat)" \
     start_owned_watcher "$home" "$state" "$fakebin" "$armout"
+  if [ "$phase" = procevent ]; then
+    # Let the arm confirm its watcher before introducing the blocked reconcile.
+    mkdir -p "$state/procevent"
+    touch "$state/procevent/fixture.source"
+  fi
 
   # Hold a live legacy lock until the watcher enters the selected acquire.
   # Observe the blocked acquisition before deleting state.
@@ -1467,8 +1489,13 @@ test_watcher_exits_when_its_state_directory_is_removed() {
     || fail "watcher did not reach the held $phase lock before state deletion"
 
   rm -rf "$state"
-  wait_for_pid_gone "$WATCH_PID" 400 \
-    || { kill -TERM "$WATCH_PID" 2>/dev/null; fail "watcher pid $WATCH_PID outlived its deleted state directory"; }
+  if ! wait_for_pid_gone "$WATCH_PID" 400; then
+    # Release an external claim lock too, so a failing reconcile can unwind.
+    rm -rf "$lock"
+    kill -TERM "$WATCH_PID" 2>/dev/null || true
+    wait_for_pid_gone "$WATCH_PID" 100 || true
+    fail "watcher pid $WATCH_PID outlived its deleted state directory"
+  fi
   wait_for_exit "$ARM_PID" 100 >/dev/null 2>&1 || true
   if [ "$phase" = recovery ]; then
     grep -qF 'watcher: exiting - state directory' "$armout" \
@@ -1804,6 +1831,8 @@ test_watcher_exits_when_its_state_directory_is_removed
 test_wake_append_exits_when_its_state_directory_is_removed
 test_watcher_exits_when_its_state_directory_is_removed pr-poll
 test_watcher_exits_when_its_state_directory_is_removed merge-outcome
+test_watcher_exits_when_its_state_directory_is_removed pending-reply
+test_watcher_exits_when_its_state_directory_is_removed procevent
 test_watcher_exits_when_its_home_is_removed
 test_reaper_stops_a_tracked_watcher
 test_attached_arm_still_fails_on_a_wake_it_did_not_deliver
