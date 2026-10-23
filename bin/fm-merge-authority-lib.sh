@@ -152,7 +152,7 @@ fm_merge_authority_read() {  # <state> <task-id> <provider> <host> <path> <numbe
   state_device=$(fm_pr_file_device "$state") || return 1
   record="$state/$id.merge-authority"
   lock="$record.lock"
-  fm_lock_acquire_wait "$lock" || return 1
+  fm_lock_acquire_wait "$lock" "$state" || return 1
   if fm_merge_authority_record_matches "$record" "$state_device" \
       "$provider" "$host" "$path" "$number"; then
     # shellcheck disable=SC2034 # Public results consumed by sourcing callers.
@@ -173,7 +173,7 @@ fm_merge_authority_remove_if_matches() {  # <state> <task-id> <provider> <host> 
   state_device=$(fm_pr_file_device "$state") || return 1
   record="$state/$id.merge-authority"
   lock="$record.lock"
-  fm_lock_acquire_wait "$lock" || return 1
+  fm_lock_acquire_wait "$lock" "$state" || return 1
   if [ -e "$record" ] || [ -L "$record" ]; then
     if fm_merge_authority_record_matches "$record" "$state_device" \
         "$provider" "$host" "$path" "$number"; then
