@@ -916,6 +916,31 @@ test_lock_empty_pid_uses_minimum_grace() {
   pass "empty mid-acquire lock keeps a minimum grace"
 }
 
+test_lock_failing_exit_trap_keeps_mid_acquire_grace() {
+  local dir state lockdir out
+  dir=$(make_case lock-failing-trap-grace)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  mkdir "$lockdir"
+  out=$(FM_LOCK_STALE_AFTER=0 FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    lock=$2
+    on_exit() {
+      if fm_lock_try_acquire "$lock"; then rc=0; else rc=1; fi
+      printf "rc=%s\n" "$rc"
+    }
+    trap on_exit EXIT
+    exit 3
+  ' _ "$LIB" "$lockdir")
+  case "$out" in
+    *"rc=1"*) ;;
+    *) fail "failing exit trap stole a mid-acquire lock: $out" ;;
+  esac
+  [ -d "$lockdir" ] || fail "failing exit trap removed a mid-acquire lock dir"
+  [ ! -e "$lockdir/pid" ] || fail "failing exit trap claimed a mid-acquire lock"
+  pass "failing exit trap keeps a mid-acquire lock's grace"
+}
+
 test_lock_late_claim_loses_after_recreate() {
   local dir state lockdir out
   dir=$(make_case lock-late-claim)
@@ -1657,7 +1682,7 @@ test_pid_identity_is_terminal_width_invariant() {
   # the command column to the ambient width unless the fallback pins COLUMNS wide.
   # A truncated command then never equals the recorded one and every fleet command
   # is denied (issue #799). A long sleep argument makes the cut visible on GNU and
-  # BSD ps alike, so both readings must be byte-identical and carry the whole command.
+  # BSD ps alike, so both command columns must match and carry the whole command.
   local live no_proc narrow wide
   local long_arg=300.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
   no_proc="$TMP_ROOT/no-width-proc"
@@ -1672,6 +1697,10 @@ test_pid_identity_is_terminal_width_invariant() {
   kill "$live" 2>/dev/null || true
   wait "$live" 2>/dev/null || true
   [ -n "$wide" ] || fail "fm_pid_identity produced no identity under a wide COLUMNS"
+  # GNU ps reconstructs lstart from the wall clock, which can shift on WSL.
+  # Width affects the command column, so compare that independently of lstart.
+  read -r _ _ _ _ _ narrow <<< "$narrow"
+  read -r _ _ _ _ _ wide <<< "$wide"
   case "$wide" in
     *"sleep $long_arg"*) ;;
     *) fail "fm_pid_identity dropped the full command under a wide COLUMNS (got '$wide')" ;;
@@ -1807,6 +1836,7 @@ test_lock_reused_pid_is_stale_on_macos_stubs
 test_lock_acquire_records_identity_and_rejects_reuse
 test_lock_bounded_acquire_hands_identity_to_caller
 test_lock_empty_pid_uses_minimum_grace
+test_lock_failing_exit_trap_keeps_mid_acquire_grace
 test_lock_late_claim_loses_after_recreate
 test_lock_paused_mid_acquire_claim_fails_during_steal
 test_watch_restart_rejects_reused_pid

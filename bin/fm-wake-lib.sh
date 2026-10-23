@@ -253,8 +253,10 @@ fm_lock_holder_alive() {
   if [ "$comparable" -eq 1 ]; then
     # Only the start time is compared: the holder's command changes when it
     # execs while holding the lock, and that is still the genuine holder.
-    [ "$(_fm_identity_start "$rec_identity")" = "$(_fm_identity_start "$cur_identity")" ]
-    return
+    # A bare return inside an EXIT trap can reuse the status that invoked the
+    # trap, even after a successful comparison. Keep a live holder protected.
+    [ "$(_fm_identity_start "$rec_identity")" = "$(_fm_identity_start "$cur_identity")" ] && return 0
+    return 1
   fi
   ! fm_boot_id_differs "$rec_boot" "$cur_boot"
 }
@@ -781,8 +783,8 @@ fm_lock_mid_acquire_is_fresh() {
     ''|*[!0-9]*)
       mid_acquire_stale=$FM_LOCK_STALE_AFTER
       [ "$mid_acquire_stale" -lt 2 ] && mid_acquire_stale=2
-      [ "$(fm_path_age "$lockdir")" -lt "$mid_acquire_stale" ]
-      return
+      [ "$(fm_path_age "$lockdir")" -lt "$mid_acquire_stale" ] && return 0
+      return 1
       ;;
   esac
   return 1
@@ -1035,11 +1037,11 @@ _fm_recovery_marker_ack() {
 }
 
 _fm_recovery_marker_arm_check() {
-  local marker=$1 lock line quarantine
+  local marker=$1 required_dir=${2:-} lock line quarantine
   FM_RECOVERY_MARKER_ACTION='none'
   lock="${marker}.lock"
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
-  if ! fm_lock_acquire_wait "$lock"; then
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" "$required_dir" || return 1
+  if ! fm_lock_acquire_wait "$lock" "$required_dir"; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     return 1
   fi
@@ -1203,7 +1205,7 @@ fm_recovery_transition() {
       _fm_recovery_marker_ack "$marker" "$target"
       ;;
     arm-check)
-      _fm_recovery_marker_arm_check "$marker"
+      _fm_recovery_marker_arm_check "$marker" "$target"
       ;;
     reopen-announced)
       _fm_recovery_marker_reopen_announced "$marker"
@@ -1249,8 +1251,8 @@ fm_recovery_marker_begin_handling() {
   _fm_recovery_marker_begin_handling "$1" "${2:-}"
 }
 
-fm_recovery_marker_arm_check() {
-  fm_recovery_transition "$1" arm-check
+fm_recovery_marker_arm_check() {  # <marker> [required-directory]
+  fm_recovery_transition "$1" arm-check "${2:-}"
 }
 
 fm_recovery_marker_reopen_announced() {
@@ -1417,9 +1419,12 @@ fm_lock_try_acquire() {
   return "$rc"
 }
 
-fm_lock_acquire_wait() {
-  local lockdir=$1
+# The optional required directory cancels a wait when its owner's world is
+# removed, without changing ordinary waits on a live foreign lock holder.
+fm_lock_acquire_wait() {  # <lockdir> [required-directory]
+  local lockdir=$1 required_dir=${2:-}
   while ! fm_lock_try_acquire "$lockdir"; do
+    [ -z "$required_dir" ] || [ -d "$required_dir" ] || return 1
     sleep 0.1
   done
 }

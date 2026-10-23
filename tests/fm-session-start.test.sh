@@ -845,7 +845,7 @@ EOF
 
   sleep 300 &
   holder_pid=$!
-  printf '%s\n' "$holder_pid" > "$home/state/.lock"
+  write_foreign_session_lock "$home" "$holder_pid"
 
   status=0
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH") || status=$?
@@ -911,8 +911,15 @@ EOF
   pass "session start stays read-only when lock ownership cannot be published"
 }
 
+write_foreign_session_lock() {  # <home> <holder-pid>
+  # Replace the whole prior session record, so its trusted session id and
+  # process identity cannot turn this different, live legacy holder into ours.
+  rm -f "$1/state/.lock-session" "$1/state/.lock-identity"
+  printf '%s\n' "$2" > "$1/state/.lock"
+}
+
 test_trace_context_effective_state_is_frozen_after_lock() {
-  local rec root home fakebin out frozen
+  local rec root home fakebin out frozen holder_pid
   rec=$(new_world trace-context-session-state)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -933,7 +940,7 @@ EOF
 
   sleep 300 &
   holder_pid=$!
-  printf '%s\n' "$holder_pid" > "$home/state/.lock"
+  write_foreign_session_lock "$home" "$holder_pid"
   out=$(FM_TRACE_CONTEXT=off run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   kill "$holder_pid" 2>/dev/null || true
   wait "$holder_pid" 2>/dev/null || true
@@ -2563,7 +2570,7 @@ EOF
   holder_pid=$!
   printf '%s\n%s\n' "$holder_pid" "$(hash_file_for_test "$root/AGENTS.md")" \
     > "$home/state/.session-start-agents-baseline"
-  printf '%s\n' "$holder_pid" > "$home/state/.lock"
+  write_foreign_session_lock "$home" "$holder_pid"
   baseline_before=$(cat "$home/state/.session-start-agents-baseline")
   completion_before=$(cat "$home/state/.session-start-complete")
 
@@ -2673,7 +2680,7 @@ EOF
   rm -f "$home/state/.lock"
   sleep 300 &
   holder_pid=$!
-  printf '%s\n' "$holder_pid" > "$home/state/.lock"
+  write_foreign_session_lock "$home" "$holder_pid"
   readonly_out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" PATH="$fakebin:$BASE_PATH" \
     env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
     "$SESSION_START" --reemit)

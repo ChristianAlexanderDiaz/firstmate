@@ -2995,6 +2995,7 @@ SH
     FAKE_MV_FAIL_AFTER_FLAG="$flag" FAKE_MV_FAILED_ONCE="$mvflag" FAKE_MV_META_TARGET="$meta" \
     "$ROOT/bin/fm-x-followup.sh" task-rf - <<<"posted but local state write fails" 2>"$err"); rc=$?
   expect_code 0 "$rc" "followup post state-record failure exit"
+  assert_present "$mvflag" "the post-success counter write failure was not injected"
   [ "$out" = "req-rf" ] || fail "posted followup with tombstoned state must echo the request_id (got: $out)"
   assert_no_grep "x_request=" "$meta" "a failed counter write must tombstone the link"
   assert_no_grep "x_followups=" "$meta" "a failed counter write must remove the stale counter"

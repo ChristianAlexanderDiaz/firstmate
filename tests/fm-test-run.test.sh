@@ -1581,9 +1581,16 @@ SH
   grep -Eq '^FM_TEST_BUDGET max_wall_ms=60000 duration_ms=[0-9]+$' "$tmp/under" \
     || fail "an inside-budget run did not report the budget: $(cat "$tmp/under")"
 
-  # Same green script, budget it cannot meet: the run must FAIL.
+  # Same green script, budget it cannot meet: the run must FAIL even when the
+  # system wall clock stops advancing. Elapsed budgets need a monotonic clock.
+  mkdir -p "$tmp/clock"
+  cat >"$tmp/clock/sitecustomize.py" <<'PY'
+import time
+time.time = lambda: 1700000000.0
+PY
   set +e
-  "$runner" --max-wall-ms 500 "$fast" >"$tmp/over" 2>"$tmp/over.err"
+  PYTHONPATH="$tmp/clock${PYTHONPATH:+:$PYTHONPATH}" \
+    "$runner" --max-wall-ms 500 "$fast" >"$tmp/over" 2>"$tmp/over.err"
   rc=$?
   set -e
   [ "$rc" -eq 1 ] || fail "an over-budget run must fail through the result path, got $rc"

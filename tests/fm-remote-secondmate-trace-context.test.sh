@@ -17,6 +17,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/remote-herdr-fixture.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-trace-context-lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-remote-job-lib.sh"
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 TMP_ROOT=$(fm_test_tmproot fm-remote-trace-context)
@@ -26,14 +28,24 @@ PARENT="$TMP_ROOT/parent"
 REMOTE_ROOT="$TMP_ROOT/remote-root"
 REMOTE_HOME="$TMP_ROOT/remote-home"
 SECOND_HOME="$TMP_ROOT/remote-home-2"
+ACCOUNT_HOME="$TMP_ROOT/account"
 FAKEBIN=$(fm_fakebin "$TMP_ROOT/fake")
 HERDR_LOG="$TMP_ROOT/remote-herdr.log"
 HERDR_STATE="$TMP_ROOT/remote-herdr.state"
 TMUX_LOG="$TMP_ROOT/remote-tmux.log"
 TMUX_STATE="$TMP_ROOT/remote-tmux.state"
 CLAIMS="$TMP_ROOT/claims"
-mkdir -p "$PARENT/data" "$PARENT/state" "$PARENT/config" "$PARENT/projects" "$REMOTE_ROOT" "$CLAIMS"
-trap 'FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true; if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then kill "$(cat "$TMP_ROOT/remote-jobs/worker.pid")" 2>/dev/null || true; fi; rm -rf -- "$TMP_ROOT"' EXIT
+mkdir -p "$PARENT/data" "$PARENT/state" "$PARENT/config" "$PARENT/projects" "$REMOTE_ROOT" "$CLAIMS" "$ACCOUNT_HOME"
+WORKER_PID=
+cleanup_remote_trace_fixture() {
+  FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
+  if [ -n "$WORKER_PID" ]; then
+    fm_remote_job_stop_worker_tree "$WORKER_PID" || true
+    wait "$WORKER_PID" 2>/dev/null || true
+  fi
+  fm_test_remove_tree "$TMP_ROOT"
+}
+trap cleanup_remote_trace_fixture EXIT
 
 # The remote host's tracked code root is this branch, as a real git repository:
 # fm-on and the remote entrypoint both require the dispatched command to be
@@ -92,11 +104,50 @@ SH
 chmod +x "$REMOTE_ROOT/bin/tmux"
 install_remote_herdr_fixture "$REMOTE_ROOT" "$HERDR_STATE" "$HERDR_LOG" \
   "$TMP_ROOT/herdr-send-fail" "$TMP_ROOT/herdr.sock"
+cat > "$REMOTE_ROOT/bin/fm-trace-account-fixture.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$HOME"
+SH
+chmod +x "$REMOTE_ROOT/bin/fm-trace-account-fixture.sh"
+
+# Cover both the incoming entrypoint and env -i job commands: the former gets
+# the absolute systemctl override, while the latter rebuild PATH from the
+# remote root and account bin directories. Unit writes also stay private.
+mkdir -p "$ACCOUNT_HOME/.local/bin" "$ACCOUNT_HOME/.config/systemd/user" "$ACCOUNT_HOME/run"
+chmod 700 "$ACCOUNT_HOME/run"
+cat > "$FAKEBIN/systemctl" <<SH
+#!/usr/bin/env bash
+printf '%s %s\\n' "\${0##*/}" "\$*" >> '$TMP_ROOT/host-manager-calls'
+exit 70
+SH
+chmod +x "$FAKEBIN/systemctl"
+for manager in systemctl loginctl; do
+  cp "$FAKEBIN/systemctl" "$REMOTE_ROOT/bin/$manager"
+  cp "$FAKEBIN/systemctl" "$ACCOUNT_HOME/.local/bin/$manager"
+done
+cp "$FAKEBIN/systemctl" "$FAKEBIN/loginctl"
+export PATH="$FAKEBIN:$PATH"
+export FM_REMOTE_SYSTEMCTL="$FAKEBIN/systemctl"
+export FM_REMOTE_SYSTEMD_UNIT_DIR="$ACCOUNT_HOME/.config/systemd/user"
+export XDG_CONFIG_HOME="$ACCOUNT_HOME/.config" XDG_RUNTIME_DIR="$ACCOUNT_HOME/run"
 git -C "$REMOTE_ROOT" init -q -b main
 git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test
 git -C "$REMOTE_ROOT" add .
 git -C "$REMOTE_ROOT" commit -qm 'remote fixture root'
+
+# The entrypoint intentionally ignores caller HOME and resolves the SSH
+# account from passwd. Start our private account worker directly, as the lane
+# transport fixture does, and keep these requests inside that existing worker.
+HOME="$ACCOUNT_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+  FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/remote-jobs" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" > "$TMP_ROOT/worker.log" 2>&1 &
+WORKER_PID=$!
+for _ in $(seq 1 200); do
+  [ -f "$TMP_ROOT/remote-jobs/worker.ready" ] && break
+  sleep 0.1
+done
+assert_present "$TMP_ROOT/remote-jobs/worker.ready" "private remote worker did not report ready"
 
 cat > "$FAKEBIN/fake-ssh" <<'SH'
 #!/usr/bin/env bash
@@ -116,7 +167,7 @@ if printf '%s' "$4" | base64 --decode 2>/dev/null | tr '\0' '\n' | head -1 | gre
   printf 'ok: remote second-mate readiness confirmed on this host\n'
   exit 0
 fi
-exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
+FM_REMOTE_JOB_ACTIVE=1 exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
 SH
 chmod +x "$FAKEBIN/fake-ssh"
 
@@ -126,10 +177,12 @@ printf 'codex\n' > "$PARENT/config/crew-harness"
 printf '## In flight\n\n## Queued\n\n## Done\n' > "$PARENT/data/backlog.md"
 
 remote_env() {
+  HOME="$ACCOUNT_HOME" \
   FM_HOME="$PARENT" \
   FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
   FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
   FM_SSH_BIN="$FAKEBIN/fake-ssh" \
+  FM_REMOTE_SYSTEMCTL="$FAKEBIN/systemctl" \
   FM_FAKE_REMOTE_ENTRYPOINT="$REMOTE_ROOT/bin/fm-remote-entrypoint.sh" \
   FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
   FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/remote-jobs" \
@@ -168,6 +221,11 @@ FM_SECONDMATE_CHARTER='Own iOS delivery on the build Mac.' \
   FM_SECONDMATE_SCOPE='iOS implementation and Xcode validation' \
   remote_env "$ROOT/bin/fm-remote-home-seed.sh" ios remote-mac "$REMOTE_ROOT" "$REMOTE_HOME" --no-projects >/dev/null \
   || fail "remote seed did not provision the traced route"
+
+OBSERVED_ACCOUNT=$(remote_env "$ROOT/bin/fm-on.sh" ios fm-trace-account-fixture.sh) \
+  || fail "private remote account probe failed"
+[ "$OBSERVED_ACCOUNT" = "$ACCOUNT_HOME" ] || fail "remote jobs escaped the private fixture account"
+pass "isolation: the real remote worker executes jobs in the private account"
 
 # --- disabled: the remote route must stay byte-identically untraced ----------
 freeze_parent_session
@@ -312,5 +370,8 @@ try_flag 'requires a non-empty value' \
   "an empty carrier must be refused rather than silently ignored" \
   --secondmate --traceparent=
 pass "delivery: a parent-supplied carrier is accepted only for a secondmate launch and only as a strict W3C value"
+
+assert_absent "$TMP_ROOT/host-manager-calls" "the isolated remote account contacted the host's user manager"
+pass "isolation: the remote fixture never contacts the host's systemd user manager"
 
 echo "ALL TESTS PASSED"
