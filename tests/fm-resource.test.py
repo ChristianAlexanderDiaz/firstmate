@@ -25,7 +25,7 @@ spec.loader.exec_module(resource)
 SAMPLE = {"schemaVersion": 1, "instanceUUID": "fixture-instance", "lifecycle": "running",
     "unavailable": [], "thermalState": "nominal", "lowPowerModeEnabled": False,
     "lidClosed": False, "memory": {"pressure": "normal", "swapUsedBytes": 0},
-    "power": {"source": "ac", "adapterWatts": 65, "batteryPercent": 80, "isCharging": True},
+    "power": {"source": "battery", "adapterWatts": None, "batteryPercent": 80, "isCharging": False},
     "policy": {"schemaVersion": 1, "maxHeavyJobs": 1, "batteryAdmissionPercent": 30,
                "batteryCancellationPercent": 15, "staleAfterSeconds": 10}}
 
@@ -196,6 +196,49 @@ class ResourceTests(unittest.TestCase):
         result = self.request("acquire", **self.status()["queue"][0])
         self.assertEqual(result["state"], "leased")
         self.assertIn(token, self.status()["leases"])
+
+    def test_legacy_queued_client_without_parent_survives_owner_restart(self):
+        holder, state = self.acquire("exclusive")
+        self.assertEqual(state, "leased")
+        controller = subprocess.Popen(["/bin/sleep", "30"])
+        self.children.append(controller)
+        token = uuid.uuid4().hex
+        legacy = {"token": token, "controller": resource.identity(controller.pid),
+            "class": "exclusive", "memoryMiB": 4096, "task": "legacy"}
+        self.assertEqual(self.request("acquire", **legacy)["state"], "queued")
+        self.stop()
+        # Model a ledger and a still-running client from before parent tracking.
+        ledger = Path(self.config["stateDirectory"]) / "ledger.json"
+        data = json.loads(ledger.read_text())
+        for queued in data["queue"]:
+            queued.pop("parent")
+        ledger.write_text(json.dumps(data))
+        self.start()
+        self.assertEqual(self.request("acquire", **legacy)["state"], "queued")
+        self.assertEqual(next(q for q in self.status()["queue"] if q["token"] == token)["parent"], os.getpid())
+        self.request("release", token=holder)
+        clock = self.root / "clock"
+        clock.write_text(str(int(clock.read_text()) + 121))
+        wait_for(lambda: self.status()["reason"] == "ready")
+        self.assertEqual(self.request("acquire", **legacy)["state"], "leased")
+
+    def test_low_watt_ac_is_desk_power_unless_the_battery_drains(self):
+        probe = ["--", "/bin/sh", "-c", 'printf %s "$FM_RESOURCE_PORTABLE"']
+        sample = copy.deepcopy(SAMPLE)
+        sample["power"].update(source="ac", adapterWatts=94, isCharging=True)
+        self.write("input.json", sample)
+        wait_for(lambda: self.status().get("telemetry", {}).get("power") == sample["power"])
+        sample["power"]["batteryPercent"] = 79
+        self.write("input.json", sample)
+        wait_for(lambda: self.status().get("portable"))
+        result = self.call("run", "--class", "worker", *probe)
+        self.assertEqual((result.returncode, result.stdout), (0, "1"), result.stderr)
+        clock = self.root / "clock"
+        clock.write_text(str(int(clock.read_text()) + 121))
+        wait_for(lambda: self.status()["reason"] == "ready")
+        self.assertFalse(self.status()["portable"])
+        result = self.call("run", "--class", "test", *probe)
+        self.assertEqual((result.returncode, result.stdout), (0, "0"), result.stderr)
 
     def test_long_queued_request_emits_one_wake_naming_the_holder(self):
         self.job("sleep 30", kind="exclusive")
@@ -410,7 +453,7 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 75)
         (self.root / "clock").write_text("242")
         wait_for(lambda: self.status()["reason"] == "ready")
-        sample["power"]["source"], sample["power"]["adapterWatts"] = "battery", None
+        sample["power"].update(source="ac", adapterWatts=65, isCharging=True)
         self.write("input.json", sample)
         wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis"))
 
@@ -674,6 +717,54 @@ for timeout in (False, True):
         wait_for(lambda: not self.status()["leases"])
         self.assertFalse(self.status()["queue"])
 
+    def test_axi_bridge_inherits_the_stage_browser_lease_without_queueing(self):
+        fake = self.root / "axi-bin"
+        fake.mkdir()
+        npx = fake / "npx"
+        npx.write_text("#!" + sys.executable + '''
+import json, os, subprocess
+state = json.loads(subprocess.check_output([os.environ["CLIENT_RESOURCE_CLI"],
+    "--config", os.environ["FM_RESOURCE_CONFIG"], "status"], text=True))
+print(json.dumps({"token": os.environ["FM_RESOURCE_LEASE"], "queue": state["queue"],
+    "leases": list(state["leases"]), "groups": list(state["leases"].values())[0].get("browserGroups", [])}), flush=True)
+''')
+        # Like chrome-devtools-axi, start a detached bridge with the caller's
+        # environment; its MCP stdio transport may filter lease variables.
+        axi = fake / "chrome-devtools-axi"
+        axi.write_text("#!" + sys.executable + '''
+import subprocess, sys
+bridge = "import os,subprocess,sys; env=dict(os.environ) if sys.argv[1]=='full' else {k:v for k,v in os.environ.items() if k in ('HOME','PATH','CLIENT_RESOURCE_CLI')}; sys.exit(subprocess.call(['npx','-y','chrome-devtools-mcp@latest'],env=env))"
+child = subprocess.Popen([sys.executable, "-c", bridge, sys.argv[-1]], start_new_session=True, stdout=subprocess.PIPE, text=True)
+print(child.communicate(timeout=10)[0], end="")
+sys.exit(child.returncode)
+''')
+        npx.chmod(0o700)
+        axi.chmod(0o700)
+        env = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ["PATH"], CLIENT_RESOURCE_CLI=CLI)
+        directory = self.root / "axi-adapters"
+        result = self.call("prepare", "--directory", str(directory), "--worktree", str(ROOT),
+            "--task", "axi-bridge", "--account-label", "default", "--", "true", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        driver = self.root / "axi-driver.py"
+        driver.write_text('''import subprocess
+for variant in ("filtered", "full"):
+    result = subprocess.run(["chrome-devtools-axi", variant], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    print(result.stdout, end="")
+''')
+        result = self.call("run", "--class", "browser", "--", sys.executable, str(driver),
+            env=dict(env, PATH=str(directory / "bin") + os.pathsep + env["PATH"]))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        records = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(len(records), 2)
+        for record in records:
+            self.assertEqual(record["leases"], [record["token"]])
+            self.assertFalse(record["queue"])
+            self.assertTrue(record["groups"])
+        self.assertEqual(records[0]["token"], records[1]["token"])
+        wait_for(lambda: not self.status()["leases"])
+        self.assertFalse(self.status()["queue"])
+
     def test_recovery_requires_continuous_nominal_observations(self):
         sample = copy.deepcopy(SAMPLE)
         sample["thermalState"] = "serious"
@@ -708,7 +799,7 @@ for timeout in (False, True):
         job = self.job("sleep 30")
         wait_for(lambda: any(l.get("group") for l in self.status().get("leases", {}).values()))
         sample = copy.deepcopy(SAMPLE)
-        sample["power"]["batteryPercent"] = 29
+        sample["power"].update(source="ac", adapterWatts=65, isCharging=True, batteryPercent=29)
         self.write("input.json", sample)
         wait_for(lambda: "30%" in self.status()["reason"])
         self.assertEqual(self.call("run", "--wait-seconds", "0.1", "--", "true").returncode, 75)
@@ -795,11 +886,11 @@ sys.exit(subprocess.call(command + " " + shlex.join(args), shell=True))
         local.mkdir(parents=True)
         (fake / "playwright").rename(local / "playwright")
         env["PATH"] = os.pathsep.join((str(local), str(adapters / "bin"), env["PATH"]))
-        for watts, workers in ((140, 2), (65, 1)):
+        for power, workers in (({"source": "ac", "adapterWatts": 140, "isCharging": True}, 2), ({}, 1)):
             sample = copy.deepcopy(SAMPLE)
-            sample["power"]["adapterWatts"] = watts
+            sample["power"].update(power)
             self.write("input.json", sample)
-            wait_for(lambda: self.status().get("telemetry", {}).get("power", {}).get("adapterWatts") == watts)
+            wait_for(lambda: self.status().get("telemetry", {}).get("power") == sample["power"])
             clock = self.root / "clock"
             clock.write_text(str(int(clock.read_text()) + 121))
             wait_for(lambda: self.status()["reason"] == "ready")
@@ -814,7 +905,7 @@ sys.exit(subprocess.call(command + " " + shlex.join(args), shell=True))
                 self.write("package.json", {"scripts": {"test": script, "check": script}})
                 for name in ("npm", "pnpm", "yarn"):
                     for argv in (["run", "check"], ["test"]):
-                        with self.subTest(watts=watts, runner=runner, name=name, argv=argv):
+                        with self.subTest(power=power, runner=runner, name=name, argv=argv):
                             # Exercise both direct leasing and the PATH adapter's
                             # inherited-lease path through the executable API.
                             command = [str(fake / name), *argv]
@@ -961,11 +1052,11 @@ for argv in json.loads(sys.argv[2]):
     assert output[1] == child.pid, "adapter must exec real node"
     print(json.dumps(output[0]))
 ''')
-        for watts, cap in ((140, 2), (65, 1)):
+        for power, cap in (({"source": "ac", "adapterWatts": 140, "isCharging": True}, 2), ({}, 1)):
             sample = copy.deepcopy(SAMPLE)
-            sample["power"]["adapterWatts"] = watts
+            sample["power"].update(power)
             self.write("input.json", sample)
-            wait_for(lambda: self.status().get("telemetry", {}).get("power", {}).get("adapterWatts") == watts)
+            wait_for(lambda: self.status().get("telemetry", {}).get("power") == sample["power"])
             clock = self.root / "clock"
             clock.write_text(str(int(clock.read_text()) + 121))
             wait_for(lambda: self.status()["reason"] == "ready")

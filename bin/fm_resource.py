@@ -277,6 +277,9 @@ class Budget:
     def orphaned(self, controller, parent):
         return parent != 1 and self.table[controller["pid"]]["ppid"] == 1
 
+    def draining(self, battery):
+        return bool(self.swap) and battery < self.swap[0][2]
+
     def cleanup_browser(self, token, lease):
         directory = self.root / "browser-jobs" / token
         if not directory.exists():
@@ -291,8 +294,10 @@ class Budget:
 
     def reconcile(self):
         self.table = process_table()
-        self.data["queue"] = [r for r in self.data["queue"] if matches(r["controller"], self.table)
-            and not self.orphaned(r["controller"], r.get("parent"))]
+        queue = [r for r in self.data["queue"] if matches(r["controller"], self.table)]
+        for r in queue:
+            r.setdefault("parent", self.table[r["controller"]["pid"]]["ppid"])
+        self.data["queue"] = [r for r in queue if not self.orphaned(r["controller"], r["parent"])]
         for token, lease in list(self.data["leases"].items()):
             group = lease.get("group")
             if lease["controller"].get("boot") != boot_id():
@@ -332,6 +337,7 @@ class Budget:
     def policy(self):
         now, mono = time.time(), time.monotonic()
         cancel = False
+        self.portable = True
         try:
             sample = json.loads(Path(self.config["monitorPath"]).read_text())
             if sample["schemaVersion"] != 1 or sample["lifecycle"] != "running":
@@ -369,6 +375,9 @@ class Budget:
                 raise Refusal("power source is unavailable")
             if power["source"] == "ac" and (type(power["adapterWatts"]) not in (int, float) or power["adapterWatts"] <= 0):
                 raise Refusal("negotiated AC supply is unavailable")
+            while len(self.swap) > 1 and mono - self.swap[1][0] >= 60:
+                self.swap.popleft()
+            self.portable = power["source"] != "ac" or self.draining(battery)
             if thermal == "critical" or pressure == "critical" or battery < 15:
                 cancel = True
             if thermal not in ("nominal", "fair") or pressure not in ("normal", "warning"):
@@ -385,15 +394,13 @@ class Budget:
             sample_id = (monitor_id, sequence)
             if sample_id != self.sample_id:
                 self.swap.append((mono, swap, battery))
-                while len(self.swap) > 1 and mono - self.swap[1][0] >= 60:
-                    self.swap.popleft()
                 if self.swap and mono - self.swap[0][0] >= 60:
                     growth = swap - self.swap[0][1]
                     self.swap_bad = self.swap_bad + 1 if growth >= 256 * 1024 * 1024 else 0
                 self.sample_id = sample_id
             if self.swap_bad >= 2:
                 raise Refusal("sustained swap growth >=256 MiB/60s")
-            if power["source"] == "ac" and self.swap and mono - self.swap[0][0] >= 60 and battery < self.swap[0][2]:
+            if power["source"] == "ac" and self.draining(battery) and mono - self.swap[0][0] >= 60:
                 raise Refusal("sustained AC battery discharge")
             if self.data["emergency"]:
                 raise Refusal("persistent emergency latch requires inspected evidence and explicit clear")
@@ -516,7 +523,7 @@ class Budget:
             quarantined = sum(bool(l.get("quarantined")) for l in self.data["leases"].values())
             self.event(self.reason + (f"; {quarantined} unverified process group(s) quarantined" if quarantined else ""))
         if op == "status":
-            return {"ok": True, "reason": self.reason, "availableHeavySlots": max(0, 1 - sum(l["class"] != "worker" for l in self.data["leases"].values())) if self.reason == "ready" else 0,
+            return {"ok": True, "reason": self.reason, "portable": self.portable, "availableHeavySlots": max(0, 1 - sum(l["class"] != "worker" for l in self.data["leases"].values())) if self.reason == "ready" else 0,
                 "leases": self.data["leases"], "queue": self.data["queue"],
                 "telemetry": self.telemetry, "events": self.data["events"], "emergency": self.data["emergency"]}
         if op == "emergency":
@@ -561,12 +568,12 @@ class Budget:
             controller = request["controller"]
             if not matches(controller, self.table):
                 raise Refusal("controller boot/start identity does not match")
-            parent = request.get("parent")
+            existing = self.data["leases"].get(token) or next((q for q in self.data["queue"] if q["token"] == token), None)
+            parent = request.get("parent", (existing or {}).get("parent", self.table[controller["pid"]]["ppid"]))
             if type(parent) is not int:
-                raise Refusal("acquire requires the controller's starting parent pid")
+                raise Refusal("invalid controller parent pid")
             if self.orphaned(controller, parent):
                 raise Refusal("orphaned controller cannot acquire a lease")
-            existing = self.data["leases"].get(token) or next((q for q in self.data["queue"] if q["token"] == token), None)
             if existing is None:
                 kind = request["class"]
                 memory = request["memoryMiB"]
@@ -1086,7 +1093,7 @@ def run_job(args, config_name, config, digest):
                 break
             time.sleep(0.2)
         state = rpc(config, digest, op="status")
-        portable = state["telemetry"]["power"]["source"] != "ac" or state["telemetry"]["power"]["adapterWatts"] < 96
+        portable = state["portable"]
         command, env = caps(command, kind, portable, config_name, config)
         env.update(FM_RESOURCE_CONFIG=config_name, FM_RESOURCE_PORTABLE="1" if portable else "0")
         if kind == "browser":

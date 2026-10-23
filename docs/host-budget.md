@@ -73,11 +73,12 @@ A browser stage creates a private profile, named Chrome automation session, serv
 Nested browser stages initialize these resources if the outer compute reservation has none; otherwise they reuse the inherited profile and composite lifetime.
 Project server configuration must consume that port and keep reuse disabled by default; a bind collision must fail rather than attach to a different server.
 The Chrome adapter rejects short requests outside that composite lifetime and clears ambient auto-connect and browser URL settings when creating it.
-The `npx chrome-devtools-mcp` adapter recovers the caller's existing browser reservation from verified process ancestry when the MCP transport filters lease environment variables.
+The `npx chrome-devtools-mcp` adapter recovers the caller's existing browser reservation from verified process ancestry, including the detached bridge that `chrome-devtools-axi` starts inside a browser stage, whether or not the MCP transport filters lease environment variables.
 It restores the owned browser context and attaches the bridge process group to that reservation without queuing a second job; a launch without a live ancestor browser reservation queues for its own browser reservation.
 The wrapper exports `FM_RESOURCE_CPU_WORKERS` and `FM_RESOURCE_BROWSER_WORKERS` for project runners, and applies direct Vitest, Node test, Playwright, graphify and Nix caps where the command interface supports them.
 Package-script Vitest runs inherit `VITEST_MAX_WORKERS` and the older thread/fork environment limits, with minimum workers set to one; see [Vitest's environment variable migration](https://vitest.dev/guide/migration.html).
 Prepared launches and direct leased package-test runs install a Node PATH adapter that caps `node --test` before file arguments at two workers on desk power or one on portable power, including npm and pnpm package scripts.
+Portable power means a non-AC source, or AC while the owner's recent battery history shows the charge falling; AC that holds its charge is desk power whatever the adapter wattage.
 Explicit Node concurrency limits at or below the cap are preserved, and other Node invocations pass through unchanged.
 For npm, pnpm and yarn `run <script>` or `test`, simple package scripts invoking `playwright test` receive one worker, while simple Node test scripts rely on the prepared Node adapter subject to the PATH limitations below.
 Scripts containing `playwright test` or `node --test` tokens anywhere are refused unless they are recognized as a simple runner command; this includes shell compounds with setup or cleanup commands and script-level `--` terminators.
@@ -119,6 +120,7 @@ Heavy and exclusive jobs remain held under warning pressure.
 The queue admits requests that fit the available capacity without reserving memory for waiting requests, so a queued exclusive job cannot block workers or smaller compute jobs behind it.
 Reconciliation drops queued requests whose controller identity is dead or whose controller was reparented to process 1 after it started waiting; such a controller cannot queue again.
 A controller whose parent was already process 1 when it first asked, such as one started by launchd, is admitted normally.
+A request from a client or ledger that predates parent tracking records the controller's observed parent when the owner first sees it, so only a later transition to process 1 drops it.
 The owner uses the monitor's observation time and uptime, restarts recovery after source or monitor-instance changes, observed suspension or gaps longer than ten seconds, and persists its last blocking cause.
 An explicit `emergency --evidence` records an observed emergency sleep; a critical thermal reading also latches conservatively without asserting that sleep occurred.
 Dotfiles schema 1 does not report historical emergency sleeps, so an emergency that happened while both monitor and coordinator were absent must be recorded from inspected OS evidence before restoring work.
