@@ -111,7 +111,7 @@ The recorded-parent rule below also applies to held leases, preserving launchd-p
 An unanchored surviving group with a live controller is quarantined, retaining capacity without signaling an unverified process.
 Cancellation sends TERM to verified members, then KILL after the configured grace, and never kills by executable name or port.
 Stopping the owner preserves live reservations for reconciliation by its replacement.
-Once a lease's verified process group has drained or its controller is gone, the owner checks the browser manifest's lease, boot and profile identity and removes the token directory, including its profile and caches.
+Once a lease's verified process group has drained or its controller is gone or orphaned under the recorded-parent rule, the owner checks the browser manifest's lease, boot and profile identity and removes the token directory, including its profile and caches.
 The same reconciliation handles completion, cancellation, inherited browser stages, attached bridge groups and owner recovery.
 Unknown or corrupt recovery state fails closed; preserve it for inspection rather than deleting it to regain slots.
 
