@@ -1177,7 +1177,6 @@ test_scout_base_branch_refused_on_gerrit_forge() {
   pass "a based scout on a forge=gerrit project is refused at spawn"
 }
 
-if [ "${FM_TEST_SLOT_LEASE_ONLY:-0}" != 1 ]; then
 
 test_remote_seeded_home_spawns_from_treehouse_pool
 test_pool_slot_claim_follows_the_spawn_outcome
@@ -1208,8 +1207,6 @@ test_work_inside_submodule_is_still_uncommitted_work
 test_stale_pin_carrying_real_work_is_not_called_stale
 test_stale_pin_beside_other_dirt_reports_one_verdict
 
-
-fi
 
 # Real pool lifecycle coverage uses a separate private socket and scratch home.
 test_stopped_task_retains_slot_lease() (
@@ -1273,6 +1270,9 @@ for _ in $(seq 1 100); do
 done
 [ "$LEGACY" != "$PROJECT" ] || fail 'legacy acquire did not enter a slot'
 git -C "$LEGACY" checkout -qb fm/legacy
+printf 'preserved task commit\n' > "$LEGACY/saved-work"
+git -C "$LEGACY" add saved-work
+git -C "$LEGACY" -c user.name=test -c user.email=test@example.invalid commit -qm 'Preserve task work'
 fm_test_spawn_brief "$FM_HOME" legacy
 cp "$FM_HOME/data/legacy/brief.md" "$FM_HOME/data/legacy/launch-brief.md"
 fm_write_meta "$FM_HOME/state/legacy.meta" "window=legacy:fm-legacy" \
@@ -1296,22 +1296,64 @@ for _ in $(seq 1 100); do
 done
 # The owner claim is the published spawn contract that guards legacy cleanup.
 printf 'task=replacement\nhome=%s\n' "$FM_HOME" > "$(dirname "$REUSED")/.fm-slot-owner"
-if "$ROOT/bin/fm-control.sh" legacy relaunch --note 'Continue the stopped task.' > "$TMP_ROOT/legacy-relaunch.log" 2>&1; then
-  fail 'legacy relaunch accepted another task branch'
-fi
+printf 'successor edits\n' > "$REUSED/successor-work"
+SUCCESSOR_STATUS=$(git -C "$REUSED" status --porcelain --untracked-files=all)
+"$ROOT/bin/fm-control.sh" legacy relaunch --note 'Continue the stopped task.' > "$TMP_ROOT/legacy-relaunch.log" 2>&1
 cat "$TMP_ROOT/legacy-relaunch.log"
-assert_contains "$(cat "$TMP_ROOT/legacy-relaunch.log")" reassigned 'relaunch refused for an unrelated reason'
-if "$ROOT/bin/fm-spawn.sh" legacy --relaunch > "$TMP_ROOT/legacy-spawn.log" 2>&1; then
-  fail 'direct relaunch accepted a reassigned slot'
-fi
-assert_contains "$(cat "$TMP_ROOT/legacy-spawn.log")" reassigned 'direct relaunch refused for an unrelated reason'
-"$ROOT/bin/fm-teardown.sh" legacy > "$TMP_ROOT/legacy-cleanup.log" 2>&1
-assert_absent "$FM_HOME/state/legacy.meta" 'legacy cleanup stranded the stale record'
-assert_equals fm/replacement "$(git -C "$REUSED" branch --show-current)" 'legacy cleanup reset the reassigned slot'
-assert_contains "$(cat "$TMP_ROOT/legacy-cleanup.log")" reassigned 'legacy cleanup did not explain the skipped slot'
+RESTORED=$(sed -n 's/^worktree=//p' "$FM_HOME/state/legacy.meta")
+assert_not_equals "$REUSED" "$RESTORED" 'legacy relaunch reused the successor copy'
+assert_equals fm/legacy "$(git -C "$RESTORED" branch --show-current)" 'legacy relaunch did not restore the task branch'
+assert_equals 'preserved task commit' "$(cat "$RESTORED/saved-work")" 'legacy relaunch lost the task commit'
+assert_equals 'successor edits' "$(cat "$REUSED/successor-work")" 'legacy relaunch changed successor work'
+assert_equals "$SUCCESSOR_STATUS" "$(git -C "$REUSED" status --porcelain --untracked-files=all)" 'legacy relaunch changed successor status'
+assert_equals fm/replacement "$(git -C "$REUSED" branch --show-current)" 'legacy relaunch changed successor branch'
+assert_contains "$(cat "$(dirname "$REUSED")/.fm-slot-owner")" task=replacement 'legacy relaunch changed successor ownership'
+(cd "$PROJECT" && treehouse status --json) | jq -e --arg path "$RESTORED" '.[] | select(.path == $path and .status == "leased")' >/dev/null \
+  || fail 'legacy relaunch did not obtain a durable lease'
+"$ROOT/bin/fm-teardown.sh" legacy --force > "$TMP_ROOT/legacy-cleanup.log" 2>&1
+assert_absent "$FM_HOME/state/legacy.meta" 'legacy cleanup stranded its record'
+assert_equals 'successor edits' "$(cat "$REUSED/successor-work")" 'legacy cleanup reset the successor slot'
 (cd "$PROJECT" && treehouse return --force --if-lease-holder replacement "$REUSED")
 rm "$(dirname "$REUSED")/.fm-slot-owner"
-pass 'legacy process lease expiry reproduces slot reuse and refused relaunch; stale cleanup leaves its successor alone'
+pass 'a legacy task with a reassigned slot relaunches in a durable copy of its committed branch'
+
+# A still-owned process lease is upgraded too, even with no commits beyond its
+# base. Dirty work remains preserved until the operator commits it.
+tmux new-session -d -s legacy-owned -n fm-owned -c "$PROJECT" 'bash --noprofile --norc'
+tmux send-keys -t legacy-owned:fm-owned 'treehouse get' Enter
+OWNED=$PROJECT
+for _ in $(seq 1 100); do
+  OWNED=$(tmux display-message -p -t legacy-owned:fm-owned '#{pane_current_path}')
+  [ "$OWNED" = "$PROJECT" ] || break
+  sleep 0.1
+done
+[ "$OWNED" != "$PROJECT" ] || fail 'owned legacy acquire did not enter a slot'
+git -C "$OWNED" checkout -qb fm/owned
+printf 'task=owned\nhome=%s\n' "$FM_HOME" > "$(dirname "$OWNED")/.fm-slot-owner"
+fm_test_spawn_brief "$FM_HOME" owned
+cp "$FM_HOME/data/owned/brief.md" "$FM_HOME/data/owned/launch-brief.md"
+fm_write_meta "$FM_HOME/state/owned.meta" 'window=legacy-owned:fm-owned' \
+  'endpoint_task_id=owned' "worktree=$OWNED" "project=$PROJECT" \
+  'kind=ship' 'harness=codex' 'backend=tmux' 'branch=fm/owned' \
+  'mode=no-mistakes' 'yolo=off' 'model=default' 'effort=default' 'spawn_gen=fixture'
+printf 'uncommitted task work\n' > "$OWNED/local-work"
+if "$ROOT/bin/fm-control.sh" owned relaunch --note 'Continue own work.' > "$TMP_ROOT/dirty-owned.log" 2>&1; then
+  fail 'a dirty owned legacy slot was moved'
+fi
+assert_equals 'uncommitted task work' "$(cat "$OWNED/local-work")" 'legacy move lost uncommitted work'
+assert_equals "$OWNED" "$(sed -n 's/^worktree=//p' "$FM_HOME/state/owned.meta")" 'dirty refusal rebound the record'
+assert_contains "$(cat "$TMP_ROOT/dirty-owned.log")" 'uncommitted work' 'dirty legacy refusal did not explain how work is preserved'
+rm "$OWNED/local-work"
+"$ROOT/bin/fm-control.sh" owned relaunch --note 'Continue own work.'
+UPGRADED=$(sed -n 's/^worktree=//p' "$FM_HOME/state/owned.meta")
+assert_equals fm/owned "$(git -C "$UPGRADED" branch --show-current)" 'owned upgrade lost its branch'
+"$ROOT/bin/fm-control.sh" owned exit
+(cd "$PROJECT" && treehouse status --json) | jq -e --arg path "$UPGRADED" '.[] | select(.path == $path and .status == "leased")' >/dev/null \
+  || fail 'owned legacy upgrade remained process-leased'
+"$ROOT/bin/fm-control.sh" owned relaunch --note 'Continue after upgrade.'
+assert_equals "$UPGRADED" "$(sed -n 's/^worktree=//p' "$FM_HOME/state/owned.meta")" 'an upgraded lease moved again'
+"$ROOT/bin/fm-teardown.sh" owned --force > "$TMP_ROOT/owned-cleanup.log" 2>&1
+pass 'a still-owned legacy copy becomes durably leased; dirty work is refused and preserved'
 
 spawn() {
   fm_test_spawn_brief "$FM_HOME" "$1"

@@ -1791,8 +1791,8 @@ fm_treehouse_slot_owner_marker() {  # <worktree>
 
 # Claim a pool slot for a task, replacing whatever the previous holder left.
 # The rename is atomic, so a reader either sees the old claim or the new one.
-fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home>
-  local worktree=$1 id=$2 home=$3 marker tmp
+fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home> [durable]
+  local worktree=$1 id=$2 home=$3 lease=${4:-} marker tmp
   [ -n "$id" ] || return 1
   marker=$(fm_treehouse_slot_owner_marker "$worktree") || return 1
   # Only a plain claim file may be replaced: renaming onto a directory would
@@ -1806,6 +1806,7 @@ fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home>
   {
     printf 'task=%s\n' "$id"
     printf 'home=%s\n' "$home"
+    if [ "$lease" = durable ]; then printf 'lease=durable\n'; fi
   } > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
   mv -f "$tmp" "$marker" 2>/dev/null || { rm -f "$tmp"; return 1; }
 }
@@ -1819,11 +1820,14 @@ fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home>
 # FM_TREEHOUSE_SLOT_OWNER_ID and FM_TREEHOUSE_SLOT_OWNER_HOME carry the recorded
 # claimant as evidence. The home is reported, never matched: a home that moved
 # must not turn a task's own slot into a refusal.
+# FM_TREEHOUSE_SLOT_DURABLE reports the acquire mode stamped by the allocator;
+# an older claim without lease=durable needs migration before relaunch.
 fm_treehouse_slot_owner_state() {  # <worktree> <task-id>
-  local worktree=$1 id=$2 marker line owner_id='' owner_home=''
+  local worktree=$1 id=$2 marker line owner_id='' owner_home='' durable=0
   FM_TREEHOUSE_SLOT_OWNER=unsafe
   FM_TREEHOUSE_SLOT_OWNER_ID=
   FM_TREEHOUSE_SLOT_OWNER_HOME=
+  FM_TREEHOUSE_SLOT_DURABLE=0
   marker=$(fm_treehouse_slot_owner_marker "$worktree") || return 0
   if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
     FM_TREEHOUSE_SLOT_OWNER=absent
@@ -1834,6 +1838,7 @@ fm_treehouse_slot_owner_state() {  # <worktree> <task-id>
     case "$line" in
       task=*) owner_id=${line#task=} ;;
       home=*) owner_home=${line#home=} ;;
+      lease=durable) durable=1 ;;
     esac
   done < "$marker" || return 0
   [ -n "$owner_id" ] || return 0
@@ -1841,26 +1846,14 @@ fm_treehouse_slot_owner_state() {  # <worktree> <task-id>
   FM_TREEHOUSE_SLOT_OWNER_ID=$owner_id
   # shellcheck disable=SC2034 # Output globals, read by the sourcing caller.
   FM_TREEHOUSE_SLOT_OWNER_HOME=$owner_home
+  # This records the acquire mode, not a second lease: only Treehouse releases it.
+  # shellcheck disable=SC2034 # Output global, read by relaunch.
+  FM_TREEHOUSE_SLOT_DURABLE=$durable
   if [ "$owner_id" = "$id" ]; then
     FM_TREEHOUSE_SLOT_OWNER=mine
   else
     FM_TREEHOUSE_SLOT_OWNER=other
   fi
-}
-
-# Relaunch must not adopt a legacy record's reassigned slot. Teardown has a
-# separate records-only path for that state; launch has no safe use for it.
-fm_treehouse_require_task_slot() {  # <worktree> <task-id>
-  local worktree=$1 id=$2
-  fm_treehouse_slot_owner_state "$worktree" "$id"
-  case "$FM_TREEHOUSE_SLOT_OWNER" in
-    mine|absent) return 0 ;;
-    other)
-      echo "error: task $id's Treehouse slot $worktree was reassigned to task $FM_TREEHOUSE_SLOT_OWNER_ID; refusing to relaunch in another task's copy" >&2 ;;
-    *)
-      echo "error: task $id's Treehouse slot $worktree has an unreadable owner claim; refusing to relaunch without proof of ownership" >&2 ;;
-  esac
-  return 1
 }
 
 # Drop a task's own claim once its slot is back in the pool. Never removes
