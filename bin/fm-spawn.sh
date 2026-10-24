@@ -4461,10 +4461,10 @@ relaunch_ensure_durable_worktree() {
   # it must never revert to the slot that now belongs to another task.
   SPAWN_META_TMP="$STATE/.$ID.meta.move.${BASHPID:-$$}"
   awk -F= -v path="$new_path" -v tx="${FM_CONTROL_RELAUNCH_TX:-}" '
+    BEGIN { if (tx != "") print "control_relaunch_tx=" tx }
     $1 == "worktree" { print "worktree=" path; next }
     $1 == "control_relaunch_tx" && tx != "" { next }
     { print }
-    END { if (tx != "") print "control_relaunch_tx=" tx }
   ' "$RELAUNCH_META" > "$SPAWN_META_TMP" || return 1
   fm_backlog_atomic_transition publish "$SPAWN_META_TMP" "$RELAUNCH_META" "task record" "$STATE" || return 1
   SPAWN_META_TMP=

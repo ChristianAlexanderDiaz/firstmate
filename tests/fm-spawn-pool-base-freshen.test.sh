@@ -1229,6 +1229,13 @@ export HOME="$TMP_ROOT/user" SHELL=/bin/bash TREEHOUSE_ROOT="$TMP_ROOT/pools" TR
 mkdir -p "$HOME" "$TMP_ROOT/shim"
 cat > "$TMP_ROOT/shim/tmux" <<EOF
 #!/usr/bin/env bash
+if [ -e "$TMP_ROOT/refuse-launch-delivery" ] && [ "\${1:-}" = send-keys ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      '. '*) echo 'fixture: launch delivery refused' >&2; exit 1 ;;
+    esac
+  done
+fi
 exec "$REAL_TMUX" -L "$SOCKET" "\$@"
 EOF
 # A shell model of an idle Codex composer, not a real model invocation.
@@ -1298,6 +1305,25 @@ done
 printf 'task=replacement\nhome=%s\n' "$FM_HOME" > "$(dirname "$REUSED")/.fm-slot-owner"
 printf 'successor edits\n' > "$REUSED/successor-work"
 SUCCESSOR_STATUS=$(git -C "$REUSED" status --porcelain --untracked-files=all)
+PR_URL=https://github.com/example/project/pull/42
+PR_HEAD=$(git -C "$PROJECT" rev-parse fm/legacy)
+printf 'pr=%s\npr_head=%s\nx_request=fixture\n' "$PR_URL" "$PR_HEAD" >> "$FM_HOME/state/legacy.meta"
+touch "$TMP_ROOT/refuse-launch-delivery"
+if "$ROOT/bin/fm-control.sh" legacy relaunch --note 'Continue after moving.' > "$TMP_ROOT/legacy-refused.log" 2>&1; then
+  fail 'legacy relaunch unexpectedly survived refused launch delivery'
+fi
+rm "$TMP_ROOT/refuse-launch-delivery"
+assert_contains "$(cat "$TMP_ROOT/legacy-refused.log")" 'fixture: launch delivery refused' 'failure did not reach the post-move launch boundary'
+RESTORED=$(sed -n 's/^worktree=//p' "$FM_HOME/state/legacy.meta")
+assert_not_equals "$REUSED" "$RESTORED" 'failed launch lost the recovered location'
+assert_present "$RESTORED/saved-work" 'failed launch lost the recovered task work'
+# shellcheck source=bin/fm-pr-lib.sh
+. "$ROOT/bin/fm-pr-lib.sh"
+fm_pr_metadata_identity_parse "$FM_HOME/state/legacy.meta" || fail 'failed legacy restart left unreadable PR metadata'
+assert_equals "$PR_URL" "$FM_PR_META_URL" 'failed legacy restart changed the registered PR'
+assert_equals "$PR_HEAD" "$(sed -n 's/^pr_head=//p' "$FM_HOME/state/legacy.meta")" 'failed legacy restart changed the registered head'
+assert_equals fixture "$(sed -n 's/^x_request=//p' "$FM_HOME/state/legacy.meta")" 'failed legacy restart lost PR follow-up metadata'
+pass 'a failed legacy restart preserves a readable terminal PR block and recovered location'
 "$ROOT/bin/fm-control.sh" legacy relaunch --note 'Continue the stopped task.' > "$TMP_ROOT/legacy-relaunch.log" 2>&1
 cat "$TMP_ROOT/legacy-relaunch.log"
 RESTORED=$(sed -n 's/^worktree=//p' "$FM_HOME/state/legacy.meta")
@@ -1417,5 +1443,7 @@ pass 'cleanup returns the retained leases to the private pool'
 )
 
 test_stopped_task_retains_slot_lease
+lease_status=$?
+[ "$lease_status" -eq 0 ] || exit "$lease_status"
 
 echo "# all fm-spawn-pool-base-freshen tests passed"
