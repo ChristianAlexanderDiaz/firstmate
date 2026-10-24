@@ -696,8 +696,10 @@ list_portable_serial() {
 # These are balance hints only: the shard
 # partition stays complete and disjoint whatever they say, so a stale hint costs
 # balance rather than coverage. That doc owns the refresh procedure.
+# fm-auto-teardown starts with a provisional 60s hint pending CI timing artifacts.
 portable_serial_weight_hints() {
   cat <<'EOF'
+tests/fm-auto-teardown.test.sh 60000
 tests/fm-afk-contract.test.sh 11101
 tests/fm-afk-inject-e2e.test.sh 41958
 tests/fm-afk-pi-herdr-return-e2e.test.sh 52

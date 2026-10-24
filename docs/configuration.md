@@ -598,6 +598,13 @@ Only metadata-routed task selectors carry secondmate-marker and Codex-harness co
 These rules are the single owner of the task-selector vocabulary.
 Backend guides and other documents refer here instead of restating the resolution order.
 
+### Automatic task cleanup (config/auto-teardown)
+
+The optional presence flag `config/auto-teardown` enables ordinary completed-task cleanup for this home; it is absent and off by default.
+Set `keep_open=1` in a task's `state/<id>.meta` to retain that worker, and remove that row to restore automatic cleanup.
+[`bin/fm-auto-teardown.sh`](../bin/fm-auto-teardown.sh) owns eligibility and invocation mechanics; normal teardown retains its safety gates and reports refusals without forcing cleanup.
+The setting applies across runtime backends and primary harnesses through the common wake drain and local landing entrypoint.
+
 ### Teardown identity checks
 
 `fm-teardown.sh <id>` takes a task id directly and validates the complete metadata-only endpoint identity before any runtime dispatch or cleanup mutation.
