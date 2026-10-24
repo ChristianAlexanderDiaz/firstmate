@@ -3,9 +3,10 @@
 #
 # A treehouse pool can return a clean detached worktree whose origin/main was
 # advanced after the worktree was allocated.
-# These tests drive the real spawn path with a fake terminal, then prove it
+# Base-refresh cases drive the real spawn path with a fake terminal, then prove it
 # starts the worker from the fetched origin tip, launches a clean origin-less
 # pool as-is, or stops when a configured origin is unusable.
+# Lease lifecycle coverage below uses real Treehouse and a private tmux server.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -948,9 +949,8 @@ SH
   pass "a refused polytoken launch leaves its per-id paths alone while another spawn holds the per-id lock"
 }
 
-# A launch on any harness other than polytoken keeps main's abort behavior: its
-# pre-publication claim is dropped under the allocation lock, but the window
-# it opened, and with it the slot's lease, stays for the operator to inspect.
+# A refused non-polytoken launch retains its diagnostic window. This fake
+# terminal fixture checks claim cleanup, not the durable lease lifecycle.
 test_non_polytoken_refused_launch_keeps_its_window() {
   local rec id out status slot_root world
   id='pool-refused-codex-r1'

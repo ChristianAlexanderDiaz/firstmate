@@ -60,7 +60,8 @@
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>] [--claude-account <name>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded worktree, reusing its recorded endpoint when that
-#   endpoint still exists, instead of creating either from scratch. It is
+#   endpoint still exists. Legacy pool copies migrate to a durable allocation
+#   through relaunch_ensure_durable_worktree below. It is
 #   the launch half of the control plane (bin/fm-control.sh relaunch), which
 #   owns the checkpoint, the progress note, stopping the previous agent, and the
 #   transaction; call fm-control rather than this flag directly unless you are
@@ -69,7 +70,7 @@
 #   validated state/<id>.meta, so --backend, --scout, --secondmate, a project
 #   positional, and batch pairs are all refused alongside it; only harness,
 #   model, effort, and a Claude worker's failover account (--claude-account,
-#   below) may change, which is what makes a harness switch one ordinary
+#   below) may be overridden by the caller, which makes a harness switch one ordinary
 #   relaunch. It refuses unless the recorded endpoint is positively
 #   agent-free on a backend with a recovery-grade agent-state classifier (tmux
 #   or herdr), and clears the previous harness's per-task wiring before arming
@@ -82,8 +83,8 @@
 #   again. A tmux `missing` always refuses: a task record carries no socket
 #   identity for its endpoint, so no read here can tell a destroyed window from
 #   one on a tmux server this process cannot address. An endpoint that turns out
-#   to have survived refuses too. The worktree is reused untouched either way; a
-#   rebind is a recovery, never a teardown. Only a crewmate or scout rebinds: a
+#   to have survived refuses too. Endpoint recovery does not discard work;
+#   legacy worktree migration is handled separately below. Only a crewmate or scout rebinds: a
 #   secondmate whose endpoint is gone is respawned by its own owner
 #   (`--secondmate`, driven by the session-start liveness sweep).
 #   Every fresh ship/scout launch and replacement explicitly enters the recorded
@@ -183,7 +184,8 @@
 #   owns the claim and bin/fm-teardown.sh owns what it protects. A slot that
 #   cannot be claimed refuses the spawn rather than launching a worker whose slot
 #   could later be released out from under its successor. An aborted allocation
-#   returns its clean, unlaunched lease while still holding that lock; otherwise
+#   returns its clean lease under that lock when no launch was sent or its
+#   endpoint was closed, retaking the lock once if needed; otherwise
 #   it preserves the lease and claim and reports the recovery path. A fresh
 #   polytoken spawn additionally closes its unlaunched endpoint and removes
 #   the wiring, task temp root, and staged launch file it wrote.
@@ -1066,8 +1068,9 @@ case "$EFFORT" in
   ;;
 esac
 
-# --relaunch reuses an existing task's endpoint, worktree, project, and kind,
-# so every axis this block resolves for a fresh spawn instead comes from that
+# --relaunch starts from the task's recorded identity; endpoint recovery and
+# legacy pool migration below may republish its endpoint or worktree.
+# Every axis this block resolves for a fresh spawn instead comes from that
 # task's own durable record below. Contradicting it on the command line is a
 # refusal rather than a silently-ignored flag.
 if [ "$RELAUNCH" -eq 1 ]; then
@@ -4385,7 +4388,8 @@ fi
 
 # Upgrade a legacy process-leased copy by restoring its shared branch into a
 # durable allocation. The project lock covers classification, acquire, claim
-# and record publication; another task's old slot is never inspected or changed.
+# and record publication; a reassigned checkout's contents are never inspected
+# or changed.
 SPAWN_RELAUNCH_OLD_WT=
 SPAWN_RELAUNCH_OLD_BRANCH=
 relaunch_ensure_durable_worktree() {
