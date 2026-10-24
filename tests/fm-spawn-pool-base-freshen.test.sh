@@ -1236,6 +1236,13 @@ if [ -e "$TMP_ROOT/refuse-launch-delivery" ] && [ "\${1:-}" = send-keys ]; then
     esac
   done
 fi
+if [ -e "$TMP_ROOT/refuse-directory-handoff" ] && [ "\${1:-}" = send-keys ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      'cd -- '*) echo 'fixture: directory handoff refused' >&2; exit 1 ;;
+    esac
+  done
+fi
 exec "$REAL_TMUX" -L "$SOCKET" "\$@"
 EOF
 # A shell model of an idle Codex composer, not a real model invocation.
@@ -1308,6 +1315,15 @@ SUCCESSOR_STATUS=$(git -C "$REUSED" status --porcelain --untracked-files=all)
 PR_URL=https://github.com/example/project/pull/42
 PR_HEAD=$(git -C "$PROJECT" rev-parse fm/legacy)
 printf 'pr=%s\npr_head=%s\nx_request=fixture\n' "$PR_URL" "$PR_HEAD" >> "$FM_HOME/state/legacy.meta"
+touch "$TMP_ROOT/refuse-directory-handoff"
+if "$ROOT/bin/fm-control.sh" legacy relaunch --note 'Recover the stopped task.' > "$TMP_ROOT/legacy-move-refused.log" 2>&1; then
+  fail 'legacy relaunch unexpectedly survived refused directory handoff'
+fi
+rm "$TMP_ROOT/refuse-directory-handoff"
+assert_contains "$(cat "$TMP_ROOT/legacy-move-refused.log")" 'fixture: directory handoff refused' 'failure did not reach the directory handoff'
+MOVED=$(sed -n 's/^worktree=//p' "$FM_HOME/state/legacy.meta")
+assert_not_equals "$REUSED" "$MOVED" 'refused directory handoff lost the published location'
+assert_equals "$REUSED" "$(tmux display-message -p -t legacy:fm-legacy '#{pane_current_path}')" 'refused directory handoff unexpectedly changed the endpoint directory'
 touch "$TMP_ROOT/refuse-launch-delivery"
 if "$ROOT/bin/fm-control.sh" legacy relaunch --note 'Continue after moving.' > "$TMP_ROOT/legacy-refused.log" 2>&1; then
   fail 'legacy relaunch unexpectedly survived refused launch delivery'
@@ -1317,6 +1333,8 @@ assert_contains "$(cat "$TMP_ROOT/legacy-refused.log")" 'fixture: launch deliver
 RESTORED=$(sed -n 's/^worktree=//p' "$FM_HOME/state/legacy.meta")
 assert_not_equals "$REUSED" "$RESTORED" 'failed launch lost the recovered location'
 assert_present "$RESTORED/saved-work" 'failed launch lost the recovered task work'
+assert_equals "$MOVED" "$RESTORED" 'retry allocated another copy instead of reusing the published lease'
+assert_equals "$RESTORED" "$(tmux display-message -p -t legacy:fm-legacy '#{pane_current_path}')" 'retry did not enter the published copy'
 # shellcheck source=bin/fm-pr-lib.sh
 . "$ROOT/bin/fm-pr-lib.sh"
 fm_pr_metadata_identity_parse "$FM_HOME/state/legacy.meta" || fail 'failed legacy restart left unreadable PR metadata'

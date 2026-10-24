@@ -4386,7 +4386,6 @@ fi
 # Upgrade a legacy process-leased copy by restoring its shared branch into a
 # durable allocation. The project lock covers classification, acquire, claim
 # and record publication; another task's old slot is never inspected or changed.
-SPAWN_RELAUNCH_MOVED=0
 SPAWN_RELAUNCH_OLD_WT=
 SPAWN_RELAUNCH_OLD_BRANCH=
 relaunch_ensure_durable_worktree() {
@@ -4473,7 +4472,6 @@ relaunch_ensure_durable_worktree() {
   fi
   WT=$new_path
   RELAUNCH_WT=$new_path
-  SPAWN_RELAUNCH_MOVED=1
   SPAWN_RELAUNCH_OLD_BRANCH=
 }
 
@@ -5322,7 +5320,7 @@ elif [ "$RELAUNCH" -eq 1 ]; then
   # proven instead is that the adopted endpoint's shell is actually sitting in
   # that worktree, so the replacement agent starts where the work is rather
   # than wherever the pane happened to drift.
-  [ "$SPAWN_RELAUNCH_MOVED" != 1 ] || spawn_enter_recorded_worktree
+  spawn_enter_recorded_worktree
   relaunch_wt_real=$(real_path_or_raw "$WT")
   relaunch_seen=
   for _ in $(seq 1 10); do
