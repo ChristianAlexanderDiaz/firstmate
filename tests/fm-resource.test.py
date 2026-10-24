@@ -219,6 +219,73 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(result["state"], "leased")
         self.assertIn(token, self.status()["leases"])
 
+    def held_fixture(self, parent=42, kind="exclusive"):
+        rows = {900001: {"start": "fixture-controller", "ppid": parent,
+            "pgid": 900001, "rssKiB": 0},
+            900002: {"start": "fixture-group", "ppid": 900001,
+                "pgid": 900002, "rssKiB": 0}}
+        self.write("process-table.json", rows)
+        owner = {"boot": resource.boot_id(), "pid": 900001, "start": "fixture-controller"}
+        token, state = self.acquire(kind, controller=owner, parent=parent, task="held-fixture")
+        self.assertEqual(state, "leased")
+        self.request("bind", token=token, group={"boot": resource.boot_id(),
+            "pid": 900002, "start": "fixture-group"})
+        directory = self.root / "state/browser-jobs" / token
+        (directory / "profile").mkdir(parents=True, mode=0o700)
+        directory.chmod(0o700)
+        directory.parent.chmod(0o700)
+        (directory / "manifest.json").write_text(json.dumps({"lease": token,
+            "boot": resource.boot_id(), "profile": str(directory / "profile")}))
+        return token, rows, directory
+
+    def test_dead_controller_releases_held_lease_and_browser_state(self):
+        token, rows, directory = self.held_fixture()
+        del rows[900001]
+        self.write("process-table.json", rows)
+        self.assertNotIn(token, self.status()["leases"])
+        self.assertFalse(directory.exists())
+        self.assertEqual(self.status()["availableHeavySlots"], 1)
+
+    def test_orphaned_controller_releases_held_lease_and_browser_state(self):
+        token, rows, directory = self.held_fixture()
+        rows[900001]["ppid"] = 1
+        self.write("process-table.json", rows)
+        self.assertNotIn(token, self.status()["leases"])
+        self.assertFalse(directory.exists())
+        self.assertEqual(self.status()["availableHeavySlots"], 1)
+
+    def test_launchd_parented_controller_keeps_held_lease(self):
+        token, _, directory = self.held_fixture(parent=1)
+        self.assertIn(token, self.status()["leases"])
+        self.stop()
+        self.start()
+        self.assertIn(token, self.status()["leases"])
+        self.assertTrue(directory.exists())
+
+    def test_long_held_exclusive_emits_one_wake_naming_holder(self):
+        token, _, _ = self.held_fixture()
+        self.assertFalse(any("host-budget-long-held" in line for line in self.poll_transitions()))
+        (self.root / "clock").write_text(str(121 + resource.LONG_HELD_EXCLUSIVE_SECONDS + 1))
+        self.status()
+        lines = [line for line in self.poll_transitions() if "host-budget-long-held" in line]
+        self.assertEqual(len(lines), 1)
+        for expected in (token, "pid=900001", "task=held-fixture", "class=exclusive"):
+            self.assertIn(expected, lines[0])
+        self.assertGreater(int(lines[0].split("held=")[1].split("s:")[0]),
+            resource.LONG_HELD_EXCLUSIVE_SECONDS)
+        self.status()
+        self.stop()
+        self.start()
+        self.status()
+        self.assertFalse(any("host-budget-long-held" in line for line in self.poll_transitions()))
+        self.assertTrue(self.status()["leases"][token]["longHeldNotified"])
+
+    def test_long_held_other_class_does_not_emit_exclusive_wake(self):
+        token, _, _ = self.held_fixture(kind="browser")
+        (self.root / "clock").write_text(str(121 + resource.LONG_HELD_EXCLUSIVE_SECONDS + 1))
+        self.assertIn(token, self.status()["leases"])
+        self.assertFalse(any("host-budget-long-held" in line for line in self.poll_transitions()))
+
     def test_legacy_queued_client_without_parent_survives_owner_restart(self):
         holder, state = self.acquire("exclusive")
         self.assertEqual(state, "leased")
@@ -386,17 +453,21 @@ class ResourceTests(unittest.TestCase):
         wait_for(lambda: "recovery hysteresis" in self.status()["reason"])
 
     def test_crash_preserves_live_reservation_and_partial_writes(self):
-        job = self.job("sleep 5")
-        wait_for(lambda: any(l.get("group") for l in self.status().get("leases", {}).values()))
+        token, rows, directory = self.held_fixture()
         self.stop(signal.SIGKILL)
         (self.root / "state/.resource-interrupted").write_text('{"partial":')
         self.start()
-        wait_for(lambda: self.status().get("leases"))
-        self.assertEqual(len(self.status()["leases"]), 1)
-        # The original wrapper exits on socket loss; the verified group still
-        # holds its reservation through owner recovery until the child exits.
-        wait_for(lambda: not self.status().get("leases"), seconds=10)
-        job.communicate(timeout=10)
+        try:
+            wait_for(lambda: self.status().get("ok"), seconds=12)
+        except AssertionError:
+            self.fail("replacement budget owner did not accept status requests within 12 seconds")
+        self.assertIn(token, self.status()["leases"])
+        self.assertTrue(directory.exists())
+        # Keep the controller alive across owner recovery, then drain its group.
+        del rows[900002]
+        self.write("process-table.json", rows)
+        self.assertNotIn(token, self.status()["leases"])
+        self.assertFalse(directory.exists())
 
     def test_reused_pid_is_not_signalled_or_adopted(self):
         victim = subprocess.Popen(["/bin/sleep", "30"], start_new_session=True)
