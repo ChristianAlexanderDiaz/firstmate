@@ -2,8 +2,9 @@
 """Fixture only: fresh synthetic dotfiles monitor and controllable policy clock.
 
 The production owner and every real client/socket path remain intact.
-An optional orphan-controller marker reports one live process as parented by
-process 1; an optional legacy-owner marker models an owner that predates
+An optional process-table.json supplies synthetic process identities; otherwise
+an orphan-controller marker reports one live process as parented by process 1.
+An optional legacy-owner marker models an owner that predates
 portable status and browser bridge recovery.
 No thermal load, machine settings, user daemon or runtime backend is involved.
 """
@@ -34,6 +35,9 @@ def wall_time():
 
 
 def process_table():
+    fake = root / "process-table.json"
+    if fake.exists():
+        return {int(pid): row for pid, row in json.loads(fake.read_text()).items()}
     rows = real_process_table()
     try:
         orphan = int((root / "orphan-controller").read_text())

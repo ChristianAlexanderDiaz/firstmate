@@ -32,6 +32,7 @@ CLASSES = {"test": 1024, "build": 3072, "browser": 2048, "graph": 512,
            "exclusive": 4096, "worker": 512}
 MEMORY_WARNING = "memory warning: heavy compute held"
 STUCK_QUEUE_SECONDS = 10 * 60
+LONG_HELD_EXCLUSIVE_SECONDS = 60 * 60
 HERE = Path(__file__).resolve().parent
 BOOT = None
 
@@ -300,7 +301,12 @@ class Budget:
         self.data["queue"] = [r for r in queue if not self.orphaned(r["controller"], r["parent"])]
         for token, lease in list(self.data["leases"].items()):
             group = lease.get("group")
-            if lease["controller"].get("boot") != boot_id():
+            if not matches(lease["controller"], self.table):
+                self.cleanup_browser(token, lease)
+                del self.data["leases"][token]
+                continue
+            lease.setdefault("parent", self.table[lease["controller"]["pid"]]["ppid"])
+            if self.orphaned(lease["controller"], lease["parent"]):
                 self.cleanup_browser(token, lease)
                 del self.data["leases"][token]
                 continue
@@ -330,9 +336,22 @@ class Budget:
                 else:
                     self.cleanup_browser(token, lease)
                     del self.data["leases"][token]
-            elif not matches(lease["controller"], self.table):
-                self.cleanup_browser(token, lease)
-                del self.data["leases"][token]
+        self.notify_long_held()
+
+    def notify_long_held(self):
+        for token, lease in self.data["leases"].items():
+            if lease["class"] != "exclusive" or lease.get("longHeldNotified"):
+                continue
+            held = max(0, time.monotonic() - lease["acquired"])
+            if held <= LONG_HELD_EXCLUSIVE_SECONDS:
+                continue
+            owner = lease["controller"]
+            reason = (f"lease={token} pid={owner['pid']} task={lease.get('task', 'unknown')} "
+                f"class={lease['class']} held={int(held)}s: exclusive lease held past "
+                f"{LONG_HELD_EXCLUSIVE_SECONDS}s")
+            self.record_event("host-budget-long-held", reason)
+            lease["longHeldNotified"] = True
+            self.save()
 
     def policy(self):
         now, mono = time.time(), time.monotonic()

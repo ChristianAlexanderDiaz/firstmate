@@ -105,11 +105,13 @@ In particular, a browser automation CLI's short connection request is not proof 
 Launch the browser/server under the composite stage and connect the client to that owned instance; never attach the budget to an unrelated existing browser.
 
 The ledger binds boot identity, kernel process start time, nonce and process group.
-Heartbeat expiry alone cannot release capacity while an owned group survives.
-An unanchored surviving group is quarantined, retaining capacity without signaling an unverified process.
+Heartbeat expiry alone cannot release capacity while the controller and an owned group survive.
+Reconciliation releases a held lease when its controller identity is dead or was reparented to process 1 after requesting the lease, even if a detached child group survives.
+The recorded-parent rule below also applies to held leases, preserving launchd-parented controllers and recording the first observed parent for older ledgers.
+An unanchored surviving group with a live controller is quarantined, retaining capacity without signaling an unverified process.
 Cancellation sends TERM to verified members, then KILL after the configured grace, and never kills by executable name or port.
 Stopping the owner preserves live reservations for reconciliation by its replacement.
-Once a lease's verified process group has drained, the owner checks the browser manifest's lease, boot and profile identity and removes the token directory, including its profile and caches.
+Once a lease's verified process group has drained or its controller is gone or orphaned under the recorded-parent rule, the owner checks the browser manifest's lease, boot and profile identity and removes the token directory, including its profile and caches.
 The same reconciliation handles completion, cancellation, inherited browser stages, attached bridge groups and owner recovery.
 Unknown or corrupt recovery state fails closed; preserve it for inspection rather than deleting it to regain slots.
 
@@ -134,6 +136,8 @@ Transition history, current cause and quarantine status provide the Firstmate ex
 A request waiting more than ten minutes, or waiting on capacity held by its own process or an ancestor compute stage rather than its resident worker lease, emits one stuck-request notification through the registered transition check.
 The notification names the request, task, workload class, wait duration and blocking lease holders with their process and task identities, or the admission policy when no lease holds the requested capacity.
 Its notification marker survives owner recovery, preventing repeated notifications for the same queued request.
+An exclusive lease held for more than one hour emits one long-held notification naming its controller PID, task, workload class and elapsed holding time, even without a queued request.
+Its separate per-lease notification marker survives owner recovery; the notification alone does not cancel a live job.
 Indexing and backup policies stay with the opted-in dotfiles helper; this implementation never excludes worktrees or deletes unique work.
 
 Use `bin/fm-test-run.sh tests/fm-resource.test.sh` to exercise socket admission, process ownership and fixture policy failures without generating thermal load.
