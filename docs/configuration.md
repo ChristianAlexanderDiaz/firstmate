@@ -1467,7 +1467,7 @@ An unsupported command, absent combined Claude reading, unexpected field shape, 
 The combined reader expects fields reported from a local quota-axi build and unavailable in the published PC binary; its fixture assumptions and exact compatibility boundary are recorded in [`bin/fm-quota-plan-lib.sh`](../bin/fm-quota-plan-lib.sh).
 The gate neither selects accounts nor schedules an overflow seat.
 
-Admissions hold the existing project lock and an additional machine-wide admission lock through launch, re-reading quota for the next admitted start.
+Admissions hold the existing project lock and an additional machine-wide admission lock through launch, invalidating the admission cache afterward; account-selection evidence remains subject to the [decision-sharing contract](#limits).
 This controls admission against observed usage; it cannot guarantee a final spend ceiling because running workers are never stopped and their future spending is not reserved.
 Running work and spending on other machines can cross the line after a successful admission.
 

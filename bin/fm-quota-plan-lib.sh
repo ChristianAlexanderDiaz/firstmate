@@ -11,8 +11,9 @@
 # Its machine admission lock supplements the existing project lock, waits at most
 # 45s for a concurrent admission or refill sample, and stays held until
 # fm_quota_plan_release, which bin/fm-spawn.sh runs on its EXIT path.
-# An admitted attempt invalidates the shared cache, forcing the next admission
-# to read account-wide usage again. Neither lock can reserve future token spend:
+# An admitted attempt invalidates the admission cache; a later launch may still
+# share account-selection evidence under the worker-account-lib contract.
+# Neither lock can reserve future token spend:
 # running workers and other machines can cross the line after admission.
 #
 # Snapshot: root-home state/quota-plan-snapshot.json, {fetchedAt,snapshot}.
@@ -188,6 +189,6 @@ fm_quota_plan_admit() {
     fm_quota_plan_release || true
     return 75
   fi
-  # The next admission must re-observe usage, not reuse this admission's sample.
+  # Invalidate admission evidence; account-selection sharing remains independent.
   rm -f "$FM_QUOTA_PLAN_CACHE" || { fm_quota_plan_release; return 75; }
 }

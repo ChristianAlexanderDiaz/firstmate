@@ -29,7 +29,8 @@
 # never copies credentials or changes a global login. For Claude only, `paced`
 # fixes no account: each ship and scout launch picks one account of
 # config/claude-failover instead (fm_worker_account_pace below), and every
-# other Claude launch keeps today's ambient behavior.
+# other Claude launch keeps today's ambient behavior except endpoint-dead
+# secondmate recovery, which may replace an unusable recorded account.
 #
 # A Pi root can hold several provider identities, so config/pi-account names
 # the root on line 1 and the providers that home may spend on line 2,
@@ -463,8 +464,8 @@ fm_worker_account_locked() {
 
 # fm_worker_account_snapshot <config>
 # Share one vendor snapshot (including a failed attempt) for sixty seconds.
-# Only locally timestamped, originally fresh readings are reused; vendor
-# stale/reused flags are preserved and still refuse. Refreshing credentials
+# Locally timestamped readings retain their vendor stale/reused flags, which
+# still refuse at eligibility checks. Refreshing credentials
 # explicitly invalidates the snapshot so the post-refresh decision is fresh.
 fm_worker_account_snapshot() {
   fm_worker_account_locked "$1" fm_worker_account_snapshot_read "$1"

@@ -467,7 +467,7 @@
 #   account's week left, reset, and pace. When no account is choosable it
 #   refuses before creating an endpoint, local copy, or task record, naming
 #   each account's week left and reset when available. Raw launches are not
-#   paced; secondmate account retention follows the failover contract above.
+#   paced; secondmate account recovery follows docs/configuration.md "Limits".
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode
@@ -3075,7 +3075,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
 elif [ "$KIND" = secondmate ] && [ "$HARNESS" = claude ] && [ -f "$STATE/$ID.meta" ] \
   && { [ ! -e "$CONFIG/claude-account" ] || fm_worker_account_paced "$CONFIG"; }; then
   # Endpoint-dead recovery uses --secondmate, rather than --relaunch. Retain
-  # the account selected by the same control path on that recovery too.
+  # the recorded account when usable; a paced home can recover on another.
   CLAUDE_ACCOUNT=$(fm_meta_get "$STATE/$ID.meta" claude_account)
   if [ -n "$CLAUDE_ACCOUNT" ] && [ -z "$WORKER_ACCOUNT" ] && fm_worker_account_paced "$CONFIG"; then
     if ! CLAUDE_ACCOUNT_RECOVERY_CHECK=$(fm_worker_account_failover_select "$CONFIG" "$CLAUDE_ACCOUNT" claude "$MODEL" 2>&1); then

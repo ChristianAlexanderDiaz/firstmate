@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Quota-plan public-library admission and real refill adapter regressions.
-# Vendor JSON is fixture-backed because published quota-axi lacks --all-accounts.
+# Vendor JSON is fixture-backed because the combined Claude shape requires a local quota-axi build.
 set -eu
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
