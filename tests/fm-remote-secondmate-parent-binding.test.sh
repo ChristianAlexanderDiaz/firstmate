@@ -29,6 +29,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/remote-job-fixture.sh
+. "$(dirname "${BASH_SOURCE[0]}")/remote-job-fixture.sh"
 # shellcheck source=tests/remote-herdr-fixture.sh
 . "$(dirname "${BASH_SOURCE[0]}")/remote-herdr-fixture.sh"
 
@@ -50,7 +52,6 @@ PUBLISH_PID=
 mkdir -p "$PARENT/data" "$PARENT/state" "$PARENT/config" "$PARENT/projects" "$REMOTE_ROOT" "$CLAIMS"
 
 cleanup() {
-  local worker_pid=''
   if [ -n "$PUBLISH_PID" ]; then
     touch "$PUBLISH_RELEASE" 2>/dev/null || true
     kill "$PUBLISH_PID" 2>/dev/null || true
@@ -58,11 +59,11 @@ cleanup() {
   fi
   FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
     "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
-  if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
-    worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid")
-    kill "$worker_pid" 2>/dev/null || true
+  if [ -n "${FM_TEST_REMOTE_GUARDS:-}" ]; then
+    fm_test_remote_stop_worker "$TMP_ROOT/remote-jobs"
+    fm_test_remote_assert_isolated
   fi
-  rm -rf -- "$TMP_ROOT"
+  fm_test_cleanup
 }
 trap cleanup EXIT
 
@@ -119,6 +120,7 @@ pass "remote provisioning publishes durable parent state before its completion m
 ) | (cd "$REMOTE_ROOT" && tar -xf -)
 install_remote_herdr_fixture "$REMOTE_ROOT" "$HERDR_STATE" "$HERDR_LOG" \
   "$TMP_ROOT/herdr-send-fail" "$TMP_ROOT/herdr.sock"
+fm_test_remote_isolate "$TMP_ROOT" "$REMOTE_ROOT"
 git -C "$REMOTE_ROOT" init -q -b main
 git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test
@@ -148,6 +150,8 @@ printf 'tmux\n' > "$PARENT/config/backend"
 printf 'FMX_PAIRING_TOKEN=repro-token\n' > "$PARENT/.env"
 
 # --- deterministic SSH boundary, identical shape to the lifecycle e2e suite --
+fm_test_remote_start_worker "$REMOTE_ROOT" "$TMP_ROOT/remote-jobs"
+
 cat > "$FAKEBIN/fake-ssh" <<'SH'
 #!/usr/bin/env bash
 count=$(cat "$FM_FAKE_SSH_COUNT" 2>/dev/null || echo 0)
@@ -160,6 +164,10 @@ entry=$2
 shift 2
 [ "$host" = remote-mac ] || exit 91
 [ "$entry" = fm-remote-entrypoint.sh ] || exit 92
+export HOME="$FM_TEST_REMOTE_ACCOUNT_HOME"
+# shellcheck source=/dev/null
+. "$FM_TEST_REMOTE_HELPERS"
+fm_test_remote_ssh_worker "$@" || exit $?
 cd "$FM_FAKE_REMOTE_CWD" || exit 93
 argv_b64=$4
 command_fields=$(perl -MMIME::Base64=decode_base64 -e '

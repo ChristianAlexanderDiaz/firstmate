@@ -7,19 +7,19 @@
 # stops it. Observed 2026-08-07 as 29 workers at ppid 1, 1-2 days old, each
 # still appending to a log in a pruned no-mistakes gate worktree.
 #
-# bin/fm-remote-job-reap-orphans.sh is a machine-wide sweep by design, so these
-# cases assert only about their own fixture processes. Any other worker it
-# stops during the run had a pruned code root too, which is exactly the
-# contract.
+# Account-wide process scans are filtered to this test's private fixture root.
 set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/remote-job-fixture.sh
+. "$(dirname "${BASH_SOURCE[0]}")/remote-job-fixture.sh"
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 TMP_ROOT=$(fm_test_tmproot fm-remote-job-orphan-reap)
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
 REAPER="$ROOT/bin/fm-remote-job-reap-orphans.sh"
+fm_test_remote_isolate "$TMP_ROOT/scope" "$TMP_ROOT/scope/remote-root"
 
 TRACKED_PIDS=()
 orphan_cleanup() {
@@ -29,6 +29,7 @@ orphan_cleanup() {
     kill -KILL -- "-$pid" 2>/dev/null || true
     kill -KILL "$pid" 2>/dev/null || true
   done
+  fm_test_remote_assert_isolated
   fm_test_cleanup
 }
 trap orphan_cleanup EXIT
@@ -133,7 +134,7 @@ start_worker() {
   printf '%s\n' "$pid"
 }
 
-CASE1="$TMP_ROOT/case1"
+CASE1="$TMP_ROOT/scope/case1"
 mkdir -p "$CASE1/account"
 build_remote_root "$CASE1/remote-root"
 WORKER=$(start_worker "$CASE1/remote-root" "$CASE1/account" "$CASE1/remote-jobs") ||
@@ -184,7 +185,7 @@ pass "a worker stops its whole tree once its code root is pruned"
 # that presents the same command line from a pruned root without that
 # self-termination - the shape of every worker started before it shipped.
 
-CASE2="$TMP_ROOT/case2"
+CASE2="$TMP_ROOT/scope/case2"
 mkdir -p "$CASE2/remote-root/bin"
 cat > "$CASE2/remote-root/bin/fm-remote-job-worker.sh" <<'SH'
 #!/bin/bash
@@ -202,6 +203,19 @@ done
 SH
 chmod +x "$CASE2/remote-root/bin/fm-remote-job-worker.sh"
 printf 'fixture\n' > "$CASE2/remote-root/AGENTS.md"
+
+# A real abandoned worker outside the scan scope must survive every sweep.
+# An embedded scope string is still outside: only a root-prefix match is safe.
+OUTSIDE_ROOT="$TMP_ROOT/outside$TMP_ROOT/scope/remote-root"
+mkdir -p "$OUTSIDE_ROOT/bin"
+cp "$CASE2/remote-root/bin/fm-remote-job-worker.sh" "$OUTSIDE_ROOT/bin/"
+set -m
+"$OUTSIDE_ROOT/bin/fm-remote-job-worker.sh" >/dev/null 2>&1 &
+OUTSIDE_PID=$!
+set +m
+track "$OUTSIDE_PID"
+wait_child "$OUTSIDE_PID" 10 || fail "the out-of-scope worker never started"
+rm -rf "$OUTSIDE_ROOT"
 
 set -m
 "$CASE2/remote-root/bin/fm-remote-job-worker.sh" >/dev/null 2>&1 &
@@ -228,3 +242,6 @@ pass "the reaper stops an abandoned worker's whole tree"
 out=$("$REAPER" 2>&1) || fail "a repeat reaper run failed: $out"
 assert_not_contains "$out" "$STALE" "the reaper reported an already-stopped worker"
 pass "the reaper is idempotent"
+
+alive "$OUTSIDE_PID" || fail "a fixture sweep stopped an out-of-scope abandoned worker"
+pass "orphan sweeps never signal an abandoned worker outside the fixture scope"

@@ -4,6 +4,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/remote-job-fixture.sh
+. "$(dirname "${BASH_SOURCE[0]}")/remote-job-fixture.sh"
 
 command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -26,19 +28,10 @@ mkdir -p "$PARENT/data" "$PARENT/state" "$REMOTE_ROOT/bin" \
 # So wait for the worker to actually exit and drain the shell's background jobs
 # before removing the tree, then retry rm -rf until the now-quiesced tree is gone.
 fm_remote_handoff_teardown() {
-  local worker_pid i
+  local i
   touch "$TMP_ROOT/put.release" "$TMP_ROOT/route.release" 2>/dev/null || true
-  if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
-    worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid" 2>/dev/null || true)
-    if [ -n "$worker_pid" ]; then
-      kill "$worker_pid" 2>/dev/null || true
-      i=0
-      while [ "$i" -lt 500 ] && kill -0 "$worker_pid" 2>/dev/null; do
-        sleep 0.01
-        i=$((i + 1))
-      done
-    fi
-  fi
+  fm_test_remote_stop_worker "$TMP_ROOT/remote-jobs"
+  fm_test_remote_assert_isolated
   wait 2>/dev/null || true
   i=0
   while [ "$i" -lt 50 ]; do
@@ -57,6 +50,7 @@ cp "$ROOT/bin/fm-remote-entrypoint.sh" "$ROOT/bin/fm-remote-job-lib.sh" \
 ln -s "$(command -v tasks-axi)" "$REMOTE_ROOT/bin/tasks-axi"
 ln -s "$(command -v node)" "$REMOTE_ROOT/bin/node"
 chmod +x "$REMOTE_ROOT/bin"/*.sh
+fm_test_remote_isolate "$TMP_ROOT" "$REMOTE_ROOT"
 git -C "$REMOTE_ROOT" init -q -b main
 git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test
@@ -81,6 +75,8 @@ remote_target=fm-remote:w1:p1
 EOF
 : > "$WAKE_LOG"
 
+fm_test_remote_start_worker "$REMOTE_ROOT" "$TMP_ROOT/remote-jobs"
+
 cat > "$FAKEBIN/fake-ssh" <<'SH'
 #!/usr/bin/env bash
 count=$(cat "$FM_FAKE_SSH_COUNT" 2>/dev/null || echo 0)
@@ -97,6 +93,10 @@ entry=$2
 shift 2
 [ "$host" = remote-mac ] || exit 91
 [ "$entry" = fm-remote-entrypoint.sh ] || exit 92
+export HOME="$FM_TEST_REMOTE_ACCOUNT_HOME"
+# shellcheck source=/dev/null
+. "$FM_TEST_REMOTE_HELPERS"
+fm_test_remote_ssh_worker "$@" || exit $?
 argv_b64=$4
 command_name=$(perl -MMIME::Base64=decode_base64 -e '$d=decode_base64($ARGV[0]); ($c)=split(/\0/, $d); print $c' "$argv_b64")
 case "${FM_FAKE_SSH_MODE:-normal}:$command_name" in

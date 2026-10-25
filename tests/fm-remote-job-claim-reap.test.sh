@@ -14,6 +14,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/remote-job-fixture.sh
+. "$(dirname "${BASH_SOURCE[0]}")/remote-job-fixture.sh"
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 TMP_ROOT=$(fm_test_tmproot fm-remote-job-claim-reap)
@@ -40,6 +42,7 @@ cleanup_claim_reap_fixture() {
     . "$ROOT/bin/fm-remote-job-lib.sh"
     fm_remote_job_stop_worker_tree "$(cat "$STATE_ROOT/worker.pid")" || true
   fi
+  fm_test_remote_assert_isolated
   rm -rf -- "$TMP_ROOT"
 }
 trap cleanup_claim_reap_fixture EXIT
@@ -53,6 +56,7 @@ cat > "$REMOTE_ROOT/bin/fm-touch-job.sh" <<'SH'
 printf 'ran\n' > "$1"
 SH
 chmod +x "$REMOTE_ROOT/bin"/*.sh
+fm_test_remote_isolate "$TMP_ROOT" "$REMOTE_ROOT" "$ACCOUNT_HOME"
 git -C "$REMOTE_ROOT" init -q -b main
 git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test

@@ -4,6 +4,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/remote-job-fixture.sh
+. "$(dirname "${BASH_SOURCE[0]}")/remote-job-fixture.sh"
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 TMP_ROOT=$(fm_test_tmproot fm-remote-job)
@@ -50,6 +52,7 @@ cleanup_remote_job_fixture() {
   if [ -f "$STATE_ROOT/worker.pid" ]; then
     fm_remote_job_stop_worker_tree "$(cat "$STATE_ROOT/worker.pid")" || true
   fi
+  fm_test_remote_assert_isolated
   rm -rf -- "$TMP_ROOT"
 }
 trap cleanup_remote_job_fixture EXIT
@@ -85,7 +88,7 @@ cat > "$REMOTE_ROOT/bin/fm-shutdown-job.sh" <<'SH'
 #!/bin/bash
 trap '' HUP INT TERM
 printf 'started\n' > "$1"
-sleep 3
+sleep "${3:-3}"
 printf 'ran\n' > "$2"
 SH
 cat > "$REMOTE_ROOT/bin/fm-output-job.sh" <<'SH'
@@ -103,6 +106,7 @@ exit 127
 SH
 chmod +x "$RUNTIME_BIN/perl"
 
+fm_test_remote_isolate "$TMP_ROOT" "$REMOTE_ROOT" "$ACCOUNT_HOME"
 git -C "$REMOTE_ROOT" init -q -b main
 git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test
@@ -343,11 +347,12 @@ if [ -n "$IDENTITY_LOCALE" ]; then
   pass "lock and claim owner identity stays locale-invariant ($IDENTITY_LOCALE)"
 fi
 
-LOCAL_BIN_PARENT="$ACCOUNT_HOME/.local"
+SYMLINK_ACCOUNT="$TMP_ROOT/symlink-account"
+LOCAL_BIN_PARENT="$SYMLINK_ACCOUNT/.local"
 LOCAL_BIN_TARGET="$TMP_ROOT/local-bin-target"
 mkdir -p "$LOCAL_BIN_PARENT" "$LOCAL_BIN_TARGET"
 ln -s "$LOCAL_BIN_TARGET" "$LOCAL_BIN_PARENT/bin"
-fm_remote_job_compose_operator_path "$ACCOUNT_HOME" >/dev/null
+fm_remote_job_compose_operator_path "$SYMLINK_ACCOUNT" >/dev/null
 case ":$FM_REMOTE_JOB_OPERATOR_PATH:" in
   *":$LOCAL_BIN_PARENT/bin:"*|*":$LOCAL_BIN_TARGET:"*) fail "the composed PATH followed a symlinked local bin" ;;
 esac
@@ -612,10 +617,13 @@ pass "the worker expires queued jobs before they can mutate"
 
 FIRST_DELAYED_SIDE_EFFECT="$TMP_ROOT/first-delayed-side-effect"
 SECOND_DELAYED_SIDE_EFFECT="$TMP_ROOT/second-delayed-side-effect"
-FM_REMOTE_JOB_QUEUE_TIMEOUT=5
-FM_REMOTE_JOB_TIMEOUT=3
+# Keep queue expiry separate from the execution-window assertion. Each job
+# has headroom for validation and process startup on a loaded runner, while
+# their combined delays still exceed one execution window.
+FM_REMOTE_JOB_QUEUE_TIMEOUT=30
+FM_REMOTE_JOB_TIMEOUT=8
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-delay-job.sh 1.8 "$FIRST_DELAYED_SIDE_EFFECT" < /dev/null > /dev/null
+  fm-delay-job.sh 5 "$FIRST_DELAYED_SIDE_EFFECT" < /dev/null > /dev/null
 FIRST_JOB_ID=$FM_REMOTE_JOB_ID
 FIRST_JOB_DIR="$STATE_ROOT/jobs/$FIRST_JOB_ID"
 for _ in $(seq 1 100); do
@@ -625,11 +633,13 @@ done
 [ "$(fm_remote_job_read_state "$FIRST_JOB_DIR" 2>/dev/null || true)" = running ] \
   || fail "the first delayed job did not begin running"
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-delay-job.sh 1.8 "$SECOND_DELAYED_SIDE_EFFECT" < /dev/null > /dev/null
+  fm-delay-job.sh 5 "$SECOND_DELAYED_SIDE_EFFECT" < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
 fm_remote_job_wait "$ACCOUNT_HOME" "$FIRST_JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
+[ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "the first delayed job exhausted its own execution window"
+assert_present "$FIRST_DELAYED_SIDE_EFFECT" "the first delayed job never completed its delay"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
-[ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "queue time consumed the second job's execution timeout"
+[ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "queue time consumed the second job's execution timeout (exit=$FM_REMOTE_JOB_EXIT, queue_deadline=$(cat "$STATE_ROOT/jobs/$JOB_ID/queue_deadline"), execution_deadline=$(cat "$STATE_ROOT/jobs/$JOB_ID/deadline" 2>/dev/null || echo not-started))"
 assert_present "$SECOND_DELAYED_SIDE_EFFECT" "the queued job did not receive its full execution timeout"
 fm_remote_job_reap "$ACCOUNT_HOME" "$FIRST_JOB_ID" || fail "the first delayed job could not be reaped"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the second delayed job could not be reaped"
@@ -748,9 +758,11 @@ pass "worker shutdown terminates the active command tree before replacement"
 
 CRASH_STARTED="$TMP_ROOT/crash-started"
 CRASH_SIDE_EFFECT="$TMP_ROOT/crash-side-effect"
-FM_REMOTE_JOB_TIMEOUT=5
+# Keep the command alive through legacy-record conversion and supervisor
+# restart, so natural completion cannot win the crash-recovery race.
+FM_REMOTE_JOB_TIMEOUT=60
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-shutdown-job.sh "$CRASH_STARTED" "$CRASH_SIDE_EFFECT" < /dev/null > /dev/null
+  fm-shutdown-job.sh "$CRASH_STARTED" "$CRASH_SIDE_EFFECT" 30 < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
 for _ in $(seq 1 100); do
   [ -f "$CRASH_STARTED" ] && break
@@ -763,6 +775,7 @@ for IDENTITY_KIND in owner supervisor group; do
   IDENTITY_START=$(/bin/ps -p "$IDENTITY_PID" -o lstart=) || fail "legacy $IDENTITY_KIND date unavailable"
   printf '%s\n' "$IDENTITY_START" > "$JOB_DIR/.claim/${IDENTITY_KIND}_start"
 done
+CRASH_COMMAND_GROUP=$(cat "$JOB_DIR/.claim/group")
 CRASHED_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
 kill -KILL "$CRASHED_WORKER_PID"
 for _ in $(seq 1 200); do
@@ -773,7 +786,9 @@ done
 [ -n "${RESTARTED_WORKER_PID:-}" ] && [ "$RESTARTED_WORKER_PID" != "$CRASHED_WORKER_PID" ] \
   || fail "the Linux supervisor did not restart a crashed worker"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
-[ "$FM_REMOTE_JOB_EXIT" -eq 125 ] || fail "worker crash recovery did not publish unknown completion"
+[ "$FM_REMOTE_JOB_EXIT" -eq 125 ] || fail "worker crash recovery did not publish unknown completion (exit=$FM_REMOTE_JOB_EXIT)"
+! kill -0 -- "-$CRASH_COMMAND_GROUP" 2>/dev/null \
+  || fail "the crashed worker's command group survived recovery"
 sleep 3
 assert_absent "$CRASH_SIDE_EFFECT" "an orphaned command mutated after worker crash recovery"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the crash-recovered job could not be reaped"
