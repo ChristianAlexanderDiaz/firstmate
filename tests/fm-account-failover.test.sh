@@ -1657,16 +1657,14 @@ test_dead_secondmate_retries_share_the_decision() {
     out=$(case_env "$ROOT/bin/fm-spawn.sh" sm49 --secondmate 2>&1); rc=$?
     expect_code 1 "$rc" "a rate-limited recovery attempt refuses: $out"
     assert_contains "$out" 'quota endpoint rate limited until 2099-10-25T18:00:00Z' "retry retains the endpoint reason"
-    printf '%s\n' "$(($(cat "$CASE/fake/clock") + 61))" > "$CASE/fake/clock"
   done
-  assert_equals 1 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "all retry attempts share one vendor reading even beyond a minute"
-  # A changed incarnation is a new decision and can observe recovered quota.
-  printf 'spawn_gen=rearmed\n' >> "$CASE/home/state/sm49.meta"
+  assert_equals 1 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "retry attempts within a minute share one vendor reading"
+  printf '%s\n' "$(($(cat "$CASE/fake/clock") + 61))" > "$CASE/fake/clock"
   quota_snapshot 70 80 > "$CASE/fake/quota.json"
   out=$(case_env "$ROOT/bin/fm-spawn.sh" sm49 --secondmate 2>&1); rc=$?
-  expect_code 0 "$rc" "a newly recorded recovery decision can observe fresh quota: $out"
+  expect_code 0 "$rc" "recovery after cache expiry can observe fresh quota: $out"
   assert_equals 2 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "the next decision gets one new vendor reading"
-  pass "secondmate: all dead-agent retry attempts share one decision snapshot; a new incarnation observes new quota"
+  pass "secondmate: retries share bounded quota evidence and recover after expiry"
 }
 
 test_refresh_defers_to_a_live_account_process() {
@@ -1691,6 +1689,20 @@ test_refresh_defers_to_a_live_account_process() {
   pass "refresh: the real kernel selector of a live process suppresses a competing ping"
 }
 
+test_failover_refreshes_expired_alternative() {
+  local out
+  new_case refresh-alternative t51
+  quota_snapshot 0 80 '.providers[1] |= (.state = {status:"unavailable",authStatus:"expired_refreshable"} | .windows = [] | del(.quotaSemantics))' > "$CASE/fake/quota.json"
+  quota_snapshot 0 80 > "$CASE/fake/after-refresh.json"
+  record_limit t51 rate_limit ""
+  out=$(case_env "$FAILOVER" tick 2>&1)
+  assert_contains "$out" "moved t51 limited spare" "automatic failover recovers the only alternative: $out"
+  assert_equals 1 "$(wc -l < "$CASE/fake/refresh-calls" | tr -d ' ')" "one refresh recovers the expired alternative"
+  assert_grep 'claude_account=spare' "$CASE/home/state/t51.meta" "the recovered alternative runs the worker"
+  pass "failover: expired alternative refreshes before eligibility filtering"
+}
+
+test_failover_refreshes_expired_alternative
 test_rate_limit_refusals_and_measurements
 test_dead_secondmate_retries_share_the_decision
 test_refresh_defers_to_a_live_account_process

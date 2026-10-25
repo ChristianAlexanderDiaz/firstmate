@@ -181,12 +181,14 @@ cmd_choose() {
     echo "error: snapshot '$snapshot' is not a quota-axi --all-accounts --json snapshot" >&2
     return 2
   }
-  verdicts=$(choose_usable "$verdicts" "$map" "$(cat "$snapshot")" "$(dirname "$map_file")" "$model") || return 2
+  verdicts=$(choose_usable "$verdicts" "$map" "$(cat "$snapshot")" "$(dirname "$map_file")" "$model" "$current") || return 2
   choose_print "$verdicts"
 }
 
 choose_usable() {
-  local verdicts=$1 map=$2 snapshot=$3 config=$4 model=$5 name reason
+  local verdicts=$1 map=$2 snapshot=$3 config=$4 model=$5 current=${6:-} name reason
+  snapshot=$(fm_worker_account_refresh_candidates "$config" claude "$map" "$snapshot") || return 1
+  verdicts=$(fm_worker_account_failover_quota "$map" "$snapshot" "$current" "$model") || return 1
   while IFS= read -r name; do
     if ! reason=$(fm_worker_account_failover_select "$config" "$name" claude "$model" "$snapshot" "$map" 2>&1); then
       verdicts=$(printf '%s' "$verdicts" | jq -c --arg n "$name" --arg r "$reason" \
@@ -431,7 +433,7 @@ fm_account_failover_recover() {
     rm -f "$snapshot"
     status_blocked "Claude usage limit reached ($limit_text); the quota-axi --all-accounts snapshot was unreadable, so the worker was left stopped"
   }
-  choice=$(choose_usable "$choice" "$MAP" "$(cat "$snapshot")" "$CONFIG" "$(fm_meta_get "${META:?}" model)") || {
+  choice=$(choose_usable "$choice" "$MAP" "$(cat "$snapshot")" "$CONFIG" "$(fm_meta_get "${META:?}" model)" "$current") || {
     rm -f "$snapshot"
     status_blocked "Claude usage limit reached ($limit_text); account eligibility could not be checked"
   }

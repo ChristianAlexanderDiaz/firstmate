@@ -470,36 +470,21 @@ fm_worker_account_snapshot() {
   fm_worker_account_locked "$1" fm_worker_account_snapshot_read "$1"
 }
 
-# fm_worker_account_decision_start <config> [recovery-file] [generation]
+# fm_worker_account_decision_start <config>
 # Pin one snapshot for the complete launch transaction, including subprocesses.
-# A dead secondmate's unchanged record identifies the same retry decision.
-# Normal transactions own a temporary file; successful recovery removes its
-# persistent decision file. Failed recovery keeps it for the next attempt.
 fm_worker_account_decision_start() {
-  local config=$1 recovery=${2:-} generation=${3:-} saved
+  local config=$1
   [ -z "${FM_ACCOUNT_QUOTA_DECISION_FILE:-}" ] || return 0
-  if [ -n "$recovery" ]; then
-    saved=$(jq -r '.generation // ""' "$recovery" 2>/dev/null) || saved=
-    if [ "$saved" != "$generation" ]; then
-      rm -f "$recovery" || return 1
-    fi
-    FM_ACCOUNT_QUOTA_DECISION_FILE=$recovery
-    FM_ACCOUNT_QUOTA_DECISION_RECOVERY=1
-  else
-    FM_ACCOUNT_QUOTA_DECISION_FILE=$(umask 077; mktemp "$config/.claude-quota-decision.XXXXXX") || return 1
-    FM_ACCOUNT_QUOTA_DECISION_OWNED=1
-  fi
+  FM_ACCOUNT_QUOTA_DECISION_FILE=$(umask 077; mktemp "$config/.claude-quota-decision.XXXXXX") || return 1
+  FM_ACCOUNT_QUOTA_DECISION_OWNED=1
   export FM_ACCOUNT_QUOTA_DECISION_FILE
-  export FM_ACCOUNT_QUOTA_DECISION_GENERATION=$generation
 }
 
 fm_worker_account_decision_finish() {
-  if [ "${FM_ACCOUNT_QUOTA_DECISION_OWNED:-0}" = 1 ] ||
-    { [ "${FM_ACCOUNT_QUOTA_DECISION_RECOVERY:-0}" = 1 ] && [ "$1" = 0 ]; }; then
+  if [ "${FM_ACCOUNT_QUOTA_DECISION_OWNED:-0}" = 1 ]; then
     rm -f "${FM_ACCOUNT_QUOTA_DECISION_FILE:-}" || true
   fi
-  unset FM_ACCOUNT_QUOTA_DECISION_FILE FM_ACCOUNT_QUOTA_DECISION_GENERATION
-  unset FM_ACCOUNT_QUOTA_DECISION_OWNED FM_ACCOUNT_QUOTA_DECISION_RECOVERY
+  unset FM_ACCOUNT_QUOTA_DECISION_FILE FM_ACCOUNT_QUOTA_DECISION_OWNED
 }
 
 # Copy the envelope atomically so a timed-out attempt never publishes partial
@@ -510,8 +495,8 @@ fm_worker_account_decision_capture() {
   attempts=$(jq -c '.refreshAttempts // []' "$file" 2>/dev/null) || attempts='[]'
   attempts=${attempts:-[]}
   tmp=$(umask 077; mktemp "$file.XXXXXX") || return 1
-  if ! jq --arg generation "${FM_ACCOUNT_QUOTA_DECISION_GENERATION:-}" --argjson attempts "$attempts" \
-    '. + {generation:$generation,refreshAttempts:$attempts}' "$source" > "$tmp" ||
+  if ! jq --argjson attempts "$attempts" \
+    '. + {refreshAttempts:$attempts}' "$source" > "$tmp" ||
     ! mv "$tmp" "$file"; then
     rm -f "$tmp"
     return 1
@@ -805,6 +790,25 @@ fm_worker_account_paced() {
   local token
   token=$(fm_worker_account_read claude "$1/claude-account" 2>/dev/null) || return 1
   [ "${token%%$'\t'*}" = paced ]
+}
+
+fm_worker_account_refresh_candidates() {
+  local config=$1 executable=$2 map=$3 snapshot=$4 name declared expected selection root refreshed
+  # Expired rows have no usable quota and would disappear from the candidate
+  # order, so attempt recovery before filtering. Check identity before spending.
+  while IFS=$'\t' read -r _ name declared expected; do
+    [ -n "$name" ] || continue
+    fm_worker_account_expired "$snapshot" "$name" || continue
+    if ! selection=$(fm_worker_account_failover_resolve "$config" "$name" "$map" 2>&1); then
+      continue
+    fi
+    root=${selection#*$'\t'}
+    if fm_worker_account_check claude "$declared" "$root" "$executable" '' "config/$FM_WORKER_ACCOUNT_FAILOVER_FILE" "$expected" "$name" >/dev/null 2>&1 &&
+      refreshed=$(fm_worker_account_refresh "$config" "$name" "$root" "$executable" "$snapshot" 2>/dev/null); then
+      snapshot=$refreshed
+    fi
+  done < <(printf '%s\n' "$map")
+  printf '%s\n' "$snapshot"
 }
 
 # fm_worker_account_pace <config-dir> <executable> <model> [snapshot-json]

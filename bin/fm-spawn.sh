@@ -3054,12 +3054,7 @@ CLAUDE_ACCOUNT_REASON=
 CLAUDE_ACCOUNT_PACED=0
 CLAUDE_ACCOUNT_RECOVERY_REASON=
 if [ -f "$CONFIG/$FM_WORKER_ACCOUNT_FAILOVER_FILE" ] || [ -f "$CONFIG/quota-plan" ]; then
-  if [ "$KIND" = secondmate ] && [ "$RELAUNCH" = 0 ] && [ -f "$STATE/$ID.meta" ]; then
-    fm_worker_account_decision_start "$CONFIG" "$STATE/.$ID.claude-quota-decision.json" \
-      "$(cksum < "$STATE/$ID.meta")" || exit 1
-  else
-    fm_worker_account_decision_start "$CONFIG" || exit 1
-  fi
+  fm_worker_account_decision_start "$CONFIG" || exit 1
 fi
 # Keep the exact refusal in the existing task's durable record, so parent
 # recovery reports distinguish expired sign-in from paid usage.
@@ -6748,7 +6743,7 @@ fi
 LAUNCH="export FM_TASK_INBOX=$(shell_quote "$STATE_REAL/$ID.inbox"); $LAUNCH"
 # A worker starts a new quota decision for its own future launches, never
 # inheriting the spawner's transaction file (which is removed at exit).
-LAUNCH="unset FM_ACCOUNT_QUOTA_DECISION_FILE FM_ACCOUNT_QUOTA_DECISION_GENERATION; $LAUNCH"
+LAUNCH="unset FM_ACCOUNT_QUOTA_DECISION_FILE; $LAUNCH"
 LAUNCH="export COMPACT_ADVISER_DISABLE=1; $LAUNCH"
 # When the live-harness gate has exported DISABLE_AUTOUPDATER into this spawn's
 # own environment, carry it into the launch command text so Claude Code's

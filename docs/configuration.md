@@ -1247,7 +1247,7 @@ Their workers still use their own home's [worker account configuration](#worker-
 Remote secondmate routes remain a follow-up: local control refuses endpoints on another host.
 A `config/claude-account` that names one account pins every Claude worker to it, so a home with both files leaves limited workers stopped and says so; the `paced` value pins nothing, and failover moves its workers as usual.
 Accounts with a paid credits window or unknown paid usage status never qualify, even when their plan has room.
-Selection, control, and spawn capture one snapshot for the complete launch decision, including pacing and quota-plan admission; failed secondmate recovery attempts retain that snapshot while the recorded incarnation is unchanged.
+Selection, control, and spawn capture one snapshot for the complete launch decision, including pacing and quota-plan admission.
 Separate decisions share the home-local snapshot for sixty seconds, including failed reads; vendor-stale or vendor-reused readings still refuse.
 The private cache and serialization lock live alongside `config/claude-failover`; an expired cache triggers `quota-axi --all-accounts --json` with `QUOTA_AXI_MAX_AGE` unset.
 This bounds vendor polling but means a changed allowance or paid-usage setting can take up to a minute to affect the next decision; disable paid extra usage in the account itself before using it for failover.
