@@ -19,6 +19,8 @@
 # A successful bounded quota-axi --all-accounts --json read is cached for <=300s.
 # Refresh failures never fall back to expired data. Provider freshness and reset
 # validity are also checked by the reader. No ordinary --json fallback is used.
+# Within a launch it consumes the account selector's captured decision instead
+# of asking the vendor again; worker-account-lib owns that transaction snapshot.
 #
 # fm_quota_plan_read <cache-file> <claude|codex> <now-epoch> is the ONLY quota
 # field reader, and it parses exactly one shape per provider. The combined
@@ -34,6 +36,9 @@
 # Account selection and the overflow seat are outside this library: it never
 # changes credentials or selects an account. The configured worker pin remains
 # authoritative; the combined reading is admission evidence only.
+
+# shellcheck source=bin/fm-worker-account-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-worker-account-lib.sh"
 
 fm_quota_plan_load() {
   local file="$1/quota-plan" dir="$1"
@@ -106,12 +111,19 @@ fm_quota_plan_read() {  # <cache-file> <provider> <now>
 fm_quota_plan_snapshot() {  # <root-state> <now>
   local state=$1 now=$2 tmp raw
   FM_QUOTA_PLAN_CACHE="$state/quota-plan-snapshot.json"
-  if [ -f "$FM_QUOTA_PLAN_CACHE" ] && jq -e --argjson now "$now" \
+  if [ -n "${FM_ACCOUNT_QUOTA_DECISION_FILE:-}" ] &&
+    jq -e 'has("snapshot")' "$FM_ACCOUNT_QUOTA_DECISION_FILE" >/dev/null 2>&1; then
+    raw=$(jq -ec '.snapshot | select(type == "object")' "$FM_ACCOUNT_QUOTA_DECISION_FILE") || {
+      FM_QUOTA_PLAN_ERROR='the launch quota snapshot failed; fresh spawns remain queued'
+      return 1
+    }
+  elif [ -f "$FM_QUOTA_PLAN_CACHE" ] && jq -e --argjson now "$now" \
     '(.fetchedAt|type)=="number" and .fetchedAt <= $now and $now - .fetchedAt <= 300 and (.snapshot|type)=="object"' \
     "$FM_QUOTA_PLAN_CACHE" >/dev/null 2>&1; then
+    fm_worker_account_decision_capture "$FM_QUOTA_PLAN_CACHE" || return 1
+    fm_worker_account_quota_observe "$state/../config" "$(jq -c .snapshot "$FM_QUOTA_PLAN_CACHE")"
     return 0
-  fi
-  if ! raw=$(QUOTA_AXI_MAX_AGE=0 fm_run_timed 30 quota-axi --all-accounts --json 2>/dev/null </dev/null); then
+  elif ! raw=$(QUOTA_AXI_MAX_AGE=0 fm_run_timed 30 quota-axi --all-accounts --json 2>/dev/null </dev/null); then
     FM_QUOTA_PLAN_ERROR='quota-axi --all-accounts --json failed or is unsupported; fresh spawns remain queued'
     return 1
   fi
@@ -122,7 +134,9 @@ fm_quota_plan_snapshot() {  # <root-state> <now>
     FM_QUOTA_PLAN_ERROR='quota-axi returned unreadable JSON'
     return 1
   fi
-  mv -f "$tmp" "$FM_QUOTA_PLAN_CACHE"
+  mv -f "$tmp" "$FM_QUOTA_PLAN_CACHE" || return 1
+  fm_worker_account_decision_capture "$FM_QUOTA_PLAN_CACHE" || return 1
+  fm_worker_account_quota_observe "$state/../config" "$raw"
 }
 
 fm_quota_plan_verdict() {  # <provider> <now>; after load + snapshot
@@ -130,6 +144,10 @@ fm_quota_plan_verdict() {  # <provider> <now>; after load + snapshot
   FM_QUOTA_PLAN_VERDICT=
   if ! reading=$(fm_quota_plan_read "$FM_QUOTA_PLAN_CACHE" "$1" "$2"); then
     FM_QUOTA_PLAN_ERROR="unreadable $1 account-wide weekly quota (missing combined row, stale data, or invalid reset)"
+    local diagnostics
+    diagnostics=$(fm_worker_account_diagnostics "$(jq -c .snapshot "$FM_QUOTA_PLAN_CACHE")" "$2" |
+      jq -r '.[] | select(.why != null) | "\(.name): \(.why)"' | paste -sd ';' -)
+    [ -z "$diagnostics" ] || FM_QUOTA_PLAN_ERROR="$FM_QUOTA_PLAN_ERROR; $diagnostics"
     return 1
   fi
   reserve=$(printf '%s\n' "$FM_QUOTA_PLAN_JSON" | jq -er --arg p "$1" '.reserves[$p]') || return 1

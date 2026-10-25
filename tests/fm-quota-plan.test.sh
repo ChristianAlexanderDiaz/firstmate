@@ -144,6 +144,35 @@ assert_contains "$out" 'harness pi is not paced by config/quota-plan' 'unpaced h
 assert_absent "$FM_HOME/state/.quota-plan-admission.lock" 'unpaced harness took the admission lock'
 pass 'stale outage refuses, admission lock serializes, next start refreshes, providers stay separate, undeclared harnesses run unpaced'
 
+# The account picker and admission reader consume one captured launch decision.
+fixture "$now" "$((now+500000))" 100
+rm -f "$FM_QUOTA_PLAN_CACHE"
+reads_before=$(wc -l < "$FM_TEST_QUOTA_CALLS" | tr -d ' ')
+fm_worker_account_decision_start "$FM_HOME/config"
+snapshot=$(fm_worker_account_snapshot "$FM_HOME/config") || fail 'account snapshot failed'
+fm_quota_plan_snapshot "$FM_HOME/state" "$now" || fail 'quota plan could not share the launch snapshot'
+fm_quota_plan_verdict claude "$now" || fail 'shared combined reading was not admitted'
+assert_equals "$((reads_before + 1))" "$(wc -l < "$FM_TEST_QUOTA_CALLS" | tr -d ' ')" 'account selection and quota admission must share one vendor request'
+fm_worker_account_decision_finish 0
+
+# A standalone admission retains endpoint throttling and its retry measurement.
+fixture "$now" "$((now+500000))" 100
+jq --argjson now "$now" '
+  .providers[0].account = "example" |
+  .providers[0].state = {status:"stale",stale:true,retryAfter:"2099-10-25T18:00:00Z",refreshedAt:($now-120|todateiso8601)}' \
+  "$FM_TEST_QUOTA_FILE" > "$TMP_ROOT/throttled"
+mv "$TMP_ROOT/throttled" "$FM_TEST_QUOTA_FILE"
+rm -f "$FM_QUOTA_PLAN_CACHE"
+fm_quota_plan_snapshot "$FM_HOME/state" "$now" || fail 'throttled snapshot was not retained'
+if fm_quota_plan_verdict codex "$now"; then fail 'stale rate-limited Codex row was admitted'; fi
+assert_contains "$FM_QUOTA_PLAN_ERROR" 'quota endpoint rate limited until 2099-10-25T18:00:00Z, reading from 120s ago' 'quota plan refusal must name the endpoint retry and age'
+assert_grep '"account":"example","retryAfter":"2099-10-25T18:00:00Z"' "$FM_HOME/state/.supervision-host.log" 'quota admission must record the exact retry measurement'
+: > "$FM_HOME/state/.supervision-host.log"
+fm_quota_plan_snapshot "$FM_HOME/state" "$now" || fail 'cached throttled snapshot was not retained'
+assert_grep '"account":"example","retryAfter":"2099-10-25T18:00:00Z"' "$FM_HOME/state/.supervision-host.log" 'cached admission evidence must retain the retry measurement too'
+fixture "$now" "$((now+500000))" 100
+pass 'quota plan shares the launch snapshot and retains endpoint retry diagnostics and measurements'
+
 # Real snapshot parser, capacity count, source registration and durable capture.
 fm_git_init_commit "$FM_HOME/projects/carryrank"
 fm_git_add_origin "$FM_HOME/projects/carryrank" "$TMP_ROOT/carryrank.git"

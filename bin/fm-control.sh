@@ -228,6 +228,7 @@ RELAUNCH_PHASE=start
 
 control_cleanup() {
   local status=$?
+  fm_worker_account_decision_finish "$status"
   if [ "$RELAUNCH_ACTIVE" = 1 ] \
      && declare -F relaunch_rollback >/dev/null 2>&1; then
     relaunch_rollback || true
@@ -1367,6 +1368,9 @@ case "$VERB" in
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)
+    if [ -f "$CONFIG/$FM_WORKER_ACCOUNT_FAILOVER_FILE" ]; then
+      fm_worker_account_decision_start "$CONFIG" || die "cannot capture the launch quota decision"
+    fi
     if [ "$USAGE_LIMIT" = 1 ]; then
       # shellcheck source=bin/fm-account-failover.sh
       . "$SCRIPT_DIR/fm-account-failover.sh"

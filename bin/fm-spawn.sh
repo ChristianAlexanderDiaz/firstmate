@@ -460,7 +460,7 @@
 #   that script owns the move.
 # Claude account pacing (config/claude-account `paced`): every canonical
 #   Claude ship and scout spawn and relaunch without --claude-account picks
-#   its account of config/claude-failover from one fresh quota reading
+#   its account of config/claude-failover from the shared home quota reading
 #   (fm_worker_account_pace in bin/fm-worker-account-lib.sh owns the choice and
 #   its checks), launches on it like a failover account, and records
 #   claude_account= plus a one-line claude_account_reason= naming each
@@ -1550,6 +1550,7 @@ spawn_orca_reclaim_launch_file() {
 
 spawn_abort_cleanup() {
   local status=$?
+  fm_worker_account_decision_finish "$status"
   fm_quota_plan_release || true
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] &&
     [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] &&
@@ -3051,6 +3052,21 @@ CLAUDE_ACCOUNT=
 CLAUDE_ACCOUNT_ROOT=
 CLAUDE_ACCOUNT_REASON=
 CLAUDE_ACCOUNT_PACED=0
+CLAUDE_ACCOUNT_RECOVERY_REASON=
+if [ -f "$CONFIG/$FM_WORKER_ACCOUNT_FAILOVER_FILE" ] || [ -f "$CONFIG/quota-plan" ]; then
+  if [ "$KIND" = secondmate ] && [ "$RELAUNCH" = 0 ] && [ -f "$STATE/$ID.meta" ]; then
+    fm_worker_account_decision_start "$CONFIG" "$STATE/.$ID.claude-quota-decision.json" \
+      "$(cksum < "$STATE/$ID.meta")" || exit 1
+  else
+    fm_worker_account_decision_start "$CONFIG" || exit 1
+  fi
+fi
+# Keep the exact refusal in the existing task's durable record, so parent
+# recovery reports distinguish expired sign-in from paid usage.
+record_claude_account_refusal() {
+  [ ! -f "$STATE/$ID.meta" ] || printf 'blocked [at=%s]: %s\n' "$(date +%s)" "$1" >> "$STATE/$ID.status"
+  printf '%s\n' "$1" >&2
+}
 if [ "$HARNESS" = claude ] && [ "$RAW_LAUNCH" = 0 ] && [ "$CLAUDE_ACCOUNT_SET" -eq 0 ] \
   && fm_worker_account_paced "$CONFIG"; then
   case "$KIND" in ship | scout) CLAUDE_ACCOUNT_PACED=1 ;; esac
@@ -3066,17 +3082,27 @@ elif [ "$KIND" = secondmate ] && [ "$HARNESS" = claude ] && [ -f "$STATE/$ID.met
   # Endpoint-dead recovery uses --secondmate, rather than --relaunch. Retain
   # the account selected by the same control path on that recovery too.
   CLAUDE_ACCOUNT=$(fm_meta_get "$STATE/$ID.meta" claude_account)
+  if [ -n "$CLAUDE_ACCOUNT" ] && [ -z "$WORKER_ACCOUNT" ] && fm_worker_account_paced "$CONFIG"; then
+    if ! CLAUDE_ACCOUNT_RECOVERY_CHECK=$(fm_worker_account_failover_select "$CONFIG" "$CLAUDE_ACCOUNT" claude "$MODEL" 2>&1); then
+      CLAUDE_ACCOUNT_RECOVERY_REASON="recorded account $CLAUDE_ACCOUNT refused: $CLAUDE_ACCOUNT_RECOVERY_CHECK; "
+      printf 'working [at=%s]: %s\n' "$(date +%s)" "$CLAUDE_ACCOUNT_RECOVERY_CHECK" >> "$STATE/$ID.status"
+      CLAUDE_ACCOUNT_PACED=1
+    fi
+  fi
 fi
 if [ "$CLAUDE_ACCOUNT_PACED" = 1 ]; then
   # Claude account pacing (header above): a fresh choice on every launch.
-  CLAUDE_ACCOUNT_PACE=$(fm_worker_account_pace "$CONFIG" claude "$MODEL") || exit 1
+  CLAUDE_ACCOUNT_PACE=$(fm_worker_account_pace "$CONFIG" claude "$MODEL" 2>&1) || {
+    record_claude_account_refusal "$CLAUDE_ACCOUNT_PACE"
+    exit 1
+  }
   # pick<TAB>name<TAB>declared<TAB>root<TAB>reason; root is empty for ordinary.
   CLAUDE_ACCOUNT_PACE=${CLAUDE_ACCOUNT_PACE#pick$'\t'}
   CLAUDE_ACCOUNT=${CLAUDE_ACCOUNT_PACE%%$'\t'*}
   CLAUDE_ACCOUNT_PACE=${CLAUDE_ACCOUNT_PACE#*$'\t'}
   CLAUDE_ACCOUNT_PACE=${CLAUDE_ACCOUNT_PACE#*$'\t'}
   CLAUDE_ACCOUNT_ROOT=${CLAUDE_ACCOUNT_PACE%%$'\t'*}
-  CLAUDE_ACCOUNT_REASON=${CLAUDE_ACCOUNT_PACE#*$'\t'}
+  CLAUDE_ACCOUNT_REASON="$CLAUDE_ACCOUNT_RECOVERY_REASON${CLAUDE_ACCOUNT_PACE#*$'\t'}"
   if [ -n "$CLAUDE_ACCOUNT_ROOT" ]; then
     export CLAUDE_CONFIG_DIR=$CLAUDE_ACCOUNT_ROOT
   else
@@ -3094,7 +3120,10 @@ elif [ -n "$CLAUDE_ACCOUNT" ]; then
     exit 1
     ;;
   esac
-  CLAUDE_ACCOUNT_ROOT=$(fm_worker_account_failover_select "$CONFIG" "$CLAUDE_ACCOUNT" claude "$MODEL") || exit 1
+  CLAUDE_ACCOUNT_ROOT=$(fm_worker_account_failover_select "$CONFIG" "$CLAUDE_ACCOUNT" claude "$MODEL" 2>&1) || {
+    record_claude_account_refusal "$CLAUDE_ACCOUNT_ROOT"
+    exit 1
+  }
   CLAUDE_ACCOUNT_ROOT=${CLAUDE_ACCOUNT_ROOT#*$'\t'}
   if [ -n "$CLAUDE_ACCOUNT_ROOT" ]; then
     export CLAUDE_CONFIG_DIR=$CLAUDE_ACCOUNT_ROOT
@@ -6717,6 +6746,9 @@ fi
 # kill switch below it is an export statement, so it survives a compound raw
 # launch and the launch-env-allowlist `env -i` wrapper.
 LAUNCH="export FM_TASK_INBOX=$(shell_quote "$STATE_REAL/$ID.inbox"); $LAUNCH"
+# A worker starts a new quota decision for its own future launches, never
+# inheriting the spawner's transaction file (which is removed at exit).
+LAUNCH="unset FM_ACCOUNT_QUOTA_DECISION_FILE FM_ACCOUNT_QUOTA_DECISION_GENERATION; $LAUNCH"
 LAUNCH="export COMPACT_ADVISER_DISABLE=1; $LAUNCH"
 # When the live-harness gate has exported DISABLE_AUTOUPDATER into this spawn's
 # own environment, carry it into the launch command text so Claude Code's

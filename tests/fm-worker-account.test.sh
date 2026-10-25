@@ -36,6 +36,7 @@ fi
   printf 'ANTHROPIC_API_KEY=%s\n' "\${ANTHROPIC_API_KEY-unset}"
   printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "\${CLAUDE_CODE_OAUTH_TOKEN-unset}"
   printf 'CLAUDE_CODE_USE_BEDROCK=%s\n' "\${CLAUDE_CODE_USE_BEDROCK-unset}"
+  printf 'FM_ACCOUNT_QUOTA_DECISION_FILE=%s\n' "\${FM_ACCOUNT_QUOTA_DECISION_FILE-unset}"
 } > '$dir/claude-worker'
 SH
   cat > "$fakebin/pi" <<SH
@@ -110,6 +111,7 @@ spawn_ship() {
 # names another account for every runner.
 run_pane() {
   env -i HOME="$HOME_DIR/user-home" PATH="$FAKEBIN:$PATH" TERM=xterm \
+    FM_ACCOUNT_QUOTA_DECISION_FILE="$CASE/retired-decision" \
     CLAUDE_CONFIG_DIR="$CASE/ambient-claude" ANTHROPIC_API_KEY=ambient-pane-key \
     CLAUDE_CODE_OAUTH_TOKEN=ambient-pane-token CLAUDE_CODE_USE_BEDROCK=1 \
     PI_CODING_AGENT_DIR="$CASE/ambient-pi" OPENAI_API_KEY=ambient-pane-openai \
@@ -403,7 +405,12 @@ printf '%s\n' "\$*" >> '$CASE/quota-calls'
 [ -f '$CASE/quota.json' ] || exit 1
 cat '$CASE/quota.json'
 SH
-  chmod +x "$FAKEBIN/quota-axi"
+  /bin/date +%s > "$CASE/clock"
+  cat > "$FAKEBIN/date" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = +%s ]; then cat '$CASE/clock'; else exec /bin/date "\$@"; fi
+SH
+  chmod +x "$FAKEBIN/quota-axi" "$FAKEBIN/date"
 }
 
 # pace_snapshot <near-week-left> <near-reserve> <far-week-left> <far-reserve> [jq-filter]
@@ -411,6 +418,11 @@ SH
 # weekly window carries its reset and pace (a reserve of zero or more is on or
 # behind pace).
 pace_snapshot() {
+  # A new vendor fixture represents the next minute's observation, while
+  # repeated launches without a fixture change share the current snapshot.
+  local clock
+  clock=$(cat "$CASE/clock")
+  printf '%s\n' "$((clock + 61))" > "$CASE/clock"
   jq -n --argjson nw "$1" --argjson nr "$2" --argjson fw "$3" --argjson fr "$4" '
     def row($name; $week; $reserve; $resets):
       { provider: "claude", account: $name, state: { status: "fresh", stale: false },
@@ -447,6 +459,7 @@ assert_paced_onto() {
   run_pane
   assert_grep "CLAUDE_CONFIG_DIR=$CASE/accounts/$account" "$CASE/claude-worker" "the worker runs on the paced account"
   assert_grep "ANTHROPIC_API_KEY=unset" "$CASE/claude-worker" "an ambient API key must not outrank the paced account"
+  assert_grep 'FM_ACCOUNT_QUOTA_DECISION_FILE=unset' "$CASE/claude-worker" "a worker must not inherit the spawner's quota decision"
 }
 
 test_pacing_gives_work_to_the_nearest_reset_while_it_is_behind_pace() {

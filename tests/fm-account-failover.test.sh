@@ -103,18 +103,48 @@ case "${1:-}" in
 esac
 exit 0
 SH
+  cat > "$fb/pgrep" <<SH
+#!/usr/bin/env bash
+[ -f '$dir/fake/live-claude-pid' ] || exit 1
+cat '$dir/fake/live-claude-pid'
+SH
+  chmod +x "$fb/pgrep"
   cat > "$fb/sleep" <<'SH'
 #!/usr/bin/env bash
 exit 0
 SH
-  # claude auth status: signed in when the selected root holds a stored login.
-  cat > "$fb/claude" <<'SH'
+  # Only fixture credentials and identities are visible to this CLI.
+  cat > "$fb/claude" <<SH
 #!/usr/bin/env bash
-if [ "${1:-}" = auth ] && [ "${2:-}" = status ]; then
-  [ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json" ]
-  exit
+root=\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}
+if [ "\${1:-}" = auth ] && [ "\${2:-}" = status ]; then
+  if [ -f '$dir/fake/auth-callback' ]; then
+    printf x >> '$dir/fake/auth-count'
+    if [ "\$(wc -c < '$dir/fake/auth-count' | tr -d ' ')" = 2 ]; then
+      bash '$dir/new-turn.sh'
+    fi
+  fi
+  if [ -f '$dir/fake/advance-auth-clock' ]; then
+    clock=\$(cat '$dir/fake/clock')
+    printf '%s\n' "\$((clock + 61))" > '$dir/fake/clock'
+  fi
+  [ -f "\$root/.credentials.json" ] || exit 1
+  cat "\$root/identity.json" 2>/dev/null || printf '{"loggedIn":true,"email":"worker@example.com"}\n'
+  exit 0
+fi
+if [ "\${1:-}" = -p ]; then
+  printf '%s\n' "\${CLAUDE_CONFIG_DIR-unset}" >> '$dir/fake/refresh-calls'
+  if [ -f '$dir/fake/after-refresh.json' ]; then
+    cp '$dir/fake/after-refresh.json' '$dir/fake/quota.json'
+  fi
 fi
 exit 0
+SH
+  # The fixture clock moves only when the test changes the vendor response,
+  # or explicitly models a minute passing between launch boundaries.
+  cat > "$fb/date" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = +%s ]; then cat '$dir/fake/clock'; else exec /bin/date "\$@"; fi
 SH
   # Like quota-axi 0.1.55, --all-accounts refuses --max-age.
   cat > "$fb/quota-axi" <<SH
@@ -155,7 +185,7 @@ case "\$*" in
 esac
 exit 0
 SH
-  chmod +x "$fb/tmux" "$fb/sleep" "$fb/claude" "$fb/quota-axi" "$fb/no-mistakes"
+  chmod +x "$fb/tmux" "$fb/sleep" "$fb/claude" "$fb/quota-axi" "$fb/no-mistakes" "$fb/date"
 }
 
 # new_case <name> <id> [kind]: a home with one live canonical claude task whose
@@ -169,6 +199,7 @@ new_case() {
   : > "$dir/fake/keys"
   printf 'claude' > "$dir/fake/command"
   printf '%s\n' "fm-$id" > "$dir/fake/windows"
+  /bin/date +%s > "$dir/fake/clock"
   make_fakes "$dir"
   printf '{}\n' > "$dir/user-home/.claude/.credentials.json"
   printf '{}\n' > "$dir/accounts/spare/.credentials.json"
@@ -203,6 +234,9 @@ new_case() {
 # quota_snapshot <limited-percent> <spare-percent> [jq-filter]: an
 # --all-accounts snapshot shaped like quota-axi 0.1.55's schema 7 output.
 quota_snapshot() {
+  local clock
+  clock=$(cat "$CASE/fake/clock")
+  printf '%s\n' "$((clock + 61))" > "$CASE/fake/clock"
   jq -n --argjson limited "$1" --argjson spare "$2" '
     def row($name; $pct; $resets):
       { provider: "claude", account: $name, state: { status: "fresh", stale: false },
@@ -436,7 +470,7 @@ test_limit_prompt_is_answered_with_stop_and_the_worker_moves_to_an_account_with_
   [ ! -e "$CASE/home/state/t3.usage-limit" ] || fail "the usage-limit record must be consumed"
   [ -z "$(status_of t3)" ] || fail "a successful move raises no status line: $(status_of t3)"
   assert_grep 'all-accounts' "$CASE/fake/quota-calls" "quota checks use all mapped accounts"
-  [ "$(grep -c '' "$CASE/fake/quota-calls")" = 3 ] || fail "selection, control, and spawn each check fresh quota"
+  [ "$(grep -c '' "$CASE/fake/quota-calls")" = 1 ] || fail "selection, control, and spawn share one home quota snapshot"
   pass "run: the limit prompt gets its stop answer and the worker relaunches on an account with room"
 }
 
@@ -555,6 +589,8 @@ SH
     else
       trigger=1
       [ "$stage" != pre-stop ] || trigger=2
+      # A second sign-in boundary still exists even when quota is shared.
+      [ "$stage" != pre-stop ] || : > "$CASE/fake/auth-callback"
       mv "$CASE/fakebin/quota-axi" "$CASE/fakebin/quota-base"
       cat > "$CASE/fakebin/quota-axi" <<SH
 #!/usr/bin/env bash
@@ -916,37 +952,21 @@ test_paid_usage_is_rejected_at_control_and_spawn_launch_boundaries() {
   [ ! -s "$CASE/fake/literal" ] || fail "paid control refusal must precede stopping"
 
   new_case paid-spawn t17
-  rm -f "$CASE/fake/screen"
-  cat > "$CASE/fakebin/quota-axi" <<SH
-#!/usr/bin/env bash
-printf 'read\n' >> '$CASE/fake/quota-calls'
-if [ "\$(wc -l < '$CASE/fake/quota-calls')" -gt 1 ]; then
-  jq '.providers[1].windows += [{id: "extra_usage", kind: "credits"}]' '$CASE/fake/quota.json'
-else
-  cat '$CASE/fake/quota.json'
-fi
-SH
-  out=$(case_env "$CONTROL" t17 relaunch --claude-account spare --note "move" 2>&1); rc=$?
-  expect_code 1 "$rc" "paid usage enabled after control must refuse at spawn: $out"
-  assert_contains "$out" "paid usage enabled" "spawn rechecks paid status"
-  assert_no_grep 'claude_account=' "$CASE/home/state/t17.meta" "failed spawn retains the prior record"
-  assert_no_grep 'encode launch-brief' "$CASE/fake/literal" "no paid replacement is started"
+  printf 'claude_account=spare\n' >> "$CASE/home/state/t17.meta"
+  quota_snapshot 0 81 '.providers[1].windows += [{id:"extra_usage",kind:"credits"}]' > "$CASE/fake/quota.json"
+  printf zsh > "$CASE/fake/command"
+  out=$(case_env "$ROOT/bin/fm-spawn.sh" t17 --relaunch 2>&1); rc=$?
+  expect_code 1 "$rc" "paid usage must independently refuse at spawn: $out"
+  assert_contains "$out" 'paid usage enabled' "spawn checks the shared snapshot for credits"
+  assert_no_grep 'encode launch-brief' "$CASE/fake/literal" "no paid replacement starts"
   new_case paid-auto t19
-  cat > "$CASE/fakebin/quota-axi" <<SH
-#!/usr/bin/env bash
-printf 'read\n' >> '$CASE/fake/quota-calls'
-if [ "\$(wc -l < '$CASE/fake/quota-calls')" -gt 1 ]; then
-  jq '.providers[1].windows += [{id: "extra_usage", kind: "credits"}]' '$CASE/fake/quota.json'
-else
-  cat '$CASE/fake/quota.json'
-fi
-SH
+  quota_snapshot 0 81 '.providers[1].windows += [{id:"extra_usage",kind:"credits"}]' > "$CASE/fake/quota.json"
   record_limit t19
   out=$(case_env "$FAILOVER" run t19 2>&1)
-  assert_contains "$out" "blocked t19" "a changed paid setting produces a blocked recovery outcome: $out"
-  assert_contains "$(status_of t19)" "replacement failed" "the failed move wakes supervision"
-  [ ! -s "$CASE/fake/literal" ] || fail "paid recovery refusal must precede stopping"
-  pass "launch: control and spawn both refuse paid-enabled accounts"
+  assert_contains "$out" 'blocked t19' "automatic recovery refuses a paid account: $out"
+  assert_contains "$(status_of t19)" 'paid usage' "recovery preserves the billing reason"
+  [ ! -s "$CASE/fake/literal" ] || fail "paid recovery refuses before stopping"
+  pass "launch: control, spawn and automatic recovery refuse actual paid usage"
 }
 
 make_quota_cache_fake() {
@@ -978,22 +998,25 @@ test_reused_quota_cannot_authorize_selection_or_launch() {
   for mode in recovery control spawn; do
     new_case "cache-$mode" t22
     make_quota_cache_fake
-    if [ "$mode" = spawn ]; then
-      quota_snapshot 0 81 '.providers[1].windows += [{id: "extra_usage", kind: "credits"}]' > "$CASE/fake/quota-after.json"
-    else
-      quota_snapshot 0 81 '.providers[1].windows += [{id: "extra_usage", kind: "credits"}]' > "$CASE/fake/quota.json"
-    fi
+    quota_snapshot 0 81 '.providers[1].windows += [{id: "extra_usage", kind: "credits"}]' > "$CASE/fake/quota.json"
     if [ "$mode" = recovery ]; then
       record_limit t22
       out=$(case_env QUOTA_AXI_MAX_AGE=1h "$FAILOVER" run t22 2>&1)
       assert_contains "$out" "blocked t22" "recovery must read the changed paid setting: $out"
+    elif [ "$mode" = spawn ]; then
+      printf 'claude_account=spare\n' >> "$CASE/home/state/t22.meta"
+      printf zsh > "$CASE/fake/command"
+      out=$(case_env QUOTA_AXI_MAX_AGE=1h "$ROOT/bin/fm-spawn.sh" t22 --relaunch 2>&1); rc=$?
+      expect_code 1 "$rc" "$mode must refuse the changed paid setting: $out"
     else
       rm -f "$CASE/fake/screen"
       out=$(case_env QUOTA_AXI_MAX_AGE=1h "$CONTROL" t22 relaunch --claude-account spare --note "move" 2>&1); rc=$?
       expect_code 1 "$rc" "$mode must refresh the changed paid setting: $out"
     fi
     [ -s "$CASE/fake/vendor-reads" ] || fail "$mode must ask the vendor despite ambient reuse"
-    assert_no_grep 'claude_account=' "$CASE/home/state/t22.meta" "$mode cannot publish a paid account"
+    if [ "$mode" != spawn ]; then
+      assert_no_grep 'claude_account=' "$CASE/home/state/t22.meta" "$mode cannot publish a paid account"
+    fi
     assert_no_grep 'encode launch-brief' "$CASE/fake/literal" "$mode cannot launch the paid replacement"
     if [ "$mode" != spawn ]; then
       assert_no_grep '/exit' "$CASE/fake/literal" "$mode refusal precedes stopping"
@@ -1006,8 +1029,8 @@ test_reused_quota_cannot_authorize_selection_or_launch() {
   record_limit t23
   out=$(case_env QUOTA_AXI_MAX_AGE=1h "$FAILOVER" run t23 2>&1)
   assert_contains "$out" "moved t23 limited spare" "an uncached safe account above the fixed margin still moves: $out"
-  assert_equals 3 "$(wc -l < "$CASE/fake/vendor-reads" | tr -d ' ')" "selection, control, and spawn each refresh"
-  pass "quota: supplied cache refuses; selection and both launch boundaries force vendor reads"
+  assert_equals 1 "$(wc -l < "$CASE/fake/vendor-reads" | tr -d ' ')" "selection, control, and spawn share the home snapshot"
+  pass "quota: vendor-reused snapshots refuse; all launch boundaries share one locally captured vendor read"
 }
 
 represented_scope_snapshot() {
@@ -1079,25 +1102,28 @@ launch_scope_snapshot() {
 }
 
 test_remaining_quota_is_checked_at_control_and_spawn() {
-  local boundary problem filter out rc expected_reads
+  local boundary problem filter out rc prior
   for boundary in control spawn; do
     while read -r problem filter; do
       new_case "headroom-$boundary-$problem" t26
       printf 'model=opusplan\n' >> "$CASE/home/state/t26.meta"
       rm -f "$CASE/fake/screen"
       make_quota_cache_fake
-      if [ "$boundary" = control ]; then
-        launch_scope_snapshot "$filter" > "$CASE/fake/quota.json"
-        expected_reads=1
-      else
-        launch_scope_snapshot "$filter" > "$CASE/fake/quota-after.json"
-        expected_reads=2
+      launch_scope_snapshot "$filter" > "$CASE/fake/quota.json"
+      if [ "$boundary" = spawn ]; then
+        printf 'claude_account=spare\n' >> "$CASE/home/state/t26.meta"
+        printf zsh > "$CASE/fake/command"
       fi
-      out=$(case_env "$CONTROL" t26 relaunch --claude-account spare --note "move" 2>&1); rc=$?
+      prior=$(cat "$CASE/home/state/t26.meta")
+      if [ "$boundary" = control ]; then
+        out=$(case_env "$CONTROL" t26 relaunch --claude-account spare --note "move" 2>&1); rc=$?
+      else
+        out=$(case_env "$ROOT/bin/fm-spawn.sh" t26 --relaunch 2>&1); rc=$?
+      fi
       expect_code 1 "$rc" "$boundary must refuse $problem model-aware quota: $out"
       assert_contains "$out" 'cannot launch' "remaining quota must cause the refusal: $out"
-      assert_equals "$expected_reads" "$(wc -l < "$CASE/fake/vendor-reads" | tr -d ' ')" "the refusal occurs at $boundary"
-      assert_no_grep 'claude_account=' "$CASE/home/state/t26.meta" "$boundary cannot publish an ineligible account"
+      assert_equals 1 "$(wc -l < "$CASE/fake/vendor-reads" | tr -d ' ')" "the $boundary refusal uses one snapshot"
+      assert_equals "$prior" "$(cat "$CASE/home/state/t26.meta")" "$boundary preserves the prior account record"
       assert_no_grep "CLAUDE_CONFIG_DIR='$CASE/accounts/spare'" "$CASE/fake/literal" "$boundary cannot launch an ineligible replacement"
       if [ "$boundary" = control ]; then
         assert_no_grep '/exit' "$CASE/fake/literal" "control refusal precedes stopping"
@@ -1119,29 +1145,25 @@ QUOTA
   pass "launch: both fresh launch readings enforce model certainty, exhaustion, and the fixed margin"
 }
 
-test_recovery_refuses_quota_exhausted_after_selection() {
-  local change_at out rc
-  for change_at in 2 3; do
-    new_case "headroom-race-$change_at" t27
-    make_quota_cache_fake "$change_at"
-    quota_snapshot 0 6 > "$CASE/fake/quota.json"
-    quota_snapshot 0 0 > "$CASE/fake/quota-after.json"
-    record_limit t27
-    out=$(case_env "$FAILOVER" run t27 2>&1); rc=$?
-    expect_code 1 "$rc" "quota exhausted after selection must refuse at reading $change_at: $out"
-    assert_contains "$out" 'cannot launch' "the fresh reading refuses the exhausted account: $out"
-    assert_contains "$(status_of t27)" 'replacement failed' "a refused replacement wakes supervision"
-    assert_equals "$change_at" "$(wc -l < "$CASE/fake/vendor-reads" | tr -d ' ')" "the fresh launch reading catches exhaustion"
-    assert_no_grep 'claude_account=' "$CASE/home/state/t27.meta" "an exhausted account cannot be published"
-    assert_no_grep "CLAUDE_CONFIG_DIR='$CASE/accounts/spare'" "$CASE/fake/literal" "an exhausted replacement cannot launch"
-    if [ "$change_at" = 2 ]; then
-      assert_no_grep '/exit' "$CASE/fake/literal" "control refuses before stopping the original"
-      assert_equals claude "$(cat "$CASE/fake/command")" "the original agent stays alive"
-    else
-      assert_equals zsh "$(cat "$CASE/fake/command")" "the exhausted replacement stays stopped"
-    fi
-  done
-  pass "run: quota exhausted between selection and either launch check blocks the move"
+test_recovery_shares_one_snapshot_until_the_next_decision() {
+  local out rc
+  new_case decision-snapshot t27
+  make_quota_cache_fake
+  : > "$CASE/fake/advance-auth-clock"
+  quota_snapshot 0 60 > "$CASE/fake/quota.json"
+  quota_snapshot 0 0 > "$CASE/fake/quota-after.json"
+  record_limit t27
+  out=$(case_env "$FAILOVER" run t27 2>&1); rc=$?
+  expect_code 0 "$rc" "one recovery decision shares its snapshot even across slow sign-in checks: $out"
+  assert_contains "$out" 'moved t27 limited spare' "the safe captured decision completes"
+  assert_equals 1 "$(wc -l < "$CASE/fake/vendor-reads" | tr -d ' ')" "selection, control and spawn share a single vendor snapshot"
+  : > "$CASE/fake/literal"
+  out=$(case_env "$CONTROL" t27 relaunch --note 'next decision' 2>&1); rc=$?
+  expect_code 1 "$rc" "a later independent decision rechecks the expired home snapshot: $out"
+  assert_contains "$out" 'cannot launch' "the new exhausted reading refuses"
+  assert_equals 2 "$(wc -l < "$CASE/fake/vendor-reads" | tr -d ' ')" "only the new decision makes another vendor request"
+  assert_no_grep '/exit' "$CASE/fake/literal" "the later refusal happens before stopping"
+  pass "run: one decision shares its snapshot across slow launch gates; a later decision rechecks quota"
 }
 
 test_launch_checks_use_retained_and_overridden_models() {
@@ -1219,7 +1241,7 @@ test_paced_relaunches_choose_afresh_and_failover_still_moves() {
   assert_grep 'claude_account_reason=chose limited: limited 60% week left, resets 2026-10-03T19:59Z, on or behind pace' \
     "$CASE/home/state/t31.meta" "the reason is recorded"
   assert_no_grep "CLAUDE_CONFIG_DIR='$CASE/accounts/spare'" "$CASE/fake/literal" "the replacement runs on the paced account"
-  assert_equals 2 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "control and spawn each request a fresh pacing snapshot"
+  assert_equals 1 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "control and spawn share the pacing snapshot"
   quota_snapshot 60 81 '.providers[0].windows[1].pace = {status: "ahead", reservePercentPoints: -10}' > "$CASE/fake/quota.json"
   : > "$CASE/fake/literal"
   out=$(case_env "$CONTROL" t31 relaunch --note "paced again" 2>&1); rc=$?
@@ -1393,7 +1415,7 @@ test_successful_recovery_rearms_before_maintenance() {
       out=$(case_env "$FAILOVER" run t40 2>&1)
       assert_contains "$out" 'moved t40 limited spare' "$kind recovers on fresh $model quota: $out"
       [ ! -e "$CASE/home/state/.claude-exhausted" ] || fail "successful recovery must rearm without maintenance"
-      assert_equals 3 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "rearming reuses selection quota, alongside the two launch readings"
+      assert_equals 1 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "rearming, control, and spawn share selection quota"
       quota_snapshot 0 0 > "$CASE/fake/quota.json"
       record_limit t40
       out=$(case_env "$FAILOVER" run t40 2>&1)
@@ -1441,6 +1463,8 @@ SH
         chmod +x "$CASE/fakebin/claude"
         ;;
     esac
+    # Expire the shared quota snapshot as well as the maintenance cooldown.
+    printf '%s\n' "$(($(cat "$CASE/fake/clock") + 61))" > "$CASE/fake/clock"
     printf 'v1\ngen=stale\n' > "$CASE/home/state/t39.usage-limit"
     out=$(case_env FM_MAINTENANCE_FAILURE="$mode" python3 - "$FAILOVER" <<'PYTEST'
 import os, signal, subprocess, sys
@@ -1474,6 +1498,207 @@ PYTEST
   done
   pass "maintenance: failures, hung quota and hung authentication stay bounded and throttled"
 }
+
+# Public sourced account-selection API, with both tools resolved from fake PATH.
+select_account() {
+  # shellcheck disable=SC2016 # The inner Bash expands positional arguments.
+  case_env bash -c '. "$1"; fm_worker_account_failover_select "$2" "$3" claude fable' \
+    _ "$ROOT/bin/fm-worker-account-lib.sh" "$CASE/home/config" "${1:-limited}"
+}
+
+expired_snapshot() {
+  quota_snapshot 70 80 '.providers[0] |= (.state = {status:"unavailable", authStatus:"expired_refreshable"} | .windows = [] | del(.quotaSemantics))'
+}
+
+test_expected_identity_and_legacy_map() {
+  local out rc
+  new_case identity t41
+  printf '{"loggedIn":true,"email":"worker@example.com","accessToken":"private-fixture-token"}\n' > "$CASE/user-home/.claude/identity.json"
+  printf 'account limited ordinary personal@example.com\naccount spare %s work@example.com\n' "$CASE/accounts/spare" > "$CASE/home/config/claude-failover"
+  out=$(select_account 2>&1); rc=$?
+  expect_code 1 "$rc" "the wrong ordinary identity must refuse: $out"
+  assert_contains "$out" "account 'limited' is signed in as worker@example.com, expected personal@example.com" "the refusal names both identities"
+  assert_contains "$out" 'sign that account in from a normal terminal' "the remedy is a normal-terminal sign-in"
+  assert_not_contains "$out" 'private-fixture-token' "the identity refusal must never print the auth response"
+  [ ! -e "$CASE/fake/quota-calls" ] || fail "wrong identity must refuse before querying quota"
+  quota_snapshot 70 80 > "$CASE/fake/quota.json"
+  printf '{"loggedIn":true,"email":"work@example.com"}\n' > "$CASE/accounts/spare/identity.json"
+  out=$(select_account spare 2>&1); rc=$?
+  expect_code 0 "$rc" "the matching directory-selected identity passes: $out"
+  printf 'account limited ordinary\naccount spare %s\n' "$CASE/accounts/spare" > "$CASE/home/config/claude-failover"
+  out=$(select_account 2>&1); rc=$?
+  expect_code 0 "$rc" "a legacy map without expected identities behaves unchanged: $out"
+  pass "identity: wrong email refuses with identities and remedy; matching and legacy entries pass"
+}
+
+test_refreshable_login_and_shared_snapshot() {
+  local out rc attempt
+  new_case refreshable t42
+  expired_snapshot > "$CASE/fake/quota.json"
+  quota_snapshot 70 80 > "$CASE/fake/after-refresh.json"
+  out=$(select_account 2>&1); rc=$?
+  expect_code 0 "$rc" "one refresh ping should recover the account: $out"
+  assert_equals unset "$(cat "$CASE/fake/refresh-calls")" "ordinary refresh leaves CLAUDE_CONFIG_DIR unset"
+  for attempt in 1 2 3; do
+    out=$(select_account 2>&1); rc=$?
+    expect_code 0 "$rc" "retry shares the refreshed snapshot: $out"
+  done
+  assert_equals 1 "$(wc -l < "$CASE/fake/refresh-calls" | tr -d ' ')" "one ping per expired account"
+  assert_equals 2 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "one initial read and one required post-refresh read cover all retries"
+  # Pacing and literal launch decisions share the same home reading.
+  # shellcheck disable=SC2016 # The inner Bash expands positional arguments.
+  out=$(case_env bash -c '. "$1"; fm_worker_account_pace "$2" claude fable' _ "$ROOT/bin/fm-worker-account-lib.sh" "$CASE/home/config" 2>&1); rc=$?
+  expect_code 0 "$rc" "pacing reuses the same snapshot: $out"
+  assert_equals 2 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "pacing adds no vendor request"
+  quota_snapshot 70 80 > "$CASE/fake/quota.json"
+  select_account >/dev/null || fail "a later-minute decision should still pass"
+  assert_equals 3 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "after a minute the home requests fresh data"
+  pass "refresh: one ordinary-selector ping recovers; retries and pacing share reads until expiry"
+}
+
+test_failed_refresh_and_missing_expired_row() {
+  local shape out rc attempt
+  for shape in provider missing-row; do
+    new_case "still-expired-$shape" t43
+    if [ "$shape" = missing-row ]; then
+      expired_snapshot | jq '.failures = [{provider:"claude",account:"limited",authStatus:"expired_refreshable"}] | del(.providers[0])' > "$CASE/fake/quota.json"
+    else
+      expired_snapshot > "$CASE/fake/quota.json"
+    fi
+    for attempt in 1 2; do
+      out=$(select_account 2>&1); rc=$?
+      expect_code 1 "$rc" "a still-expired $shape login must refuse: $out"
+      assert_contains "$out" "account 'limited' login expired" "expiry is an authentication problem"
+      assert_contains "$out" 'fresh sign-in from a normal terminal' "the refusal gives a sign-in remedy"
+      [[ $out != *'paid usage'* ]] || fail "expiry must never be called a paid-usage problem"
+    done
+    assert_equals 1 "$(wc -l < "$CASE/fake/refresh-calls" | tr -d ' ')" "failed-refresh retries must not storm the CLI"
+    assert_equals 2 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "failed-refresh retries share the negative snapshot"
+  done
+  new_case refreshed-credits t44
+  expired_snapshot > "$CASE/fake/quota.json"
+  quota_snapshot 70 80 '.providers[0].windows += [{id:"extra_usage",kind:"credits"}]' > "$CASE/fake/after-refresh.json"
+  out=$(select_account 2>&1); rc=$?
+  expect_code 1 "$rc" "refresh must not bypass paid usage: $out"
+  assert_contains "$out" 'has paid usage enabled (credits window)' "actual credits retain the paid-usage refusal"
+  new_case reused-credits t51
+  quota_snapshot 70 80 '.providers[0].state.reused = true | .providers[0].windows += [{id:"extra_usage",kind:"credits"}]' > "$CASE/fake/quota.json"
+  out=$(select_account 2>&1); rc=$?
+  expect_code 1 "$rc" "vendor-reused credits still refuse: $out"
+  assert_contains "$out" 'no fresh usable quota reading' "a reused reading cannot establish current billing"
+  assert_not_contains "$out" 'paid usage enabled' "billing refusal requires a genuinely fresh reading"
+  pass "refresh: persistent and missing-row expiry need sign-in; refreshed credits still refuse"
+}
+
+test_paced_secondmate_recovers_on_another_account() {
+  local out rc
+  new_case paced-secondmate sm45 secondmate
+  printf 'paced\n' > "$CASE/home/config/claude-account"
+  printf 'claude_account=limited\n' >> "$CASE/home/state/sm45.meta"
+  expired_snapshot > "$CASE/fake/quota.json"
+  printf zsh > "$CASE/fake/command"
+  : > "$CASE/fake/windows"
+  out=$(case_env "$ROOT/bin/fm-spawn.sh" sm45 --secondmate 2>&1); rc=$?
+  expect_code 0 "$rc" "paced endpoint-dead recovery must use the available account: $out"
+  assert_grep 'claude_account=spare' "$CASE/home/state/sm45.meta" "recovery records the alternate account"
+  assert_grep "claude_account_reason=recorded account limited refused: error: Claude account 'limited' login expired" "$CASE/home/state/sm45.meta" "recovery records the refusal"
+  assert_grep 'chose spare:' "$CASE/home/state/sm45.meta" "recovery records the new choice"
+  assert_grep "error: Claude account 'limited' login expired; needs a fresh sign-in from a normal terminal" "$CASE/home/state/sm45.status" "parent can read the exact refusal"
+  assert_equals 1 "$(wc -l < "$CASE/fake/refresh-calls" | tr -d ' ')" "fallback does not repeat the refresh ping"
+  assert_equals 2 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "fallback shares the initial and post-refresh snapshots"
+  pass "secondmate: paced recovery falls through from expired login and records the selected account and exact reason"
+}
+
+test_pacing_refreshes_before_filtering() {
+  local out rc
+  new_case pacing-refresh t46
+  expired_snapshot > "$CASE/fake/quota.json"
+  quota_snapshot 70 80 > "$CASE/fake/after-refresh.json"
+  # shellcheck disable=SC2016 # The inner Bash expands positional arguments.
+  out=$(case_env bash -c '. "$1"; fm_worker_account_pace "$2" claude fable' _ "$ROOT/bin/fm-worker-account-lib.sh" "$CASE/home/config" 2>&1); rc=$?
+  expect_code 0 "$rc" "pacing recovers a row before candidate filtering: $out"
+  assert_contains "$out" $'pick\tlimited\tordinary' "the expired account can become the pacing choice"
+  assert_equals 1 "$(wc -l < "$CASE/fake/refresh-calls" | tr -d ' ')" "pacing refreshes only once"
+  pass "pacing: refreshable rows are recovered before candidates are filtered"
+}
+
+test_rate_limit_refusals_and_measurements() {
+  local shape out rc until='2099-10-25T18:00:00Z'
+  for shape in rate_limited stale; do
+    new_case "endpoint-$shape" t47
+    quota_snapshot 70 80 > "$CASE/fake/base-quota.json"
+    jq --arg status "$shape" --arg until "$until" --argjson now "$(cat "$CASE/fake/clock")" '
+      .providers[0].state = {status:$status,stale:($status == "stale"),retryAfter:$until,refreshedAt:($now-120|todateiso8601)}' \
+      "$CASE/fake/base-quota.json" > "$CASE/fake/quota.json"
+    out=$(select_account 2>&1); rc=$?
+    expect_code 1 "$rc" "a $shape endpoint refuses with its own cause: $out"
+    assert_contains "$out" "quota endpoint rate limited until $until, reading from 120s ago" "refusal reports vendor retry and age"
+    [[ $out != *'paid usage'* ]] || fail "endpoint throttling must not be called unknown billing"
+    assert_grep "\"account\":\"limited\",\"retryAfter\":\"$until\"" "$CASE/home/state/.supervision-host.log" "the exact account and retryAfter are recorded"
+  done
+  new_case expired-error t48
+  expired_snapshot | jq '.providers[0].state = {status:"unavailable",error:"Claude credential expired"}' > "$CASE/fake/quota.json"
+  quota_snapshot 70 80 > "$CASE/fake/after-refresh.json"
+  out=$(select_account 2>&1); rc=$?
+  expect_code 0 "$rc" "credential-expired errors also get one refresh: $out"
+  assert_equals 1 "$(wc -l < "$CASE/fake/refresh-calls" | tr -d ' ')" "credential expiry refreshes only once"
+  pass "endpoint: rate-limit and stale retry refusals name retry and reading age; measurements are retained; credential-expired errors refresh"
+}
+
+test_dead_secondmate_retries_share_the_decision() {
+  local out rc attempt
+  new_case retry-decision sm49 secondmate
+  printf 'paced\n' > "$CASE/home/config/claude-account"
+  printf 'claude_account=limited\n' >> "$CASE/home/state/sm49.meta"
+  quota_snapshot 70 80 '.providers[].state = {status:"rate_limited",retryAfter:"2099-10-25T18:00:00Z"}' > "$CASE/fake/quota.json"
+  printf zsh > "$CASE/fake/command"
+  : > "$CASE/fake/windows"
+  for attempt in 1 2 3; do
+    out=$(case_env "$ROOT/bin/fm-spawn.sh" sm49 --secondmate 2>&1); rc=$?
+    expect_code 1 "$rc" "a rate-limited recovery attempt refuses: $out"
+    assert_contains "$out" 'quota endpoint rate limited until 2099-10-25T18:00:00Z' "retry retains the endpoint reason"
+    printf '%s\n' "$(($(cat "$CASE/fake/clock") + 61))" > "$CASE/fake/clock"
+  done
+  assert_equals 1 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "all retry attempts share one vendor reading even beyond a minute"
+  # A changed incarnation is a new decision and can observe recovered quota.
+  printf 'spawn_gen=rearmed\n' >> "$CASE/home/state/sm49.meta"
+  quota_snapshot 70 80 > "$CASE/fake/quota.json"
+  out=$(case_env "$ROOT/bin/fm-spawn.sh" sm49 --secondmate 2>&1); rc=$?
+  expect_code 0 "$rc" "a newly recorded recovery decision can observe fresh quota: $out"
+  assert_equals 2 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "the next decision gets one new vendor reading"
+  pass "secondmate: all dead-agent retry attempts share one decision snapshot; a new incarnation observes new quota"
+}
+
+test_refresh_defers_to_a_live_account_process() {
+  local out rc pid
+  if [ ! -d /proc/self ]; then
+    pass "refresh: Linux process selector check skipped without procfs"
+    return
+  fi
+  new_case live-selector t50
+  expired_snapshot > "$CASE/fake/quota.json"
+  mkdir -p "$CASE/runtime"
+  cp /bin/sleep "$CASE/runtime/claude"
+  env -u CLAUDE_CONFIG_DIR "$CASE/runtime/claude" 30 &
+  pid=$!
+  printf '%s\n' "$pid" > "$CASE/fake/live-claude-pid"
+  out=$(select_account 2>&1); rc=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 1 "$rc" "a live ordinary account is left to refresh itself: $out"
+  [ ! -e "$CASE/fake/refresh-calls" ] || fail "no refresh ping may race the live account process"
+  assert_contains "$out" 'login expired' "a deferred account retains the authentication diagnosis"
+  pass "refresh: the real kernel selector of a live process suppresses a competing ping"
+}
+
+test_rate_limit_refusals_and_measurements
+test_dead_secondmate_retries_share_the_decision
+test_refresh_defers_to_a_live_account_process
+test_expected_identity_and_legacy_map
+test_refreshable_login_and_shared_snapshot
+test_failed_refresh_and_missing_expired_row
+test_paced_secondmate_recovers_on_another_account
+test_pacing_refreshes_before_filtering
 
 test_secondmate_failover
 test_exhaustion_episode_is_shared
@@ -1509,7 +1734,7 @@ test_reused_quota_cannot_authorize_selection_or_launch
 test_model_scope_representations_constrain_the_same_families
 test_recovery_respects_legacy_versioned_and_unresolved_scopes
 test_remaining_quota_is_checked_at_control_and_spawn
-test_recovery_refuses_quota_exhausted_after_selection
+test_recovery_shares_one_snapshot_until_the_next_decision
 test_launch_checks_use_retained_and_overridden_models
 test_paced_relaunch_refuses_before_stopping_when_no_account_qualifies
 test_paced_relaunches_choose_afresh_and_failover_still_moves

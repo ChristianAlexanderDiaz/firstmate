@@ -1158,6 +1158,7 @@ The refusal names the variable; remove that assignment from the raw command, or 
 
 Before any worker endpoint, local copy, or task record exists, and before a relaunch stops the running worker, Firstmate asks the runner itself whether the pinned account is signed in: `claude auth status` for Claude, and `pi auth check --provider <provider> --json --no-refresh` for Pi, falling back to `pi --list-models <provider>` for a provider an extension registers.
 The check runs with only `HOME`, `PATH`, `TMPDIR`, `USER`, `LOGNAME`, and the pinned root in its environment, so a credential variable in firstmate's own environment cannot answer for an empty root.
+Mapped Claude accounts can also verify the signed-in identity and recover an expired login through the [failover account checks](#limits).
 
 A pinned Claude launch also unsets the environment credentials Claude ranks above a stored login, such as `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, and the Bedrock and Vertex switches ([authentication precedence](https://code.claude.com/docs/en/authentication#authentication-precedence)).
 Pi ranks a root's stored logins above environment variables, so a pinned Pi launch unsets nothing.
@@ -1206,11 +1207,14 @@ The file is local and gitignored, because it names this machine's accounts and c
 Each account line is:
 
 ```text
-account <name> <ordinary | absolute CLAUDE_CONFIG_DIR>
+account <name> <ordinary | absolute CLAUDE_CONFIG_DIR> [expected-email]
 ```
 
 `<name>` is the account's name in `quota-axi --all-accounts`, which reads its own account list from `~/.config/quota-axi/accounts.json`; list every account a worker may run on, including the one firstmate itself launches workers on.
 `ordinary` means `CLAUDE_CONFIG_DIR` unset, for the Keychain reason the [worker account pin](#worker-account-pin-configclaude-account-configpi-account) gives.
+The optional trailing `expected-email` is compared with `claude auth status` under that account's selector before launch or refresh.
+A mismatch refuses with the account name, signed-in email, expected email, and instructions to sign that account in from a normal terminal; existing lines without the column keep their sign-in checks unchanged.
+For a directory containing spaces, an existing directory matching the entire entry takes precedence; otherwise a final whitespace-separated token containing `@` is treated as the email.
 An account is never chosen with 5% or less quota remaining; this safety margin is fixed.
 Blank lines and lines starting with `#` are ignored, names are unique, and a control character or any other line refuses.
 
@@ -1238,12 +1242,20 @@ Maintenance checks are throttled and time-bounded so quota or sign-in outages do
 ### Limits
 
 Local secondmates use the same failover path and retain their home, charter, child state, and steering inbox; launch-only hooks merge with their own supervision hooks without changing home settings.
-Endpoint-dead recovery retains the selected account.
+Endpoint-dead recovery retains the selected account when it remains usable; a launching home with `config/claude-account` set to `paced` tries another mapped account when that recorded account refuses, recording both the refusal and the selected account's reason.
 Their workers still use their own home's [worker account configuration](#worker-account-pin-configclaude-account-configpi-account).
 Remote secondmate routes remain a follow-up: local control refuses endpoints on another host.
 A `config/claude-account` that names one account pins every Claude worker to it, so a home with both files leaves limited workers stopped and says so; the `paced` value pins nothing, and failover moves its workers as usual.
 Accounts with a paid credits window or unknown paid usage status never qualify, even when their plan has room.
-Selection, control, and spawn require an unreused vendor reading and run their quota queries with `QUOTA_AXI_MAX_AGE` unset before launching a worker on a mapped account; disable paid extra usage in the account itself before using it for failover.
+Selection, control, and spawn capture one snapshot for the complete launch decision, including pacing and quota-plan admission; failed secondmate recovery attempts retain that snapshot while the recorded incarnation is unchanged.
+Separate decisions share the home-local snapshot for sixty seconds, including failed reads; vendor-stale or vendor-reused readings still refuse.
+The private cache and serialization lock live alongside `config/claude-failover`; an expired cache triggers `quota-axi --all-accounts --json` with `QUOTA_AXI_MAX_AGE` unset.
+This bounds vendor polling but means a changed allowance or paid-usage setting can take up to a minute to affect the next decision; disable paid extra usage in the account itself before using it for failover.
+An `expired_refreshable` account gets one bounded `claude -p "reply with ok" --model haiku` under its selector, followed by a new quota reading that replaces the cached snapshot.
+Refresh attempts are serialized, limited to one per account per decision, and throttled across decisions for sixty seconds; they defer to a running Claude process for that account where its selector can be inspected, or to any running Claude process when it cannot.
+A login that remains expired refuses with a fresh-sign-in instruction rather than a paid-usage error; a fresh reading with a credits window still refuses as paid usage.
+Recovery writes the exact launch refusal into the existing task's status so its parent can distinguish sign-in problems from paid usage.
+Endpoint throttling refuses with `quota endpoint rate limited until <time>, reading from <age>`; the home supervision log records the account and the exact `retryAfter` measurement, including a missing value when a 429 carries none.
 Control and spawn recheck every quota scope that applies to the replacement's model and refuse a launch when an applicable allowance is unknown, exhausted, or has 5% or less remaining.
 An exhausted scope for an unrelated known model family does not rule an account out; unresolved model or scope identities are checked conservatively.
 The recorded generation is checked inside the control plane's gate, supervision lease, and lifecycle lock before the event is consumed or the worker and validation run are changed.
@@ -1259,7 +1271,7 @@ Every other `config/claude-account` value, and a home without the file, behaves 
 
 ### How an account is chosen
 
-Each canonical Claude ship and scout spawn and relaunch that does not name an account reads one fresh `quota-axi --all-accounts --json` snapshot and chooses among the mapped accounts:
+Each canonical Claude ship and scout spawn and relaunch that does not name an account uses the shared snapshot and refresh-before-refuse behavior in [failover limits](#limits), then chooses among the mapped accounts:
 
 1. The account whose weekly window resets soonest gets the work while it is on or behind the pace that would empty it at that reset, which `quota-axi` reports as a weekly pace reserve of zero or more.
 2. While that account is ahead of pace, the other accounts are tried first, and it remains the last choice.
@@ -1268,7 +1280,7 @@ Each canonical Claude ship and scout spawn and relaunch that does not name an ac
 
 The launch runs on the chosen account like a failover account, and the task record carries `claude_account=<name>` plus `claude_account_reason=`, one line naming each account's week left, weekly reset, and pace, and any account refused at launch.
 Every paced relaunch chooses afresh rather than keeping the last account, while a relaunch that names `--claude-account`, including a failover move, uses that literal account for its replacement.
-Control checks a fresh pacing choice before stopping the current worker, and spawn chooses again from a fresh reading before launching its replacement.
+Control checks a pacing choice before stopping the current worker, and spawn chooses again using the shared home snapshot before launching its replacement.
 
 ### When no account is choosable
 
@@ -1276,7 +1288,7 @@ When no account is choosable, the launch refuses with an `error: Claude account 
 A fresh spawn refuses before creating an endpoint, local copy, or task record; a relaunch whose pre-stop pacing check fails leaves the current worker running.
 A home with `paced` but no `config/claude-failover` refuses Claude ship and scout launches and names the missing file.
 Raw Claude launch commands are not paced and keep their ambient launch account.
-Secondmate agents are not paced; their account retention follows the [failover limits](#limits).
+Secondmate agents retain their recorded account when usable, with paced recovery fall-through as described in [failover limits](#limits).
 A worker that later reaches a usage limit still moves through [Claude account failover](#claude-account-failover-configclaude-failover).
 [`bin/fm-worker-account-lib.sh`](../bin/fm-worker-account-lib.sh) owns the choice and its checks.
 
@@ -1450,6 +1462,7 @@ A fresh worker starts only when observed used percentage is strictly below `allo
 The resolved `claude` harness reads the combined all-models weekly Claude quota, and `codex` reads the normal Codex weekly window.
 The plan paces only the providers it declares: any other resolved harness, such as `pi` or `omp`, has no reserve line, so its fresh spawn is admitted unpaced with one diagnostic line naming the harness, and it is never mapped onto the Claude gate.
 The gate reads account-wide usage, including spending from other machines, through `quota-axi --all-accounts --json`, with a cache no older than five minutes.
+When account selection has already captured the launch snapshot, admission consumes that same snapshot through the [failover decision-sharing contract](#limits).
 An unsupported command, absent combined Claude reading, unexpected field shape, stale snapshot, ambiguous provider or invalid reset refuses the affected admission rather than substituting local usage.
 The combined reader expects fields reported from a local quota-axi build and unavailable in the published PC binary; its fixture assumptions and exact compatibility boundary are recorded in [`bin/fm-quota-plan-lib.sh`](../bin/fm-quota-plan-lib.sh).
 The gate neither selects accounts nor schedules an overflow seat.

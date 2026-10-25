@@ -39,8 +39,9 @@
 #      upgrade) can ever be picked, whatever order the prompt lists them in.
 #      A repeat limit may report only "You've hit your ... limit" without a
 #      menu; that verified hook text confirms exhaustion without sending a key.
-#   3. Takes one fresh `quota-axi --all-accounts --json` snapshot and picks an
-#      account of the map through `choose`.
+#   3. Uses the home-shared `quota-axi --all-accounts --json` snapshot and
+#      picks an account of the map through `choose` (worker-account-lib owns
+#      the sixty-second cache and refresh invalidation).
 #   4. With no qualifying account, leaves the worker stopped and
 #      appends one home-wide `blocked:` outcome naming each account's quota
 #      and reset time, once until a fresh snapshot finds room for the
@@ -304,7 +305,7 @@ current_account() {
     if [ "$set" = 1 ]; then
       want=$(cd "$dir" 2>/dev/null && pwd -P) || want=$dir
     fi
-    while IFS=$'\t' read -r _ name declared; do
+    while IFS=$'\t' read -r _ name declared _; do
       [ -n "$name" ] || continue
       root=$declared
       [ "$declared" != ordinary ] || root=
@@ -421,7 +422,7 @@ fm_account_failover_recover() {
   command -v quota-axi >/dev/null 2>&1 \
     || status_blocked "Claude usage limit reached ($limit_text); quota-axi is not installed, so no other account could be checked and the worker was left stopped"
   snapshot="$STATE/.$ID.account-failover-quota.$$.json"
-  if ! fm_run_timed "$quota_seconds" env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json > "$snapshot" 2>/dev/null </dev/null; then
+  if ! FM_ACCOUNT_FAILOVER_QUOTA_SECONDS="$quota_seconds" fm_worker_account_snapshot "$CONFIG" > "$snapshot" 2>/dev/null; then
     rm -f "$snapshot"
     status_blocked "Claude usage limit reached ($limit_text); the quota-axi --all-accounts snapshot failed, so the worker was left stopped"
   fi
@@ -505,7 +506,7 @@ cmd_tick() {
         # shellcheck disable=SC2016 # Positional parameters expand in the inner Bash process.
         if touch "$state/.claude-exhausted" && fm_run_timed 2 bash -c '
           . "$1"
-          env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json > "$2" </dev/null &&
+          FM_ACCOUNT_FAILOVER_QUOTA_SECONDS=2 fm_worker_account_snapshot "$(dirname "$3")" > "$2" &&
             cmd_choose --map "$3" --snapshot "$2" --model "$4"
         ' _ "$SCRIPT_DIR/fm-account-failover.sh" "$snapshot" \
           "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/$FM_WORKER_ACCOUNT_FAILOVER_FILE" "$model" >/dev/null 2>&1; then

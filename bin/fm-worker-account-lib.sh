@@ -198,11 +198,12 @@ fm_worker_account_pi_provider() {
   esac
 }
 
-# fm_worker_account_check <harness> <declared> <root> <executable> [<provider>] [<setting>]
+# fm_worker_account_check <harness> <declared> <root> <executable> [<provider>] [<setting>] [<expected-email>] [<account-name>]
 # Returns 0 only when the runner's own check says the selected root is signed
 # in for this launch; otherwise prints one error and returns 1.
 fm_worker_account_check() {
   local harness=$1 declared=$2 root=$3 executable=$4 provider=${5:-} setting=${6:-} out verdict name
+  local expected=${7:-} account=${8:-$declared} email
   [ -n "$setting" ] || setting="config/$(fm_worker_account_file "$harness")"
   local -a clean=(env -i "HOME=${HOME:-}" "PATH=${PATH:-}")
   for name in TMPDIR USER LOGNAME; do
@@ -211,8 +212,17 @@ fm_worker_account_check() {
   case "$harness" in
   claude)
     [ -z "$root" ] || clean+=("CLAUDE_CONFIG_DIR=$root")
-    if fm_run_timed "$FM_WORKER_ACCOUNT_CHECK_SECONDS" "${clean[@]}" \
-      "$executable" auth status >/dev/null 2>&1 </dev/null; then
+    if out=$(fm_run_timed "$FM_WORKER_ACCOUNT_CHECK_SECONDS" "${clean[@]}" \
+      "$executable" auth status 2>/dev/null </dev/null); then
+      if [ -n "$expected" ]; then
+        email=$(printf '%s' "$out" | jq -r '.email | select(type == "string")' 2>/dev/null)
+        if [ "$email" != "$expected" ]; then
+          # Only the identity is reported, never the auth response or tokens.
+          email=$(printf '%s' "${email:-unknown}" | tr '\n\r\t' '   ')
+          echo "error: Claude account '$account' is signed in as $email, expected $expected; sign that account in from a normal terminal" >&2
+          return 1
+        fi
+      fi
       return 0
     fi
     if [ -n "$root" ]; then
@@ -326,16 +336,16 @@ fm_worker_account_claude_shed() {
 # Opt-in; an absent file is no failover. The file names the Claude accounts a
 # ship, scout, or local secondmate may be moved between, each by the account name `quota-axi
 # --all-accounts` reports for it:
-#   account <name> <ordinary | absolute CLAUDE_CONFIG_DIR>
+#   account <name> <ordinary | absolute CLAUDE_CONFIG_DIR> [expected-email]
 # Blank lines and lines starting with # are ignored. `ordinary` means
 # CLAUDE_CONFIG_DIR unset, for the same Keychain reason the pin above gives.
 # Names are [A-Za-z0-9][A-Za-z0-9._-]* and unique; a path is the rest of its
-# line, absolute, with no control characters.
+# line, absolute, with no control characters, followed optionally by an email.
 
 FM_WORKER_ACCOUNT_FAILOVER_FILE=claude-failover
 
 # fm_worker_account_failover_read <file>
-# Prints one "account<TAB><name><TAB><declared>" line per account in file
+# Prints one "account<TAB><name><TAB><declared>[<TAB><expected-email>]" line per account in file
 # order. Returns 0 on success, 3 when the file does not exist, 4 when it cannot be inspected
 # (one error already printed), 5 when it is not a readable regular file, and 6
 # when it is malformed (one error naming the line already printed).
@@ -359,9 +369,16 @@ fm_worker_account_failover_read() {
       next if $line =~ /\A\s*(?:#.*)?\z/;
       if ($line =~ /\Aaccount +([A-Za-z0-9][A-Za-z0-9._-]*) +(ordinary|\/.*?) *\z/) {
         $bad->("account $1 is named twice") if $seen{$1}++;
-        push @accounts, "account\t$1\t$2\n";
+        my ($name, $declared, $email) = ($1, $2, "");
+        # Existing directories win over an ambiguous email-looking suffix,
+        # preserving legacy paths with spaces and @ in their final component.
+        if (!-d $declared && $declared =~ s/ +([^\s\@]+\@[^\s\@]+)\z//) { $email = $1 }
+        push @accounts, "account\t$name\t$declared" . (length($email) ? "\t$email" : "") . "\n";
+      } elsif ($line =~ /\Aaccount +([A-Za-z0-9][A-Za-z0-9._-]*) +ordinary +([^\s\@]+\@[^\s\@]+) *\z/) {
+        $bad->("account $1 is named twice") if $seen{$1}++;
+        push @accounts, "account\t$1\tordinary\t$2\n";
       } else {
-        $bad->("expected \"account <name> <ordinary|/absolute/path>\"");
+        $bad->("expected \"account <name> <ordinary|/absolute/path> [expected-email]\"");
       }
     }
     print @accounts;
@@ -414,6 +431,7 @@ fm_worker_account_failover_resolve() {
     return 1
   }
   declared=${line#account$'\t'"$name"$'\t'}
+  declared=${declared%%$'\t'*}
   root=$declared
   [ "$declared" != ordinary ] || root=
   if [ -n "$root" ] && { [ ! -d "$root" ] || [ ! -r "$root" ] || [ ! -x "$root" ]; }; then
@@ -423,13 +441,226 @@ fm_worker_account_failover_resolve() {
   printf '%s\t%s\n' "$declared" "$root"
 }
 
+# fm_worker_account_locked <config> <operation> [args...]
+# Serialize quota reads and refresh attempts within this home, with an OS
+# lock released even on timeout. The bound includes lock wait and all work.
+fm_worker_account_locked() {
+  local config=$1
+  shift
+  # shellcheck disable=SC2016 # Perl and the inner Bash expand their own variables.
+  fm_run_timed "${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}" perl -MFcntl=:flock -e '
+    my $lock = shift;
+    open(my $fh, ">>", $lock) or exit 1;
+    flock($fh, LOCK_EX) or exit 1;
+    system @ARGV;
+    exit($? == -1 ? 1 : $? & 127 ? 1 : $? >> 8);
+  ' "$config/.claude-quota.lock" bash -c '
+    . "$1"
+    shift
+    "$@"
+  ' _ "${BASH_SOURCE[0]}" "$@"
+}
+
+# fm_worker_account_snapshot <config>
+# Share one vendor snapshot (including a failed attempt) for sixty seconds.
+# Only locally timestamped, originally fresh readings are reused; vendor
+# stale/reused flags are preserved and still refuse. Refreshing credentials
+# explicitly invalidates the snapshot so the post-refresh decision is fresh.
+fm_worker_account_snapshot() {
+  fm_worker_account_locked "$1" fm_worker_account_snapshot_read "$1"
+}
+
+# fm_worker_account_decision_start <config> [recovery-file] [generation]
+# Pin one snapshot for the complete launch transaction, including subprocesses.
+# A dead secondmate's unchanged record identifies the same retry decision.
+# Normal transactions own a temporary file; successful recovery removes its
+# persistent decision file. Failed recovery keeps it for the next attempt.
+fm_worker_account_decision_start() {
+  local config=$1 recovery=${2:-} generation=${3:-} saved
+  [ -z "${FM_ACCOUNT_QUOTA_DECISION_FILE:-}" ] || return 0
+  if [ -n "$recovery" ]; then
+    saved=$(jq -r '.generation // ""' "$recovery" 2>/dev/null) || saved=
+    if [ "$saved" != "$generation" ]; then
+      rm -f "$recovery" || return 1
+    fi
+    FM_ACCOUNT_QUOTA_DECISION_FILE=$recovery
+    FM_ACCOUNT_QUOTA_DECISION_RECOVERY=1
+  else
+    FM_ACCOUNT_QUOTA_DECISION_FILE=$(umask 077; mktemp "$config/.claude-quota-decision.XXXXXX") || return 1
+    FM_ACCOUNT_QUOTA_DECISION_OWNED=1
+  fi
+  export FM_ACCOUNT_QUOTA_DECISION_FILE
+  export FM_ACCOUNT_QUOTA_DECISION_GENERATION=$generation
+}
+
+fm_worker_account_decision_finish() {
+  if [ "${FM_ACCOUNT_QUOTA_DECISION_OWNED:-0}" = 1 ] ||
+    { [ "${FM_ACCOUNT_QUOTA_DECISION_RECOVERY:-0}" = 1 ] && [ "$1" = 0 ]; }; then
+    rm -f "${FM_ACCOUNT_QUOTA_DECISION_FILE:-}" || true
+  fi
+  unset FM_ACCOUNT_QUOTA_DECISION_FILE FM_ACCOUNT_QUOTA_DECISION_GENERATION
+  unset FM_ACCOUNT_QUOTA_DECISION_OWNED FM_ACCOUNT_QUOTA_DECISION_RECOVERY
+}
+
+# Copy the envelope atomically so a timed-out attempt never publishes partial
+# JSON for a later retry. It contains quota data, never auth-status responses.
+fm_worker_account_decision_capture() {
+  local source=$1 file=${FM_ACCOUNT_QUOTA_DECISION_FILE:-} tmp attempts
+  [ -n "$file" ] || return 0
+  attempts=$(jq -c '.refreshAttempts // []' "$file" 2>/dev/null) || attempts='[]'
+  attempts=${attempts:-[]}
+  tmp=$(umask 077; mktemp "$file.XXXXXX") || return 1
+  if ! jq --arg generation "${FM_ACCOUNT_QUOTA_DECISION_GENERATION:-}" --argjson attempts "$attempts" \
+    '. + {generation:$generation,refreshAttempts:$attempts}' "$source" > "$tmp" ||
+    ! mv "$tmp" "$file"; then
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+# Internal; caller holds .claude-quota.lock.
+fm_worker_account_snapshot_read() {
+  local config=$1 force=${2:-0} cache="$1/.claude-quota.json" now saved snapshot tmp
+  if [ "$force" = 0 ] && [ -n "${FM_ACCOUNT_QUOTA_DECISION_FILE:-}" ] &&
+    jq -e 'has("snapshot")' "$FM_ACCOUNT_QUOTA_DECISION_FILE" >/dev/null 2>&1; then
+    jq -ec '.snapshot | select(type == "object")' "$FM_ACCOUNT_QUOTA_DECISION_FILE"
+    return
+  fi
+  now=$(date +%s)
+  saved=$(jq -r '.at // 0' "$cache" 2>/dev/null) || saved=0
+  if [ "$force" = 0 ] && [[ $saved =~ ^[0-9]+$ ]] && [ "$now" -ge "$saved" ] && [ "$((now - saved))" -lt 60 ]; then
+    fm_worker_account_decision_capture "$cache" || return 1
+    fm_worker_account_quota_observe "$config" "$(jq -c .snapshot "$cache")"
+    jq -ec '.snapshot | select(type == "object")' "$cache"
+    return
+  fi
+  snapshot=$(env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json 2>/dev/null </dev/null) || snapshot=null
+  if ! printf '%s' "$snapshot" | jq -e 'type == "object" and (.providers | type == "array")' >/dev/null 2>&1; then
+    snapshot=null
+  fi
+  tmp=$(umask 077; mktemp "$cache.XXXXXX") || return 1
+  if ! jq -nc --argjson at "$(date +%s)" --argjson snapshot "$snapshot" '{at:$at,snapshot:$snapshot}' > "$tmp" ||
+    ! mv "$tmp" "$cache"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  fm_worker_account_decision_capture "$cache" || return 1
+  [ "$snapshot" != null ] || return 1
+  fm_worker_account_quota_observe "$config" "$snapshot"
+  printf '%s\n' "$snapshot"
+}
+
+# fm_worker_account_diagnostics <snapshot>
+# Authentication failures take precedence over endpoint throttling. Keep the
+# vendor retryAfter measurement intact and derive display age from refreshedAt.
+fm_worker_account_diagnostics() {
+  printf '%s' "$1" | jq -c --argjson now "${2:-$(date +%s)}" '
+    def epoch: if type == "string" then try (sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) catch null else null end;
+    [ .. | objects | select(((.account? // .provider?) | type) == "string") |
+      . as $row | (.state // .) as $state |
+      (($state.error // .error // "") | tostring | ascii_downcase) as $error |
+      ($state.retryAfter // .retryAfter // null) as $retry |
+      (($state.authStatus // .authStatus // "") == "expired_refreshable" or
+        ($error | test("claude[ _-]*(credential|access[ _-]*token)[ _-]*expired"))) as $expired |
+      (($state.status // "") == "rate_limited" or
+        (($state.stale // false) == true and $retry != null) or ($error | test("(^|[^0-9])429([^0-9]|$)"))) as $limited |
+      ($state.refreshedAt // .refreshedAt // null | epoch) as $time |
+      { name:(.account // .provider), provider:(.provider // null), authExpired:$expired, rateLimited:$limited, retryAfter:$retry,
+        measurement:($limited or $retry != null),
+        why:(if $expired then "login expired; needs a fresh sign-in from a normal terminal"
+          elif $limited then "quota endpoint rate limited until " +
+            (if ($retry | type) == "number" then ($now + $retry | todateiso8601) else ($retry // "unknown" | tostring) end) +
+            ", reading from " + (if $time != null and $time <= $now then "\($now - $time)s ago" else "unknown age" end)
+          else null end) } ] |
+    group_by([(.provider // "claude"), .name]) | map(sort_by(if .authExpired then 0 elif .rateLimited then 1 else 2 end) | .[0])'
+}
+
+# fm_worker_account_expired <snapshot> <name>
+# Includes account-scoped failure records when the provider row is missing.
+fm_worker_account_expired() {
+  fm_worker_account_diagnostics "$1" | jq -e --arg name "$2" 'any(.[]; (.provider == null or .provider == "claude") and .name == $name and .authExpired)' >/dev/null 2>&1
+}
+
+# fm_worker_account_quota_observe <config> <snapshot>
+# Private measurement only: record account and the exact retryAfter reported
+# by quota-axi, including 429s with no header. No auth response is logged.
+fm_worker_account_quota_observe() {
+  local config=$1 snapshot=$2 line log="$1/../state/.supervision-host.log"
+  [ -d "$config/../state" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    printf '[%s] quota endpoint: %s\n' "$(date +%s)" "$line" >> "$log"
+  done < <(fm_worker_account_diagnostics "$snapshot" | jq -cr '.[] | select(.measurement) | {account:.name,retryAfter:.retryAfter}')
+}
+
+# fm_worker_account_claude_live <root>
+# Do not race token rotation by a running CLI. Linux exposes its selector;
+# where it cannot be inspected, conservatively defer while any Claude runs.
+# No process environment or credential contents leave this function.
+fm_worker_account_claude_live() {
+  local root=$1 pid selected
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    [ -r "/proc/$pid/environ" ] || return 0
+    selected=$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^CLAUDE_CONFIG_DIR=//p')
+    [ "$selected" != "$root" ] || return 0
+  done < <(pgrep -u "$(id -u)" -f '^([^ ]*/)?claude( |$)|@anthropic-ai/claude-code/' 2>/dev/null)
+  return 1
+}
+
+# fm_worker_account_refresh <config> <name> <root> <executable> <snapshot>
+# Caller has checked the identity. One bounded Haiku ping, then a vendor
+# re-read, breaks the expired-token launch deadlock. The home lock and a
+# sixty-second per-account marker suppress concurrent/retry refresh storms.
+fm_worker_account_refresh() {
+  fm_worker_account_locked "$1" fm_worker_account_refresh_locked "$@"
+}
+
+fm_worker_account_refresh_locked() {
+  local config=$1 name=$2 root=$3 executable=$4 snapshot=$5 latest marker now saved
+  marker="$config/.claude-refresh-$name"
+  latest=$(fm_worker_account_snapshot_read "$config") || return 1
+  if ! fm_worker_account_expired "$latest" "$name"; then
+    printf '%s\n' "$latest"
+    return 0
+  fi
+  snapshot=$latest
+  if [ -n "${FM_ACCOUNT_QUOTA_DECISION_FILE:-}" ]; then
+    if jq -e --arg name "$name" '(.refreshAttempts // []) | index($name) != null' "$FM_ACCOUNT_QUOTA_DECISION_FILE" >/dev/null 2>&1; then
+      printf '%s\n' "$snapshot"
+      return 0
+    fi
+    local tmp
+    tmp=$(umask 077; mktemp "$FM_ACCOUNT_QUOTA_DECISION_FILE.XXXXXX") || return 1
+    if ! jq --arg name "$name" '.refreshAttempts = ((.refreshAttempts // []) + [$name])' "$FM_ACCOUNT_QUOTA_DECISION_FILE" > "$tmp" ||
+      ! mv "$tmp" "$FM_ACCOUNT_QUOTA_DECISION_FILE"; then
+      rm -f "$tmp"
+      return 1
+    fi
+  fi
+  now=$(date +%s)
+  saved=$(cat "$marker" 2>/dev/null) || saved=0
+  if [[ $saved =~ ^[0-9]+$ ]] && [ "$now" -ge "$saved" ] && [ "$((now - saved))" -lt 60 ]; then
+    printf '%s\n' "$snapshot"
+    return 0
+  fi
+  local -a clean=(env -i "HOME=${HOME:-}" "PATH=${PATH:-}")
+  [ -z "$root" ] || clean+=("CLAUDE_CONFIG_DIR=$root")
+  (umask 077; printf '%s\n' "$now" > "$marker") || return 1
+  if ! fm_worker_account_claude_live "$root"; then
+    "${clean[@]}" "$executable" -p 'reply with ok' --model haiku >/dev/null 2>&1 </dev/null || true
+  fi
+  fm_worker_account_snapshot_read "$config" 1
+}
+
 # fm_worker_account_failover_quota <map-text> <snapshot-json> <current> <model>
 # Prints one JSON array of per-account verdicts in map order.
 fm_worker_account_failover_quota() {
-  local map=$1 snapshot=$2 current=$3 model=$4 names
+  local map=$1 snapshot=$2 current=$3 model=$4 names diagnostics
+  diagnostics=$(fm_worker_account_diagnostics "$snapshot") || return 1
   names=$(printf '%s\n' "$map" | awk -F'\t' '$1 == "account" { print $2 }' | jq -R . | jq -sc .)
   printf '%s' "$snapshot" | jq -c --argjson names "$names" \
-    --arg current "$current" --arg model "$model" '
+    --arg current "$current" --arg model "$model" --argjson diagnostics "$diagnostics" '
     def short_time: if type == "string" then sub("\\.[0-9]+"; "") | sub(":[0-9]{2}(\\+00:00|Z)$"; "Z") else null end;
     def model_family:
       if type != "string" then null
@@ -450,7 +681,9 @@ fm_worker_account_failover_quota() {
     [ $names | to_entries[] | .key as $order | .value as $name |
       [ $snap.providers[] | select(type == "object" and .provider == "claude" and .account == $name) ] as $rows |
       { name: $name, order: $order } +
-      (if ($rows | length) == 0 then { ok: false, why: "no quota reading for this account" }
+      (if ([$diagnostics[] | select((.provider == null or .provider == "claude") and .name == $name and .why != null)] | length) > 0 then
+        {ok:false,why:([$diagnostics[] | select((.provider == null or .provider == "claude") and .name == $name)][0].why)}
+      elif ($rows | length) == 0 then { ok: false, why: "no quota reading for this account" }
       elif ($rows | length) > 1 then { ok: false, why: "more than one quota reading for this account" }
       else
         $rows[0] as $row |
@@ -484,24 +717,49 @@ fm_worker_account_failover_quota() {
 # The launch-time decision for a worker recorded on a failover account: the
 # resolve above, the same sign-in check a pin gets, and a fresh quota reading
 # proving paid usage disabled and model quota above the fixed safety margin;
-# reused readings refuse. Without a supplied snapshot, reads
-# quota-axi --all-accounts --json at launch with QUOTA_AXI_MAX_AGE unset, so
-# the vendor is asked (--all-accounts refuses --max-age). Prints
+# vendor-reused readings refuse. Without a supplied snapshot, uses the shared
+# sixty-second home snapshot. An expired-refreshable login gets one bounded
+# refresh ping before a new quota reading. Prints
 # "declared<TAB>root" on success; on refusal prints one error and returns 1.
 fm_worker_account_failover_select() {
-  local config=$1 name=$2 executable=$3 model=$4 snapshot=${5:-} map=${6:-} selection declared root verdict reason
+  local config=$1 name=$2 executable=$3 model=$4 snapshot=${5:-} map=${6:-} selection declared root verdict reason expected
+  [ -n "$map" ] || map=$(fm_worker_account_failover_load "$config") || return 1
   selection=$(fm_worker_account_failover_resolve "$config" "$name" "$map") || return 1
   declared=${selection%%$'\t'*}
   root=${selection#*$'\t'}
-  if ! fm_worker_account_check claude "$declared" "$root" "$executable" 2>/dev/null; then
-    echo "error: config/$FM_WORKER_ACCOUNT_FAILOVER_FILE account '$name' ($declared) is not signed in (claude auth status); sign in to it, or remove it from the map" >&2
+  expected=$(printf '%s\n' "$map" | awk -F'\t' -v n="$name" '$2 == n { print $4; exit }')
+  if ! reason=$(fm_worker_account_check claude "$declared" "$root" "$executable" '' "config/$FM_WORKER_ACCOUNT_FAILOVER_FILE account '$name'" "$expected" "$name" 2>&1); then
+    printf '%s\n' "$reason" >&2
     return 1
   fi
   if [ -z "$snapshot" ]; then
-    snapshot=$(fm_run_timed "${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}" env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json 2>/dev/null </dev/null) || {
-      echo "error: Claude account '$name' paid usage could not be checked" >&2
+    snapshot=$(fm_worker_account_snapshot "$config") || {
+      echo "error: Claude account '$name' quota and sign-in status could not be checked" >&2
       return 1
     }
+  fi
+  if fm_worker_account_expired "$snapshot" "$name"; then
+    snapshot=$(fm_worker_account_refresh "$config" "$name" "$root" "$executable" "$snapshot") || {
+      echo "error: Claude account '$name' login expired; refresh could not be confirmed; sign that account in from a normal terminal" >&2
+      return 1
+    }
+    if fm_worker_account_expired "$snapshot" "$name"; then
+      echo "error: Claude account '$name' login expired; needs a fresh sign-in from a normal terminal" >&2
+      return 1
+    fi
+    fm_worker_account_check claude "$declared" "$root" "$executable" '' "config/$FM_WORKER_ACCOUNT_FAILOVER_FILE account '$name'" "$expected" "$name" || return 1
+  fi
+  reason=$(fm_worker_account_diagnostics "$snapshot" | jq -r --arg name "$name" '.[] | select((.provider == null or .provider == "claude") and .name == $name) | .why // empty')
+  if [ -n "$reason" ]; then
+    echo "error: Claude account '$name' $reason" >&2
+    return 1
+  fi
+  if printf '%s' "$snapshot" | jq -e --arg name "$name" '
+    any(.providers[]; .provider == "claude" and .account == $name and .state.status == "fresh"
+      and .state.stale != true and .state.reused != true
+      and any(.windows[]?; .kind == "credits" or .id == "extra_usage"))' >/dev/null 2>&1; then
+    echo "error: Claude account '$name' has paid usage enabled (credits window)" >&2
+    return 1
   fi
   if ! printf '%s' "$snapshot" | jq -e --arg name "$name" '
     [.providers[] | select(.provider == "claude" and .account == $name)] |
@@ -509,7 +767,7 @@ fm_worker_account_failover_select() {
       and .quotaSemantics.status == "known" and (.windows | type) == "array"
       and any(.windows[]; .kind == "session" or .kind == "weekly")
       and all(.windows[]; .kind != "credits" and .id != "extra_usage"))' >/dev/null 2>&1; then
-    echo "error: Claude account '$name' has paid usage enabled or its paid usage status is unknown" >&2
+    echo "error: Claude account '$name' has no fresh usable quota reading" >&2
     return 1
   fi
   verdict=$(fm_worker_account_failover_quota "$(printf 'account\t%s\n' "$name")" "$snapshot" '' "$model" 2>/dev/null) || {
@@ -551,25 +809,42 @@ fm_worker_account_paced() {
 
 # fm_worker_account_pace <config-dir> <executable> <model> [snapshot-json]
 # Picks the account for one Claude ship or scout launch in a paced home from
-# one quota-axi --all-accounts reading (read here, with QUOTA_AXI_MAX_AGE
-# unset, unless supplied). Prints
+# one shared home quota snapshot (unless supplied), refreshing expired logins
+# before planning account order. Prints
 # "pick<TAB><name><TAB><declared><TAB><root><TAB><reason>" and returns 0.
 # The reason is one line naming each account's week left, weekly reset, and
 # pace. Prints one error and returns 1 when no account is choosable or the
 # home has no usable config/claude-failover; callers must refuse the launch.
 fm_worker_account_pace() {
-  local config=$1 executable=$2 model=$3 snapshot=${4:-} map verdicts plan summary name selection err refused=
+  local config=$1 executable=$2 model=$3 snapshot=${4:-} map verdicts plan summary name selection err refused='' root declared expected refreshed
   map=$(fm_worker_account_failover_load "$config") || return 1
   [ -n "$map" ] || {
     echo "error: config/claude-account selects pacing across the accounts of config/$FM_WORKER_ACCOUNT_FAILOVER_FILE, and this home has none" >&2
     return 1
   }
   if [ -z "$snapshot" ]; then
-    snapshot=$(fm_run_timed "${FM_ACCOUNT_FAILOVER_QUOTA_SECONDS:-90}" env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json 2>/dev/null </dev/null) || {
+    snapshot=$(fm_worker_account_snapshot "$config") || {
       echo 'error: Claude account pacing: the quota-axi --all-accounts reading failed' >&2
       return 1
     }
   fi
+  # Expired rows have no usable quota and would disappear from the candidate
+  # order, so attempt recovery before filtering. Check identity before spending.
+  while IFS=$'\t' read -r _ name declared expected; do
+    [ -n "$name" ] || continue
+    fm_worker_account_expired "$snapshot" "$name" || continue
+    if ! selection=$(fm_worker_account_failover_resolve "$config" "$name" "$map" 2>&1); then
+      refused="$refused; $name refused at launch (${selection#error: })"
+      continue
+    fi
+    root=${selection#*$'\t'}
+    if err=$(fm_worker_account_check claude "$declared" "$root" "$executable" '' "config/$FM_WORKER_ACCOUNT_FAILOVER_FILE" "$expected" "$name" 2>&1) &&
+      refreshed=$(fm_worker_account_refresh "$config" "$name" "$root" "$executable" "$snapshot" 2>/dev/null); then
+      snapshot=$refreshed
+    else
+      refused="$refused; $name refused at launch (${err:-login expired; refresh could not be confirmed; sign in from a normal terminal})"
+    fi
+  done < <(printf '%s\n' "$map")
   verdicts=$(fm_worker_account_failover_quota "$map" "$snapshot" '' "$model" 2>/dev/null) || {
     echo 'error: Claude account pacing: the quota-axi --all-accounts reading was unreadable' >&2
     return 1
