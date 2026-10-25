@@ -3,9 +3,10 @@
 #
 # A treehouse pool can return a clean detached worktree whose origin/main was
 # advanced after the worktree was allocated.
-# These tests drive the real spawn path with a fake terminal, then prove it
+# Base-refresh cases drive the real spawn path with a fake terminal, then prove it
 # starts the worker from the fetched origin tip, launches a clean origin-less
 # pool as-is, or stops when a configured origin is unusable.
+# Lease lifecycle coverage below uses real Treehouse and a private tmux server.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -948,9 +949,8 @@ SH
   pass "a refused polytoken launch leaves its per-id paths alone while another spawn holds the per-id lock"
 }
 
-# A launch on any harness other than polytoken keeps main's abort behavior: its
-# pre-publication claim is dropped under the allocation lock, but the window
-# it opened, and with it the slot's lease, stays for the operator to inspect.
+# A refused non-polytoken launch retains its diagnostic window. This fake
+# terminal fixture checks claim cleanup, not the durable lease lifecycle.
 test_non_polytoken_refused_launch_keeps_its_window() {
   local rec id out status slot_root world
   id='pool-refused-codex-r1'
@@ -1177,6 +1177,7 @@ test_scout_base_branch_refused_on_gerrit_forge() {
   pass "a based scout on a forge=gerrit project is refused at spawn"
 }
 
+
 test_remote_seeded_home_spawns_from_treehouse_pool
 test_pool_slot_claim_follows_the_spawn_outcome
 test_refused_launch_leaves_the_pool_for_a_retry_and_a_second_task
@@ -1205,5 +1206,262 @@ test_unpushed_submodule_commit_is_still_uncommitted_work
 test_work_inside_submodule_is_still_uncommitted_work
 test_stale_pin_carrying_real_work_is_not_called_stale
 test_stale_pin_beside_other_dirt_reports_one_verdict
+
+
+# Real pool lifecycle coverage uses a separate private socket and scratch home.
+test_stopped_task_retains_slot_lease() (
+set -eu
+for tool in treehouse tmux jq; do
+  command -v "$tool" >/dev/null || { echo "skip: $tool not found"; exit 0; }
+done
+treehouse get --help | grep -q -- --lease-holder || { echo 'skip: Treehouse durable leases unavailable'; exit 0; }
+
+TMP_ROOT=$(fm_test_tmproot fm-spawn-slot-lease)
+REAL_TMUX=$(command -v tmux)
+SOCKET="fm-slot-lease-$$"
+cleanup() {
+  "$REAL_TMUX" -L "$SOCKET" kill-server >/dev/null 2>&1 || true
+  fm_test_cleanup
+}
+trap cleanup EXIT
+unset TMUX TMUX_PANE FM_BACKEND HERDR_ENV HERDR_SESSION HERDR_SOCKET_PATH TREEHOUSE_DIR
+export HOME="$TMP_ROOT/user" SHELL=/bin/bash TREEHOUSE_ROOT="$TMP_ROOT/pools" TREEHOUSE_NO_UPDATE_CHECK=1
+mkdir -p "$HOME" "$TMP_ROOT/shim"
+cat > "$TMP_ROOT/shim/tmux" <<EOF
+#!/usr/bin/env bash
+if [ -e "$TMP_ROOT/refuse-launch-delivery" ] && [ "\${1:-}" = send-keys ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      '. '*) echo 'fixture: launch delivery refused' >&2; exit 1 ;;
+    esac
+  done
+fi
+if [ -e "$TMP_ROOT/refuse-directory-handoff" ] && [ "\${1:-}" = send-keys ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      'cd -- '*) echo 'fixture: directory handoff refused' >&2; exit 1 ;;
+    esac
+  done
+fi
+exec "$REAL_TMUX" -L "$SOCKET" "\$@"
+EOF
+# A shell model of an idle Codex composer, not a real model invocation.
+# argv[0] makes the foreground agent recognizable to the lifecycle classifier.
+cat > "$TMP_ROOT/shim/codex" <<'EOF'
+#!/usr/bin/env bash
+exec -a codex bash --noprofile --norc -c '
+  printf "\033[2J\033[H› "
+  while IFS= read -r line; do
+    [ "$line" != /quit ] || exit 0
+  done
+'
+EOF
+chmod +x "$TMP_ROOT/shim/"*
+export PATH="$TMP_ROOT/shim:$PATH"
+export FM_HOME="$TMP_ROOT/home"
+fm_test_spawn_home "$FM_HOME" codex
+printf 'tmux\n' > "$FM_HOME/config/backend"
+export FM_STATE_OVERRIDE="$FM_HOME/state" FM_DATA_OVERRIDE="$FM_HOME/data" FM_CONFIG_OVERRIDE="$FM_HOME/config"
+export FM_PROJECTS_OVERRIDE="$FM_HOME/projects" FM_SPAWN_NO_GUARD=1
+fm_git_init_commit "$TMP_ROOT/project"
+PROJECT="$TMP_ROOT/project"
+# Keep capacity explicit so the second allocation can succeed while the first
+# slot remains leased, with no network fetch or developer configuration.
+printf 'max_trees = 3\n' > "$PROJECT/treehouse.toml"
+git -C "$PROJECT" add treehouse.toml
+git -C "$PROJECT" -c user.name=test -c user.email=test@example.invalid commit -qm 'Configure private pool'
+
+# Reproduce the legacy acquire's failure independently of Treehouse's version
+# specific treatment of idle shells. Explicitly end its interactive subshell:
+# the endpoint and task record survive, but the process lease expires.
+tmux new-session -d -s legacy -n fm-legacy -c "$PROJECT" 'bash --noprofile --norc'
+tmux send-keys -t legacy:fm-legacy 'treehouse get' Enter
+LEGACY=
+for _ in $(seq 1 100); do
+  LEGACY=$(tmux display-message -p -t legacy:fm-legacy '#{pane_current_path}')
+  [ "$LEGACY" = "$PROJECT" ] || break
+  sleep 0.1
+done
+[ "$LEGACY" != "$PROJECT" ] || fail 'legacy acquire did not enter a slot'
+git -C "$LEGACY" checkout -qb fm/legacy
+printf 'preserved task commit\n' > "$LEGACY/saved-work"
+git -C "$LEGACY" add saved-work
+git -C "$LEGACY" -c user.name=test -c user.email=test@example.invalid commit -qm 'Preserve task work'
+fm_test_spawn_brief "$FM_HOME" legacy
+cp "$FM_HOME/data/legacy/brief.md" "$FM_HOME/data/legacy/launch-brief.md"
+fm_write_meta "$FM_HOME/state/legacy.meta" "window=legacy:fm-legacy" \
+  'endpoint_task_id=legacy' "worktree=$LEGACY" "project=$PROJECT" \
+  'kind=ship' 'harness=codex' 'backend=tmux' 'branch=fm/legacy' \
+  'mode=no-mistakes' 'yolo=off' 'model=default' 'effort=default' 'spawn_gen=fixture'
+"$ROOT/bin/fm-control.sh" legacy exit
+tmux send-keys -t legacy:fm-legacy exit Enter
+for _ in $(seq 1 100); do
+  [ "$(tmux display-message -p -t legacy:fm-legacy '#{pane_current_path}')" != "$PROJECT" ] || break
+  sleep 0.1
+done
+REUSED=$(cd "$PROJECT" && treehouse get --lease --lease-holder replacement)
+assert_equals "$LEGACY" "$REUSED" 'legacy process lease did not permit slot reuse'
+git -C "$REUSED" checkout -qb fm/replacement
+# Match a stopped endpoint still sitting in its recorded copy after reuse.
+tmux send-keys -t legacy:fm-legacy "cd -- '$REUSED'" Enter
+for _ in $(seq 1 100); do
+  [ "$(tmux display-message -p -t legacy:fm-legacy '#{pane_current_path}')" != "$REUSED" ] || break
+  sleep 0.1
+done
+# The owner claim is the published spawn contract that guards legacy cleanup.
+printf 'task=replacement\nhome=%s\n' "$FM_HOME" > "$(dirname "$REUSED")/.fm-slot-owner"
+printf 'successor edits\n' > "$REUSED/successor-work"
+SUCCESSOR_STATUS=$(git -C "$REUSED" status --porcelain --untracked-files=all)
+PR_URL=https://github.com/example/project/pull/42
+PR_HEAD=$(git -C "$PROJECT" rev-parse fm/legacy)
+printf 'pr=%s\npr_head=%s\nx_request=fixture\n' "$PR_URL" "$PR_HEAD" >> "$FM_HOME/state/legacy.meta"
+touch "$TMP_ROOT/refuse-directory-handoff"
+if "$ROOT/bin/fm-control.sh" legacy relaunch --note 'Recover the stopped task.' > "$TMP_ROOT/legacy-move-refused.log" 2>&1; then
+  fail 'legacy relaunch unexpectedly survived refused directory handoff'
+fi
+rm "$TMP_ROOT/refuse-directory-handoff"
+assert_contains "$(cat "$TMP_ROOT/legacy-move-refused.log")" 'fixture: directory handoff refused' 'failure did not reach the directory handoff'
+MOVED=$(sed -n 's/^worktree=//p' "$FM_HOME/state/legacy.meta")
+assert_not_equals "$REUSED" "$MOVED" 'refused directory handoff lost the published location'
+assert_equals "$REUSED" "$(tmux display-message -p -t legacy:fm-legacy '#{pane_current_path}')" 'refused directory handoff unexpectedly changed the endpoint directory'
+touch "$TMP_ROOT/refuse-launch-delivery"
+if "$ROOT/bin/fm-control.sh" legacy relaunch --note 'Continue after moving.' > "$TMP_ROOT/legacy-refused.log" 2>&1; then
+  fail 'legacy relaunch unexpectedly survived refused launch delivery'
+fi
+rm "$TMP_ROOT/refuse-launch-delivery"
+assert_contains "$(cat "$TMP_ROOT/legacy-refused.log")" 'fixture: launch delivery refused' 'failure did not reach the post-move launch boundary'
+RESTORED=$(sed -n 's/^worktree=//p' "$FM_HOME/state/legacy.meta")
+assert_not_equals "$REUSED" "$RESTORED" 'failed launch lost the recovered location'
+assert_present "$RESTORED/saved-work" 'failed launch lost the recovered task work'
+assert_equals "$MOVED" "$RESTORED" 'retry allocated another copy instead of reusing the published lease'
+assert_equals "$RESTORED" "$(tmux display-message -p -t legacy:fm-legacy '#{pane_current_path}')" 'retry did not enter the published copy'
+# shellcheck source=bin/fm-pr-lib.sh
+. "$ROOT/bin/fm-pr-lib.sh"
+fm_pr_metadata_identity_parse "$FM_HOME/state/legacy.meta" || fail 'failed legacy restart left unreadable PR metadata'
+assert_equals "$PR_URL" "$FM_PR_META_URL" 'failed legacy restart changed the registered PR'
+assert_equals "$PR_HEAD" "$(sed -n 's/^pr_head=//p' "$FM_HOME/state/legacy.meta")" 'failed legacy restart changed the registered head'
+assert_equals fixture "$(sed -n 's/^x_request=//p' "$FM_HOME/state/legacy.meta")" 'failed legacy restart lost PR follow-up metadata'
+pass 'a failed legacy restart preserves a readable terminal PR block and recovered location'
+"$ROOT/bin/fm-control.sh" legacy relaunch --note 'Continue the stopped task.' > "$TMP_ROOT/legacy-relaunch.log" 2>&1
+cat "$TMP_ROOT/legacy-relaunch.log"
+RESTORED=$(sed -n 's/^worktree=//p' "$FM_HOME/state/legacy.meta")
+assert_not_equals "$REUSED" "$RESTORED" 'legacy relaunch reused the successor copy'
+assert_equals fm/legacy "$(git -C "$RESTORED" branch --show-current)" 'legacy relaunch did not restore the task branch'
+assert_equals 'preserved task commit' "$(cat "$RESTORED/saved-work")" 'legacy relaunch lost the task commit'
+assert_equals 'successor edits' "$(cat "$REUSED/successor-work")" 'legacy relaunch changed successor work'
+assert_equals "$SUCCESSOR_STATUS" "$(git -C "$REUSED" status --porcelain --untracked-files=all)" 'legacy relaunch changed successor status'
+assert_equals fm/replacement "$(git -C "$REUSED" branch --show-current)" 'legacy relaunch changed successor branch'
+assert_contains "$(cat "$(dirname "$REUSED")/.fm-slot-owner")" task=replacement 'legacy relaunch changed successor ownership'
+(cd "$PROJECT" && treehouse status --json) | jq -e --arg path "$RESTORED" '.[] | select(.path == $path and .status == "leased")' >/dev/null \
+  || fail 'legacy relaunch did not obtain a durable lease'
+"$ROOT/bin/fm-teardown.sh" legacy --force > "$TMP_ROOT/legacy-cleanup.log" 2>&1
+assert_absent "$FM_HOME/state/legacy.meta" 'legacy cleanup stranded its record'
+assert_equals 'successor edits' "$(cat "$REUSED/successor-work")" 'legacy cleanup reset the successor slot'
+(cd "$PROJECT" && treehouse return --force --if-lease-holder replacement "$REUSED")
+rm "$(dirname "$REUSED")/.fm-slot-owner"
+pass 'a legacy task with a reassigned slot relaunches in a durable copy of its committed branch'
+
+# A still-owned process lease is upgraded too, even with no commits beyond its
+# base. Dirty work remains preserved until the operator commits it.
+tmux new-session -d -s legacy-owned -n fm-owned -c "$PROJECT" 'bash --noprofile --norc'
+tmux send-keys -t legacy-owned:fm-owned 'treehouse get' Enter
+OWNED=$PROJECT
+for _ in $(seq 1 100); do
+  OWNED=$(tmux display-message -p -t legacy-owned:fm-owned '#{pane_current_path}')
+  [ "$OWNED" = "$PROJECT" ] || break
+  sleep 0.1
+done
+[ "$OWNED" != "$PROJECT" ] || fail 'owned legacy acquire did not enter a slot'
+git -C "$OWNED" checkout -qb fm/owned
+printf 'task=owned\nhome=%s\n' "$FM_HOME" > "$(dirname "$OWNED")/.fm-slot-owner"
+fm_test_spawn_brief "$FM_HOME" owned
+cp "$FM_HOME/data/owned/brief.md" "$FM_HOME/data/owned/launch-brief.md"
+fm_write_meta "$FM_HOME/state/owned.meta" 'window=legacy-owned:fm-owned' \
+  'endpoint_task_id=owned' "worktree=$OWNED" "project=$PROJECT" \
+  'kind=ship' 'harness=codex' 'backend=tmux' 'branch=fm/owned' \
+  'mode=no-mistakes' 'yolo=off' 'model=default' 'effort=default' 'spawn_gen=fixture'
+printf 'uncommitted task work\n' > "$OWNED/local-work"
+if "$ROOT/bin/fm-control.sh" owned relaunch --note 'Continue own work.' > "$TMP_ROOT/dirty-owned.log" 2>&1; then
+  fail 'a dirty owned legacy slot was moved'
+fi
+assert_equals 'uncommitted task work' "$(cat "$OWNED/local-work")" 'legacy move lost uncommitted work'
+assert_equals "$OWNED" "$(sed -n 's/^worktree=//p' "$FM_HOME/state/owned.meta")" 'dirty refusal rebound the record'
+assert_contains "$(cat "$TMP_ROOT/dirty-owned.log")" 'uncommitted work' 'dirty legacy refusal did not explain how work is preserved'
+rm "$OWNED/local-work"
+"$ROOT/bin/fm-control.sh" owned relaunch --note 'Continue own work.'
+UPGRADED=$(sed -n 's/^worktree=//p' "$FM_HOME/state/owned.meta")
+assert_equals fm/owned "$(git -C "$UPGRADED" branch --show-current)" 'owned upgrade lost its branch'
+"$ROOT/bin/fm-control.sh" owned exit
+(cd "$PROJECT" && treehouse status --json) | jq -e --arg path "$UPGRADED" '.[] | select(.path == $path and .status == "leased")' >/dev/null \
+  || fail 'owned legacy upgrade remained process-leased'
+"$ROOT/bin/fm-control.sh" owned relaunch --note 'Continue after upgrade.'
+assert_equals "$UPGRADED" "$(sed -n 's/^worktree=//p' "$FM_HOME/state/owned.meta")" 'an upgraded lease moved again'
+"$ROOT/bin/fm-teardown.sh" owned --force > "$TMP_ROOT/owned-cleanup.log" 2>&1
+pass 'a still-owned legacy copy becomes durably leased; dirty work is refused and preserved'
+
+spawn() {
+  fm_test_spawn_brief "$FM_HOME" "$1"
+  "$ROOT/bin/fm-spawn.sh" "$1" "$PROJECT" --mode no-mistakes --yolo off
+  # Creating the requested branch is the worker's first instruction, not the
+  # allocator's job. Perform that instruction for the fake agent.
+  git -C "$(copy_of "$1")" checkout -qb "fm/$1"
+}
+copy_of() { sed -n 's/^worktree=//p' "$FM_HOME/state/$1.meta"; }
+pool_status() { (cd "$PROJECT" && treehouse status --json); }
+
+spawn retained
+FIRST=$(copy_of retained)
+"$ROOT/bin/fm-control.sh" retained exit
+assert_present "$FM_HOME/state/retained.meta" 'exit removed the task record'
+pool_status > "$TMP_ROOT/after-exit.json"
+spawn successor
+SECOND=$(copy_of successor)
+if [ "$FIRST" = "$SECOND" ]; then
+  if "$ROOT/bin/fm-control.sh" retained relaunch --note 'Continue in the preserved copy.' > "$TMP_ROOT/relaunch.log" 2>&1; then
+    fail 'relaunch accepted a slot now used by another task'
+  fi
+  cat "$TMP_ROOT/relaunch.log"
+  "$ROOT/bin/fm-teardown.sh" retained > "$TMP_ROOT/stale-cleanup.log" 2>&1
+  assert_absent "$FM_HOME/state/retained.meta" 'cleanup left the reassigned record'
+  assert_equals fm/successor "$(git -C "$SECOND" branch --show-current)" 'stale cleanup changed the successor branch'
+  cat "$TMP_ROOT/stale-cleanup.log"
+  fail 'a new task took the stopped task slot; relaunch refused it'
+fi
+jq -e --arg path "$FIRST" '.[] | select(.path == $path and .status == "leased")' \
+  "$TMP_ROOT/after-exit.json" >/dev/null || fail 'exit made the stopped task slot available for reuse'
+assert_not_equals "$FIRST" "$SECOND" 'a new task took the stopped task slot'
+"$ROOT/bin/fm-control.sh" retained relaunch --note 'Continue in the preserved copy.'
+assert_equals "$FIRST" "$(copy_of retained)" 'relaunch moved away from the retained copy'
+assert_equals fm/retained "$(git -C "$FIRST" branch --show-current)" 'relaunch lost the task branch'
+pass 'exit retains its slot lease across a second allocation and relaunch'
+
+# Simulate a legacy stale record whose slot was reassigned. Cleanup must clear
+# that record without returning, resetting or removing its successor's copy.
+cp "$FM_HOME/state/retained.meta" "$FM_HOME/state/stale.meta"
+sed -i.bak -e 's/retained/stale/g' -e "s|^worktree=.*|worktree=$SECOND|" "$FM_HOME/state/stale.meta"
+rm "$FM_HOME/state/stale.meta.bak"
+printf 'successor work\n' > "$SECOND/sentinel"
+"$ROOT/bin/fm-teardown.sh" stale > "$TMP_ROOT/stale-cleanup.log" 2>&1
+assert_absent "$FM_HOME/state/stale.meta" 'cleanup left the stale record'
+assert_equals 'successor work' "$(cat "$SECOND/sentinel")" 'cleanup reset the successor copy'
+assert_equals fm/successor "$(git -C "$SECOND" branch --show-current)" 'cleanup changed the successor branch'
+assert_present "$FM_HOME/state/successor.meta" 'cleanup removed the successor record'
+assert_contains "$(cat "$TMP_ROOT/stale-cleanup.log")" reassigned 'cleanup did not explain why it skipped the slot'
+pool_status | jq -e --arg path "$SECOND" '.[] | select(.path == $path and .status == "leased")' >/dev/null \
+  || fail 'cleanup released the successor lease'
+pass 'cleanup retires a reassigned record without touching the successor slot'
+
+# Forced cleanup is confined to scratch tasks made here, and proves leases
+# return to the pool only when explicitly retired.
+"$ROOT/bin/fm-teardown.sh" retained --force
+"$ROOT/bin/fm-teardown.sh" successor --force
+pool_status | jq -e 'all(.[]; .status == "available")' >/dev/null || fail 'cleanup leaked a task lease'
+pass 'cleanup returns the retained leases to the private pool'
+
+)
+
+test_stopped_task_retains_slot_lease
+lease_status=$?
+[ "$lease_status" -eq 0 ] || exit "$lease_status"
 
 echo "# all fm-spawn-pool-base-freshen tests passed"

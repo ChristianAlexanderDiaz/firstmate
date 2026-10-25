@@ -1766,10 +1766,10 @@ fm_treehouse_pool_slot() {  # <project-dir> <worktree>
 #
 # Treehouse can record ownership durably: `treehouse get --lease --lease-holder`
 # reserves a slot under a label until `treehouse return --if-lease-holder`
-# releases it, and Firstmate uses exactly that for secondmate homes
-# (bin/fm-home-seed.sh). Crewmate spawns do not take that path: they acquire
-# their slot through the interactive pane-driven `treehouse get`, whose state
-# entry is a live process lease (owner_pid plus owner_started_at, and `treehouse
+# releases it. Both worker slots (bin/fm-spawn.sh) and secondmate homes
+# (bin/fm-home-seed.sh) use durable leases. Legacy worker slots acquired
+# through interactive pane-driven `treehouse get` have a live process lease
+# in their state entry (owner_pid plus owner_started_at, and `treehouse
 # status` reports in-use from the processes actually running under the path).
 # That answers "is anything running here", never "which task owns this", and it
 # is released by the very event that makes a task record stale - the worker
@@ -1777,8 +1777,7 @@ fm_treehouse_pool_slot() {  # <project-dir> <worktree>
 # this task's or has since been handed to another one. Firstmate therefore keeps
 # its own claim on top: one file naming the task that took the slot, written by
 # bin/fm-spawn.sh under the same project lock that allocates the slot and
-# released by bin/fm-teardown.sh when the slot goes back to the pool. Moving
-# crewmate spawns onto the durable lease is separate follow-up work.
+# released by bin/fm-teardown.sh when the slot goes back to the pool.
 #
 # The claim lives at <pool>/<slot>/.fm-slot-owner - a sibling of the repo
 # checkout rather than a file inside it - so claiming a slot can never dirty the
@@ -1792,8 +1791,8 @@ fm_treehouse_slot_owner_marker() {  # <worktree>
 
 # Claim a pool slot for a task, replacing whatever the previous holder left.
 # The rename is atomic, so a reader either sees the old claim or the new one.
-fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home>
-  local worktree=$1 id=$2 home=$3 marker tmp
+fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home> [durable]
+  local worktree=$1 id=$2 home=$3 lease=${4:-} marker tmp
   [ -n "$id" ] || return 1
   marker=$(fm_treehouse_slot_owner_marker "$worktree") || return 1
   # Only a plain claim file may be replaced: renaming onto a directory would
@@ -1807,6 +1806,7 @@ fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home>
   {
     printf 'task=%s\n' "$id"
     printf 'home=%s\n' "$home"
+    if [ "$lease" = durable ]; then printf 'lease=durable\n'; fi
   } > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
   mv -f "$tmp" "$marker" 2>/dev/null || { rm -f "$tmp"; return 1; }
 }
@@ -1820,11 +1820,14 @@ fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home>
 # FM_TREEHOUSE_SLOT_OWNER_ID and FM_TREEHOUSE_SLOT_OWNER_HOME carry the recorded
 # claimant as evidence. The home is reported, never matched: a home that moved
 # must not turn a task's own slot into a refusal.
+# FM_TREEHOUSE_SLOT_DURABLE reports the acquire mode stamped by the allocator;
+# an older claim without lease=durable needs migration before relaunch.
 fm_treehouse_slot_owner_state() {  # <worktree> <task-id>
-  local worktree=$1 id=$2 marker line owner_id='' owner_home=''
+  local worktree=$1 id=$2 marker line owner_id='' owner_home='' durable=0
   FM_TREEHOUSE_SLOT_OWNER=unsafe
   FM_TREEHOUSE_SLOT_OWNER_ID=
   FM_TREEHOUSE_SLOT_OWNER_HOME=
+  FM_TREEHOUSE_SLOT_DURABLE=0
   marker=$(fm_treehouse_slot_owner_marker "$worktree") || return 0
   if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
     FM_TREEHOUSE_SLOT_OWNER=absent
@@ -1835,6 +1838,7 @@ fm_treehouse_slot_owner_state() {  # <worktree> <task-id>
     case "$line" in
       task=*) owner_id=${line#task=} ;;
       home=*) owner_home=${line#home=} ;;
+      lease=durable) durable=1 ;;
     esac
   done < "$marker" || return 0
   [ -n "$owner_id" ] || return 0
@@ -1842,6 +1846,9 @@ fm_treehouse_slot_owner_state() {  # <worktree> <task-id>
   FM_TREEHOUSE_SLOT_OWNER_ID=$owner_id
   # shellcheck disable=SC2034 # Output globals, read by the sourcing caller.
   FM_TREEHOUSE_SLOT_OWNER_HOME=$owner_home
+  # This records the acquire mode, not a second lease: only Treehouse releases it.
+  # shellcheck disable=SC2034 # Output global, read by relaunch.
+  FM_TREEHOUSE_SLOT_DURABLE=$durable
   if [ "$owner_id" = "$id" ]; then
     FM_TREEHOUSE_SLOT_OWNER=mine
   else

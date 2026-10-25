@@ -58,7 +58,8 @@
 #              a tmux server it cannot address, and it will not claim a stop it
 #              cannot see.
 #   relaunch   Transactionally replace the running agent with a new one, in the
-#              SAME worktree - and the same endpoint whenever that endpoint
+#              recorded worktree, upgrading a legacy pool copy to a durable
+#              allocation when needed - and the same endpoint whenever it
 #              still exists - on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
 #              of this verb. When the recorded endpoint is instead proven gone -
@@ -1116,6 +1117,23 @@ safe_checkpoint() {
   CHECKPOINT_LINES=()
   [ -n "$WT" ] || die "task $ID has no recorded worktree; refusing to relaunch without a recorded local copy to preserve"
   [ -d "$WT" ] || die "task $ID's recorded worktree $WT is missing; refusing to relaunch and lose track of its work"
+  if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+    fm_treehouse_slot_owner_state "$WT" "$ID"
+    case "$FM_TREEHOUSE_SLOT_OWNER" in
+      unsafe) die "task $ID's slot has an unreadable owner claim; refusing to relaunch" ;;
+      other)
+        # The slot is somebody else's. Account for this task's committed work
+        # through its shared branch, without inspecting the successor's copy.
+        [ "$KIND" = ship ] || die "task $ID's slot was reassigned and it has no ship branch to restore"
+        head_ref=$(fm_meta_get "$META" branch)
+        [ -n "$head_ref" ] || head_ref="fm/$ID"
+        head=$(git -C "$(fm_meta_get "$META" project)" rev-parse --verify "refs/heads/$head_ref^{commit}") \
+          || die "task $ID's shared branch $head_ref cannot be restored"
+        CHECKPOINT_LINES+=("worktree_reassigned=$FM_TREEHOUSE_SLOT_OWNER_ID" "shared_branch=$head_ref" "shared_branch_head=$head")
+        return 0
+        ;;
+    esac
+  fi
   wt_real=$(cd "$WT" 2>/dev/null && pwd -P) || die "task $ID's recorded worktree $WT cannot be resolved"
   wt_top=$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null) \
     || die "task $ID's recorded worktree $WT is not a git worktree; refusing to relaunch without a checkout whose unlanded work can be accounted for"
@@ -1191,8 +1209,9 @@ record_note() {
         echo
         echo "## Progress note ($stamp)"
         echo
-        echo "This task was relaunched. Continue from here; the local copy and every"
-        echo "uncommitted change are exactly as the previous worker left them."
+        echo "This task was relaunched. Continue from its task records and this note."
+        echo "A legacy slot may have moved to a fresh leased copy of the task branch;"
+        echo "a slot claimed by another task must be left alone."
         echo
         inbox_q=$(printf '%s' "$STATE/$ID.inbox" | sed "s/'/'\\\\''/g")
         echo "First, check your instruction inbox: list it with"
@@ -1301,12 +1320,14 @@ do_relaunch() {
     if fm_backend_validate_task_endpoint "$META" "$ID" >/dev/null \
        && [ -n "$FM_BACKEND_VALIDATED_TARGET" ]; then
       T=$FM_BACKEND_VALIDATED_TARGET
+      WT=$(fm_meta_get "$META" worktree)
     else
       die "the replacement agent for $ID was launched, but task $ID's republished record no longer passes endpoint validation (the refusal above names the row), so this transaction cannot say which endpoint to confirm it on; reconcile $META before any further control action"
     fi
   else
     [ "$(fm_meta_get "$META" control_relaunch_tx)" != "$RELAUNCH_TX" ] \
       || RELAUNCH_META_PUBLISHED=1
+    [ "$RELAUNCH_META_PUBLISHED" != 1 ] || WT=$(fm_meta_get "$META" worktree)
     die "the replacement agent for $ID could not be launched on $TARGET_HARNESS"
   fi
 

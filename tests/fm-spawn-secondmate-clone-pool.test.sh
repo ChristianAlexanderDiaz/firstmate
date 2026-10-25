@@ -113,8 +113,9 @@ claim_of() { # <copy>
   sed -n 's/^task=//p' "$(dirname "$(physical "$1")")/.fm-slot-owner" 2>/dev/null
 }
 
-stop_task() { # <id>
-  tmux kill-window -t "firstmate:fm-$1"
+return_task() { # <home> <id>
+  FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" FM_DATA_OVERRIDE="$1/data" \
+    FM_CONFIG_OVERRIDE="$1/config" "$ROOT/bin/fm-teardown.sh" "$2" --force
 }
 
 # Wait until Treehouse itself reports <copy> available for reuse.
@@ -134,13 +135,13 @@ wait_available() { # <copy>
 MAIN_CLONE=$(physical "$MAIN/projects/demo/.git")
 SM_CLONE=$(physical "$SM/projects/demo/.git")
 
-# 1. The parent home takes the pool's first copy, and its worker exits.
+# 1. The parent home takes the pool's first copy, and its task is cleaned up.
 out=$(spawn_task "$MAIN" main-a)
 expect_code 0 "$?" "the parent home's first spawn should launch"$'\n'"$out"
 MAIN_COPY=$(copy_of "$MAIN" main-a)
 assert_equals "$MAIN_CLONE" "$(clone_of "$MAIN_COPY")" "the parent's copy should belong to the parent's clone"
-stop_task main-a
-wait_available "$MAIN_COPY" || fail "the parent's copy never became available after its worker exited"
+return_task "$MAIN" main-a
+wait_available "$MAIN_COPY" || fail "the parent's copy never became available after task cleanup"
 
 # 2. The secondmate spawns while the parent's copy is the idle one on offer.
 out=$(spawn_task "$SM" sm-a)
@@ -150,12 +151,12 @@ assert_not_equals "$(physical "$MAIN_COPY")" "$(physical "$SM_COPY")" \
   "the secondmate was handed the parent's idle copy"
 assert_equals "$SM_CLONE" "$(clone_of "$SM_COPY")" "the secondmate's copy should belong to its own clone"
 assert_equals sm-a "$(claim_of "$SM_COPY")" "the secondmate's spawn should claim its own copy"
-assert_equals main-a "$(claim_of "$MAIN_COPY")" "the parent's copy should keep the parent's claim"
+assert_equals "" "$(claim_of "$MAIN_COPY")" "the returned parent copy should have no claim"
 pass "a secondmate spawn gets a copy of its own clone while the parent's copy is idle"
 
 # 3. The parent reuses its own idle copy, which keeps it busy for step 4.
-stop_task sm-a
-wait_available "$SM_COPY" || fail "the secondmate's copy never became available after its worker exited"
+return_task "$SM" sm-a
+wait_available "$SM_COPY" || fail "the secondmate's copy never became available after task cleanup"
 out=$(spawn_task "$MAIN" main-b)
 expect_code 0 "$?" "the parent's second spawn should launch"$'\n'"$out"
 assert_equals "$(physical "$MAIN_COPY")" "$(physical "$(copy_of "$MAIN" main-b)")" \
@@ -169,5 +170,5 @@ MAIN_COPY_C=$(copy_of "$MAIN" main-c)
 assert_not_equals "$(physical "$SM_COPY")" "$(physical "$MAIN_COPY_C")" \
   "the parent was handed the secondmate's idle copy"
 assert_equals "$MAIN_CLONE" "$(clone_of "$MAIN_COPY_C")" "the parent's new copy should belong to the parent's clone"
-assert_equals sm-a "$(claim_of "$SM_COPY")" "the secondmate's idle copy should keep its claim"
+assert_equals "" "$(claim_of "$SM_COPY")" "the returned secondmate copy should have no claim"
 pass "a parent spawn gets a copy of its own clone while the secondmate's copy is idle"
