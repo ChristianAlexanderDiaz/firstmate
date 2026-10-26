@@ -39,8 +39,9 @@
 #      upgrade) can ever be picked, whatever order the prompt lists them in.
 #      A repeat limit may report only "You've hit your ... limit" without a
 #      menu; that verified hook text confirms exhaustion without sending a key.
-#   3. Takes one fresh `quota-axi --all-accounts --json` snapshot and picks an
-#      account of the map through `choose`.
+#   3. Uses the home-shared `quota-axi --all-accounts --json` snapshot and
+#      picks an account of the map through `choose` (worker-account-lib owns
+#      the sixty-second cache and refresh invalidation).
 #   4. With no qualifying account, leaves the worker stopped and
 #      appends one home-wide `blocked:` outcome naming each account's quota
 #      and reset time, once until a fresh snapshot finds room for the
@@ -180,12 +181,14 @@ cmd_choose() {
     echo "error: snapshot '$snapshot' is not a quota-axi --all-accounts --json snapshot" >&2
     return 2
   }
-  verdicts=$(choose_usable "$verdicts" "$map" "$(cat "$snapshot")" "$(dirname "$map_file")" "$model") || return 2
+  verdicts=$(choose_usable "$verdicts" "$map" "$(cat "$snapshot")" "$(dirname "$map_file")" "$model" "$current") || return 2
   choose_print "$verdicts"
 }
 
 choose_usable() {
-  local verdicts=$1 map=$2 snapshot=$3 config=$4 model=$5 name reason
+  local verdicts=$1 map=$2 snapshot=$3 config=$4 model=$5 current=${6:-} name reason
+  snapshot=$(fm_worker_account_refresh_candidates "$config" claude "$map" "$snapshot") || return 1
+  verdicts=$(fm_worker_account_failover_quota "$map" "$snapshot" "$current" "$model") || return 1
   while IFS= read -r name; do
     if ! reason=$(fm_worker_account_failover_select "$config" "$name" claude "$model" "$snapshot" "$map" 2>&1); then
       verdicts=$(printf '%s' "$verdicts" | jq -c --arg n "$name" --arg r "$reason" \
@@ -304,7 +307,7 @@ current_account() {
     if [ "$set" = 1 ]; then
       want=$(cd "$dir" 2>/dev/null && pwd -P) || want=$dir
     fi
-    while IFS=$'\t' read -r _ name declared; do
+    while IFS=$'\t' read -r _ name declared _; do
       [ -n "$name" ] || continue
       root=$declared
       [ "$declared" != ordinary ] || root=
@@ -421,7 +424,7 @@ fm_account_failover_recover() {
   command -v quota-axi >/dev/null 2>&1 \
     || status_blocked "Claude usage limit reached ($limit_text); quota-axi is not installed, so no other account could be checked and the worker was left stopped"
   snapshot="$STATE/.$ID.account-failover-quota.$$.json"
-  if ! fm_run_timed "$quota_seconds" env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json > "$snapshot" 2>/dev/null </dev/null; then
+  if ! FM_ACCOUNT_FAILOVER_QUOTA_SECONDS="$quota_seconds" fm_worker_account_snapshot "$CONFIG" > "$snapshot" 2>/dev/null; then
     rm -f "$snapshot"
     status_blocked "Claude usage limit reached ($limit_text); the quota-axi --all-accounts snapshot failed, so the worker was left stopped"
   fi
@@ -430,7 +433,7 @@ fm_account_failover_recover() {
     rm -f "$snapshot"
     status_blocked "Claude usage limit reached ($limit_text); the quota-axi --all-accounts snapshot was unreadable, so the worker was left stopped"
   }
-  choice=$(choose_usable "$choice" "$MAP" "$(cat "$snapshot")" "$CONFIG" "$(fm_meta_get "${META:?}" model)") || {
+  choice=$(choose_usable "$choice" "$MAP" "$(cat "$snapshot")" "$CONFIG" "$(fm_meta_get "${META:?}" model)" "$current") || {
     rm -f "$snapshot"
     status_blocked "Claude usage limit reached ($limit_text); account eligibility could not be checked"
   }
@@ -505,7 +508,7 @@ cmd_tick() {
         # shellcheck disable=SC2016 # Positional parameters expand in the inner Bash process.
         if touch "$state/.claude-exhausted" && fm_run_timed 2 bash -c '
           . "$1"
-          env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json > "$2" </dev/null &&
+          FM_ACCOUNT_FAILOVER_QUOTA_SECONDS=2 fm_worker_account_snapshot "$(dirname "$3")" > "$2" &&
             cmd_choose --map "$3" --snapshot "$2" --model "$4"
         ' _ "$SCRIPT_DIR/fm-account-failover.sh" "$snapshot" \
           "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/$FM_WORKER_ACCOUNT_FAILOVER_FILE" "$model" >/dev/null 2>&1; then
