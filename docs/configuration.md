@@ -1226,7 +1226,7 @@ Without a rendered limit menu, other hook text, including "API Error: Rate limit
 Firstmate's monitoring then, within one cycle:
 
 1. When the limit menu is shown, answers it with Escape, its cancel key, which leaves the worker stopped just as "Stop and wait for limit to reset" does and can never pick usage credits, extra usage, or an upgrade; when only the verified exhaustion wording is recorded, sends no prompt key.
-2. Reads one fresh `quota-axi --all-accounts --json` snapshot and picks another listed account whose quota is known, fresh, above the fixed 5% safety margin in every quota scope that applies to the worker's model, with a usable signed-in root and paid extra usage disabled.
+2. Reads one age-bounded `quota-axi --all-accounts --json` snapshot and picks another listed account whose quota is known, fresh, above the fixed 5% safety margin in every quota scope that applies to the worker's model, with a usable signed-in root and paid extra usage disabled.
 3. Stops the task's own active no-mistakes run through `no-mistakes axi abort --run <id>` and confirms it ended, and moves nothing while a run it cannot read or stop may still be active.
 4. Relaunches the worker on the chosen account through `bin/fm-control.sh <id> relaunch --claude-account <name>` with a handoff note, so the replacement resumes from the task's instructions and durable records.
 
@@ -1248,10 +1248,14 @@ Remote secondmate routes remain a follow-up: local control refuses endpoints on 
 A `config/claude-account` that names one account pins every Claude worker to it, so a home with both files leaves limited workers stopped and says so; the `paced` value pins nothing, and failover moves its workers as usual.
 Accounts with a paid credits window or unknown paid usage status never qualify, even when their plan has room.
 Selection, control, and spawn capture one snapshot for the complete launch decision, including pacing and quota-plan admission.
-Separate decisions share the home-local snapshot for sixty seconds, including failed reads; vendor-stale or vendor-reused readings still refuse.
-The private cache and serialization lock live alongside `config/claude-failover`; an expired cache triggers `quota-axi --all-accounts --json` with `QUOTA_AXI_MAX_AGE` unset.
-This bounds vendor polling but means a changed allowance or paid-usage setting can take up to a minute to affect the next decision; disable paid extra usage in the account itself before using it for failover.
-An `expired_refreshable` account gets one bounded `claude -p "reply with ok" --model haiku` under its selector, followed by a new quota reading that replaces the cached snapshot.
+Separate decisions share the home-local snapshot for sixty seconds, including failed reads; vendor-stale readings still refuse.
+The private cache and serialization lock live alongside `config/claude-failover`.
+All account-gate and quota-plan reads use quota-axi's host-wide, per-account shared cache with a default reuse bound of 60 seconds; an operator-set `QUOTA_AXI_MAX_AGE` overrides that bound.
+Launch, pacing, and failover eligibility accept reused readings only when `state.refreshedAt` is no more than 120 seconds old; missing, malformed, future, and older timestamps refuse, with the age named when known.
+The original vendor timestamp controls eligibility even when the home-local snapshot is younger or the operator permits longer reuse.
+Firstmate probes named-account reuse with an explicit `--max-age`; an older quota-axi that rejects that combination falls back to a forced read, while other failures refuse without retrying.
+Changed allowance or paid-usage settings can therefore take up to 120 seconds to affect a decision; disable paid extra usage in the account itself before using it for failover.
+An `expired_refreshable` account gets one bounded `claude -p "reply with ok" --model haiku` under its selector, followed by a forced quota read that observes the refreshed credential and replaces the cached snapshot.
 Refresh attempts are serialized, limited to one per account per decision, and throttled across decisions for sixty seconds; they defer to a running Claude process for that account where its selector can be inspected, or to any running Claude process when it cannot.
 A login that remains expired refuses with a fresh-sign-in instruction rather than a paid-usage error; a fresh reading with a credits window still refuses as paid usage.
 Recovery writes the exact launch refusal into the existing task's status so its parent can distinguish sign-in problems from paid usage.
