@@ -1251,7 +1251,7 @@ Selection, control, and spawn capture one snapshot for the complete launch decis
 Separate decisions share the home-local snapshot for sixty seconds, including failed reads; vendor-stale readings still refuse.
 The private cache and serialization lock live alongside `config/claude-failover`.
 All account-gate and quota-plan reads use quota-axi's host-wide, per-account shared cache with a default reuse bound of 60 seconds; an operator-set `QUOTA_AXI_MAX_AGE` overrides that bound.
-Launch, pacing, and failover eligibility accept reused readings only when `state.refreshedAt` is no more than 120 seconds old; missing, malformed, future, and older timestamps refuse, with the age named when known.
+Launch, pacing, and failover eligibility require every reading, including reused readings, to have a `state.refreshedAt` timestamp no more than 120 seconds old; missing, malformed, future, and older timestamps refuse, with the age named when known.
 The original vendor timestamp controls eligibility even when the home-local snapshot is younger or the operator permits longer reuse.
 Firstmate probes named-account reuse with an explicit `--max-age`; an older quota-axi that rejects that combination falls back to a forced read, while other failures refuse without retrying.
 Changed allowance or paid-usage settings can therefore take up to 120 seconds to affect a decision; disable paid extra usage in the account itself before using it for failover.
