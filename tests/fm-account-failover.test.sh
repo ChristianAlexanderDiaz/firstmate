@@ -126,7 +126,8 @@ if [ "\${1:-}" = auth ] && [ "\${2:-}" = status ]; then
   fi
   if [ -f '$dir/fake/advance-auth-clock' ]; then
     clock=\$(cat '$dir/fake/clock')
-    printf '%s\n' "\$((clock + 61))" > '$dir/fake/clock'
+    advance=\$(cat '$dir/fake/advance-auth-clock')
+    printf '%s\n' "\$((clock + \${advance:-61}))" > '$dir/fake/clock'
   fi
   [ -f "\$root/.credentials.json" ] || exit 1
   cat "\$root/identity.json" 2>/dev/null || printf '{"loggedIn":true,"email":"worker@example.com"}\n'
@@ -146,16 +147,14 @@ SH
 #!/usr/bin/env bash
 if [ "\${1:-}" = +%s ]; then cat '$dir/fake/clock'; else exec /bin/date "\$@"; fi
 SH
-  # Like quota-axi 0.1.55, --all-accounts refuses --max-age.
+  # Modern quota-axi accepts named-account reuse; record the effective bound.
   cat > "$fb/quota-axi" <<SH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> '$dir/fake/quota-calls'
-case " \$* " in
-  *" --all-accounts "*" --max-age "* | *" --max-age "*" --all-accounts "*)
-    echo 'error: "--all-accounts cannot be combined with --max-age"'
-    exit 1
-    ;;
-esac
+printf '%s\n' "\${QUOTA_AXI_MAX_AGE-unset}" >> '$dir/fake/quota-ages'
+if [ "\${QUOTA_AXI_MAX_AGE:-0}" = 0 ] || ! jq -e 'all(.providers[]; .state.reused == true)' '$dir/fake/quota.json' >/dev/null; then
+  printf 'vendor read\n' >> '$dir/fake/vendor-reads'
+fi
 cat '$dir/fake/quota.json'
 SH
   # no-mistakes: one run on the task branch whose state lives in fake/nm-state
@@ -237,9 +236,9 @@ quota_snapshot() {
   local clock
   clock=$(cat "$CASE/fake/clock")
   printf '%s\n' "$((clock + 61))" > "$CASE/fake/clock"
-  jq -n --argjson limited "$1" --argjson spare "$2" '
+  jq -n --argjson now "$((clock + 61))" --argjson limited "$1" --argjson spare "$2" '
     def row($name; $pct; $resets):
-      { provider: "claude", account: $name, state: { status: "fresh", stale: false },
+      { provider: "claude", account: $name, state: { status: "fresh", stale: false, refreshedAt: ($now | todateiso8601) },
         windows: [
           { id: "five_hour", kind: "session", resetsAt: "2026-10-02T05:19:59.617813+00:00", percentRemaining: 100 },
           { id: "seven_day", kind: "weekly", resetsAt: $resets, percentRemaining: $pct },
@@ -989,48 +988,57 @@ fi
 SH
 }
 
-test_reused_quota_cannot_authorize_selection_or_launch() {
-  local out rc mode
-  new_case supplied-cache c4
-  out=$(choose "$(quota_snapshot 0 81 '.providers[1].state.reused = true')" --current limited); rc=$?
-  expect_code 1 "$rc" "a reused supplied snapshot cannot authorize a move: $out"
-
-  for mode in recovery control spawn; do
-    new_case "cache-$mode" t22
-    make_quota_cache_fake
-    quota_snapshot 0 81 '.providers[1].windows += [{id: "extra_usage", kind: "credits"}]' > "$CASE/fake/quota.json"
-    if [ "$mode" = recovery ]; then
-      record_limit t22
-      out=$(case_env QUOTA_AXI_MAX_AGE=1h "$FAILOVER" run t22 2>&1)
-      assert_contains "$out" "blocked t22" "recovery must read the changed paid setting: $out"
-    elif [ "$mode" = spawn ]; then
-      printf 'claude_account=spare\n' >> "$CASE/home/state/t22.meta"
-      printf zsh > "$CASE/fake/command"
-      out=$(case_env QUOTA_AXI_MAX_AGE=1h "$ROOT/bin/fm-spawn.sh" t22 --relaunch 2>&1); rc=$?
-      expect_code 1 "$rc" "$mode must refuse the changed paid setting: $out"
+test_reused_quota_is_bounded_at_selection_and_launch() {
+  local out rc mode age snapshot
+  new_case supplied-cache cache
+  quota_snapshot 0 81 > "$CASE/fake/base.json"
+  for age in 120 121; do
+    snapshot=$(jq --argjson now "$(cat "$CASE/fake/clock")" --argjson age "$age" '
+      .providers[1].state |= (.reused = true | .refreshedAt = ($now - $age | todateiso8601))' "$CASE/fake/base.json")
+    out=$(choose "$snapshot" --current limited); rc=$?
+    if [ "$age" = 120 ]; then
+      expect_code 0 "$rc" "a reused supplied reading at the boundary qualifies: $out"
     else
-      rm -f "$CASE/fake/screen"
-      out=$(case_env QUOTA_AXI_MAX_AGE=1h "$CONTROL" t22 relaunch --claude-account spare --note "move" 2>&1); rc=$?
-      expect_code 1 "$rc" "$mode must refresh the changed paid setting: $out"
-    fi
-    [ -s "$CASE/fake/vendor-reads" ] || fail "$mode must ask the vendor despite ambient reuse"
-    if [ "$mode" != spawn ]; then
-      assert_no_grep 'claude_account=' "$CASE/home/state/t22.meta" "$mode cannot publish a paid account"
-    fi
-    assert_no_grep 'encode launch-brief' "$CASE/fake/literal" "$mode cannot launch the paid replacement"
-    if [ "$mode" != spawn ]; then
-      assert_no_grep '/exit' "$CASE/fake/literal" "$mode refusal precedes stopping"
+      expect_code 1 "$rc" "an over-age supplied reading refuses: $out"
+      assert_contains "$out" '121s old (maximum 120s)' "refusal names original reading age"
     fi
   done
-
-  new_case cache-safe t23
-  make_quota_cache_fake
-  quota_snapshot 0 15 > "$CASE/fake/quota.json"
-  record_limit t23
-  out=$(case_env QUOTA_AXI_MAX_AGE=1h "$FAILOVER" run t23 2>&1)
-  assert_contains "$out" "moved t23 limited spare" "an uncached safe account above the fixed margin still moves: $out"
-  assert_equals 1 "$(wc -l < "$CASE/fake/vendor-reads" | tr -d ' ')" "selection, control, and spawn share the home snapshot"
-  pass "quota: vendor-reused snapshots refuse; all launch boundaries share one locally captured vendor read"
+  for age in null '"invalid"' '"2099-01-01T00:00:00Z"'; do
+    snapshot=$(jq --argjson timestamp "$age" --argjson now "$(cat "$CASE/fake/clock")" '
+      .providers[1].state.refreshedAt = $timestamp | .providers[1].refreshedAt = ($now | todateiso8601)' "$CASE/fake/base.json")
+    out=$(choose "$snapshot" --current limited); rc=$?
+    expect_code 1 "$rc" "an untrustworthy state timestamp refuses despite another account and a top-level timestamp: $out"
+    assert_contains "$out" 'maximum 120s' "timestamp refusal names the bound"
+  done
+  for mode in recovery control spawn; do
+    new_case "reuse-$mode" reuse
+    quota_snapshot 0 81 '.providers[].state.reused = true' > "$CASE/fake/quota.json"
+    if [ "$mode" = recovery ]; then
+      record_limit reuse
+      out=$(case_env "$FAILOVER" run reuse 2>&1); rc=$?
+      assert_contains "$out" 'moved reuse limited spare' "recovery accepts recent reuse"
+    elif [ "$mode" = spawn ]; then
+      printf 'claude_account=spare\n' >> "$CASE/home/state/reuse.meta"
+      printf zsh > "$CASE/fake/command"
+      out=$(case_env "$ROOT/bin/fm-spawn.sh" reuse --relaunch 2>&1); rc=$?
+    else
+      rm -f "$CASE/fake/screen"
+      out=$(case_env "$CONTROL" reuse relaunch --claude-account spare --note move 2>&1); rc=$?
+    fi
+    expect_code 0 "$rc" "$mode accepts recent reuse: $out"
+    assert_equals 60 "$(cat "$CASE/fake/quota-ages")" "$mode supplies the default reuse bound"
+    assert_equals 1 "$(wc -l < "$CASE/fake/quota-calls" | tr -d ' ')" "$mode uses one shared cached read"
+    [ ! -e "$CASE/fake/vendor-reads" ] || fail "$mode must not request the vendor for recent reuse"
+  done
+  new_case override reuse
+  quota_snapshot 70 81 '.providers[].state.reused = true' > "$CASE/fake/quota.json"
+  # shellcheck disable=SC2016 # The inner Bash expands positional arguments.
+  out=$(case_env QUOTA_AXI_MAX_AGE=2m bash -c '. "$1"; fm_worker_account_failover_select "$2" spare claude fable' _ \
+    "$ROOT/bin/fm-worker-account-lib.sh" "$CASE/home/config" 2>&1); rc=$?
+  expect_code 0 "$rc" "operator override accepts a recent reused reading: $out"
+  assert_equals 2m "$(cat "$CASE/fake/quota-ages")" "operator override reaches quota-axi"
+  assert_grep '--max-age 2m' "$CASE/fake/quota-calls" "feature probe uses the same override"
+  pass "quota: recent reuse qualifies across launch boundaries; original age bounds supplied data; operator override reaches the reader"
 }
 
 represented_scope_snapshot() {
@@ -1149,9 +1157,14 @@ test_recovery_shares_one_snapshot_until_the_next_decision() {
   local out rc
   new_case decision-snapshot t27
   make_quota_cache_fake
-  : > "$CASE/fake/advance-auth-clock"
+  # Three sign-in boundaries cross the home cache's minute while the vendor
+  # reading remains within the launch age bound.
+  printf '21\n' > "$CASE/fake/advance-auth-clock"
   quota_snapshot 0 60 > "$CASE/fake/quota.json"
   quota_snapshot 0 0 > "$CASE/fake/quota-after.json"
+  jq --argjson now "$(cat "$CASE/fake/clock")" '.providers[].state.refreshedAt = ($now | todateiso8601)' \
+    "$CASE/fake/quota.json" > "$CASE/fake/current.json"
+  mv "$CASE/fake/current.json" "$CASE/fake/quota.json"
   record_limit t27
   out=$(case_env "$FAILOVER" run t27 2>&1); rc=$?
   expect_code 0 "$rc" "one recovery decision shares its snapshot even across slow sign-in checks: $out"
@@ -1536,9 +1549,10 @@ test_refreshable_login_and_shared_snapshot() {
   new_case refreshable t42
   expired_snapshot > "$CASE/fake/quota.json"
   quota_snapshot 70 80 > "$CASE/fake/after-refresh.json"
-  out=$(select_account 2>&1); rc=$?
+  out=$(QUOTA_AXI_MAX_AGE=2m select_account 2>&1); rc=$?
   expect_code 0 "$rc" "one refresh ping should recover the account: $out"
   assert_equals unset "$(cat "$CASE/fake/refresh-calls")" "ordinary refresh leaves CLAUDE_CONFIG_DIR unset"
+  assert_equals $'2m\n0' "$(cat "$CASE/fake/quota-ages")" "post-refresh read forces despite the operator reuse bound"
   for attempt in 1 2 3; do
     out=$(select_account 2>&1); rc=$?
     expect_code 0 "$rc" "retry shares the refreshed snapshot: $out"
@@ -1585,8 +1599,7 @@ test_failed_refresh_and_missing_expired_row() {
   quota_snapshot 70 80 '.providers[0].state.reused = true | .providers[0].windows += [{id:"extra_usage",kind:"credits"}]' > "$CASE/fake/quota.json"
   out=$(select_account 2>&1); rc=$?
   expect_code 1 "$rc" "vendor-reused credits still refuse: $out"
-  assert_contains "$out" 'no fresh usable quota reading' "a reused reading cannot establish current billing"
-  assert_not_contains "$out" 'paid usage enabled' "billing refusal requires a genuinely fresh reading"
+  assert_contains "$out" 'paid usage enabled' "recent reused credits retain the billing refusal"
   pass "refresh: persistent and missing-row expiry need sign-in; refreshed credits still refuse"
 }
 
@@ -1742,7 +1755,7 @@ test_manual_relaunch_cannot_race_the_quota_query
 test_paid_usage_is_rejected_at_control_and_spawn_launch_boundaries
 test_model_choices_check_every_family_they_can_use
 test_automatic_recovery_respects_alias_and_unresolved_model_scopes
-test_reused_quota_cannot_authorize_selection_or_launch
+test_reused_quota_is_bounded_at_selection_and_launch
 test_model_scope_representations_constrain_the_same_families
 test_recovery_respects_legacy_versioned_and_unresolved_scopes
 test_remaining_quota_is_checked_at_control_and_spawn
