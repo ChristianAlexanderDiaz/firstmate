@@ -6322,9 +6322,9 @@ preserve_relaunch_meta() {
   if [ "$SPAWN_CONTROL_PARENT" = 1 ] && [ -n "${FM_CONTROL_RELAUNCH_TX:-}" ]; then
     echo "control_relaunch_tx=$FM_CONTROL_RELAUNCH_TX"
   fi
-  # Preserved lines go last: a registered pr= block (pr_head=, x_*) must stay at
+  # Preserved lines go last: a registered pr= block (pr_head=, x_*, keep_open=) must stay at
   # the end of the record, because fm_pr_metadata_identity_parse refuses any
-  # other key after pr= and the merge watch would silently stop.
+  # unrelated key after pr= and the merge watch would silently stop.
   if [ "$RELAUNCH" -eq 1 ]; then
     preserve_relaunch_meta
   fi

@@ -80,8 +80,8 @@ META_TMP=$(mktemp "$STATE/.fm-remote-relaunch-meta.XXXXXX") || {
 } >> "$META_TMP"
 # Every other line is preserved in its original relative order after the
 # refreshed harness/model/effort. A pr= line's own identity block (pr_head=
-# and the x_* fields fm_pr_metadata_identity_parse allows after it) must stay
-# LAST in the record: that parser rejects any other key following pr=, so
+# and the x_* and keep_open fields fm_pr_metadata_identity_parse allows) must stay
+# LAST in the record: that parser rejects unrelated keys following pr=, so
 # writing harness/model/effort after it would break PR movement monitoring on
 # a task that already had one armed.
 while IFS= read -r line || [ -n "$line" ]; do
