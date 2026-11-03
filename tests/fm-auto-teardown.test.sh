@@ -6,9 +6,17 @@ set -eu
 TMP_ROOT=$(fm_test_tmproot fm-auto-teardown)
 # shellcheck source=bin/fm-pr-lib.sh
 . "$ROOT/bin/fm-pr-lib.sh"
+# shellcheck source=bin/fm-gate-refuse-lib.sh
+. "$ROOT/bin/fm-gate-refuse-lib.sh"
+LAB_MODE=0
 
 make_case() {
   CASE="$TMP_ROOT/$1"
+  mkdir -p "$CASE"
+  if [ "$LAB_MODE" -eq 1 ]; then
+    fm_gate_lab_mark "$CASE" || fail 'could not mark empty lab home'
+    mkdir -p "$CASE/projects"
+  fi
   mkdir -p "$CASE/state" "$CASE/config" "$CASE/data/task-a" "$CASE/user-home"
   FAKEBIN=$(fm_fakebin "$CASE")
   fm_fake_exit0 "$FAKEBIN" tmux treehouse no-mistakes gh gh-axi
@@ -35,9 +43,13 @@ SH
   in_home "$ROOT/bin/fm-busy-event.sh" arm "$CASE/state" task-a --state idle --source claude-hook --event Stop >/dev/null
 }
 in_home() {
+  local lab_env=()
+  if [ "$LAB_MODE" -eq 1 ]; then
+    lab_env=(env -u FM_DATA_OVERRIDE FM_GATE_REFUSE_BYPASS=0 NO_MISTAKES_GATE=test)
+  fi
   env -u FM_TRACE_CONTEXT FM_ROOT_OVERRIDE='' FM_HOME="$CASE" \
     HOME="$CASE/user-home" FM_STATE_OVERRIDE="$CASE/state" FM_CONFIG_OVERRIDE="$CASE/config" \
-    FM_DATA_OVERRIDE="$CASE/data" FM_SUPERVISION_ACTOR=main PATH="$FAKEBIN:$PATH" "$@"
+    FM_DATA_OVERRIDE="$CASE/data" FM_SUPERVISION_ACTOR=main PATH="$FAKEBIN:$PATH" "${lab_env[@]}" "$@"
 }
 run_auto() { in_home "$ROOT/bin/fm-auto-teardown.sh" task-a; }
 retained() { [ -f "$CASE/state/task-a.meta" ] && [ -d "$CASE/wt" ] || fail 'task was removed'; }
@@ -72,6 +84,25 @@ neighbor() {
   in_home "$ROOT/bin/fm-auto-teardown.sh" --eligible task-b neighbor-generation || fail 'neighbor is not independently eligible'
 }
 neighbor_retained() { [ -f "$CASE/state/task-b.meta" ] && [ -d "$CASE/neighbor-wt" ] || fail 'unacknowledged neighbor was removed'; }
+
+# Exercise both acknowledgement entrypoints with the real marked-lab guard.
+# Tool shims isolate runtime/forge dependencies; teardown and its guard are real.
+LAB_MODE=1
+for acknowledgement in wake outcome; do
+  make_case "lab-$acknowledgement"
+  land
+  if [ "$acknowledgement" = wake ]; then
+    ack_task
+  else
+    SEQ=$(in_home "$ROOT/bin/fm-branch-outcome.sh" append --task task-a --verdict captain --summary handled)
+    in_home "$ROOT/bin/fm-branch-outcome.sh" present >/dev/null
+    in_home "$ROOT/bin/fm-branch-outcome.sh" mark-read --through "$SEQ"
+    retained
+    OUT=$(in_home "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through "$SEQ" 2>&1)
+  fi
+  retired
+done
+LAB_MODE=0
 
 make_case default-off
 land

@@ -108,7 +108,7 @@ attempt() {
   [ -n "$gen" ] || return 0
   eligible "$meta" "$id" || return 0
   output=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
-    FM_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/fm-teardown.sh" "$id" --auto "$gen" 2>&1) || rc=$?
+    "$SCRIPT_DIR/fm-teardown.sh" "$id" --auto "$gen" 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then
     printf 'auto-teardown: %s complete\n' "$id"
   else
