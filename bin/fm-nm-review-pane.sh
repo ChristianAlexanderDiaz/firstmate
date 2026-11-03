@@ -6,7 +6,8 @@
 # Usage: fm-nm-review-pane.sh <task-id>
 # Asks fm-crew-state.sh --sync-review-pane, without forge reads, to reconcile a
 # proven run. Ordinary crew-state reads remain side-effect free. The existing
-# watcher invokes this on a bounded cadence; there is no additional daemon.
+# watcher requests the same reconciliation through crew-state on a bounded
+# cadence, sharing its read with workspace-label updates; no additional daemon.
 # Task teardown closes the viewer through fm_nm_review_pane_close_locked.
 # Non-Herdr and remote tasks are no-ops. Unknown run evidence preserves the pane.
 #

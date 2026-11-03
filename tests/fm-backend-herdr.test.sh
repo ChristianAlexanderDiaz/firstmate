@@ -3223,8 +3223,9 @@ test_projection_order_group_key_places_new_task_inside_its_group() {
 }
 
 test_projection_order_moves_only_exact_new_workspace_and_preserves_relative_order() {
+  local prefix=${1:-}
   local dir log resp fb mover mover_log out status
-  dir="$TMP_ROOT/projection-order"; mkdir -p "$dir/responses"
+  dir="$TMP_ROOT/projection-order${prefix:+-emoji}"; mkdir -p "$dir/responses"
   log="$dir/log"; resp="$dir/responses"; mover="$dir/mover"; mover_log="$dir/mover.log"
   : > "$log"; : > "$mover_log"
   printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"firstmate","focused":false},{"workspace_id":"w2","label":"firstmate/old · p:AbCdEfGhIjKlMnOpQrStUv","focused":false},{"workspace_id":"w3","label":"2ndmate-alpha","focused":false},{"workspace_id":"w4","label":"2ndmate-bravo","focused":true},{"workspace_id":"w5","label":"└ new · p:ZyXwVuTsRqPoNmLkJiHgFe","focused":false}]}}' > "$resp/1.out"
@@ -3238,6 +3239,10 @@ printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$FM_FAKE_MOVER_LOG"
 printf '%s\n' '{"id":"fm-workspace-move","result":{"type":"workspace_list","workspaces":[{"workspace_id":"w1","label":"firstmate","focused":false},{"workspace_id":"w2","label":"firstmate/old · p:AbCdEfGhIjKlMnOpQrStUv","focused":false},{"workspace_id":"w5","label":"└ new · p:ZyXwVuTsRqPoNmLkJiHgFe","focused":false},{"workspace_id":"w3","label":"2ndmate-alpha","focused":false},{"workspace_id":"w4","label":"2ndmate-bravo","focused":true}]}}'
 SH
   chmod +x "$mover"
+  if [ -n "$prefix" ]; then
+    jq --arg prefix "$prefix" '.result.workspaces |= map(if (.label | contains(" · p:")) then .label = ($prefix + .label) else . end)' "$resp/1.out" > "$dir/with-emoji"
+    mv "$dir/with-emoji" "$resp/1.out"
+  fi
   fb=$(make_herdr_fakebin "$dir")
   out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_HERDR_SCRIPT_STATUS=1 \
     FM_BACKEND_HERDR_WORKSPACE_MOVER="$mover" FM_FAKE_MOVER_LOG="$mover_log" \
@@ -3931,13 +3936,13 @@ test_projection_custom_parent_binding_keeps_exact_identity_and_shape() {
   dir="$TMP_ROOT/projection-custom-parent"; mkdir -p "$dir/responses"
   log="$dir/log"; resp="$dir/responses"
   fb=$(make_herdr_fakebin "$dir")
-  for mode in exact renamed missing-parent extra-tab; do
+  for mode in exact emoji stacked renamed missing-parent extra-tab; do
     : > "$log"; rm -f "$resp/.count"
     jq -cn --arg mode "$mode" '
       {result:{workspaces:[
         {workspace_id:"w0",label:"custom launcher"},
         {workspace_id:"w1",label:(if $mode == "renamed" then "renamed" else "custom launcher" end)},
-        {workspace_id:"w2",label:"└ custom-bind · p:AbCdEfGhIjKlMnOpQrStUv"}
+        {workspace_id:"w2",label:((if $mode == "emoji" then "⏳ " elif $mode == "stacked" then "🔨 🔍 " else "" end) + "└ custom-bind · p:AbCdEfGhIjKlMnOpQrStUv")}
       ]}}
       | if $mode == "missing-parent" then .result.workspaces |= map(select(.workspace_id != "w1")) else . end
     ' > "$resp/1.out"
@@ -3952,7 +3957,7 @@ test_projection_custom_parent_binding_keeps_exact_identity_and_shape() {
           fmtest AbCdEfGhIjKlMnOpQrStUv w2 w2:t2 w2:p2 w1 "custom launcher" \
           "└ custom-bind · p:AbCdEfGhIjKlMnOpQrStUv" fm-custom-bind' "$ROOT" 2>&1)
     status=$?
-    want=1; [ "$mode" != exact ] || want=0
+    want=1; case "$mode" in exact|emoji|stacked) want=0 ;; esac
     expect_code "$want" "$status" "custom parent binding $mode returned an unexpected verdict: $out"
     assert_not_contains "$(cat "$log")" $'\x1fcreate' "binding verification must remain read-only"
     assert_not_contains "$(cat "$log")" $'\x1fclose' "binding verification must not close an endpoint"
@@ -6777,3 +6782,83 @@ test_wait_transition_stream_absorb_clears_then_timeout
 test_wait_transition_reader_failure_returns_2
 test_wait_transition_bad_ack_returns_2_and_cleans_up
 test_wait_transition_clean_timeout_returns_1
+
+# The CLI is scripted; no real Herdr server or lifecycle action is used.
+test_work_state_label_sync() {
+  local dir fb mode label want out rc mutations token base home
+  dir="$TMP_ROOT/work-state-label"
+  mkdir -p "$dir/responses" "$dir/state" "$dir/home"
+  home=$(cd "$dir/home" && pwd -P)
+  fb=$(make_herdr_fakebin "$dir")
+  token=$(FM_HOME="$home" bash -c '
+    . "$0/bin/backends/herdr.sh"
+    token=$(fm_backend_herdr_projection_journal_create "$1" emoji)
+    label=$(fm_backend_herdr_projection_workspace_label emoji "$token")
+    fm_backend_herdr_projection_journal_bind "$1/emoji.herdr-presentation" emoji "$2" fmtest w2 w2:t2 w2:p2 w1 firstmate "$label" fm-emoji
+    printf "%s" "$token"
+  ' "$ROOT" "$dir/state" "$home") || fail "could not create emoji journal"
+  base="└ emoji · p:$token"
+  for mode in initial unchanged replace stacked unknown foreign duplicate secondmate tmux remote failed flat shared; do
+    rm -f "$dir/responses/.count" "$dir/responses/3.exit"
+    : > "$dir/log"
+    fm_write_meta "$dir/state/emoji.meta" "backend=herdr" "kind=ship" "herdr_session=fmtest" "herdr_workspace_id=w2" "herdr_tab_id=w2:t2" "herdr_pane_id=w2:p2"
+    label=$base; want="🔨 $base"
+    [ ! -e "$dir/state/saved-journal" ] || mv "$dir/state/saved-journal" "$dir/state/emoji.herdr-presentation"
+    case "$mode" in
+      unchanged) label="🔨 $base" ;;
+      replace) label="⏳ $base" ;;
+      stacked) label="🔍 💤 $base" ;;
+      unknown) label="🔨 $base"; want=$base ;;
+      foreign) label="somebody else · p:$token" ;;
+      secondmate) printf 'kind=secondmate\n' >> "$dir/state/emoji.meta" ;;
+      tmux) printf 'backend=tmux\n' >> "$dir/state/emoji.meta" ;;
+      remote) printf 'remote_host=other-host\n' >> "$dir/state/emoji.meta" ;;
+      failed) printf '1\n' > "$dir/responses/3.exit" ;;
+      flat|shared)
+        mv "$dir/state/emoji.herdr-presentation" "$dir/state/saved-journal"
+        label=fm-emoji; want='🔨 fm-emoji'
+        [ "$mode" != shared ] || label=firstmate
+        ;;
+    esac
+    jq -cn --arg label "$label" --arg mode "$mode" '
+      {result:{workspaces:[{workspace_id:"w1",label:"firstmate"},{workspace_id:"w2",label:$label}]}}
+      | if $mode == "duplicate" then .result.workspaces += [{workspace_id:"w3",label:$label}] else . end
+    ' > "$dir/responses/1.out"
+    printf '%s\n' '{"result":{"pane":{"pane_id":"w2:p2","workspace_id":"w2","tab_id":"w2:t2"}}}' > "$dir/responses/2.out"
+    rc=0
+    out=$(PATH="$fb:$PATH" FM_HOME="$home" FM_HERDR_LOG="$dir/log" FM_HERDR_RESPONSES="$dir/responses" LABEL_TEST_DIR="$dir" \
+      bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source herdr
+        # Override the lock path, not the lock implementation.
+        fm_backend_herdr_presentation_session_lock_path() { printf "%s/lock" "$LABEL_TEST_DIR"; }
+        emoji=🔨; [ "$2" != unknown ] || emoji=
+        fm_backend_herdr_work_state_label_sync "$1/state/emoji.meta" "$1/state" emoji "$emoji"
+      ' "$ROOT" "$dir" "$mode" 2>&1) || rc=$?
+    mutations=$(tr '\037' ' ' < "$dir/log")
+    case "$mode" in
+      initial|replace|stacked|unknown|failed|flat)
+        assert_contains "$mutations" "workspace rename w2 $want" "rename preserves the exact existing task name ($mode): $out"
+        ;;
+      *) assert_not_contains "$mutations" 'workspace rename' "unsafe or unchanged label must not rename ($mode): $out" ;;
+    esac
+    if [ "$mode" = failed ]; then [ "$rc" -ne 0 ] || fail "failed rename must retry next sweep"
+    else [ "$rc" -eq 0 ] || fail "label sync failed ($mode): $out"; fi
+  done
+  pass "work-state label sync: exact ID, replacement, no stacking, no repeat rename, unknown removal and ownership guards"
+}
+test_work_state_label_sync
+test_projection_order_moves_only_exact_new_workspace_and_preserves_relative_order '🔨 '
+
+test_work_state_legacy_order_owner() {
+  local out
+  out=$(bash -c '. "$0/bin/backends/herdr.sh"
+    printf "%s\n" '\''{"result":{"workspaces":[
+      {"workspace_id":"personal","label":"personal"},
+      {"workspace_id":"worker","label":"🔍 firstmate/old · p:AbCdEfGhIjKlMnOpQrStUv"},
+      {"workspace_id":"main","label":"firstmate"}
+    ]}}'\'' | fm_backend_herdr_presentation_arrange_plan "{}"
+  ' "$ROOT") || fail "legacy emoji owner must remain recognizable"
+  [ "$(printf '%s' "$out" | jq -c '.moves[-1].after')" = '["main","worker","personal"]' ] \
+    || fail "emoji changed the legacy worker owner: $out"
+  pass "work-state label prefix preserves legacy owner classification in whole-sidebar ordering"
+}
+test_work_state_legacy_order_owner

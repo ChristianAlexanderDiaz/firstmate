@@ -5894,4 +5894,60 @@ test_newer_failed_run_is_not_hidden_by_older_live_run
 test_unverifiable_run_selection_reports_unknown
 test_legacy_conflicting_run_records_report_unknown
 
+# Exercise the presentation through the authoritative public reader, including
+# transitions that must supersede an old declaration rather than tail it.
+test_work_state_emoji() {
+  reset_fakes
+  local d out declaration expected
+  d=$(new_case work-emoji)
+  make_repo_on_branch "$d/wt" fm/work-emoji
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/emoji.meta" "window=fm:fm-emoji" "worktree=$d/wt" "kind=ship" "harness=claude" "yolo=off"
+  arm_idle_record "$d/state" emoji
+  while IFS='|' read -r declaration expected; do
+    printf '%s\n' "$declaration" > "$d/state/emoji.status"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ "$out" = "$expected" ] || fail "emoji for $declaration: expected '$expected', got '$out'"
+  done <<'EOF'
+working: building|🔨
+needs-decision [key=pick]: pick a design|🙋
+blocked: credential missing|🙋
+paused [wait=captain]: review|🙋
+paused: machine slot|💤
+paused: test lease|💤
+paused: until 2027-01-01T00:00Z|💤
+unknown: no declaration|
+EOF
+  printf 'needs-decision: old gate\n' > "$d/state/emoji.status"
+  FM_FAKE_AXI_STATUS="$(run_running fm/work-emoji)"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = 🔍 ] || fail "an active review must supersede the old decision: $out"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/work-emoji)"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = ⏳ ] || fail "CI must show checks, not the stale gate: $out"
+  FM_FAKE_CI_LOGS='all CI checks passed - still monitoring until merged or closed'
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = 🙋 ] || fail "green PR needs merge approval: $out"
+  printf 'yolo=on\n' >> "$d/state/emoji.meta"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = ⏳ ] || fail "automatic merge waits with checks: $out"
+  FM_FAKE_AXI_STATUS="$(run_ci_fixing fm/work-emoji)"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = 🔍 ] || fail "CI fixes return to review: $out"
+  : > "$d/state/emoji.status"
+  FM_FAKE_AXI_STATUS="$(run_parked fm/work-emoji)"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = 🙋 ] || fail "an authority finding needs a decision: $out"
+  FM_FAKE_AXI_STATUS="$(run_parked_crewmate_gate_with_ask_user_prose fm/work-emoji)"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = 🔍 ] || fail "the worker's own review gate stays in review: $out"
+  printf 'kind=secondmate\n' >> "$d/state/emoji.meta"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ -z "$out" ] || fail "secondmate must not have a state emoji: $out"
+  out=$(FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" absent --work-emoji)
+  [ -z "$out" ] || fail "missing task must not guess a state: $out"
+  pass "work-state emoji: building, review, CI, merge approval, external and captain waits, unknown and secondmate"
+}
+test_work_state_emoji
+
 echo "all fm-crew-state tests passed"
