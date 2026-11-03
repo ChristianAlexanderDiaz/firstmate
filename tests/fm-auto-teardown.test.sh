@@ -367,4 +367,60 @@ for mutation in append replace; do
   case "$OUT" in *'done: ready in branch fm/task-a'*) ;; *) fail "changed completion was not presented: $OUT" ;; esac
 done
 
+for verdict in captain routine; do
+  make_case "branch-outcome-delivery-$verdict"
+  land
+  ln "$CASE/state/task-a.status" "$CASE/state/task-b.status"
+  OTHER_SEQ=$(in_home "$ROOT/bin/fm-branch-outcome.sh" append --task task-b --verdict captain --summary 'another task outcome')
+  in_home "$ROOT/bin/fm-branch-outcome.sh" mark-read --through "$OTHER_SEQ"
+  OUT=$(in_home env FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 "$ROOT/bin/fm-auto-teardown.sh"); retained
+  rm "$CASE/state/task-b.status"
+  SEQ=$(in_home "$ROOT/bin/fm-branch-outcome.sh" append --task task-a --verdict "$verdict" --summary 'landed task ready for retirement')
+  OUT=$(in_home "$ROOT/bin/fm-wake-drain.sh" 2>&1); retained
+  case "$OUT" in *'task-a done:'*) fail "unread branch outcome unexpectedly reached the status backstop: $OUT" ;; esac
+  OUT=$(in_home env FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 "$ROOT/bin/fm-auto-teardown.sh"); retained
+  for cursor in invalid 999; do
+    printf '%s\n' "$cursor" > "$CASE/state/.branch-outcomes-cursor"
+    OUT=$(in_home env FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 "$ROOT/bin/fm-auto-teardown.sh"); retained
+  done
+  rm "$CASE/state/.branch-outcomes-cursor"
+  rm "$CASE/config/supervision-host-off"
+  printf 'claude\n' > "$CASE/config/supervision-host"
+  OUT=$(in_home env FM_TEST_HARNESS=claude "$ROOT/bin/fm-wake-drain.sh" 2>&1)
+  case "$OUT" in *'landed task ready for retirement'*) ;; *) fail "branch outcome was not presented: $OUT" ;; esac
+  retired
+done
+
+for mutation in append replace; do
+  make_case "branch-coverage-$mutation"
+  land
+  SEQ=$(in_home "$ROOT/bin/fm-branch-outcome.sh" append --task task-a --verdict captain --summary 'completion delivered through branch')
+  OUT=$(in_home "$ROOT/bin/fm-branch-outcome.sh" present)
+  case "$OUT" in *'completion delivered through branch'*) ;; *) fail 'branch delivery fixture omitted its outcome' ;; esac
+  in_home "$ROOT/bin/fm-branch-outcome.sh" mark-read --through "$SEQ"
+  in_home "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through "$SEQ"
+  fm_lock_try_acquire "$CASE/state/.meta-task-a.lock" || fail 'could not hold metadata lock'
+  in_home env FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 "$ROOT/bin/fm-auto-teardown.sh" > "$CASE/auto.out" 2>&1 &
+  auto_pid=$!
+  tries=0
+  while [ ! -d "$CASE/state/.control-task-a.lock" ] && [ "$tries" -lt 100 ]; do
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  [ -d "$CASE/state/.control-task-a.lock" ] || fail 'delivered branch outcome did not establish eligibility'
+  if [ "$mutation" = replace ]; then
+    printf 'done: ready in branch fm/task-a\n' > "$CASE/replacement.status"
+    mv "$CASE/replacement.status" "$CASE/state/task-a.status"
+  else
+    printf 'done: ready in branch fm/task-a after another iteration\n' >> "$CASE/state/task-a.status"
+  fi
+  fm_lock_release "$CASE/state/.meta-task-a.lock"
+  wait "$auto_pid"
+  OUT=$(cat "$CASE/auto.out"); retained
+  case "$OUT" in *'no longer eligible'*) ;; *) fail "locked branch provenance was not checked: $OUT" ;; esac
+  OUT=$(in_home "$ROOT/bin/fm-wake-drain.sh" 2>&1)
+  retired
+  case "$OUT" in *'done: ready in branch fm/task-a'*) ;; *) fail "new outcome was not presented: $OUT" ;; esac
+done
+
 printf 'PASS: automatic cleanup, real teardown, landing and wake entrypoints\n'

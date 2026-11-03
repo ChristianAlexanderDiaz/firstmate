@@ -6,7 +6,8 @@
 # keep_open=1 row is skipped; remove that row to restore automatic cleanup.
 # Called after main-actor wake presentation and successful local-only landing.
 # FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 requires status presentation receipts
-# covering the current status identity and latest event endpoint.
+# covering the current status identity and latest event endpoint, including
+# delivered branch outcomes verified by fm-branch-outcome.sh covers-status.
 # Ships require an identity-matched merge-poll notification, or a local-only
 # branch reachable from the project's checked-out main/master default branch.
 # Scouts require their report and the existing captain-call verify gate.
@@ -71,7 +72,9 @@ eligible() {
     presented=$(status_presentation_cursor_offset "$status") || return 1
     backstop=$(status_outcome_backstop_cursor_offset "$status") || return 1
     [ "$presented" -ge "$FM_STATUS_SNAPSHOT_EVENT_ENDPOINT" ] \
-      || [ "$backstop" -ge "$FM_STATUS_SNAPSHOT_EVENT_ENDPOINT" ] || return 1
+      || [ "$backstop" -ge "$FM_STATUS_SNAPSHOT_EVENT_ENDPOINT" ] \
+      || FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-branch-outcome.sh" \
+        covers-status "$id" "$FM_STATUS_SNAPSHOT_EVENT_ENDPOINT" "$ident" >/dev/null 2>&1 || return 1
     [ "$(_fm_open_decisions_file_ident "$status")" = "$ident" ] \
       && [ "$(_fm_status_file_size "$status")" -eq "$size" ] || return 1
   fi
