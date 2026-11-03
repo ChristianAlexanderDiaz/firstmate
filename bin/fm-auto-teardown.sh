@@ -8,7 +8,8 @@
 # Ships require an identity-matched merge-poll notification, or a local-only
 # branch reachable from the project's checked-out main/master default branch.
 # Scouts require their report and the existing captain-call verify gate.
-# All kinds require current-state done from fm-crew-state.sh.
+# All kinds require current-state done from fm-crew-state.sh, an idle harness,
+# and no unhandled steering inbox records.
 # fm-teardown.sh rechecks eligibility and incarnation under its lifecycle locks
 # and owns every ordinary safety check.
 # Refusals are reduced to one output line; no force, retries, or discard here.
@@ -30,6 +31,10 @@ if [ "${1:-}" = --eligible ]; then CHECK_ONLY=1; shift; fi
 [ "${FM_SUPERVISION_ACTOR:-main}" = main ] || exit "$CHECK_ONLY"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-task-inbox-lib.sh
+. "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+# shellcheck source=bin/fm-busy-lib.sh
+. "$SCRIPT_DIR/fm-busy-lib.sh"
 if [ "$CHECK_ONLY" -eq 1 ]; then
   [ "$#" -eq 2 ] && [ -n "$2" ] || exit 2
 else
@@ -39,8 +44,17 @@ fi
 
 meta_value() { sed -n "s/^$2=//p" "$1" | tail -1; }
 eligible() {
-  local meta=$1 id=$2 kind mode project branch default ref current
+  local meta=$1 id=$2 kind mode project branch default ref current inbox record activity
   grep -qx 'keep_open=1' "$meta" && return 1
+  inbox=$(fm_task_inbox_dir "$STATE" "$id")
+  if [ -e "$inbox" ] || [ -L "$inbox" ]; then
+    [ -d "$inbox" ] && [ -r "$inbox" ] && [ -x "$inbox" ] && [ ! -L "$inbox" ] || return 1
+    for record in "$inbox"/*.msg; do
+      [ ! -e "$record" ] && [ ! -L "$record" ] || return 1
+    done
+  fi
+  activity=$(fm_busy_classify_meta "$meta" "$id" "$STATE") || return 1
+  case "$activity" in "idle "*) ;; *) return 1 ;; esac
   current=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
     FM_CONFIG_OVERRIDE="$CONFIG" FM_CREW_STATE_NO_FORGE=1 "$SCRIPT_DIR/fm-crew-state.sh" "$id") || return 1
   case "$current" in "state: done "*) ;; *) return 1 ;; esac

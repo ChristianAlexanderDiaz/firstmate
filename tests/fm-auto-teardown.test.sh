@@ -141,7 +141,7 @@ OUT=$(run_auto); retained
 [ -z "$OUT" ] || fail 'historical local done event closed a busy worker'
 
 FM_STATE_OVERRIDE="$CASE/state" . "$ROOT/bin/fm-wake-lib.sh"
-for change in busy incarnation retention; do
+for change in busy incarnation retention steering; do
   make_case "locked-$change"
   land
   fm_lock_try_acquire "$CASE/state/.meta-task-a.lock" || fail 'could not hold metadata lock'
@@ -160,6 +160,7 @@ for change in busy incarnation retention; do
       mv "$CASE/meta" "$CASE/state/task-a.meta"
       ;;
     retention) printf 'keep_open=1\n' >> "$CASE/state/task-a.meta" ;;
+    steering) in_home bash -c '. "$1/bin/fm-task-inbox-lib.sh"; fm_task_inbox_write "$2" task-a "iterate again"' _ "$ROOT" "$CASE/state" >/dev/null ;;
   esac
   fm_lock_release "$CASE/state/.meta-task-a.lock"
   wait "$auto_pid"
@@ -168,7 +169,7 @@ for change in busy incarnation retention; do
 done
 
 for queue in empty presented reserved; do
-  for failure in snapshot lock; do
+  for failure in snapshot lock history-lock unsafe-history rebuild index budget; do
     make_case "presentation-$queue-$failure"
     land
     if [ "$queue" != empty ]; then
@@ -178,16 +179,45 @@ for queue in empty presented reserved; do
       in_home "$ROOT/bin/fm-wake-grant.sh" activate "$$" auto-test
       in_home "$ROOT/bin/fm-wake-grant.sh" publish auto-test 1
     fi
+    case "$failure" in
+      history-lock)
+        : > "$CASE/state/branch-outcomes.jsonl"
+        fm_lock_try_acquire "$CASE/state/.branch-outcomes.lock" || fail 'could not hold outcome lock'
+        ;;
+      unsafe-history) mkdir "$CASE/state/branch-outcomes.jsonl" ;;
+      rebuild) printf 'invalid history\n' > "$CASE/state/branch-outcomes.jsonl" ;;
+      index) mkdir "$CASE/state/.task-a.branch-outcome-index" ;;
+      budget)
+        printf 'done: ready in branch fm/task-a %0300d\n' 0 > "$CASE/state/task-a.status"
+        i=1
+        while [ "$i" -le 25 ]; do
+          printf 'done: outcome %s %0300d\n' "$i" 0 > "$CASE/state/aaa-$i.status"
+          i=$((i + 1))
+        done
+        ;;
+    esac
     if [ "$failure" = snapshot ]; then
       printf '#!/usr/bin/env bash\nexit 1\n' > "$CASE/identity-reader"
       chmod +x "$CASE/identity-reader"
       OUT=$(in_home env FM_STATUS_IDENTITY_READER="$CASE/identity-reader" "$ROOT/bin/fm-wake-drain.sh" 2>&1)
       case "$OUT" in *'STATUS PRESENTATION INCOMPLETE'*) ;; *) fail "snapshot failure not exercised: $OUT" ;; esac
-    else
+    elif [ "$failure" = lock ]; then
       fm_lock_try_acquire "$CASE/state/.status-presentation-lock" || fail 'could not hold presentation lock'
       OUT=$(in_home env FM_STATUS_PRESENTATION_LOCK_TIMEOUT=1 "$ROOT/bin/fm-wake-drain.sh" 2>&1)
       fm_lock_release "$CASE/state/.status-presentation-lock"
       case "$OUT" in *'STATUS PRESENTATION SKIPPED'*) ;; *) fail "lock skip not exercised: $OUT" ;; esac
+    else
+      OUT=$(in_home env FM_STATUS_PRESENTATION_LOCK_TIMEOUT=1 "$ROOT/bin/fm-wake-drain.sh" 2>&1)
+      case "$OUT" in
+        *'STATUS OUTCOME BACKSTOP SKIPPED:'*|*'more omitted (byte cap)'*) ;;
+        *) fail "outcome deferral not exercised: $OUT" ;;
+      esac
+      case "$failure" in
+        history-lock) fm_lock_release "$CASE/state/.branch-outcomes.lock" ;;
+        unsafe-history) rmdir "$CASE/state/branch-outcomes.jsonl" ;;
+        rebuild) rm "$CASE/state/branch-outcomes.jsonl" ;;
+        index) rmdir "$CASE/state/.task-a.branch-outcome-index" ;;
+      esac
     fi
     retained
     [ -s "$CASE/state/task-a.status" ] || fail 'failed presentation erased unread outcome'
@@ -196,5 +226,68 @@ for queue in empty presented reserved; do
     case "$OUT" in *'task-a done: ready in branch fm/task-a'*) ;; *) fail "outcome not retried: $OUT" ;; esac
   done
 done
+
+for kind in scout local pr; do
+  for delivery in '' fire-and-forget; do
+    make_case "steering-$kind-${delivery:-ordinary}"
+    land
+    case "$kind" in
+      scout)
+        sed 's/kind=ship/kind=scout/' "$CASE/state/task-a.meta" > "$CASE/meta"
+        mv "$CASE/meta" "$CASE/state/task-a.meta"
+        printf 'Findings.\n' > "$CASE/data/task-a/report.md"
+        in_home "$ROOT/bin/fm-captain-hold.sh" complete task-a --none >/dev/null
+        ;;
+      pr)
+        sed 's/mode=local-only/mode=direct-PR/' "$CASE/state/task-a.meta" > "$CASE/meta"
+        mv "$CASE/meta" "$CASE/state/task-a.meta"
+        printf 'pr=https://github.com/example/sample/pull/7\n' >> "$CASE/state/task-a.meta"
+        printf 'done: PR https://github.com/example/sample/pull/7\n' > "$CASE/state/task-a.status"
+        fm_pr_poll_merge_mark_notified "$CASE/state" task-a github github.com example/sample 7
+        PR_HEAD=$(git -C "$CASE/wt" rev-parse HEAD)
+        cat > "$FAKEBIN/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\\t%s\\t%s\\n' MERGED '$PR_HEAD' 'https://github.com/example/sample/pull/7'
+SH
+        ;;
+    esac
+    RECORD=$(in_home bash -c '. "$1/bin/fm-task-inbox-lib.sh"; fm_task_inbox_write "$2" task-a "iterate again" "$3"' _ "$ROOT" "$CASE/state" "$delivery")
+    OUT=$(run_auto); retained
+    [ -f "$RECORD" ] || fail 'pending steer was discarded'
+    mv "$RECORD" "$CASE/state/task-a.inbox/handled/"
+    OUT=$(run_auto); retired
+  done
+done
+
+make_case passed-run-active-harness
+land
+HEAD_SHA=$(git -C "$CASE/wt" rev-parse HEAD)
+cat > "$CASE/run.toon" <<EOF
+run:
+  id: "01RUN"
+  branch: fm/task-a
+  status: completed
+  head: "$HEAD_SHA"
+  pr: ""
+  findings: none
+outcome: passed
+EOF
+cat > "$FAKEBIN/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}:${2:-}" in
+  axi:|axi:status) cat "$FM_HOME/run.toon" ;;
+esac
+exit 0
+SH
+for activity in busy unknown; do
+  in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a "$activity" --current-gen --source claude-hook --event UserPromptSubmit
+  CURRENT=$(in_home "$ROOT/bin/fm-crew-state.sh" task-a)
+  case "$CURRENT" in 'state: done '*'source: run-step'*) ;; *) fail "passed run did not override harness state: $CURRENT" ;; esac
+  OUT=$(run_auto); retained
+  OUT=$(in_home "$ROOT/bin/fm-teardown.sh" task-a --auto auto-teardown-test 2>&1) && fail 'locked auto teardown accepted a non-idle harness'
+  retained
+done
+in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a idle --current-gen --source claude-hook --event Stop
+OUT=$(run_auto); retired
 
 printf 'PASS: automatic cleanup, real teardown, landing and wake entrypoints\n'

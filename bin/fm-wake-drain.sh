@@ -340,11 +340,11 @@ print_status_outcome_backstop_section() {  # <task-and-endpoint-snapshot>
   if [ -e "$store" ] || [ -L "$store" ]; then
     if [ ! -f "$store" ] || [ ! -r "$store" ] || [ -L "$store" ]; then
       printf 'STATUS OUTCOME BACKSTOP SKIPPED: branch outcome history could not be read safely; repair it before relying on drain recovery.\n'
-      return 0
+      return 2
     fi
     if ! fm_lock_acquire_wait_bounded "$lock" "$PRESENTATION_LOCK_TIMEOUT"; then
       printf 'STATUS OUTCOME BACKSTOP SKIPPED: branch outcome history is busy; retry on the next drain.\n'
-      return 0
+      return 2
     fi
     ready="$STATE/.branch-outcome-index-ready"
     if ! outcome_index_ready_ok "$ready"; then
@@ -352,7 +352,7 @@ print_status_outcome_backstop_section() {  # <task-and-endpoint-snapshot>
         || ! outcome_index_ready_ok "$ready"; then
         fm_lock_release "$lock"
         printf 'STATUS OUTCOME BACKSTOP SKIPPED: bounded outcome indexes could not be rebuilt because the outcome store is unsafe; repair it before relying on drain recovery.\n'
-        return 0
+        return 2
       fi
     fi
   fi
@@ -413,13 +413,14 @@ EOF
   if [ "$rc" -eq 2 ]; then
     printf 'STATUS OUTCOME BACKSTOP SKIPPED: a bounded task outcome index could not be read safely; repair it before relying on drain recovery.\n'
     STATUS_OUTCOME_BACKSTOP_ACKNOWLEDGED=
-    return 0
+    return 2
   fi
   [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ] || return 0
   printf 'STATUS OUTCOME BACKSTOP (newest captain-facing task event has no covering branch outcome):\n' || return 1
   printf '%s' "$output" || return 1
   if [ "$omitted" -gt 0 ]; then
     printf 'STATUS OUTCOME BACKSTOP: %d more omitted (byte cap)\n' "$omitted" || return 1
+    return 2
   fi
 }
 
@@ -754,14 +755,14 @@ cap_outcome_line() {  # <line> <max-bytes>
 }
 
 print_status_sections() {
-  local snapshot=${1:-} fully_presented=${2:-} acknowledged prepared
+  local snapshot=${1:-} fully_presented=${2:-} acknowledged prepared backstop_rc=0
   if [ -z "$snapshot" ]; then snapshot=$(status_presentation_snapshot "$STATE") || return 1; fi
   [ -n "$snapshot" ] || return 0
   acknowledged=$(status_acknowledge_presented_snapshot "$STATE" "$snapshot" "$fully_presented") || return 1
   prepared=$(mktemp "$STATE/.status-presentation.prepared.XXXXXX") || return 1
   if ! {
     print_unread_status_section "$snapshot" \
-      && print_status_outcome_backstop_section "$snapshot" \
+      && { print_status_outcome_backstop_section "$snapshot" || backstop_rc=$?; [ "$backstop_rc" -ne 1 ]; } \
       && print_open_decisions_section "$snapshot" \
       && print_record_divergence_section
   } > "$prepared"; then
@@ -780,6 +781,7 @@ print_status_sections() {
     return 1
   fi
   rm -f -- "$prepared"
+  [ "$backstop_rc" -eq 0 ]
 }
 
 print_status_presentation() {  # [<deduped-raw-rows>]
