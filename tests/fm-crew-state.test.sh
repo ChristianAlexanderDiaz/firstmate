@@ -5913,6 +5913,7 @@ working: building|🔨
 needs-decision [key=pick]: pick a design|🙋
 blocked: credential missing|🙋
 paused [wait=captain]: review|🙋
+captain-held: review transferred|🙋
 paused: machine slot|💤
 paused: test lease|💤
 paused: until 2027-01-01T00:00Z|💤
@@ -5949,5 +5950,56 @@ EOF
   pass "work-state emoji: building, review, CI, merge approval, external and captain waits, unknown and secondmate"
 }
 test_work_state_emoji
+
+test_work_state_emoji_reconciles_declarations() {
+  command -v jq >/dev/null 2>&1 || { pass "herdr emoji transitions skipped without jq"; return; }
+  reset_fakes
+  local d out declaration expected state gen
+  d=$(new_case work-emoji-transitions)
+  make_repo_on_branch "$d/wt" fm/work-emoji-transitions
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/emoji.meta" "backend=herdr" "window=default:w1:p2" \
+    "worktree=$d/wt" "kind=ship" "harness=claude"
+  export FM_FAKE_HERDR_AGENT_STATUS=idle FM_FAKE_HERDR_PROCESS=agent
+  while IFS='|' read -r declaration expected state; do
+    printf '%s\n' "$declaration" > "$d/state/emoji.status"
+    arm_idle_record "$d/state" emoji
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" "state: $state" "idle declaration: $declaration"
+    assert_contains "$out" 'source: status-log' "idle declaration: $declaration"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ "$out" = "$expected" ] || fail "current declaration $declaration: $out"
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" emoji)
+    "$ROOT/bin/fm-busy-event.sh" apply "$d/state" emoji busy --gen "$gen" \
+      --source claude-hook --event user-prompt-submit
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" 'state: working' "resumed declaration: $declaration"
+    assert_contains "$out" 'source: pane' "resumed declaration: $declaration"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ "$out" = 🔨 ] || fail "resumed declaration $declaration: $out"
+    FM_FAKE_HERDR_PROCESS=shell
+    FM_FAKE_HERDR_READ_FAIL=1
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" 'state: unknown' "stopped declaration: $declaration"
+    assert_contains "$out" 'pane shell remains' "stopped declaration: $declaration"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ -z "$out" ] || fail "stopped declaration $declaration: $out"
+    FM_FAKE_HERDR_PROCESS=agent
+    FM_FAKE_HERDR_READ_FAIL=0
+    "$ROOT/bin/fm-busy-event.sh" arm "$d/state" emoji --state unknown >/dev/null
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" 'state: unknown' "unverified declaration: $declaration"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ -z "$out" ] || fail "unverified declaration $declaration: $out"
+  done <<'EOF'
+paused: machine slot|💤|paused
+paused [wait=captain]: review|🙋|paused
+captain-held: review transferred|🙋|paused
+needs-decision [key=pick]: choose|🙋|parked
+blocked: credential missing|🙋|blocked
+EOF
+  pass 'work-state emoji reconciles current, resumed, stopped and unverified declarations'
+}
+test_work_state_emoji_reconciles_declarations
 
 echo "all fm-crew-state tests passed"

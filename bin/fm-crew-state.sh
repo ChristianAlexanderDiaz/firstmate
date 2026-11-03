@@ -225,6 +225,7 @@ work_state_emoji() {  # <state> <source>
   local pr='' active=0
   case "${KIND:-}" in secondmate) return ;; esac
   [ -z "${REMOTE_HOST:-}" ] || return
+  [ "$1" != unknown ] || return
   if [ "${HAVE_RUN:-0}" = 1 ] && [ "$2" = run-step ]; then
     active=1
     if [ "${RUN_SOURCE:-}" = full ]; then
@@ -236,7 +237,7 @@ work_state_emoji() {  # <state> <source>
   # A merged task has no presentation state; never mint a merged check mark.
   if [ -n "$pr" ] && fm_pr_poll_retirement_receipt_valid "$STATE" "$ID" \
     && [ "$FM_PR_RETIRE_URL" = "$pr" ]; then return; fi
-  if [ "$active" = 0 ]; then
+  if [ "$2" = status-log ]; then
     if status_is_captain_held "${LOG_LINE:-}"; then printf '🙋'; return; fi
     case "${LOG_VERB:-}" in needs-decision|blocked) printf '🙋'; return ;; esac
     if status_is_paused "${LOG_LINE:-}"; then
@@ -348,7 +349,7 @@ fi
 
 # Map a status-log verb onto a canonical state for the fallback path. `paused` is
 # the deliberate-external-wait verb (fm-classify-lib.sh's FM_CLASSIFY_PAUSED_VERB):
-# a crew with no active run and an idle pane that declared a known external wait
+# a crew with no active run and an idle pane that declared an external wait or captain hold
 # reports `paused` distinctly, so a supervisor reading this sees a declared pause
 # and its reason rather than a wedge-suspect idle.
 # A ship `done:` is not current-state done while bin/fm-dod-lib.sh refuses the
@@ -363,7 +364,7 @@ emit_ship_status_done() {  # [extra-detail]
 }
 
 map_log_state() {  # <line>
-  if status_is_paused "$1"; then
+  if status_is_paused_or_captain_held "$1"; then
     echo paused
     return
   fi
