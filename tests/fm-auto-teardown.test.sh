@@ -57,6 +57,7 @@ retired() { [ ! -e "$CASE/state/task-a.meta" ] || fail "task was retained: ${OUT
 land() { git -C "$CASE/project" merge --ff-only fm/task-a >/dev/null; }
 
 enqueue() {
+  # shellcheck disable=SC2016 # The child shell expands its positional arguments.
   in_home bash -c '. "$1/bin/fm-wake-lib.sh"; fm_wake_append "$2" "$3" "$4"' _ "$ROOT" "$1" "$2" "${3:-wake}"
 }
 present_wakes() {
@@ -225,7 +226,10 @@ for change in busy incarnation retention steering; do
       mv "$CASE/meta" "$CASE/state/task-a.meta"
       ;;
     retention) printf 'keep_open=1\n' >> "$CASE/state/task-a.meta" ;;
-    steering) in_home bash -c '. "$1/bin/fm-task-inbox-lib.sh"; fm_task_inbox_write "$2" task-a "iterate again"' _ "$ROOT" "$CASE/state" >/dev/null ;;
+    steering)
+      # shellcheck disable=SC2016 # The child shell expands its positional arguments.
+      in_home bash -c '. "$1/bin/fm-task-inbox-lib.sh"; fm_task_inbox_write "$2" task-a "iterate again"' _ "$ROOT" "$CASE/state" >/dev/null
+      ;;
   esac
   fm_lock_release "$CASE/state/.meta-task-a.lock"
   wait "$auto_pid"
@@ -257,6 +261,7 @@ printf '%s\\t%s\\t%s\\n' MERGED '$PR_HEAD' 'https://github.com/example/sample/pu
 SH
         ;;
     esac
+    # shellcheck disable=SC2016 # The child shell expands its positional arguments.
     RECORD=$(in_home bash -c '. "$1/bin/fm-task-inbox-lib.sh"; fm_task_inbox_write "$2" task-a "iterate again" "$3"' _ "$ROOT" "$CASE/state" "$delivery")
     OUT=$(run_auto); retained
     [ -f "$RECORD" ] || fail 'pending steer was discarded'
@@ -368,6 +373,7 @@ in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a busy --current-g
 ack_wakes
 retained
 in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a idle --current-gen --source claude-hook --event Stop
+# shellcheck disable=SC2016 # The child shell expands its positional arguments.
 RECORD=$(in_home bash -c '. "$1/bin/fm-task-inbox-lib.sh"; fm_task_inbox_write "$2" task-a "new instruction"' _ "$ROOT" "$CASE/state")
 ack_task
 retained

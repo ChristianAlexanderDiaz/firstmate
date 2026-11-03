@@ -277,7 +277,8 @@ acknowledged_task_ids() { # <cutoff> <owned-row-file>
   local cutoff=$1 rows=$2 epoch seq kind key payload
   while IFS=$(printf '\t') read -r epoch seq kind key payload; do
     case "$seq" in ''|*[!0-9]*) continue ;; esac
-    [ "$seq" -le "$cutoff" ] && grep -qxF "$seq" "$rows" || continue
+    [ "$seq" -le "$cutoff" ] || continue
+    grep -qxF "$seq" "$rows" || continue
     case "$key" in "$STATE/"*) key=${key#"$STATE/"} ;; esac
     case "$kind:$key" in
       signal:*) fm_wake_status_key_map "$key" || continue ;;
