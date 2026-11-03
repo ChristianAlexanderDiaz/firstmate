@@ -290,4 +290,81 @@ done
 in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a idle --current-gen --source claude-hook --event Stop
 OUT=$(run_auto); retired
 
+REAL_MV=$(command -v mv)
+for queue in empty presented reserved; do
+  for mutation in append replace; do
+    make_case "completion-race-$queue-$mutation"
+    land
+    if [ "$mutation" = append ]; then
+      printf 'working: finishing the landed work\n' > "$CASE/state/task-a.status"
+      in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a busy --current-gen --source claude-hook --event UserPromptSubmit
+    fi
+    if [ "$queue" != empty ]; then
+      in_home bash -c '. "$1/bin/fm-wake-lib.sh"; fm_wake_append signal task-a.status "signal: task-a.status"' _ "$ROOT"
+    fi
+    if [ "$queue" = reserved ]; then
+      in_home "$ROOT/bin/fm-wake-grant.sh" activate "$$" completion-race
+      in_home "$ROOT/bin/fm-wake-grant.sh" publish completion-race 1
+    fi
+    cat > "$FAKEBIN/mv" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do destination=$arg; done
+if [ "$destination" = "$FM_STATE_OVERRIDE/.status-presentation-cursor" ] && [ ! -e "$FM_HOME/mutated" ]; then
+  "$FM_TEST_REAL_MV" "$@" || exit 1
+  : > "$FM_HOME/mutated"
+  if [ "$FM_TEST_STATUS_MUTATION" = replace ]; then
+    printf 'done: ready in branch fm/task-a\n' > "$FM_HOME/replacement.status"
+    "$FM_TEST_REAL_MV" "$FM_HOME/replacement.status" "$FM_STATE_OVERRIDE/task-a.status" || exit 1
+  else
+    printf 'done: ready in branch fm/task-a\n' >> "$FM_STATE_OVERRIDE/task-a.status"
+  fi
+  "$FM_TEST_ROOT/bin/fm-busy-event.sh" apply "$FM_STATE_OVERRIDE" task-a idle --current-gen --source claude-hook --event Stop || exit 1
+  . "$FM_TEST_ROOT/bin/fm-wake-lib.sh"
+  fm_wake_append signal task-a.status 'signal: task-a.status'
+  exit $?
+fi
+exec "$FM_TEST_REAL_MV" "$@"
+SH
+    chmod +x "$FAKEBIN/mv"
+    OUT=$(in_home env FM_TEST_REAL_MV="$REAL_MV" FM_TEST_ROOT="$ROOT" FM_TEST_STATUS_MUTATION="$mutation" "$ROOT/bin/fm-wake-drain.sh" 2>&1)
+    [ -f "$CASE/mutated" ] || fail 'completion race was not exercised'
+    retained
+    grep -q '^done:' "$CASE/state/task-a.status" || fail 'unpresented completion was erased'
+    grep -q 'signal: task-a.status' "$CASE/state/.wake-queue" || fail 'new completion signal was pruned'
+    OUT=$(in_home env FM_TEST_REAL_MV="$REAL_MV" "$ROOT/bin/fm-wake-drain.sh" 2>&1)
+    retired
+    case "$OUT" in *'done: ready in branch fm/task-a'*) ;; *) fail "new completion was not presented: $OUT" ;; esac
+  done
+done
+
+for mutation in append replace; do
+  make_case "locked-coverage-$mutation"
+  land
+  rm "$CASE/config/auto-teardown"
+  in_home "$ROOT/bin/fm-wake-drain.sh" >/dev/null 2>&1
+  : > "$CASE/config/auto-teardown"
+  fm_lock_try_acquire "$CASE/state/.meta-task-a.lock" || fail 'could not hold metadata lock'
+  in_home env FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 "$ROOT/bin/fm-auto-teardown.sh" > "$CASE/auto.out" 2>&1 &
+  auto_pid=$!
+  tries=0
+  while [ ! -d "$CASE/state/.control-task-a.lock" ] && [ "$tries" -lt 100 ]; do
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  [ -d "$CASE/state/.control-task-a.lock" ] || fail 'covered task never reached lifecycle lock'
+  if [ "$mutation" = replace ]; then
+    printf 'done: ready in branch fm/task-a\n' > "$CASE/replacement.status"
+    mv "$CASE/replacement.status" "$CASE/state/task-a.status"
+  else
+    printf 'done: ready in branch fm/task-a after another iteration\n' >> "$CASE/state/task-a.status"
+  fi
+  fm_lock_release "$CASE/state/.meta-task-a.lock"
+  wait "$auto_pid"
+  OUT=$(cat "$CASE/auto.out"); retained
+  case "$OUT" in *'no longer eligible'*) ;; *) fail "locked coverage was not rechecked: $OUT" ;; esac
+  OUT=$(in_home "$ROOT/bin/fm-wake-drain.sh" 2>&1)
+  retired
+  case "$OUT" in *'done: ready in branch fm/task-a'*) ;; *) fail "changed completion was not presented: $OUT" ;; esac
+done
+
 printf 'PASS: automatic cleanup, real teardown, landing and wake entrypoints\n'

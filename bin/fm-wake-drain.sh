@@ -997,7 +997,7 @@ if [ ! -s "$FM_WAKE_QUEUE" ]; then
   STATUS_PRESENTED=0
   (print_status_presentation) && STATUS_PRESENTED=1
   print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
-  [ "$STATUS_PRESENTED" -ne 1 ] || [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ] || FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" || true
+  [ "$STATUS_PRESENTED" -ne 1 ] || [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ] || FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" || true
   if [ "$RECOVERY_ACK_REQUIRED" = true ]; then
     printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation %s\n' "${RECOVERY_MARKER_TOKEN##*:}" >&2
   fi
@@ -1021,7 +1021,7 @@ if [ "$ACTOR" = main ]; then
     STATUS_PRESENTED=0
     (print_status_presentation) && STATUS_PRESENTED=1
     print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
-    [ "$STATUS_PRESENTED" -ne 1 ] || [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ] || FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" || true
+    [ "$STATUS_PRESENTED" -ne 1 ] || [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ] || FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" || true
     assert_watcher_liveness
     exit "$BRANCH_OUTCOMES_RC"
   fi
@@ -1086,6 +1086,6 @@ printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --a
 STATUS_PRESENTED=0
 (print_status_presentation "$RAW_ROWS") && STATUS_PRESENTED=1
 print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
-[ "$STATUS_PRESENTED" -ne 1 ] || [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ] || FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" || true
+[ "$STATUS_PRESENTED" -ne 1 ] || [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ] || FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" || true
 assert_watcher_liveness
 exit "$BRANCH_OUTCOMES_RC"

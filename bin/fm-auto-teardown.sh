@@ -5,6 +5,8 @@
 # config/auto-teardown is a presence flag, absent by default. Metadata with any
 # keep_open=1 row is skipped; remove that row to restore automatic cleanup.
 # Called after main-actor wake presentation and successful local-only landing.
+# FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 requires status presentation receipts
+# covering the current status identity and latest event endpoint.
 # Ships require an identity-matched merge-poll notification, or a local-only
 # branch reachable from the project's checked-out main/master default branch.
 # Scouts require their report and the existing captain-call verify gate.
@@ -35,6 +37,8 @@ if [ "${1:-}" = --eligible ]; then CHECK_ONLY=1; shift; fi
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 if [ "$CHECK_ONLY" -eq 1 ]; then
   [ "$#" -eq 2 ] && [ -n "$2" ] || exit 2
 else
@@ -44,7 +48,7 @@ fi
 
 meta_value() { sed -n "s/^$2=//p" "$1" | tail -1; }
 eligible() {
-  local meta=$1 id=$2 kind mode project branch default ref current inbox record activity
+  local meta=$1 id=$2 kind mode project branch default ref current inbox record activity status size ident presented backstop
   grep -qx 'keep_open=1' "$meta" && return 1
   inbox=$(fm_task_inbox_dir "$STATE" "$id")
   if [ -e "$inbox" ] || [ -L "$inbox" ]; then
@@ -58,6 +62,19 @@ eligible() {
   current=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
     FM_CONFIG_OVERRIDE="$CONFIG" FM_CREW_STATE_NO_FORGE=1 "$SCRIPT_DIR/fm-crew-state.sh" "$id") || return 1
   case "$current" in "state: done "*) ;; *) return 1 ;; esac
+  if [ "${FM_AUTO_TEARDOWN_REQUIRE_PRESENTED:-0}" = 1 ]; then
+    status="$STATE/$id.status"
+    size=$(_fm_status_file_size "$status") || return 1
+    size=${size//[[:space:]]/}
+    ident=$(_fm_open_decisions_file_ident "$status") || return 1
+    status_snapshot_latest_event "$status" "$size" "$ident" || return 1
+    presented=$(status_presentation_cursor_offset "$status") || return 1
+    backstop=$(status_outcome_backstop_cursor_offset "$status") || return 1
+    [ "$presented" -ge "$FM_STATUS_SNAPSHOT_EVENT_ENDPOINT" ] \
+      || [ "$backstop" -ge "$FM_STATUS_SNAPSHOT_EVENT_ENDPOINT" ] || return 1
+    [ "$(_fm_open_decisions_file_ident "$status")" = "$ident" ] \
+      && [ "$(_fm_status_file_size "$status")" -eq "$size" ] || return 1
+  fi
   kind=$(meta_value "$meta" kind)
   case "$kind" in
     scout)
