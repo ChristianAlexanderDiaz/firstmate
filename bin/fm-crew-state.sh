@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fm-crew-state.sh - deterministic read of a crew's CURRENT state.
-# Usage: fm-crew-state.sh <id> [--sync-review-pane]
+# Usage: fm-crew-state.sh <id> [--sync-review-pane|--sync-presentation|--work-emoji]
 #
 # Why this exists: state/<id>.status is an append-only, best-effort EVENT LOG.
 # Crews append only wake-worthy transitions (done/needs-decision/blocked/paused/failed)
@@ -159,9 +159,10 @@
 #      classified by step 4. Backends with no classifier keep reading a failed
 #      capture as gone. The fallback's own comment owns the per-verdict rules.
 #
-# Read-only unless --sync-review-pane explicitly requests Herdr presentation
-# reconciliation through bin/fm-nm-review-pane.sh. Always exits 0 on a read regardless
-# of state; exit 2 only on a usage error (no id).
+# --work-emoji prints only the derived work-state emoji (or an empty line).
+# Read-only unless --sync-review-pane requests the review pane, or
+# --sync-presentation requests both the review pane and workspace state label.
+# Always exits 0 on a read regardless of state; exit 2 on a usage error.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -188,7 +189,7 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 ID=${1:-}
 SYNC_REVIEW_PANE=${2:-}
-case "$SYNC_REVIEW_PANE" in ''|--sync-review-pane) ;; *) echo "usage: fm-crew-state.sh <id> [--sync-review-pane]" >&2; exit 2 ;; esac
+case "$SYNC_REVIEW_PANE" in ''|--sync-review-pane|--sync-presentation|--work-emoji) ;; *) echo "usage: fm-crew-state.sh <id> [--sync-review-pane|--sync-presentation|--work-emoji]" >&2; exit 2 ;; esac
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
 
 # Fleet snapshot composition supplies its captured metadata path here so every
@@ -218,14 +219,81 @@ FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
 SEP=' · '
 
-# Emit the one canonical line and exit 0. Detail is optional.
+# Derive presentation from the same attributed run and reconciled declaration
+# as the canonical verdict. No pane glyphs or free-form wait prose are parsed.
+work_state_emoji() {  # <state> <source>
+  local pr='' active=0
+  case "${KIND:-}" in secondmate) return ;; esac
+  [ -z "${REMOTE_HOST:-}" ] || return
+  if [ "${HAVE_RUN:-0}" = 1 ] && [ "$2" = run-step ]; then
+    active=1
+    if [ "${RUN_SOURCE:-}" = full ]; then
+      pr=$(strip_quotes "$(nm_field pr)")
+      fm_pr_url_parse "$pr" || pr=
+    fi
+  fi
+  [ -n "$pr" ] || { fm_pr_metadata_identity_parse "$META" && pr=$FM_PR_META_URL; }
+  # A merged task has no presentation state; never mint a merged check mark.
+  if [ -n "$pr" ] && fm_pr_poll_retirement_receipt_valid "$STATE" "$ID" \
+    && [ "$FM_PR_RETIRE_URL" = "$pr" ]; then return; fi
+  if [ "$active" = 0 ]; then
+    if status_is_captain_held "${LOG_LINE:-}"; then printf '🙋'; return; fi
+    case "${LOG_VERB:-}" in needs-decision|blocked) printf '🙋'; return ;; esac
+    if status_is_paused "${LOG_LINE:-}"; then
+      if [ "$(status_declared_wait_owner "$LOG_LINE")" = captain ]; then printf '🙋'
+      else printf '💤'; fi
+      return
+    fi
+  fi
+  case "$1" in
+    blocked|failed) printf '🙋' ;;
+    parked)
+      if [ "${LOG_VERB:-}" = needs-decision ] || [ "${LOG_VERB:-}" = blocked ] \
+        || { [ "$active" = 1 ] && nm_gate_awaits_human_decision; }; then printf '🙋'
+      elif [ "$active" = 1 ]; then printf '🔍'; fi
+      ;;
+    working)
+      if [ "$active" = 1 ]; then
+        if [ "${RUN_STATUS:-}" != fixing ] \
+          && { [ "${CI_STEP_STATUS:-}" = running ] || [ "${RUN_STATUS:-}" = ci ]; }; then printf '⏳'
+        else printf '🔍'; fi
+      elif [ -n "$pr" ]; then printf '⏳'
+      else printf '🔨'; fi
+      ;;
+    done)
+      if [ -n "$pr" ] || log_reports_ci_ready; then
+        if [ "$(meta_value yolo)" = on ]; then printf '⏳'
+        else printf '🙋'; fi
+      fi
+      ;;
+  esac
+}
+
+# Emit the canonical line or the explicitly requested presentation, then exit.
 emit() {  # <state> <source> [detail]
-  local line="state: $1${SEP}source: $2"
+  local line="state: $1${SEP}source: $2" emoji
   [ -n "${3:-}" ] && line="$line${SEP}$3"
-  # Presentation is explicitly requested by the watcher, never by normal
-  # snapshots. Its failure must not change the authoritative state verdict.
-  if [ "$SYNC_REVIEW_PANE" = --sync-review-pane ] && [ "${TASK_BACKEND:-}" = herdr ]; then
-    reconcile_review_pane || echo "warning: no-mistakes pane reconciliation for $ID failed; supervision will retry" >&2
+  if [ "$SYNC_REVIEW_PANE" = --work-emoji ]; then
+    work_state_emoji "$1" "$2"
+    printf '\n'
+    exit 0
+  fi
+  # Ordinary snapshots stay read-only. Presentation failures never change the
+  # authoritative verdict; the watcher's next bounded sweep retries them.
+  if [ "${TASK_BACKEND:-}" = herdr ]; then
+    case "$SYNC_REVIEW_PANE" in
+      --sync-presentation)
+        emoji=$(work_state_emoji "$1" "$2")
+        fm_backend_source herdr
+        fm_backend_herdr_work_state_label_sync "$META" "$STATE" "$ID" "$emoji" \
+          || echo "warning: workspace label reconciliation for $ID failed; supervision will retry" >&2
+        ;;
+    esac
+    case "$SYNC_REVIEW_PANE" in
+      --sync-review-pane|--sync-presentation)
+        reconcile_review_pane || echo "warning: no-mistakes pane reconciliation for $ID failed; supervision will retry" >&2
+        ;;
+    esac
   fi
   printf '%s\n' "$line"
   exit 0
