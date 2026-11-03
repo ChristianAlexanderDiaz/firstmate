@@ -79,9 +79,6 @@
 #   fm-branch-outcome.sh append --task <id> --verdict routine|captain \
 #       --summary <text> [--wake <text>] [--silent true|false]
 #     Append one outcome record; prints the assigned seq.
-#   fm-branch-outcome.sh covers-status <task> <endpoint> <identity>
-#     Exit 0 only when a validated outcome at or below the read cursor covers
-#     this task and status position; print nothing and move no markers.
 #   fm-branch-outcome.sh unread
 #     Print every unread record (raw JSONL). Exit 0 with no output when none.
 #   fm-branch-outcome.sh mark-read --through <seq>
@@ -95,6 +92,8 @@
 #     Advance the processed marker after main acknowledged the captain rows
 #     through <seq>; the target itself must be a currently unprocessed captain
 #     row at or below the read cursor.
+#     In an opted-in home, attempt ordinary cleanup only for tasks named by
+#     the newly acknowledged captain outcomes after the marker is committed.
 #   fm-branch-outcome.sh present
 #     A supervision-host drain's presentation off Pi (bin/fm-wake-drain.sh
 #     "BRANCH OUTCOMES", docs/supervision-host.md "Captain outcomes"): under
@@ -166,7 +165,7 @@ RECORDED_AGO_JQ='def recorded_ago: ([$now - .epoch, 0] | max) as $s
     else "\($s / 86400 | floor)d" end;'
 
 usage() {
-  echo "usage: fm-branch-outcome.sh append --task <id> --verdict routine|captain --summary <text> [--wake <text>] [--silent true|false] | covers-status <task> <endpoint> <identity> | unread | mark-read --through <seq> | unprocessed | mark-processed --through <seq> | present | processed-init [--held-lock] | list [--recent <n>] | lookup --seqs <n,...> | startup-replay | seed-tail" >&2
+  echo "usage: fm-branch-outcome.sh append --task <id> --verdict routine|captain --summary <text> [--wake <text>] [--silent true|false] | unread | mark-read --through <seq> | unprocessed | mark-processed --through <seq> | present | processed-init [--held-lock] | list [--recent <n>] | lookup --seqs <n,...> | startup-replay | seed-tail" >&2
   exit 2
 }
 
@@ -562,29 +561,6 @@ case "$CMD" in
     fm_lock_release "$LOCK"
     printf '%s\n' "$SEQ"
     ;;
-  covers-status)
-    [ "$#" -eq 3 ] || usage
-    TASK=$1
-    ENDPOINT=$2
-    IDENTITY=$3
-    outcome_index_path "$TASK" >/dev/null || usage
-    bounded_uint "$ENDPOINT" && [ "$ENDPOINT" -gt 0 ] && [ -n "$IDENTITY" ] || usage
-    fm_lock_acquire_wait "$LOCK"
-    if ! LAST_SEQ=$(last_seq) || ! CURSOR_SEQ=$(read_cursor) || ! PROCESSED_SEQ=$(read_processed); then
-      fm_lock_release "$LOCK"
-      exit 1
-    fi
-    if [ "$CURSOR_SEQ" -gt "$LAST_SEQ" ] || [ "$PROCESSED_SEQ" -gt "$CURSOR_SEQ" ] || [ ! -s "$STORE" ]; then
-      fm_lock_release "$LOCK"
-      exit 1
-    fi
-    STATUS=0
-    jq -se --arg task "$TASK" --arg ident "$IDENTITY" --argjson endpoint "$ENDPOINT" --argjson cursor "$CURSOR_SEQ" '
-      any(.[]; .seq <= $cursor and .task == $task and .statusIdent == $ident and (.statusEndpoint // 0) >= $endpoint)
-    ' "$STORE" >/dev/null || STATUS=1
-    fm_lock_release "$LOCK"
-    exit "$STATUS"
-    ;;
   unread)
     [ "$#" -eq 0 ] || usage
     fm_lock_acquire_wait "$LOCK"
@@ -698,8 +674,26 @@ case "$CMD" in
       echo "error: refusing processed advancement because seq $THROUGH is not an unprocessed captain outcome" >&2
       exit 1
     fi
-    write_processed "$THROUGH"
+    ACK_TASKS=
+    if [ -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ]; then
+      ACK_TASKS=$(jq -sr --argjson after "$PROCESSED_SEQ" --argjson through "$THROUGH" '
+      map(select(.seq > $after and .seq <= $through and .verdict == "captain") | .task
+        | select(test("^[A-Za-z0-9_-][A-Za-z0-9._-]*$"))) | unique | .[]
+      ' "$STORE")
+    fi
+    if ! write_processed "$THROUGH"; then
+      fm_lock_release "$LOCK"
+      exit 1
+    fi
     fm_lock_release "$LOCK"
+    if [ -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ]; then
+      while IFS= read -r task; do
+        [ -n "$task" ] || continue
+        FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" "$task" || true
+      done <<EOF
+$ACK_TASKS
+EOF
+    fi
     ;;
   processed-init)
     HELD_LOCK=0

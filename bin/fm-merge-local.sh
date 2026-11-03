@@ -144,6 +144,3 @@ after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 # Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
 [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/fleet-ledger" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/fm-fleet-ledger.sh" merged "$ID" local || true
 echo "merged $BRANCH into local $DEFAULT ($before -> $after) in $PROJ"
-
-# Ordinary teardown retains all of its landed-work and completion guards.
-[ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ] || FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" "$ID"

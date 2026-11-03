@@ -53,6 +53,7 @@ ACK_REMOVED=0
 PRESENTED_MAX=0
 ACK_FINGERPRINTS=
 ACK_NOTICE_FINGERPRINTS=
+ACK_TASKS=
 PRESENTATION_LOCK_TIMEOUT=${FM_STATUS_PRESENTATION_LOCK_TIMEOUT:-10}
 BRANCH_OUTCOMES_RC=0
 case "$PRESENTATION_LOCK_TIMEOUT" in ''|*[!0-9]*|0) PRESENTATION_LOCK_TIMEOUT=10 ;; esac
@@ -270,6 +271,21 @@ inactive_outcome_fingerprints() { # <sequence> <key-prefix> [<rows-file>]
   done < "$FM_WAKE_QUEUE"
 }
 
+acknowledged_task_ids() { # <cutoff> <owned-row-file>
+  local cutoff=$1 rows=$2 epoch seq kind key payload
+  while IFS=$(printf '\t') read -r epoch seq kind key payload; do
+    case "$seq" in ''|*[!0-9]*) continue ;; esac
+    [ "$seq" -le "$cutoff" ] && grep -qxF "$seq" "$rows" || continue
+    case "$key" in "$STATE/"*) key=${key#"$STATE/"} ;; esac
+    case "$kind:$key" in
+      signal:*) fm_wake_status_key_map "$key" || continue ;;
+      check:*.check.sh) fm_wake_status_key_map "${key%.check.sh}.status" || continue ;;
+      *) continue ;;
+    esac
+    printf '%s\n' "${FM_WAKE_STATUS_KEY%.status}"
+  done < "$FM_WAKE_QUEUE" | LC_ALL=C sort -u
+}
+
 acknowledge_inactive_outcomes() { # <mode> <newline-separated-fingerprints>
   local mode=$1 fingerprints=$2 fingerprint
   while IFS= read -r fingerprint; do
@@ -340,11 +356,11 @@ print_status_outcome_backstop_section() {  # <task-and-endpoint-snapshot>
   if [ -e "$store" ] || [ -L "$store" ]; then
     if [ ! -f "$store" ] || [ ! -r "$store" ] || [ -L "$store" ]; then
       printf 'STATUS OUTCOME BACKSTOP SKIPPED: branch outcome history could not be read safely; repair it before relying on drain recovery.\n'
-      return 2
+      return 0
     fi
     if ! fm_lock_acquire_wait_bounded "$lock" "$PRESENTATION_LOCK_TIMEOUT"; then
       printf 'STATUS OUTCOME BACKSTOP SKIPPED: branch outcome history is busy; retry on the next drain.\n'
-      return 2
+      return 0
     fi
     ready="$STATE/.branch-outcome-index-ready"
     if ! outcome_index_ready_ok "$ready"; then
@@ -352,7 +368,7 @@ print_status_outcome_backstop_section() {  # <task-and-endpoint-snapshot>
         || ! outcome_index_ready_ok "$ready"; then
         fm_lock_release "$lock"
         printf 'STATUS OUTCOME BACKSTOP SKIPPED: bounded outcome indexes could not be rebuilt because the outcome store is unsafe; repair it before relying on drain recovery.\n'
-        return 2
+        return 0
       fi
     fi
   fi
@@ -413,14 +429,13 @@ EOF
   if [ "$rc" -eq 2 ]; then
     printf 'STATUS OUTCOME BACKSTOP SKIPPED: a bounded task outcome index could not be read safely; repair it before relying on drain recovery.\n'
     STATUS_OUTCOME_BACKSTOP_ACKNOWLEDGED=
-    return 2
+    return 0
   fi
   [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ] || return 0
   printf 'STATUS OUTCOME BACKSTOP (newest captain-facing task event has no covering branch outcome):\n' || return 1
   printf '%s' "$output" || return 1
   if [ "$omitted" -gt 0 ]; then
     printf 'STATUS OUTCOME BACKSTOP: %d more omitted (byte cap)\n' "$omitted" || return 1
-    return 2
   fi
 }
 
@@ -755,14 +770,14 @@ cap_outcome_line() {  # <line> <max-bytes>
 }
 
 print_status_sections() {
-  local snapshot=${1:-} fully_presented=${2:-} acknowledged prepared backstop_rc=0
+  local snapshot=${1:-} fully_presented=${2:-} acknowledged prepared
   if [ -z "$snapshot" ]; then snapshot=$(status_presentation_snapshot "$STATE") || return 1; fi
   [ -n "$snapshot" ] || return 0
   acknowledged=$(status_acknowledge_presented_snapshot "$STATE" "$snapshot" "$fully_presented") || return 1
   prepared=$(mktemp "$STATE/.status-presentation.prepared.XXXXXX") || return 1
   if ! {
     print_unread_status_section "$snapshot" \
-      && { print_status_outcome_backstop_section "$snapshot" || backstop_rc=$?; [ "$backstop_rc" -ne 1 ]; } \
+      && print_status_outcome_backstop_section "$snapshot" \
       && print_open_decisions_section "$snapshot" \
       && print_record_divergence_section
   } > "$prepared"; then
@@ -781,7 +796,6 @@ print_status_sections() {
     return 1
   fi
   rm -f -- "$prepared"
-  [ "$backstop_rc" -eq 0 ]
 }
 
 print_status_presentation() {  # [<deduped-raw-rows>]
@@ -921,6 +935,9 @@ if [ -n "$ACK_THROUGH" ]; then
       exit 1
     }
   fi
+  if [ "$ACTOR" = main ] && [ -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ]; then
+    ACK_TASKS=$(acknowledged_task_ids "$ACK_THROUGH" "$MAIN_ROWS_FILE") || exit 1
+  fi
   ACK_REMOVED=$(( $(awk 'END { print NR }' "$FM_WAKE_QUEUE") - $(awk 'END { print NR }' "$DRAIN_TMP") ))
   if [ ! -s "$DRAIN_TMP" ]; then
     fm_recovery_marker_ack "$RECOVERY_MARKER" "$ACK_GENERATION"
@@ -974,6 +991,12 @@ if [ -n "$ACK_THROUGH" ]; then
     printf 'wake drain: acknowledged wakes through %s (%s row(s) consumed), but a newer recovery episode is pending; re-run bin/fm-wake-drain.sh and use the new WAKE_ACK_REQUIRED command\n' \
       "$ACK_THROUGH" "$ACK_REMOVED" >&2
   fi
+  while IFS= read -r task; do
+    [ -n "$task" ] || continue
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" "$task" || true
+  done <<EOF
+$ACK_TASKS
+EOF
   exit 0
 fi
 
@@ -994,10 +1017,8 @@ if [ ! -s "$FM_WAKE_QUEUE" ]; then
   esac
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
-  STATUS_PRESENTED=0
-  (print_status_presentation) && STATUS_PRESENTED=1
+  (print_status_presentation) || true
   print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
-  [ "$STATUS_PRESENTED" -ne 1 ] || [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ] || FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" || true
   if [ "$RECOVERY_ACK_REQUIRED" = true ]; then
     printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation %s\n' "${RECOVERY_MARKER_TOKEN##*:}" >&2
   fi
@@ -1018,10 +1039,8 @@ if [ "$ACTOR" = main ]; then
     print_branch_held_notice
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     DRAIN_LOCK_HELD=false
-    STATUS_PRESENTED=0
-    (print_status_presentation) && STATUS_PRESENTED=1
+    (print_status_presentation) || true
     print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
-    [ "$STATUS_PRESENTED" -ne 1 ] || [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ] || FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" || true
     assert_watcher_liveness
     exit "$BRANCH_OUTCOMES_RC"
   fi
@@ -1083,9 +1102,7 @@ DRAIN_LOCK_HELD=false
 printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through %s --recovery-generation %s\n' \
   "$ACK_THROUGH" "${RECOVERY_MARKER_TOKEN##*:}" >&2
 
-STATUS_PRESENTED=0
-(print_status_presentation "$RAW_ROWS") && STATUS_PRESENTED=1
+(print_status_presentation "$RAW_ROWS") || true
 print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
-[ "$STATUS_PRESENTED" -ne 1 ] || [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ] || FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" || true
 assert_watcher_liveness
 exit "$BRANCH_OUTCOMES_RC"

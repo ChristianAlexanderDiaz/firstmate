@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Automatic cleanup eligibility and real teardown, local landing, and wake entrypoints.
+# Task-scoped cleanup after handling acknowledgements and ordinary teardown safety.
 set -eu
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -15,7 +15,7 @@ make_case() {
   cat > "$FAKEBIN/tmux" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
-  list-windows) printf 'fm-task-a\n' ;;
+  list-windows) printf 'fm-task-a\nfm-task-b\n' ;;
 esac
 exit 0
 SH
@@ -39,10 +39,39 @@ in_home() {
     HOME="$CASE/user-home" FM_STATE_OVERRIDE="$CASE/state" FM_CONFIG_OVERRIDE="$CASE/config" \
     FM_DATA_OVERRIDE="$CASE/data" FM_SUPERVISION_ACTOR=main PATH="$FAKEBIN:$PATH" "$@"
 }
-run_auto() { in_home "$ROOT/bin/fm-auto-teardown.sh"; }
+run_auto() { in_home "$ROOT/bin/fm-auto-teardown.sh" task-a; }
 retained() { [ -f "$CASE/state/task-a.meta" ] && [ -d "$CASE/wt" ] || fail 'task was removed'; }
 retired() { [ ! -e "$CASE/state/task-a.meta" ] || fail "task was retained: ${OUT:-}"; }
 land() { git -C "$CASE/project" merge --ff-only fm/task-a >/dev/null; }
+
+enqueue() {
+  in_home bash -c '. "$1/bin/fm-wake-lib.sh"; fm_wake_append "$2" "$3" "$4"' _ "$ROOT" "$1" "$2" "${3:-wake}"
+}
+present_wakes() {
+  OUT=$(in_home "$ROOT/bin/fm-wake-drain.sh" 2>&1)
+  CUTOFF=$(printf '%s\n' "$OUT" | sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation .*/\1/p')
+  GENERATION=$(printf '%s\n' "$OUT" | sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p')
+  [ -n "$CUTOFF" ] && [ -n "$GENERATION" ] || fail "drain did not provide an acknowledgement: $OUT"
+}
+ack_wakes() {
+  OUT=$(in_home "$ROOT/bin/fm-wake-drain.sh" --ack-through "${1:-$CUTOFF}" --recovery-generation "$GENERATION" 2>&1)
+}
+ack_task() {
+  enqueue signal task-a.status 'signal: task-a.status'
+  present_wakes
+  retained
+  ack_wakes
+}
+neighbor() {
+  fm_git_worktree "$CASE/neighbor-project" "$CASE/neighbor-wt" fm/task-b
+  fm_write_meta "$CASE/state/task-b.meta" window=firstmate:fm-task-b endpoint_task_id=task-b \
+    "project=$CASE/neighbor-project" "worktree=$CASE/neighbor-wt" kind=ship mode=local-only \
+    branch=fm/task-b spawn_gen=neighbor-generation harness=claude
+  printf 'done: ready in branch fm/task-b\n' > "$CASE/state/task-b.status"
+  in_home "$ROOT/bin/fm-busy-event.sh" arm "$CASE/state" task-b --state idle --source claude-hook --event Stop >/dev/null
+  in_home "$ROOT/bin/fm-auto-teardown.sh" --eligible task-b neighbor-generation || fail 'neighbor is not independently eligible'
+}
+neighbor_retained() { [ -f "$CASE/state/task-b.meta" ] && [ -d "$CASE/neighbor-wt" ] || fail 'unacknowledged neighbor was removed'; }
 
 make_case default-off
 land
@@ -62,12 +91,13 @@ OUT=$(run_auto); retained
 
 make_case local-landing
 OUT=$(in_home "$ROOT/bin/fm-merge-local.sh" task-a 2>&1)
+retained
+ack_task
 retired
-case "$OUT" in *'auto-teardown: task-a complete'*) ;; *) fail "local landing did not trigger cleanup: $OUT" ;; esac
 
 make_case branch-actor
 land
-OUT=$(in_home env FM_SUPERVISION_ACTOR=branch "$ROOT/bin/fm-auto-teardown.sh"); retained
+OUT=$(in_home env FM_SUPERVISION_ACTOR=branch "$ROOT/bin/fm-auto-teardown.sh" task-a); retained
 [ -z "$OUT" ] || fail 'branch actor attempted cleanup'
 
 make_case keep-open
@@ -115,7 +145,11 @@ in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a busy --current-g
 OUT=$(run_auto); retained
 [ -z "$OUT" ] || fail 'merged PR evidence closed a busy worker'
 in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a idle --current-gen --source claude-hook --event Stop
-OUT=$(run_auto); retired
+enqueue check "$CASE/state/task-a.check.sh" merged
+present_wakes
+retained
+ack_wakes
+retired
 
 make_case scout
 sed 's/kind=ship/kind=scout/' "$CASE/state/task-a.meta" > "$CASE/meta"
@@ -130,7 +164,7 @@ in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a busy --current-g
 OUT=$(run_auto); retained
 [ -z "$OUT" ] || fail 'reviewed scout report closed a busy worker'
 in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a idle --current-gen --source claude-hook --event Stop
-OUT=$(in_home "$ROOT/bin/fm-wake-drain.sh" 2>&1)
+ack_task
 retired
 [ -f "$CASE/data/task-a/report.md" ] || fail 'scout report was removed'
 
@@ -166,65 +200,6 @@ for change in busy incarnation retention steering; do
   wait "$auto_pid"
   OUT=$(cat "$CASE/auto.out"); retained
   case "$OUT" in *'no longer eligible'*) ;; *) fail "locked eligibility was not rechecked: $OUT" ;; esac
-done
-
-for queue in empty presented reserved; do
-  for failure in snapshot lock history-lock unsafe-history rebuild index budget; do
-    make_case "presentation-$queue-$failure"
-    land
-    if [ "$queue" != empty ]; then
-      in_home bash -c '. "$1/bin/fm-wake-lib.sh"; fm_wake_append signal task-a.status "signal: task-a.status"' _ "$ROOT"
-    fi
-    if [ "$queue" = reserved ]; then
-      in_home "$ROOT/bin/fm-wake-grant.sh" activate "$$" auto-test
-      in_home "$ROOT/bin/fm-wake-grant.sh" publish auto-test 1
-    fi
-    case "$failure" in
-      history-lock)
-        : > "$CASE/state/branch-outcomes.jsonl"
-        fm_lock_try_acquire "$CASE/state/.branch-outcomes.lock" || fail 'could not hold outcome lock'
-        ;;
-      unsafe-history) mkdir "$CASE/state/branch-outcomes.jsonl" ;;
-      rebuild) printf 'invalid history\n' > "$CASE/state/branch-outcomes.jsonl" ;;
-      index) mkdir "$CASE/state/.task-a.branch-outcome-index" ;;
-      budget)
-        printf 'done: ready in branch fm/task-a %0300d\n' 0 > "$CASE/state/task-a.status"
-        i=1
-        while [ "$i" -le 25 ]; do
-          printf 'done: outcome %s %0300d\n' "$i" 0 > "$CASE/state/aaa-$i.status"
-          i=$((i + 1))
-        done
-        ;;
-    esac
-    if [ "$failure" = snapshot ]; then
-      printf '#!/usr/bin/env bash\nexit 1\n' > "$CASE/identity-reader"
-      chmod +x "$CASE/identity-reader"
-      OUT=$(in_home env FM_STATUS_IDENTITY_READER="$CASE/identity-reader" "$ROOT/bin/fm-wake-drain.sh" 2>&1)
-      case "$OUT" in *'STATUS PRESENTATION INCOMPLETE'*) ;; *) fail "snapshot failure not exercised: $OUT" ;; esac
-    elif [ "$failure" = lock ]; then
-      fm_lock_try_acquire "$CASE/state/.status-presentation-lock" || fail 'could not hold presentation lock'
-      OUT=$(in_home env FM_STATUS_PRESENTATION_LOCK_TIMEOUT=1 "$ROOT/bin/fm-wake-drain.sh" 2>&1)
-      fm_lock_release "$CASE/state/.status-presentation-lock"
-      case "$OUT" in *'STATUS PRESENTATION SKIPPED'*) ;; *) fail "lock skip not exercised: $OUT" ;; esac
-    else
-      OUT=$(in_home env FM_STATUS_PRESENTATION_LOCK_TIMEOUT=1 "$ROOT/bin/fm-wake-drain.sh" 2>&1)
-      case "$OUT" in
-        *'STATUS OUTCOME BACKSTOP SKIPPED:'*|*'more omitted (byte cap)'*) ;;
-        *) fail "outcome deferral not exercised: $OUT" ;;
-      esac
-      case "$failure" in
-        history-lock) fm_lock_release "$CASE/state/.branch-outcomes.lock" ;;
-        unsafe-history) rmdir "$CASE/state/branch-outcomes.jsonl" ;;
-        rebuild) rm "$CASE/state/branch-outcomes.jsonl" ;;
-        index) rmdir "$CASE/state/.task-a.branch-outcome-index" ;;
-      esac
-    fi
-    retained
-    [ -s "$CASE/state/task-a.status" ] || fail 'failed presentation erased unread outcome'
-    OUT=$(in_home "$ROOT/bin/fm-wake-drain.sh" 2>&1)
-    retired
-    case "$OUT" in *'task-a done: ready in branch fm/task-a'*) ;; *) fail "outcome not retried: $OUT" ;; esac
-  done
 done
 
 for kind in scout local pr; do
@@ -290,137 +265,132 @@ done
 in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a idle --current-gen --source claude-hook --event Stop
 OUT=$(run_auto); retired
 
-REAL_MV=$(command -v mv)
-for queue in empty presented reserved; do
-  for mutation in append replace; do
-    make_case "completion-race-$queue-$mutation"
-    land
-    if [ "$mutation" = append ]; then
-      printf 'working: finishing the landed work\n' > "$CASE/state/task-a.status"
-      in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a busy --current-gen --source claude-hook --event UserPromptSubmit
-    fi
-    if [ "$queue" != empty ]; then
-      in_home bash -c '. "$1/bin/fm-wake-lib.sh"; fm_wake_append signal task-a.status "signal: task-a.status"' _ "$ROOT"
-    fi
-    if [ "$queue" = reserved ]; then
-      in_home "$ROOT/bin/fm-wake-grant.sh" activate "$$" completion-race
-      in_home "$ROOT/bin/fm-wake-grant.sh" publish completion-race 1
-    fi
+
+make_case no-scan
+land
+neighbor
+OUT=$(in_home "$ROOT/bin/fm-auto-teardown.sh" 2>&1) && fail 'cleanup accepted an unscoped fleet scan'
+retained; neighbor_retained
+OUT=$(in_home "$ROOT/bin/fm-wake-drain.sh" 2>&1)
+retained; neighbor_retained
+
+enqueue signal task-a.status 'signal: task-a.status'
+enqueue signal task-b.status 'signal: task-b.status'
+present_wakes
+retained; neighbor_retained
+OUT=$(in_home "$ROOT/bin/fm-wake-drain.sh" --ack-through 1 --recovery-generation ../invalid 2>&1) && fail 'invalid acknowledgement succeeded'
+retained; neighbor_retained
+ack_wakes 1
+retired; neighbor_retained
+grep -q 'task-b.status' "$CASE/state/.wake-queue" || fail 'later neighbor wake was pruned'
+ack_wakes 2
+[ ! -e "$CASE/state/task-b.meta" ] || fail 'acknowledged neighbor was retained'
+
+make_case unrelated-ack
+land
+neighbor
+enqueue check unrelated.check.sh 'unrelated check'
+present_wakes
+ack_wakes
+retained; neighbor_retained
+enqueue check "$CASE/state/task-a.check.sh" 'task poll result'
+present_wakes
+ack_wakes
+retired; neighbor_retained
+
+make_case reserved-ack
+land
+neighbor
+enqueue signal task-a.status 'signal: task-a.status'
+enqueue signal task-b.status 'signal: task-b.status'
+in_home "$ROOT/bin/fm-wake-grant.sh" activate "$$" ack-scope
+in_home "$ROOT/bin/fm-wake-grant.sh" publish ack-scope 1
+present_wakes
+ack_wakes
+retained
+[ ! -e "$CASE/state/task-b.meta" ] || fail 'main acknowledgement did not clean its own task'
+OUT=$(in_home env FM_SUPERVISION_ACTOR=branch "$ROOT/bin/fm-wake-drain.sh" --ack-through 1 --recovery-generation "$GENERATION" 2>&1)
+retained
+ack_task
+retired
+
+make_case default-off-ack
+land
+rm "$CASE/config/auto-teardown"
+ack_task
+retained
+
+make_case default-off-processed
+land
+rm "$CASE/config/auto-teardown"
+SEQ=$(in_home "$ROOT/bin/fm-branch-outcome.sh" append --task task-a --verdict captain --summary handled)
+in_home "$ROOT/bin/fm-branch-outcome.sh" present >/dev/null
+in_home "$ROOT/bin/fm-branch-outcome.sh" mark-read --through "$SEQ"
+in_home "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through "$SEQ"
+retained
+
+make_case resumed-at-ack
+land
+enqueue signal task-a.status 'signal: task-a.status'
+present_wakes
+in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a busy --current-gen --source claude-hook --event UserPromptSubmit
+ack_wakes
+retained
+in_home "$ROOT/bin/fm-busy-event.sh" apply "$CASE/state" task-a idle --current-gen --source claude-hook --event Stop
+RECORD=$(in_home bash -c '. "$1/bin/fm-task-inbox-lib.sh"; fm_task_inbox_write "$2" task-a "new instruction"' _ "$ROOT" "$CASE/state")
+ack_task
+retained
+mv "$RECORD" "$CASE/state/task-a.inbox/handled/"
+ack_task
+retired
+
+for verdict in captain routine; do
+  make_case "withheld-$verdict"
+  land
+  neighbor
+  rm "$CASE/config/supervision-host-off"
+  printf 'claude\n' > "$CASE/config/supervision-host"
+  PAYLOAD=$(printf '%0600d' 0)
+  if [ "$verdict" = captain ]; then first=task-b; last=task-a; else first=task-a; last=task-b; fi
+  in_home "$ROOT/bin/fm-branch-outcome.sh" append --task "$first" --verdict "$verdict" --summary "$first $PAYLOAD" >/dev/null
+  i=1
+  while [ "$i" -le 6 ]; do
+    printf 'done: filler complete\n' > "$CASE/state/filler-$i.status"
+    in_home "$ROOT/bin/fm-branch-outcome.sh" append --task "filler-$i" --verdict "$verdict" --summary "filler-$i $PAYLOAD" >/dev/null
+    i=$((i + 1))
+  done
+  in_home "$ROOT/bin/fm-branch-outcome.sh" append --task "$last" --verdict "$verdict" --summary "$last $PAYLOAD" >/dev/null
+  OUT=$(in_home env FM_TEST_HARNESS=claude "$ROOT/bin/fm-wake-drain.sh" 2>&1)
+  case "$OUT" in *'held back (byte cap)'*|*'earlier routine outcome(s) not shown'*) ;; *) fail "budget omission was not exercised: $OUT" ;; esac
+  retained; neighbor_retained
+  if [ "$verdict" = captain ]; then
+    THROUGH=$(printf '%s\n' "$OUT" | sed -n 's/^BRANCH OUTCOMES: after processing them run bin\/fm-branch-outcome.sh mark-processed --through \([0-9][0-9]*\).*/\1/p')
+    [ -n "$THROUGH" ] && [ "$THROUGH" -lt 8 ] || fail 'withheld task was included in the offered acknowledgement'
+    REAL_MV=$(command -v mv)
     cat > "$FAKEBIN/mv" <<'SH'
 #!/usr/bin/env bash
 for arg in "$@"; do destination=$arg; done
-if [ "$destination" = "$FM_STATE_OVERRIDE/.status-presentation-cursor" ] && [ ! -e "$FM_HOME/mutated" ]; then
-  "$FM_TEST_REAL_MV" "$@" || exit 1
-  : > "$FM_HOME/mutated"
-  if [ "$FM_TEST_STATUS_MUTATION" = replace ]; then
-    printf 'done: ready in branch fm/task-a\n' > "$FM_HOME/replacement.status"
-    "$FM_TEST_REAL_MV" "$FM_HOME/replacement.status" "$FM_STATE_OVERRIDE/task-a.status" || exit 1
-  else
-    printf 'done: ready in branch fm/task-a\n' >> "$FM_STATE_OVERRIDE/task-a.status"
-  fi
-  "$FM_TEST_ROOT/bin/fm-busy-event.sh" apply "$FM_STATE_OVERRIDE" task-a idle --current-gen --source claude-hook --event Stop || exit 1
-  . "$FM_TEST_ROOT/bin/fm-wake-lib.sh"
-  fm_wake_append signal task-a.status 'signal: task-a.status'
-  exit $?
-fi
+case "$destination" in */.branch-outcomes-processed) exit 1 ;; esac
 exec "$FM_TEST_REAL_MV" "$@"
 SH
     chmod +x "$FAKEBIN/mv"
-    OUT=$(in_home env FM_TEST_REAL_MV="$REAL_MV" FM_TEST_ROOT="$ROOT" FM_TEST_STATUS_MUTATION="$mutation" "$ROOT/bin/fm-wake-drain.sh" 2>&1)
-    [ -f "$CASE/mutated" ] || fail 'completion race was not exercised'
+    OUT=$(in_home env FM_TEST_REAL_MV="$REAL_MV" "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through "$THROUGH" 2>&1) && fail 'failed marker commit was accepted'
+    retained; neighbor_retained
+    rm "$FAKEBIN/mv"
+    OUT=$(in_home "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through "$THROUGH" 2>&1)
     retained
-    grep -q '^done:' "$CASE/state/task-a.status" || fail 'unpresented completion was erased'
-    grep -q 'signal: task-a.status' "$CASE/state/.wake-queue" || fail 'new completion signal was pruned'
-    OUT=$(in_home env FM_TEST_REAL_MV="$REAL_MV" "$ROOT/bin/fm-wake-drain.sh" 2>&1)
+    [ ! -e "$CASE/state/task-b.meta" ] || fail 'processed neighbor outcome did not trigger cleanup'
+    OUT=$(in_home "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through "$THROUGH" 2>&1) && fail 'replayed outcome acknowledgement succeeded'
+    retained
+    in_home "$ROOT/bin/fm-branch-outcome.sh" present >/dev/null
+    in_home "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through 8 >/dev/null
     retired
-    case "$OUT" in *'done: ready in branch fm/task-a'*) ;; *) fail "new completion was not presented: $OUT" ;; esac
-  done
-done
-
-for mutation in append replace; do
-  make_case "locked-coverage-$mutation"
-  land
-  rm "$CASE/config/auto-teardown"
-  in_home "$ROOT/bin/fm-wake-drain.sh" >/dev/null 2>&1
-  : > "$CASE/config/auto-teardown"
-  fm_lock_try_acquire "$CASE/state/.meta-task-a.lock" || fail 'could not hold metadata lock'
-  in_home env FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 "$ROOT/bin/fm-auto-teardown.sh" > "$CASE/auto.out" 2>&1 &
-  auto_pid=$!
-  tries=0
-  while [ ! -d "$CASE/state/.control-task-a.lock" ] && [ "$tries" -lt 100 ]; do
-    sleep 0.1
-    tries=$((tries + 1))
-  done
-  [ -d "$CASE/state/.control-task-a.lock" ] || fail 'covered task never reached lifecycle lock'
-  if [ "$mutation" = replace ]; then
-    printf 'done: ready in branch fm/task-a\n' > "$CASE/replacement.status"
-    mv "$CASE/replacement.status" "$CASE/state/task-a.status"
   else
-    printf 'done: ready in branch fm/task-a after another iteration\n' >> "$CASE/state/task-a.status"
+    OUT=$(in_home "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through 8 2>&1) && fail 'routine row was accepted as a captain acknowledgement'
+    retained; neighbor_retained
+    ack_task
+    retired; neighbor_retained
   fi
-  fm_lock_release "$CASE/state/.meta-task-a.lock"
-  wait "$auto_pid"
-  OUT=$(cat "$CASE/auto.out"); retained
-  case "$OUT" in *'no longer eligible'*) ;; *) fail "locked coverage was not rechecked: $OUT" ;; esac
-  OUT=$(in_home "$ROOT/bin/fm-wake-drain.sh" 2>&1)
-  retired
-  case "$OUT" in *'done: ready in branch fm/task-a'*) ;; *) fail "changed completion was not presented: $OUT" ;; esac
 done
 
-for verdict in captain routine; do
-  make_case "branch-outcome-delivery-$verdict"
-  land
-  ln "$CASE/state/task-a.status" "$CASE/state/task-b.status"
-  OTHER_SEQ=$(in_home "$ROOT/bin/fm-branch-outcome.sh" append --task task-b --verdict captain --summary 'another task outcome')
-  in_home "$ROOT/bin/fm-branch-outcome.sh" mark-read --through "$OTHER_SEQ"
-  OUT=$(in_home env FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 "$ROOT/bin/fm-auto-teardown.sh"); retained
-  rm "$CASE/state/task-b.status"
-  SEQ=$(in_home "$ROOT/bin/fm-branch-outcome.sh" append --task task-a --verdict "$verdict" --summary 'landed task ready for retirement')
-  OUT=$(in_home "$ROOT/bin/fm-wake-drain.sh" 2>&1); retained
-  case "$OUT" in *'task-a done:'*) fail "unread branch outcome unexpectedly reached the status backstop: $OUT" ;; esac
-  OUT=$(in_home env FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 "$ROOT/bin/fm-auto-teardown.sh"); retained
-  for cursor in invalid 999; do
-    printf '%s\n' "$cursor" > "$CASE/state/.branch-outcomes-cursor"
-    OUT=$(in_home env FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 "$ROOT/bin/fm-auto-teardown.sh"); retained
-  done
-  rm "$CASE/state/.branch-outcomes-cursor"
-  rm "$CASE/config/supervision-host-off"
-  printf 'claude\n' > "$CASE/config/supervision-host"
-  OUT=$(in_home env FM_TEST_HARNESS=claude "$ROOT/bin/fm-wake-drain.sh" 2>&1)
-  case "$OUT" in *'landed task ready for retirement'*) ;; *) fail "branch outcome was not presented: $OUT" ;; esac
-  retired
-done
-
-for mutation in append replace; do
-  make_case "branch-coverage-$mutation"
-  land
-  SEQ=$(in_home "$ROOT/bin/fm-branch-outcome.sh" append --task task-a --verdict captain --summary 'completion delivered through branch')
-  OUT=$(in_home "$ROOT/bin/fm-branch-outcome.sh" present)
-  case "$OUT" in *'completion delivered through branch'*) ;; *) fail 'branch delivery fixture omitted its outcome' ;; esac
-  in_home "$ROOT/bin/fm-branch-outcome.sh" mark-read --through "$SEQ"
-  in_home "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through "$SEQ"
-  fm_lock_try_acquire "$CASE/state/.meta-task-a.lock" || fail 'could not hold metadata lock'
-  in_home env FM_AUTO_TEARDOWN_REQUIRE_PRESENTED=1 "$ROOT/bin/fm-auto-teardown.sh" > "$CASE/auto.out" 2>&1 &
-  auto_pid=$!
-  tries=0
-  while [ ! -d "$CASE/state/.control-task-a.lock" ] && [ "$tries" -lt 100 ]; do
-    sleep 0.1
-    tries=$((tries + 1))
-  done
-  [ -d "$CASE/state/.control-task-a.lock" ] || fail 'delivered branch outcome did not establish eligibility'
-  if [ "$mutation" = replace ]; then
-    printf 'done: ready in branch fm/task-a\n' > "$CASE/replacement.status"
-    mv "$CASE/replacement.status" "$CASE/state/task-a.status"
-  else
-    printf 'done: ready in branch fm/task-a after another iteration\n' >> "$CASE/state/task-a.status"
-  fi
-  fm_lock_release "$CASE/state/.meta-task-a.lock"
-  wait "$auto_pid"
-  OUT=$(cat "$CASE/auto.out"); retained
-  case "$OUT" in *'no longer eligible'*) ;; *) fail "locked branch provenance was not checked: $OUT" ;; esac
-  OUT=$(in_home "$ROOT/bin/fm-wake-drain.sh" 2>&1)
-  retired
-  case "$OUT" in *'done: ready in branch fm/task-a'*) ;; *) fail "new outcome was not presented: $OUT" ;; esac
-done
-
-printf 'PASS: automatic cleanup, real teardown, landing and wake entrypoints\n'
+printf 'PASS: task-scoped acknowledgement cleanup and ordinary teardown safety\n'

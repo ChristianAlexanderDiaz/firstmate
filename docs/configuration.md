@@ -604,7 +604,11 @@ The optional presence flag `config/auto-teardown` enables ordinary completed-tas
 Set `keep_open=1` in a task's `state/<id>.meta` to retain that worker, and remove that row to restore automatic cleanup.
 The retention row may appear before or after the PR metadata block.
 [`bin/fm-auto-teardown.sh`](../bin/fm-auto-teardown.sh) owns eligibility and invocation mechanics; normal teardown retains its safety gates and reports refusals without forcing cleanup.
-The setting applies across runtime backends and primary harnesses through the common wake drain and local landing entrypoint.
+After handling a task, main's successful `fm-wake-drain.sh --ack-through ... --recovery-generation ...` attempts cleanup only for that acknowledgement's task status, turn-ended, or poll-check rows.
+Successful `fm-branch-outcome.sh mark-processed --through ...` attempts cleanup only for tasks named by the newly acknowledged captain outcomes.
+Presenting outcomes, reading branch outcomes, acknowledging unrelated wakes, and landing a local branch do not trigger a fleet cleanup scan.
+Current completion, an idle harness, no pending steering, and the ordinary teardown gates are rechecked under the task's lifecycle locks.
+The setting applies across runtime backends and primary harnesses through these acknowledgement entrypoints.
 
 ### Teardown identity checks
 
