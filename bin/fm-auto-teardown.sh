@@ -6,7 +6,8 @@
 # keep_open=1 row is skipped; remove that row to restore automatic cleanup.
 # Called for tasks whose wakes or captain outcomes main has acknowledged.
 # Ships require an identity-matched merge-poll notification, or a local-only
-# branch reachable from the project's checked-out main/master default branch.
+# branch reachable from the project's checked-out default branch (origin/HEAD,
+# falling back to a local main or master branch).
 # Scouts require their report and the existing captain-call verify gate.
 # All kinds require current-state done from fm-crew-state.sh, an idle harness,
 # and no unhandled steering inbox records.

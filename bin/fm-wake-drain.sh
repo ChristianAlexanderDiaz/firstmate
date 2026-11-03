@@ -6,6 +6,8 @@
 # newer branch outcome, OPEN DECISIONS, captain-call record divergence, and on
 # a supervision-host home the supervision session's new and unprocessed
 # outcomes (BRANCH OUTCOMES), then assert liveness.
+# Main's handled-row acknowledgement also attempts task-scoped cleanup in
+# opted-in homes; bin/fm-auto-teardown.sh owns eligibility.
 #
 # Keep sequence-bound row consumption independent from generation-bound episode
 # retirement; docs/watcher-continuity.md owns the recovery contract.
