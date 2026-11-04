@@ -6002,4 +6002,34 @@ EOF
 }
 test_work_state_emoji_reconciles_declarations
 
+test_work_state_emoji_busy_direct_pr() {
+  reset_fakes
+  local d out pr gen
+  d=$(new_case work-emoji-direct-pr)
+  make_repo_on_branch "$d/wt" fm/work-emoji-direct-pr
+  make_fakebin "$d" >/dev/null
+  for pr in '' https://github.com/o/r/pull/7; do
+    fm_write_meta "$d/state/emoji.meta" "window=fm:fm-emoji" "worktree=$d/wt" \
+      "kind=ship" "mode=direct-PR" "harness=claude" "pr=$pr"
+    printf 'paused: waiting for feedback\n' > "$d/state/emoji.status"
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" emoji)
+    "$ROOT/bin/fm-busy-event.sh" apply "$d/state" emoji busy --gen "$gen" \
+      --source claude-hook --event user-prompt-submit
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" 'state: working' "resumed direct-PR worker with PR '$pr'"
+    assert_contains "$out" 'source: pane' "resumed direct-PR worker with PR '$pr'"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ "$out" = 🔨 ] || fail "busy direct-PR worker with PR '$pr': $out"
+    arm_idle_record "$d/state" emoji
+    printf 'working: editing feedback\n' > "$d/state/emoji.status"
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" 'state: working' "working declaration with PR '$pr'"
+    assert_contains "$out" 'source: status-log' "working declaration with PR '$pr'"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ "$out" = 🔨 ] || fail "working declaration with PR '$pr': $out"
+  done
+  pass 'direct-PR workers keep building with or without a recorded PR'
+}
+test_work_state_emoji_busy_direct_pr
+
 echo "all fm-crew-state tests passed"

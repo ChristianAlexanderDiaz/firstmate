@@ -258,7 +258,6 @@ work_state_emoji() {  # <state> <source>
         if [ "${RUN_STATUS:-}" != fixing ] \
           && { [ "${CI_STEP_STATUS:-}" = running ] || [ "${RUN_STATUS:-}" = ci ]; }; then printf '⏳'
         else printf '🔍'; fi
-      elif [ -n "$pr" ]; then printf '⏳'
       else printf '🔨'; fi
       ;;
     done)
