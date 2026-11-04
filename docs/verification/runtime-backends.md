@@ -1754,6 +1754,26 @@ The tests establish Firstmate's placement calls and failure handling; live Herdr
 
 ### Per-home and presentation topology
 
+The work-state label regressions were refreshed on 2026-11-03 with Bash 5.3.9 on macOS arm64.
+Herdr 0.9.3's `herdr workspace rename --help` reports `herdr workspace rename <WORKSPACE_ID> <LABEL>...`.
+The following portable command exercises scripted Herdr responses and real classification without querying or changing a live server:
+
+```sh
+bash bin/fm-test-run.sh tests/fm-backend-herdr.test.sh tests/fm-crew-state.test.sh tests/fm-nm-review-pane.test.sh --jobs 1
+```
+
+Its work-state assertions report:
+
+```text
+ok - work-state label sync: exact ID, replacement, no stacking, no repeat rename, unknown removal and ownership guards
+ok - work-state label prefix preserves legacy owner classification in whole-sidebar ordering
+ok - work-state emoji: building, review, CI, merge approval, external and captain waits, unknown and secondmate
+ok - one attributed state read reconciles both the workspace emoji and review viewer without repeated renames
+```
+
+These regressions cover projected and flat worker labels, prefix-tolerant recovery and ordering, and exclusion of shared spaces, secondmate spaces, and other backends.
+They establish the portable label-update contract, not live-server rename or remote-host verification.
+
 Per-home behavior is owned by:
 
 ```sh

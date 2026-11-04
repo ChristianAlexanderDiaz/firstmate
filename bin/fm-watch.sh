@@ -2795,8 +2795,8 @@ home_summary_refresh_detached() {
   HOME_SUMMARY_PID=$!
 }
 
-# Port of the upstream review-pane tick. The existing watcher owns this bounded
-# child sweep; crew-state owns run attribution and the pane helper owns mutation.
+# The existing bounded Herdr sweep shares one authoritative state read for
+# review panes and work-state labels on each home, including remote PC homes.
 NM_REVIEW_PANE_PID=
 nm_review_pane_tick() {
   local meta id
@@ -2810,7 +2810,7 @@ nm_review_pane_tick() {
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     grep -q '^backend=herdr$' "$meta" || continue
-    grep -q '^kind=ship$' "$meta" || continue
+    grep -Eq '^kind=(ship|scout)$' "$meta" || continue
     metas+=("$meta")
   done
   [ "${#metas[@]}" -gt 0 ] || return 0
@@ -2818,8 +2818,8 @@ nm_review_pane_tick() {
   (
     for meta in "${metas[@]}"; do
       id=$(basename "$meta" .meta)
-      FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
-        "$SCRIPT_DIR/fm-nm-review-pane.sh" "$id" || true
+      FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CREW_STATE_NO_FORGE=1 \
+        "$SCRIPT_DIR/fm-crew-state.sh" "$id" --sync-presentation || true
     done
   ) </dev/null >/dev/null 2>"$STATE/.nm-review-pane.log" &
   NM_REVIEW_PANE_PID=$!
