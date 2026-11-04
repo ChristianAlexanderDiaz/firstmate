@@ -6,6 +6,8 @@
 # newer branch outcome, OPEN DECISIONS, captain-call record divergence, and on
 # a supervision-host home the supervision session's new and unprocessed
 # outcomes (BRANCH OUTCOMES), then assert liveness.
+# Main's handled-row acknowledgement also attempts task-scoped cleanup in
+# opted-in homes; bin/fm-auto-teardown.sh owns eligibility.
 #
 # Keep sequence-bound row consumption independent from generation-bound episode
 # retirement; docs/watcher-continuity.md owns the recovery contract.
@@ -53,6 +55,7 @@ ACK_REMOVED=0
 PRESENTED_MAX=0
 ACK_FINGERPRINTS=
 ACK_NOTICE_FINGERPRINTS=
+ACK_TASKS=
 PRESENTATION_LOCK_TIMEOUT=${FM_STATUS_PRESENTATION_LOCK_TIMEOUT:-10}
 BRANCH_OUTCOMES_RC=0
 case "$PRESENTATION_LOCK_TIMEOUT" in ''|*[!0-9]*|0) PRESENTATION_LOCK_TIMEOUT=10 ;; esac
@@ -268,6 +271,22 @@ inactive_outcome_fingerprints() { # <sequence> <key-prefix> [<rows-file>]
       "$prefix"*) printf '%s\n' "${key#"$prefix"}" ;;
     esac
   done < "$FM_WAKE_QUEUE"
+}
+
+acknowledged_task_ids() { # <cutoff> <owned-row-file>
+  local cutoff=$1 rows=$2 epoch seq kind key payload
+  while IFS=$(printf '\t') read -r epoch seq kind key payload; do
+    case "$seq" in ''|*[!0-9]*) continue ;; esac
+    [ "$seq" -le "$cutoff" ] || continue
+    grep -qxF "$seq" "$rows" || continue
+    case "$key" in "$STATE/"*) key=${key#"$STATE/"} ;; esac
+    case "$kind:$key" in
+      signal:*) fm_wake_status_key_map "$key" || continue ;;
+      check:*.check.sh) fm_wake_status_key_map "${key%.check.sh}.status" || continue ;;
+      *) continue ;;
+    esac
+    printf '%s\n' "${FM_WAKE_STATUS_KEY%.status}"
+  done < "$FM_WAKE_QUEUE" | LC_ALL=C sort -u
 }
 
 acknowledge_inactive_outcomes() { # <mode> <newline-separated-fingerprints>
@@ -919,6 +938,9 @@ if [ -n "$ACK_THROUGH" ]; then
       exit 1
     }
   fi
+  if [ "$ACTOR" = main ] && [ -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ]; then
+    ACK_TASKS=$(acknowledged_task_ids "$ACK_THROUGH" "$MAIN_ROWS_FILE") || exit 1
+  fi
   ACK_REMOVED=$(( $(awk 'END { print NR }' "$FM_WAKE_QUEUE") - $(awk 'END { print NR }' "$DRAIN_TMP") ))
   if [ ! -s "$DRAIN_TMP" ]; then
     fm_recovery_marker_ack "$RECOVERY_MARKER" "$ACK_GENERATION"
@@ -972,6 +994,12 @@ if [ -n "$ACK_THROUGH" ]; then
     printf 'wake drain: acknowledged wakes through %s (%s row(s) consumed), but a newer recovery episode is pending; re-run bin/fm-wake-drain.sh and use the new WAKE_ACK_REQUIRED command\n' \
       "$ACK_THROUGH" "$ACK_REMOVED" >&2
   fi
+  while IFS= read -r task; do
+    [ -n "$task" ] || continue
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" "$task" || true
+  done <<EOF
+$ACK_TASKS
+EOF
   exit 0
 fi
 

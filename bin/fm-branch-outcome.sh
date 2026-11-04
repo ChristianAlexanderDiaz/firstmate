@@ -92,6 +92,8 @@
 #     Advance the processed marker after main acknowledged the captain rows
 #     through <seq>; the target itself must be a currently unprocessed captain
 #     row at or below the read cursor.
+#     In an opted-in home, attempt ordinary cleanup only for tasks named by
+#     the newly acknowledged captain outcomes after the marker is committed.
 #   fm-branch-outcome.sh present
 #     A supervision-host drain's presentation off Pi (bin/fm-wake-drain.sh
 #     "BRANCH OUTCOMES", docs/supervision-host.md "Captain outcomes"): under
@@ -672,8 +674,26 @@ case "$CMD" in
       echo "error: refusing processed advancement because seq $THROUGH is not an unprocessed captain outcome" >&2
       exit 1
     fi
-    write_processed "$THROUGH"
+    ACK_TASKS=
+    if [ -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ]; then
+      ACK_TASKS=$(jq -sr --argjson after "$PROCESSED_SEQ" --argjson through "$THROUGH" '
+      map(select(.seq > $after and .seq <= $through and .verdict == "captain") | .task
+        | select(test("^[A-Za-z0-9_-][A-Za-z0-9._-]*$"))) | unique | .[]
+      ' "$STORE")
+    fi
+    if ! write_processed "$THROUGH"; then
+      fm_lock_release "$LOCK"
+      exit 1
+    fi
     fm_lock_release "$LOCK"
+    if [ -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/auto-teardown" ]; then
+      while IFS= read -r task; do
+        [ -n "$task" ] || continue
+        FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-auto-teardown.sh" "$task" || true
+      done <<EOF
+$ACK_TASKS
+EOF
+    fi
     ;;
   processed-init)
     HELD_LOCK=0
