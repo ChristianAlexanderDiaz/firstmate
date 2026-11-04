@@ -797,8 +797,9 @@ fm_backend_herdr_work_state_label_base() {  # <label>
 # journal, or an exact flat task label, proves this is a worker-owned workspace
 # rather than a shared home space. No endpoint lifecycle is driven.
 # Failed reads or a busy lock retry on the next watcher sweep. The live label
-# is read every time, so a restart needs no cache invalidation; equal emojis
-# produce no rename. Remote homes execute this same path on their own host.
+# is read every time, so a restart needs no cache invalidation; an already
+# matching label produces no rename. Remote homes execute this same path on
+# their own host.
 fm_backend_herdr_work_state_label_sync() {  # <meta> <state-dir> <id> <emoji>
   local meta=$1 state=$2 id=$3 emoji=$4 session lock rc=0
   case "$emoji" in ''|🔨|🔍|⏳|🙋|💤) ;; *) return 1 ;; esac
