@@ -261,7 +261,10 @@ work_state_emoji() {  # <state> <source>
       else printf '🔨'; fi
       ;;
     done)
-      if [ -n "$pr" ] || log_reports_ci_ready; then
+      if [ "$2" = status-log ] && [ "${KIND:-}" = ship ] \
+        && [ "$(meta_value mode)" = local-only ] && [ "$(meta_value yolo)" != on ]; then
+        printf '🙋'
+      elif [ -n "$pr" ] || log_reports_ci_ready; then
         if [ "$(meta_value yolo)" = on ]; then printf '⏳'
         else printf '🙋'; fi
       fi
