@@ -6032,4 +6032,45 @@ test_work_state_emoji_busy_direct_pr() {
 }
 test_work_state_emoji_busy_direct_pr
 
+test_work_state_emoji_local_completion() {
+  reset_fakes
+  local d out yolo expected gen
+  d=$(new_case work-emoji-local-completion)
+  make_repo_on_branch "$d/wt" fm/local-ready
+  git -C "$d/wt" commit -q --allow-empty -m 'local change awaiting approval'
+  git init -q --bare "$d/project"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/emoji.meta" "window=fm:fm-emoji" "worktree=$d/wt" \
+    "project=$d/project" "kind=ship" "mode=local-only" "harness=claude" "yolo=off"
+  printf 'done: ready in branch fm/local-ready - local change\n' > "$d/state/emoji.status"
+  arm_idle_record "$d/state" emoji
+  out=$(run_crew_state "$d" emoji)
+  assert_contains "$out" 'state: blocked' 'unpreserved local completion is refused'
+  assert_contains "$out" 'unreachable outside the worker copy' 'completion authority refuses the named head'
+  git -C "$d/project" fetch -q "$d/wt" HEAD:refs/heads/fm/local-ready
+  while IFS='|' read -r yolo expected; do
+    fm_write_meta "$d/state/emoji.meta" "window=fm:fm-emoji" "worktree=$d/wt" \
+      "project=$d/project" "kind=ship" "mode=local-only" "harness=claude" "yolo=$yolo"
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" 'state: done' "preserved local completion with yolo '$yolo'"
+    assert_contains "$out" 'source: status-log' 'local completion uses the accepted declaration'
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ "$out" = "$expected" ] || fail "local completion with yolo '$yolo': expected '$expected', got '$out'"
+  done <<'EOF'
+off|🙋
+|🙋
+on|
+EOF
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" emoji)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" emoji busy --gen "$gen" \
+    --source claude-hook --event user-prompt-submit
+  out=$(run_crew_state "$d" emoji)
+  assert_contains "$out" 'state: working' 'resumed local worker supersedes completion'
+  assert_contains "$out" 'source: pane' 'resumed local worker uses current pane evidence'
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = 🔨 ] || fail "resumed local worker must build: $out"
+  pass 'accepted local-only completion needs merge approval without a PR'
+}
+test_work_state_emoji_local_completion
+
 echo "all fm-crew-state tests passed"
