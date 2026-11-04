@@ -62,7 +62,7 @@
 # merge with their own supervision hooks. Remote routes remain out of scope.
 #
 # Choice. `choose` reads the map's account names in order and one snapshot,
-# and qualifies an account only when exactly one fresh, unreused claude row carries its
+# and qualifies an account only when exactly one fresh, age-bounded Claude row carries its
 # name, every quota scope that applies to the worker's model (all_models plus
 # each legacy or model-identity scope its alias or full id can use, including
 # both opusplan phases and best choices; unresolved scope identities always

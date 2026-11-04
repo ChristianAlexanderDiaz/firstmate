@@ -112,6 +112,7 @@ fm_quota_plan_read() {  # <cache-file> <provider> <now>
 fm_quota_plan_snapshot() {  # <root-state> <now>
   local state=$1 now=$2 tmp raw
   FM_QUOTA_PLAN_CACHE="$state/quota-plan-snapshot.json"
+  # shellcheck disable=SC2016 # The inner Bash expands positional arguments.
   if [ -n "${FM_ACCOUNT_QUOTA_DECISION_FILE:-}" ] &&
     jq -e 'has("snapshot")' "$FM_ACCOUNT_QUOTA_DECISION_FILE" >/dev/null 2>&1; then
     raw=$(jq -ec '.snapshot | select(type == "object")' "$FM_ACCOUNT_QUOTA_DECISION_FILE") || {
@@ -124,7 +125,8 @@ fm_quota_plan_snapshot() {  # <root-state> <now>
     fm_worker_account_decision_capture "$FM_QUOTA_PLAN_CACHE" || return 1
     fm_worker_account_quota_observe "$state/../config" "$(jq -c .snapshot "$FM_QUOTA_PLAN_CACHE")"
     return 0
-  elif ! raw=$(QUOTA_AXI_MAX_AGE=0 fm_run_timed 30 quota-axi --all-accounts --json 2>/dev/null </dev/null); then
+  elif ! raw=$(fm_run_timed 30 bash -c '. "$1"; fm_worker_account_quota_read' _ \
+    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-worker-account-lib.sh" 2>/dev/null </dev/null); then
     FM_QUOTA_PLAN_ERROR='quota-axi --all-accounts --json failed or is unsupported; fresh spawns remain queued'
     return 1
   fi
