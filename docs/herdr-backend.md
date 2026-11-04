@@ -311,12 +311,17 @@ Ordering failure never fails the spawn or cleanup it follows.
 Firstmate does not retry a failed or unverifiable move, or adopt, reuse, close, delete, or rename anything in response to an ordering failure.
 The workspaces stay in their current order until the next pass.
 
+A projected spawn holds the session lock through launch handoff to serialize presentation mutations across homes.
+The spawn lock wait and timeout outcomes are owned by the header of [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
+
 ### Worker work-state emoji
 
 Each worker-owned workspace keeps its existing name with one work-state emoji in front.
 The legend is 🔨 building, 🔍 in review, ⏳ checks or automatic merge pending, 🙋 needs your decision or merge approval, and 💤 parked for an external wait such as machine capacity, a test slot, or a date.
-An active no-mistakes run supplies review and CI state; the shared status classifier supplies declared decisions and waits.
+An attributed no-mistakes run supplies review and CI state; declared decisions and waits apply only when the current-state reader accepts them.
+A resumed busy worker without an attributed run shows 🔨 even if an older pause, decision, or PR is recorded.
 A green PR awaiting your merge approval shows 🙋, while a green PR with automatic merge authorized stays ⏳.
+An accepted local-only completion awaiting merge approval also shows 🙋 without a PR.
 Unknown work state has no emoji, and merged workers have no separate check-mark state.
 
 The existing bounded presentation sweep refreshes these labels on every home, including remote PC homes, and renames only when the prefix changes.
@@ -324,9 +329,6 @@ The rest of the name, including the `└ ` marker and `· p:<id>` suffix, stays 
 The adapter targets the recorded workspace ID and tolerates the prefix in its recovery and ordering checks.
 Shared home spaces, secondmate spaces, and non-Herdr runtimes are untouched.
 The rename requires a matching worker presentation binding or an exact flat worker label and endpoint, so ambiguous or foreign spaces are skipped and retried on a later sweep.
-
-A projected spawn holds the session lock through launch handoff to serialize presentation mutations across homes.
-The spawn lock wait and timeout outcomes are owned by the header of [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
 
 ### Cleanup and focus safety
 
