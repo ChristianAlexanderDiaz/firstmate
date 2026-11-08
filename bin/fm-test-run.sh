@@ -52,9 +52,9 @@
 #                   The required Herdr CI lane uses this so a missing pin cannot
 #                   silently pass as a gate skip.
 #   --jobs N        run the selected scripts with up to N concurrent workers.
-#                   Plain --changed and a plain list of script paths use
+#                   Plain --all, --changed, and a plain list of script paths use
 #                   min(4, cpus) workers when multiple selected scripts are
-#                   admissible; --lane, --family, and --all stay serial unless
+#                   admissible; --lane and --family stay serial unless
 #                   asked for concurrency explicitly.
 #                   N>1 is allowed only when every selected script is proven
 #                   safe to run concurrently: individually in the proven-isolated
@@ -67,8 +67,9 @@
 #                   proof run in a separate phase for each family. Concurrent
 #                   phases use serial weights, longest-hint-first. Unproven stateful
 #                   scripts run serially after all concurrent phases. Default is
-#                   1 (serial) except for plain --changed and a plain list of
+#                   1 (serial) except for plain --all, --changed, and a plain list of
 #                   script paths, which use the bounded automatic scheduler.
+#                   --jobs 1 explicitly restores a serial complete regression.
 #   --per-script-timeout-secs N
 #                   terminate a script that runs longer than N seconds and
 #                   record it as exit 124 (0 disables, the default). The
@@ -2303,16 +2304,14 @@ for s in "${SCRIPTS[@]}"; do
   [ -x "$s" ] || [ -r "$s" ] || die "test script not readable: $s"
 done
 
-# Plain --changed and a plain list of script paths both use the bounded
-# representative-suite scheduler; numeric --jobs retains the strict all-script
-# admission rule below. Naming scripts is how a local verification round asks
-# for exactly those subjects, so it gets bounded concurrency rather than a
-# serial chain of separate runs.
-# The curated selections stay untouched: --lane composes CI shards whose serial
-# lane must stay strictly serial, --family is what the required Herdr lane runs,
-# and --all is a deliberate complete regression.
+# Plain --all, --changed, and script lists share the bounded scheduler.
+# This changes execution order, never selection or concurrency admission:
+# unproven scripts still run serially after the proven isolation phases.
+# Numeric --jobs retains the strict all-script admission rule below.
+# --lane composes CI shards whose serial lane must stay strictly serial, and
+# --family is what the required Herdr lane runs; both retain their defaults.
 AUTO_CONCURRENCY=0
-if { [ "$MODE" = changed ] || [ "$MODE" = scripts ]; } && [ "$JOBS_EXPLICIT" -eq 0 ]; then
+if { [ "$MODE" = all ] || [ "$MODE" = changed ] || [ "$MODE" = scripts ]; } && [ "$JOBS_EXPLICIT" -eq 0 ]; then
   if [ "$MODE" = changed ] && [ "${#SCRIPTS[@]}" -gt 0 ] && [ "$PER_SCRIPT_TIMEOUT_SECS" -eq 0 ]; then
     PER_SCRIPT_TIMEOUT_SECS=$CHANGED_DEFAULT_TIMEOUT_SECS
   fi
@@ -2330,7 +2329,7 @@ fi
 case "${FM_RESOURCE_CPU_WORKERS:-}" in
   1|2) [ "$JOBS" -le "$FM_RESOURCE_CPU_WORKERS" ] || JOBS=$FM_RESOURCE_CPU_WORKERS ;;
 esac
-if [ "$JOBS" -gt 1 ] || [ "$MODE" = changed ] || [ "$MODE" = scripts ]; then
+if [ "$JOBS" -gt 1 ] || [ "$MODE" = all ] || [ "$MODE" = changed ] || [ "$MODE" = scripts ]; then
   SELECTION_DESC="${SELECTION_DESC};jobs=$JOBS"
 fi
 

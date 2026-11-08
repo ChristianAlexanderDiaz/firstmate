@@ -658,6 +658,104 @@ PYJSON
   pass "a plain script list defaults to bounded automatic concurrency without an automatic timeout"
 }
 
+# The complete regression uses the same isolation phases as a named selection,
+# including the serial tail for scripts that carry no concurrency proof.
+test_all_uses_bounded_automatic_concurrency() {
+  local tmp repo script mode rc
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-all-scheduler.XXXXXX")
+  repo="$tmp/repo"
+  mkdir -p "$repo/bin" "$repo/tests" "$tmp/fakebin"
+  cp "$RUNNER" "$repo/bin/fm-test-run.sh"
+  cp "$ROOT/tests/git-config-helpers.sh" "$repo/tests/"
+  # No timeout helper: --all must preserve its existing unbounded default.
+  # Fix CPU discovery so the concurrency assertions also run on single-CPU CI.
+  cat > "$tmp/fakebin/getconf" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${FM_TEST_CPU_COUNT:-8}"
+SH
+  chmod +x "$tmp/fakebin/getconf"
+  for script in fm-cd-pretool-check fm-pr-merge fm-daemon fm-pi-watch-extension \
+    fm-calm-pi-extension fm-vendor-auth-probe fm-backend-orca fm-unmapped-example; do
+    cat > "$repo/tests/$script.test.sh" <<'SH'
+#!/usr/bin/env bash
+sleep 1
+case "$0" in
+  *fm-unmapped-example*) exit "${FM_TEST_TAIL_EXIT:-0}" ;;
+esac
+printf 'ok - all scheduler fixture\n'
+SH
+  done
+  for mode in automatic serial single-cpu failure; do
+    rc=0
+    case "$mode" in
+      automatic)
+        (cd "$repo" && PATH="$tmp/fakebin:$PATH" bin/fm-test-run.sh --all \
+          --json "$tmp/$mode.json") > "$tmp/$mode.out" 2> "$tmp/$mode.err" || rc=$?
+        ;;
+      serial)
+        (cd "$repo" && PATH="$tmp/fakebin:$PATH" bin/fm-test-run.sh --all --jobs 1 \
+          --json "$tmp/$mode.json") > "$tmp/$mode.out" 2> "$tmp/$mode.err" || rc=$?
+        ;;
+      single-cpu)
+        (cd "$repo" && PATH="$tmp/fakebin:$PATH" FM_TEST_CPU_COUNT=1 bin/fm-test-run.sh --all \
+          --json "$tmp/$mode.json") > "$tmp/$mode.out" 2> "$tmp/$mode.err" || rc=$?
+        ;;
+      failure)
+        (cd "$repo" && PATH="$tmp/fakebin:$PATH" FM_TEST_TAIL_EXIT=7 bin/fm-test-run.sh --all \
+          --json "$tmp/$mode.json") > "$tmp/$mode.out" 2> "$tmp/$mode.err" || rc=$?
+        ;;
+    esac
+    if [ "$mode" = failure ]; then
+      [ "$rc" -eq 1 ] || fail "--all did not propagate a serial-tail failure: $rc"
+    else
+      [ "$rc" -eq 0 ] || fail "--all $mode failed: $(cat "$tmp/$mode.err")"
+    fi
+  done
+  python3 - "$tmp" <<'PY' || fail "--all lost coverage, its worker bound, or an isolation boundary"
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+groups = {
+    "fm-cd-pretool-check": "isolated", "fm-pr-merge": "isolated",
+    "fm-daemon": "watcher", "fm-pi-watch-extension": "watcher",
+    "fm-calm-pi-extension": "pure", "fm-vendor-auth-probe": "pure",
+    "fm-backend-orca": "serial", "fm-unmapped-example": "serial",
+}
+for mode in ("automatic", "serial", "single-cpu", "failure"):
+    active, seen, overlapped = {}, set(), set()
+    concurrent = mode in ("automatic", "failure")
+    for line in (root / f"{mode}.out").read_text().splitlines():
+        fields = line.split()
+        if not fields or fields[0] not in ("FM_TEST_BEGIN", "FM_TEST_END"):
+            continue
+        name = pathlib.Path(fields[2]).name.removesuffix(".test.sh")
+        group = groups[name]
+        if fields[0] == "FM_TEST_BEGIN":
+            assert name not in seen, (mode, name)
+            seen.add(name)
+            if active:
+                assert concurrent and group != "serial", (mode, active, line)
+                assert set(active.values()) == {group}, (mode, active, line)
+                overlapped.add(group)
+            active[name] = group
+            assert len(active) <= (4 if concurrent else 1), (mode, active)
+        else:
+            assert name in active, (mode, active, line)
+            del active[name]
+    assert not active and seen == set(groups), (mode, seen, active)
+    assert overlapped == ({"isolated", "watcher", "pure"} if concurrent else set()), (mode, overlapped)
+    doc = json.loads((root / f"{mode}.json").read_text())
+    assert doc["selection"].split(";")[-1] == f"jobs={4 if concurrent else 1}"
+    assert len(doc["scripts"]) == len(groups)
+    failures = [s for s in doc["scripts"] if s["exit"] != 0]
+    assert len(failures) == (1 if mode == "failure" else 0), (mode, failures)
+    if failures:
+        assert failures[0]["path"] == "tests/fm-unmapped-example.test.sh"
+        assert failures[0]["exit"] == 7
+PY
+  rm -rf "$tmp"
+  pass "all uses bounded isolation phases, retains serial overrides and propagates failures"
+}
+
 test_family_proofs_run_in_separate_concurrent_phases() {
   local tmp repo script
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-family-phases.XXXXXX")
@@ -1845,6 +1943,7 @@ test_changed_bin_reference_selects_per_script_not_per_family
 test_changed_uses_bounded_automatic_concurrency
 test_windows_posix_mode_emulation_does_not_fail_parallel_runs
 test_script_list_uses_bounded_automatic_concurrency
+test_all_uses_bounded_automatic_concurrency
 test_family_proofs_run_in_separate_concurrent_phases
 test_empty_selection_emits_summary
 test_timing_markers_and_json

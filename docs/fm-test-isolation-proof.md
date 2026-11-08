@@ -234,7 +234,7 @@ On the stale package the case fails serially as well as concurrently, so it is a
 
 Each family measured with `bin/fm-test-run.sh --family <name> --jobs <n>` on the same host, back to back, every run reporting 0 failures.
 Together the pairs quantify the effect when a plain `--changed` or script-list selection contains all three families: the automatic scheduler gives each admitted family its own concurrent phase and leaves unproven work in the serial tail.
-Curated `--family`, `--lane`, and `--all` selections remain serial unless the caller explicitly requests an admissible `--jobs` value, as documented by `bin/fm-test-run.sh --help`.
+Plain `--all` uses the same bounded isolation phases; `--family` and `--lane` retain their serial defaults, as documented by `bin/fm-test-run.sh --help`.
 
 | family | scripts | `--jobs 1` | `--jobs 4` | speedup | recovered |
 |---|---:|---:|---:|---:|---:|
