@@ -410,6 +410,54 @@ class ResourceTests(unittest.TestCase):
         wait_for(lambda: self.status()["reason"] == "ready")
         self.assertEqual(self.request("acquire", **legacy)["state"], "leased")
 
+    def test_closed_lid_on_stable_ac_admits_compute_and_workers(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["lidClosed"] = True
+        sample["power"].update(source="ac", adapterWatts=60, batteryPercent=100)
+        self.write("input.json", sample)
+        wait_for(lambda: self.status().get("telemetry", {}).get("power") == sample["power"])
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis"))
+        (self.root / "clock").write_text("242")
+        wait_for(lambda: self.status()["reason"] == "ready")
+        self.assertFalse(self.status()["portable"])
+        for kind in ("test", "worker"):
+            result = self.call("run", "--class", kind, "--", "true")
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_closed_lid_on_portable_power_holds_compute_and_workers(self):
+        for source in ("battery", "ups", "ac"):
+            with self.subTest(source=source):
+                sample = copy.deepcopy(SAMPLE)
+                sample["power"].update(source=source, adapterWatts=60 if source == "ac" else None)
+                self.write("input.json", sample)
+                wait_for(lambda: self.status().get("telemetry", {}).get("power") == sample["power"])
+                # An open-lid observation establishes charge history before
+                # testing draining AC as portable power.
+                time.sleep(0.12)
+                sample["lidClosed"] = True
+                if source == "ac":
+                    sample["power"]["batteryPercent"] = 79
+                self.write("input.json", sample)
+                wait_for(lambda: self.status()["reason"] == "portable lid is closed or unknown")
+                self.assertTrue(self.status()["portable"])
+                self.assert_admission("queued")
+
+    def test_unknown_lid_holds_even_on_ac(self):
+        for source in ("ac", "battery"):
+            for lid in (None, "unknown", "false", 0, 1, [], {}, "missing"):
+                with self.subTest(source=source, lid=lid):
+                    sample = copy.deepcopy(SAMPLE)
+                    sample["instanceUUID"] = uuid.uuid4().hex
+                    sample["power"].update(source=source, adapterWatts=60 if source == "ac" else None)
+                    if lid == "missing":
+                        sample.pop("lidClosed")
+                    else:
+                        sample["lidClosed"] = lid
+                    self.write("input.json", sample)
+                    wait_for(lambda: self.status().get("telemetry", {}).get("instanceUUID") == sample["instanceUUID"])
+                    wait_for(lambda: self.status()["reason"] == "portable lid is closed or unknown")
+                    self.assert_admission("queued")
+
     def test_low_watt_ac_is_desk_power_unless_the_battery_drains(self):
         probe = ["--", "/bin/sh", "-c", 'printf %s "$FM_RESOURCE_PORTABLE"']
         sample = copy.deepcopy(SAMPLE)

@@ -118,6 +118,8 @@ Unknown or corrupt recovery state fails closed; preserve it for inspection rathe
 ## Exceptions and rollout
 
 Missing, stale, unavailable, wrong-boot or malformed monitor samples hold new compute and resident workers.
+A closed lid holds new compute and resident workers on portable power; stable AC permits a closed lid subject to the remaining admission checks.
+A missing, null or non-boolean `lidClosed` reading holds both classes regardless of power source.
 Under warning memory pressure, heavy compute and resident workers require the consumed optional schema 1 field `memory.freePercent` to be at least 30.
 This field is the kernel's system-wide memory free percentage (`kern.memorystatus_level`), a finite JSON number from 0 through 100, not a pressure level or a percentage derived from reservations.
 The named `MIN_WARNING_FREE_PERCENT` constant sets the 30% default, leaving a substantial free reserve while admitting warning samples with 41-49% headroom; it is a conservative policy threshold, not a calibrated capacity guarantee.

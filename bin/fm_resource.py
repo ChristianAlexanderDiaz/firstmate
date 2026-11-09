@@ -409,7 +409,8 @@ class Budget:
                 cancel = True
             if thermal not in ("nominal", "fair") or pressure not in ("normal", "warning"):
                 raise Refusal(f"thermal={thermal} memory={pressure}")
-            if sample["lidClosed"] is not False:
+            lid_closed = sample.get("lidClosed")
+            if type(lid_closed) is not bool or (lid_closed and self.portable):
                 raise Refusal("portable lid is closed or unknown")
             memory_warning = None
             if pressure == "warning":
