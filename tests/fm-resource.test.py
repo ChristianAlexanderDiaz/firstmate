@@ -126,15 +126,12 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.splitlines()
 
-    def test_warning_admits_residents_but_not_compute_and_unknown_holds_residents(self):
+    def test_warning_without_headroom_and_unknown_telemetry_hold_all_work(self):
         sample = copy.deepcopy(SAMPLE)
         sample["memory"]["pressure"] = "warning"
         self.write("input.json", sample)
         wait_for(lambda: "warning" in self.status()["reason"])
-        token, state = self.acquire("worker")
-        self.assertEqual(state, "leased")
-        self.request("release", token=token)
-        for kind in ("test", "build", "browser", "graph", "exclusive"):
+        for kind in ("worker", "test", "build", "browser", "graph", "exclusive"):
             token, state = self.acquire(kind)
             self.assertEqual(state, "queued", kind)
             self.request("cancel-queued", token=token)
@@ -153,6 +150,9 @@ class ResourceTests(unittest.TestCase):
         sample["memory"]["pressure"] = "warning"
         self.write("input.json", sample)
         wait_for(lambda: self.status()["reason"] == resource.MEMORY_WARNING)
+        sample["memory"]["freePercent"] = 45
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"] == "nominal thermal recovery required")
         self.assertEqual(self.acquire("worker")[1], "leased")
         heavy, state = self.acquire("test")
         self.assertEqual(state, "queued")
@@ -168,6 +168,105 @@ class ResourceTests(unittest.TestCase):
         clock = self.root / "clock"
         clock.write_text(str(int(clock.read_text()) + 121))
         wait_for(lambda: heavy in self.status()["leases"])
+
+    def publish_memory(self, pressure="warning", **readings):
+        sample = copy.deepcopy(SAMPLE)
+        sample["memory"].update(pressure=pressure, **readings)
+        # A distinct instance proves this input was observed even when multiple
+        # invalid values produce the same conservative refusal and null metric.
+        sample["instanceUUID"] = uuid.uuid4().hex
+        self.write("input.json", sample)
+        wait_for(lambda: self.status().get("telemetry", {}).get("instanceUUID") == sample["instanceUUID"])
+        return sample
+
+    def assert_admission(self, expected, kinds=("test", "worker")):
+        for kind in kinds:
+            token, state = self.acquire(kind)
+            self.assertEqual(state, expected, kind)
+            self.request("release" if state == "leased" else "cancel-queued", token=token)
+
+    def finish_recovery(self):
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis"))
+        clock = self.root / "clock"
+        clock.write_text(str(float(clock.read_text()) + 121))
+        wait_for(lambda: self.status()["reason"] == "ready")
+
+    def test_warning_headroom_at_or_above_threshold_admits_after_recovery(self):
+        for free in (30, 30.5, 41, 49, 100):
+            with self.subTest(free=free):
+                self.publish_memory(freePercent=free)
+                self.assert_admission("queued", ("test",))
+                self.assert_admission("leased", ("worker",))
+                self.finish_recovery()
+                self.assert_admission("leased", ("test", "build", "browser", "graph", "exclusive", "worker"))
+
+    def test_warning_low_headroom_holds_compute_and_workers_with_percentage(self):
+        for free in (0, 12.5, 29.99):
+            with self.subTest(free=free):
+                self.publish_memory(freePercent=free)
+                reason = self.status()["reason"]
+                self.assertIn(f"free headroom {free:g}% below 30%", reason)
+                self.assert_admission("queued")
+
+    def test_warning_invalid_headroom_holds_compute_and_workers(self):
+        for free in (None, True, False, "45", [], {}, -1, 101, 10 ** 400,
+                     float("nan"), float("inf"), float("-inf"), {"nested": float("nan")}):
+            with self.subTest(free=free):
+                self.publish_memory(freePercent=free)
+                self.assertEqual(self.status()["reason"], resource.MEMORY_WARNING)
+                self.assert_admission("queued")
+                self.assertIsNone(self.server.poll())
+
+    def test_normal_pressure_ignores_optional_headroom(self):
+        for free in (None, True, "bad", -1, 0, 101, float("nan"), float("inf")):
+            with self.subTest(free=free):
+                self.publish_memory(pressure="normal", freePercent=free)
+                self.finish_recovery()
+                self.assert_admission("leased")
+
+    def test_warning_headroom_dip_requires_new_recovery(self):
+        sample = self.publish_memory(freePercent=45)
+        self.finish_recovery()
+        sample["memory"]["freePercent"] = 20
+        self.write("input.json", sample)
+        wait_for(lambda: "free headroom 20%" in self.status()["reason"])
+        self.assert_admission("queued")
+        sample["memory"]["freePercent"] = 45
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis"))
+        self.assert_admission("queued", ("test",))
+        self.assert_admission("leased", ("worker",))
+        self.finish_recovery()
+        self.assert_admission("leased")
+
+    def test_warning_headroom_does_not_override_sustained_swap_growth(self):
+        sample = self.publish_memory(freePercent=45)
+        self.finish_recovery()
+        # Keep the instance and power source stable so the swap history remains.
+        sample["memory"]["swapUsedBytes"] = 256 * 1024 * 1024
+        self.write("input.json", sample)
+        wait_for(lambda: "sustained swap growth" in self.status()["reason"])
+        self.assert_admission("queued")
+
+    def test_ample_headroom_does_not_override_critical_pressure_or_thermal(self):
+        self.publish_memory(pressure="critical", freePercent=100)
+        wait_for(lambda: "memory=critical" in self.status()["reason"])
+        self.assert_admission("queued")
+        sample = copy.deepcopy(SAMPLE)
+        sample["memory"].update(pressure="warning", freePercent=100)
+        sample["thermalState"] = "critical"
+        self.write("input.json", sample)
+        wait_for(lambda: "thermal=critical" in self.status()["reason"])
+        self.assert_admission("queued")
+
+    def test_warning_headroom_preserves_battery_admission_reserve(self):
+        sample = self.publish_memory(freePercent=45)
+        self.finish_recovery()
+        sample["power"]["batteryPercent"] = 29
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"] == "battery below 30% admission reserve")
+        self.assert_admission("queued", ("test",))
+        self.assert_admission("leased", ("worker",))
 
     def test_unfittable_exclusive_does_not_block_workers_or_other_classes(self):
         self.assertEqual(self.acquire("worker", memory=6656)[1], "leased")

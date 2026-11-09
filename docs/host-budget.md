@@ -94,7 +94,7 @@ Yarn Classic 1.22.22 prepends its own temporary Node launcher ahead of the PATH 
 These package scripts still reserve exclusive global capacity.
 Project configuration still needs to consume the exported values for custom runners and Next compiler settings.
 Neither a generic Node heap limit nor these worker defaults is a process-tree memory ceiling.
-The reservations are planning budgets, with live memory pressure providing the admission veto.
+The reservations are planning budgets, with live memory pressure, headroom and sustained swap growth providing admission vetoes.
 An oversized project must request a larger `--memory-mib` reservation.
 
 Nested stages inherit and, if necessary, atomically upgrade the outer reservation.
@@ -118,9 +118,16 @@ Unknown or corrupt recovery state fails closed; preserve it for inspection rathe
 ## Exceptions and rollout
 
 Missing, stale, unavailable, wrong-boot or malformed monitor samples hold new compute and resident workers.
-Resident workers may start under warning memory pressure, subject to the resident count, actual memory reservations and other telemetry checks; critical or unknown pressure holds new workers.
+Under warning memory pressure, heavy compute and resident workers require the consumed optional schema 1 field `memory.freePercent` to be at least 30.
+This field is the kernel's system-wide memory free percentage (`kern.memorystatus_level`), a finite JSON number from 0 through 100, not a pressure level or a percentage derived from reservations.
+The named `MIN_WARNING_FREE_PERCENT` constant sets the 30% default, leaving a substantial free reserve while admitting warning samples with 41-49% headroom; it is a conservative policy threshold, not a calibrated capacity guarantee.
+Values below 30 hold both classes and report the measured percentage and threshold.
+Absent, null, non-numeric (including booleans), non-finite or out-of-range values hold both classes with the existing memory-warning refusal; invalid optional values are represented as null in the coordinator's telemetry and metrics.
+The coordinator only consumes this optional extension and does not add it to the external monitor; older producers without the field continue to hold heavy compute under warning pressure and now also hold new resident workers.
+Normal pressure retains its existing behavior regardless of the optional field, while critical or unknown pressure holds new work regardless of headroom.
+Sustained swap growth of at least 256 MiB over 60 seconds on two successive distinct samples still holds both classes, even with ample headroom.
+Resident workers remain subject to the resident count, actual memory reservations and other telemetry checks.
 Fair thermal awaiting nominal recovery, such as after warning pressure clears or an owner restart, also admits resident workers; serious or critical thermal holds them.
-Heavy and exclusive jobs remain held under warning pressure.
 The queue admits requests that fit the available capacity without reserving memory for waiting requests, so a queued exclusive job cannot block workers or smaller compute jobs behind it.
 Reconciliation drops queued requests whose controller identity is dead or whose controller was reparented to process 1 after it started waiting; such a controller cannot queue again.
 A controller whose parent was already process 1 when it first asked, such as one started by launchd, is admitted normally.
@@ -129,7 +136,8 @@ The owner uses the monitor's observation time and uptime, restarts recovery afte
 An explicit `emergency --evidence` records an observed emergency sleep; a critical thermal reading also latches conservatively without asserting that sleep occurred.
 Dotfiles schema 1 does not report historical emergency sleeps, so an emergency that happened while both monitor and coordinator were absent must be recorded from inspected OS evidence before restoring work.
 Clear the latch only with `clear-emergency --evidence` after inspecting that evidence.
-Heavy compute must still satisfy continuous nominal recovery hysteresis after a clear, warning, wake or owner restart.
+Heavy compute must still satisfy 120 seconds of continuous nominal thermal recovery with acceptable memory and stable power after a clear, insufficient or unknown warning headroom, wake or owner restart.
+Warning pressure with at least 30% free headroom satisfies the memory part of recovery; resident workers may start during this recovery with adequate headroom, just as they may under normal pressure.
 
 The bounded private metrics ring records telemetry and numeric resource usage by lease, without prompts, cookies or environment contents.
 Transition history, current cause and quarantine status provide the Firstmate exception summary; there is no permanent AI health watcher.

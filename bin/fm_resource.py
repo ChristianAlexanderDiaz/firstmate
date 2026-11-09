@@ -31,6 +31,7 @@ import uuid
 CLASSES = {"test": 1024, "build": 3072, "browser": 2048, "graph": 512,
            "exclusive": 4096, "worker": 512}
 MEMORY_WARNING = "memory warning: heavy compute held"
+MIN_WARNING_FREE_PERCENT = 30
 STUCK_QUEUE_SECONDS = 10 * 60
 LONG_HELD_EXCLUSIVE_SECONDS = 60 * 60
 HERE = Path(__file__).resolve().parent
@@ -385,6 +386,13 @@ class Budget:
                 raise Refusal("monitor sequence regressed")
             self.monitor_id, self.source, self.last_sequence = monitor_id, source, sequence
             self.last_uptime, self.last_wall = host_uptime, now
+            free = sample["memory"].get("freePercent")
+            if type(free) not in (int, float) or not 0 <= free <= 100:
+                free = None
+                if "freePercent" in sample["memory"]:
+                    # Unknown optional headroom must not poison JSON metrics
+                    # with non-finite values, even under normal pressure.
+                    sample["memory"]["freePercent"] = None
             self.telemetry = sample
             power = sample["power"]
             battery = power["batteryPercent"]
@@ -403,6 +411,13 @@ class Budget:
                 raise Refusal(f"thermal={thermal} memory={pressure}")
             if sample["lidClosed"] is not False:
                 raise Refusal("portable lid is closed or unknown")
+            memory_warning = None
+            if pressure == "warning":
+                if free is None:
+                    memory_warning = MEMORY_WARNING
+                elif free < MIN_WARNING_FREE_PERCENT:
+                    memory_warning = (f"memory warning: free headroom {free:g}% below "
+                        f"{MIN_WARNING_FREE_PERCENT}%; heavy compute and workers held")
             if battery < 30 and pressure == "normal":
                 raise Refusal("battery below 30% admission reserve")
             if sample.get("performanceWarning", False) or sample.get("thermalWarning", False):
@@ -423,10 +438,12 @@ class Budget:
                 raise Refusal("sustained AC battery discharge")
             if self.data["emergency"]:
                 raise Refusal("persistent emergency latch requires inspected evidence and explicit clear")
-            # Validate the whole sample before allowing resident workers under
-            # warning pressure; heavy compute still requires normal pressure.
-            if pressure == "warning":
-                raise Refusal(MEMORY_WARNING)
+            # Warning pressure needs measured headroom for every workload.
+            # Swap, power and emergency refusals remain authoritative.
+            if memory_warning is not None:
+                raise Refusal(memory_warning)
+            if battery < 30:
+                raise Refusal("battery below 30% admission reserve")
             # Fair allows one but never satisfies post-warning nominal recovery.
             if thermal == "nominal":
                 if self.healthy_since is None:
@@ -434,7 +451,7 @@ class Budget:
             elif self.healthy_since is None or self.reason != "ready":
                 raise Refusal("nominal thermal recovery required")
             if mono - self.healthy_since < self.config["recoverySeconds"]:
-                return "recovery hysteresis: 120s stable nominal/normal/source required", cancel
+                return "recovery hysteresis: 120s stable nominal/memory headroom/source required", cancel
             return "ready", cancel
         except (OSError, ValueError, KeyError, TypeError, Refusal) as error:
             self.healthy_since = None
@@ -492,9 +509,9 @@ class Budget:
             if (worker and resident >= self.config["maxResidentWorkers"]) or (not worker and active_heavy >= 1) or memory + request["memoryMiB"] > self.config["memoryMiB"]:
                 continue
             # Resident CLIs need their own admission check even without compute;
-            # Warning pressure and fair thermal awaiting nominal recovery permit
-            # residents, but never unknown telemetry.
-            if worker and (self.telemetry is None or self.telemetry["memory"]["pressure"] not in ("normal", "warning") or self.reason not in ("ready", MEMORY_WARNING, "nominal thermal recovery required", "battery below 30% admission reserve") and not self.reason.startswith("recovery hysteresis")):
+            # Warning pressure with enough headroom and fair thermal awaiting
+            # nominal recovery permit residents, but never unknown telemetry.
+            if worker and (self.telemetry is None or self.telemetry["memory"]["pressure"] not in ("normal", "warning") or self.reason not in ("ready", "nominal thermal recovery required", "battery below 30% admission reserve") and not self.reason.startswith("recovery hysteresis")):
                 continue
             lease = dict(request, acquired=time.monotonic(), heartbeat=time.monotonic())
             leases[request["token"]] = lease
