@@ -625,6 +625,7 @@ EOF
 # Membership is empirical, never assumed:
 # `bin/fm-test-isolation-proof.sh --pool <family> --jobs 4` is the owner of the
 # proof, and docs/fm-test-isolation-proof.md records the dated result.
+# These archived proofs remain subject to the serial requirements below.
 list_concurrent_safe_families() {
   cat <<'EOF'
 watcher-wake-lock
@@ -653,25 +654,45 @@ concurrent_safe_family_jobs_max() {
 }
 
 # Isolation proofs do not establish that bounded process-startup and handshake
-# waits retain their timing margin under load. These scripts passed both serial
-# controls but failed in the concurrent complete regression; keep their existing
-# assertions and deadlines intact by running them alone. The admission policy
-# is described in docs/fm-test-isolation-proof.md. This restriction also applies to
-# explicit --jobs, not just the automatic complete-suite scheduler.
-list_serial_required() {
+# waits retain their timing margin under load. Serial controls exposed this for
+# multiple watcher-family members and individual scripts. Keep their assertions
+# and deadlines intact by running them alone; the family restriction also covers
+# future members. See docs/fm-test-isolation-proof.md for the admission policy.
+family_requires_serial() {
+  case "$1" in
+    watcher-wake-lock) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+list_individual_serial_required() {
   cat <<'EOF'
+tests/fm-backlog-handoff.test.sh
 tests/fm-captain-hold-lifecycle.test.sh
 tests/fm-remote-backlog-handoff.test.sh
+tests/fm-remote-secondmate-parent-binding.test.sh
 tests/fm-secondmate-restart.test.sh
-tests/fm-watch-arm.test.sh
 EOF
+}
+
+list_serial_required() {
+  local script
+  {
+    list_individual_serial_required
+    while IFS= read -r script; do
+      if family_requires_serial "$(family_for_basename "${script##*/}")"; then
+        printf '%s\n' "$script"
+      fi
+    done < <(all_repo_tests)
+  } | LC_ALL=C sort -u
 }
 
 script_requires_serial() {
   local script
+  family_requires_serial "$(family_for_basename "${1##*/}")" && return 0
   while IFS= read -r script; do
     [ "${1##*/}" = "${script##*/}" ] && return 0
-  done < <(list_serial_required)
+  done < <(list_individual_serial_required)
   return 1
 }
 

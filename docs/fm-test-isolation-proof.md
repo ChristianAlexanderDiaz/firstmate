@@ -250,6 +250,8 @@ The three families retain the same coverage guarantees; what changed is one cras
 
 An isolation proof establishes separation of state; it does not guarantee that a bounded process-startup or handshake wait retains its timing margin under concurrent load.
 The runner's `script_requires_serial` restriction takes precedence over archived individual and family proofs for both automatic scheduling and explicit `--jobs`.
+The entire `watcher-wake-lock` family requires serial execution, including its session-lock and supervision-event members; archived family proofs do not override this rule.
+Individual restrictions also cover lifecycle and handoff scripts whose bounded waits failed beside peers.
 This restriction changes execution admission, not the complete test inventory, CI lane membership, assertions, or deadlines.
 The proof harness remains available to investigate these candidates; a successful isolated run alone does not remove a runner restriction.
 The runner exposes these paths through `--list-serial-required`, which the proof harness consults before reporting `fm_test_run_jobs_enabled`.
