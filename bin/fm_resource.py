@@ -444,7 +444,7 @@ class Budget:
                 raise Refusal(memory_warning)
             if battery < 30:
                 raise Refusal("battery below 30% admission reserve")
-            # Fair allows one but never satisfies post-warning nominal recovery.
+            # Fair preserves completed recovery but cannot establish nominal recovery.
             if thermal == "nominal":
                 if self.healthy_since is None:
                     self.healthy_since = mono

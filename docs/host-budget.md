@@ -136,7 +136,7 @@ The owner uses the monitor's observation time and uptime, restarts recovery afte
 An explicit `emergency --evidence` records an observed emergency sleep; a critical thermal reading also latches conservatively without asserting that sleep occurred.
 Dotfiles schema 1 does not report historical emergency sleeps, so an emergency that happened while both monitor and coordinator were absent must be recorded from inspected OS evidence before restoring work.
 Clear the latch only with `clear-emergency --evidence` after inspecting that evidence.
-Heavy compute must still satisfy 120 seconds of continuous nominal thermal recovery with acceptable memory and stable power after a clear, insufficient or unknown warning headroom, wake or owner restart.
+Heavy compute must still satisfy the configured recovery interval (120 seconds by default) of continuous nominal thermal recovery with acceptable memory and stable power after a clear, insufficient or unknown warning headroom, wake or owner restart.
 Warning pressure with at least 30% free headroom satisfies the memory part of recovery; resident workers may start during this recovery with adequate headroom, just as they may under normal pressure.
 
 The bounded private metrics ring records telemetry and numeric resource usage by lease, without prompts, cookies or environment contents.
