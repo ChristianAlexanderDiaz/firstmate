@@ -21,6 +21,7 @@
 #   fm-test-run.sh --list-scheduled --lane portable-parallel-1
 #   fm-test-run.sh --list-families
 #   fm-test-run.sh --list-concurrent-safe-families
+#   fm-test-run.sh --list-serial-required
 #   fm-test-run.sh --concurrent-safe-family-jobs-max <name>
 #   fm-test-run.sh --list-lanes
 #   fm-test-run.sh --check-coverage
@@ -60,7 +61,10 @@
 #                   safe to run concurrently: individually in the proven-isolated
 #                   set (bin/fm-test-isolation-proof.sh --list), or in a family
 #                   carrying a recorded concurrent proof
-#                   (list_concurrent_safe_families below). Overall cap is 8;
+#                   (list_concurrent_safe_families below), and not requiring
+#                   serial execution under script_requires_serial. A recorded
+#                   isolation proof does not override that restriction for tests
+#                   whose bounded waits failed under concurrent load. Overall cap is 8;
 #                   family proofs and a configured host-budget worker limit
 #                   may impose a lower cap. Individually proven
 #                   scripts share one phase; scripts admitted only by a family
@@ -648,10 +652,33 @@ concurrent_safe_family_jobs_max() {
   esac
 }
 
-# A script may run under --jobs when it is individually proven isolated or is
-# an exact repository member of a family carrying a recorded concurrent proof.
+# Isolation proofs do not establish that bounded process-startup and handshake
+# waits retain their timing margin under load. These scripts passed both serial
+# controls but failed in the concurrent complete regression; keep their existing
+# assertions and deadlines intact by running them alone. The admission policy
+# is described in docs/fm-test-isolation-proof.md. This restriction also applies to
+# explicit --jobs, not just the automatic complete-suite scheduler.
+list_serial_required() {
+  cat <<'EOF'
+tests/fm-captain-hold-lifecycle.test.sh
+tests/fm-remote-backlog-handoff.test.sh
+tests/fm-secondmate-restart.test.sh
+tests/fm-watch-arm.test.sh
+EOF
+}
+
+script_requires_serial() {
+  local script
+  while IFS= read -r script; do
+    [ "${1##*/}" = "${script##*/}" ] && return 0
+  done < <(list_serial_required)
+  return 1
+}
+
+# Serial requirements take precedence over archived individual/family proofs.
 script_allows_concurrency() {
   local s=$1 family repo_script
+  script_requires_serial "$s" && return 1
   is_proven_isolated_script "$s" && return 0
   family=$(family_for_basename "$(basename "$s")")
   family_is_concurrent_safe "$family" || return 1
@@ -2060,6 +2087,10 @@ while [ "$#" -gt 0 ]; do
       LIST_FAMILIES=1
       shift
       ;;
+    --list-serial-required)
+      list_serial_required
+      exit 0
+      ;;
     --list-concurrent-safe-families)
       LIST_CONCURRENT_SAFE_FAMILIES=1
       shift
@@ -2344,6 +2375,9 @@ if [ "$JOBS" -gt 1 ] && [ "$AUTO_CONCURRENCY" -eq 0 ]; then
     esac
   fi
   for s in "${SCRIPTS[@]}"; do
+    if script_requires_serial "$s"; then
+      die "--jobs $JOBS refused: $s requires serial execution to preserve its bounded waits under load; use --jobs 1"
+    fi
     if ! script_allows_concurrency "$s"; then
       die "--jobs $JOBS refused: $s is not in the proven-isolated set (see bin/fm-test-isolation-proof.sh --list) and its family has no recorded concurrent proof. Unproven stateful scripts stay serial."
     fi

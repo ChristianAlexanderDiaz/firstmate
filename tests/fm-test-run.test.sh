@@ -675,7 +675,8 @@ printf '%s\n' "${FM_TEST_CPU_COUNT:-8}"
 SH
   chmod +x "$tmp/fakebin/getconf"
   for script in fm-cd-pretool-check fm-pr-merge fm-daemon fm-pi-watch-extension \
-    fm-calm-pi-extension fm-vendor-auth-probe fm-backend-orca fm-unmapped-example; do
+    fm-calm-pi-extension fm-vendor-auth-probe fm-backend-orca fm-unmapped-example \
+    fm-captain-hold-lifecycle fm-remote-backlog-handoff fm-secondmate-restart fm-watch-arm; do
     cat > "$repo/tests/$script.test.sh" <<'SH'
 #!/usr/bin/env bash
 sleep 1
@@ -719,6 +720,8 @@ groups = {
     "fm-daemon": "watcher", "fm-pi-watch-extension": "watcher",
     "fm-calm-pi-extension": "pure", "fm-vendor-auth-probe": "pure",
     "fm-backend-orca": "serial", "fm-unmapped-example": "serial",
+    "fm-captain-hold-lifecycle": "serial", "fm-remote-backlog-handoff": "serial",
+    "fm-secondmate-restart": "serial", "fm-watch-arm": "serial",
 }
 for mode in ("automatic", "serial", "single-cpu", "failure"):
     active, seen, overlapped = {}, set(), set()
@@ -752,8 +755,21 @@ for mode in ("automatic", "serial", "single-cpu", "failure"):
         assert failures[0]["path"] == "tests/fm-unmapped-example.test.sh"
         assert failures[0]["exit"] == 7
 PY
+  "$repo/bin/fm-test-run.sh" --list-serial-required > "$tmp/serial-required"
+  [ "$(wc -l < "$tmp/serial-required")" -eq 4 ] || fail "serial requirement inspection omitted or added a script"
+  # An archived individual or family proof cannot bypass a serial requirement.
+  for script in fm-captain-hold-lifecycle fm-remote-backlog-handoff fm-secondmate-restart fm-watch-arm; do
+    grep -Fxq "tests/$script.test.sh" "$tmp/serial-required" \
+      || fail "serial requirement inspection omitted $script"
+    rc=0
+    (cd "$repo" && bin/fm-test-run.sh --jobs 2 "tests/$script.test.sh") \
+      > "$tmp/refused.out" 2> "$tmp/refused.err" || rc=$?
+    [ "$rc" -eq 2 ] || fail "explicit concurrency bypassed $script's serial requirement: $rc"
+    assert_grep 'requires serial execution' "$tmp/refused.err" "serial requirement refusal was not explained"
+    assert_no_grep '^FM_TEST_BEGIN ' "$tmp/refused.out" "serial requirement was checked after execution"
+  done
   rm -rf "$tmp"
-  pass "all uses bounded isolation phases, retains serial overrides and propagates failures"
+  pass "all uses bounded isolation phases, retains serial requirements and propagates failures"
 }
 
 test_family_proofs_run_in_separate_concurrent_phases() {

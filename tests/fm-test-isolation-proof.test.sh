@@ -25,7 +25,7 @@ test_unknown_pool_is_refused() {
 }
 
 test_family_pool_json_identifies_admission() {
-  local tmp repo proof json admitted_json capped_json skipped_json rc
+  local tmp repo proof json admitted_json capped_json skipped_json restricted_json rc
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-isolation-proof-json.XXXXXX")
   repo="$tmp/repo"
   proof="$repo/bin/fm-test-isolation-proof.sh"
@@ -33,6 +33,7 @@ test_family_pool_json_identifies_admission() {
   admitted_json="$tmp/admitted-proof.json"
   capped_json="$tmp/capped-proof.json"
   skipped_json="$tmp/skipped-proof.json"
+  restricted_json="$tmp/restricted-proof.json"
   mkdir -p "$repo/bin" "$repo/tests"
   cp "$PROOF" "$proof"
   cat >"$repo/bin/fm-test-run.sh" <<'SH'
@@ -52,6 +53,10 @@ if { [ "$1" = --list ] || [ "$1" = --list-scheduled ]; } && [ "$2" = --family ];
       exit 0
       ;;
   esac
+fi
+if [ "$1" = --list-serial-required ]; then
+  printf '%s\n' "${PROOF_SERIAL_REQUIRED:-}"
+  exit 0
 fi
 if [ "$1" = --list-concurrent-safe-families ]; then
   printf '%s\n' admitted-family skipped-family
@@ -132,6 +137,24 @@ assert artifact["fm_test_run_jobs_enabled"] is True
 assert artifact["summary"]["total"] == 3
 assert artifact["summary"]["failed"] == 0
 ' "$admitted_json" || fail "admitted family pool artifact metadata is incorrect"
+  mkdir "$tmp/restricted-evidence"
+  set +e
+  PROOF_SCHED_EVIDENCE="$tmp/restricted-evidence" \
+    PROOF_SERIAL_REQUIRED=tests/fm-proof-slow.test.sh \
+    "$proof" --pool admitted-family --jobs 2 --json "$restricted_json" \
+    >"$tmp/restricted.out" 2>"$tmp/restricted.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "serial-restricted family proof fixture failed: $(cat "$tmp/restricted.out") $(cat "$tmp/restricted.err")"
+  python3 -c '
+import json, sys
+artifact = json.load(open(sys.argv[1], encoding="utf-8"))
+assert artifact["pool"] == "admitted-family"
+assert artifact["concurrency"] == 2
+assert artifact["fm_test_run_jobs_enabled"] is False
+assert artifact["summary"]["total"] == 3
+assert artifact["summary"]["failed"] == 0
+' "$restricted_json" || fail "successful proof bypassed the runner serial requirement"
   mkdir "$tmp/capped-evidence"
   set +e
   PROOF_SCHED_EVIDENCE="$tmp/capped-evidence" "$proof" --pool admitted-family --jobs 3 --json "$capped_json" >"$tmp/capped.out" 2>"$tmp/capped.err"
