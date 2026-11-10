@@ -131,7 +131,8 @@ Dotfiles schema 1 does not report historical emergency sleeps, so an emergency t
 Clear the latch only with `clear-emergency --evidence` after inspecting that evidence.
 Heavy compute must still satisfy continuous recovery hysteresis after a clear, warning, wake or owner restart: `recoverySeconds` of uninterrupted nominal or fair thermal, normal memory pressure and an unchanged power source and monitor.
 Fair is the ordinary thermal state of a Mac under sustained multi-worker load, below throttling, so it counts toward recovery and never holds admitted work.
-After a hold caused by serious or critical thermal, the OS thermal warning or the emergency latch, the next recovery needs twice `recoverySeconds`, and any further serious reading restarts it.
+After the running owner observes serious or critical thermal, the OS thermal warning or the emergency latch, its next recovery needs twice `recoverySeconds`, and any further serious reading restarts it.
+The doubled-window marker is held in memory: an owner restart uses the base window unless it observes another thermal signal or the persisted emergency latch.
 
 The bounded private metrics ring records telemetry and numeric resource usage by lease, without prompts, cookies or environment contents.
 Transition history, current cause and quarantine status provide the Firstmate exception summary; there is no permanent AI health watcher.
