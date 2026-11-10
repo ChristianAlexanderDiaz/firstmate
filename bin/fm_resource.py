@@ -236,6 +236,8 @@ class Budget:
             self.data = {"schemaVersion": 1, "configDigest": digest, "leases": {},
                          "queue": [], "emergency": None, "events": []}
         self.healthy_since = None
+        # Set by a serious/critical/OS thermal signal; lengthens the next recovery.
+        self.thermal_hold = False
         self.source = None
         self.monitor_id = None
         self.sample_id = None
@@ -370,6 +372,8 @@ class Budget:
                 raise Refusal("stale or future monitor sample")
             thermal, pressure = sample["thermalState"], sample["memory"]["pressure"]
             cancel = thermal == "critical" or pressure == "critical"
+            if thermal in ("serious", "critical") or sample.get("thermalWarning", False):
+                self.thermal_hold = True
             if sample.get("thermalEmergencySleep") is True or thermal == "critical":
                 self.data["emergency"] = self.data["emergency"] or {"timestamp": now, "cause": "critical thermal signal / emergency sleep"}
             if sample["unavailable"]:
@@ -422,19 +426,22 @@ class Budget:
             if power["source"] == "ac" and self.draining(battery) and mono - self.swap[0][0] >= 60:
                 raise Refusal("sustained AC battery discharge")
             if self.data["emergency"]:
+                self.thermal_hold = True
                 raise Refusal("persistent emergency latch requires inspected evidence and explicit clear")
             # Validate the whole sample before allowing resident workers under
             # warning pressure; heavy compute still requires normal pressure.
             if pressure == "warning":
                 raise Refusal(MEMORY_WARNING)
-            # Fair allows one but never satisfies post-warning nominal recovery.
-            if thermal == "nominal":
-                if self.healthy_since is None:
-                    self.healthy_since = mono
-            elif self.healthy_since is None or self.reason != "ready":
-                raise Refusal("nominal thermal recovery required")
-            if mono - self.healthy_since < self.config["recoverySeconds"]:
-                return "recovery hysteresis: 120s stable nominal/normal/source required", cancel
+            # Fair is the ordinary state of a busy Mac below throttling, so it
+            # counts toward recovery; serious or critical already refused above.
+            # After a thermal hold, a doubled dwell keeps the load that heated
+            # the Mac from re-admitting at once and oscillating.
+            window = self.config["recoverySeconds"] * (2 if self.thermal_hold else 1)
+            if self.healthy_since is None:
+                self.healthy_since = mono
+            if mono - self.healthy_since < window:
+                return f"recovery hysteresis: {window}s stable nominal-or-fair thermal, normal memory and source required", cancel
+            self.thermal_hold = False
             return "ready", cancel
         except (OSError, ValueError, KeyError, TypeError, Refusal) as error:
             self.healthy_since = None
@@ -492,9 +499,9 @@ class Budget:
             if (worker and resident >= self.config["maxResidentWorkers"]) or (not worker and active_heavy >= 1) or memory + request["memoryMiB"] > self.config["memoryMiB"]:
                 continue
             # Resident CLIs need their own admission check even without compute;
-            # Warning pressure and fair thermal awaiting nominal recovery permit
-            # residents, but never unknown telemetry.
-            if worker and (self.telemetry is None or self.telemetry["memory"]["pressure"] not in ("normal", "warning") or self.reason not in ("ready", MEMORY_WARNING, "nominal thermal recovery required", "battery below 30% admission reserve") and not self.reason.startswith("recovery hysteresis")):
+            # Warning pressure and recovery hysteresis permit residents, but
+            # never unknown telemetry.
+            if worker and (self.telemetry is None or self.telemetry["memory"]["pressure"] not in ("normal", "warning") or self.reason not in ("ready", MEMORY_WARNING, "battery below 30% admission reserve") and not self.reason.startswith("recovery hysteresis")):
                 continue
             lease = dict(request, acquired=time.monotonic(), heartbeat=time.monotonic())
             leases[request["token"]] = lease
