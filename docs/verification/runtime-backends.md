@@ -51,6 +51,20 @@ FM_TEST_END 2026-10-23T04:18:18Z tests/fm-resource.test.sh exit=0 duration_ms=40
 FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=400319
 ```
 
+Verified again on 2026-11-09 with Python 3.14.8 on macOS 27.0 (Darwin 27.0.0), inside a leased worker session whose `prepare` adapters the runner strips from `PATH`:
+
+```sh
+bash tests/fm-resource.test.sh
+```
+
+All 61 cases passed, including recovery to ready under sustained fair thermal after warning pressure clears and after an owner restart, the doubled fair dwell after serious thermal or the OS thermal warning that a new serious reading restarts, and the base window for a later non-thermal hold.
+
+```text
+Ran 61 tests in 436.738s
+
+OK
+```
+
 ## Harness detection precedence
 
 Firstmate's own harness comes from two kinds of evidence, and `bin/fm-harness.sh` owns how they combine: an environment marker names its harness, and the nearest harness process in the parent chain proves who owns the process tree.
