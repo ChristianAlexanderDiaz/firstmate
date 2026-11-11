@@ -147,7 +147,8 @@ class ResourceTests(unittest.TestCase):
                 result = self.call("run", "--class", "worker", "--wait-seconds", "0.1", "--", "true")
                 self.assertEqual(result.returncode, 75, result.stderr)
 
-    def test_fair_thermal_admits_workers_from_warning_through_nominal_recovery(self):
+    def test_fair_thermal_recovers_after_memory_warning(self):
+        # A busy Mac sits at fair; a non-thermal hold must not latch heavy work shut.
         sample = copy.deepcopy(SAMPLE)
         sample["thermalState"] = "fair"
         sample["memory"]["pressure"] = "warning"
@@ -158,16 +159,24 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(state, "queued")
         sample["memory"]["pressure"] = "normal"
         self.write("input.json", sample)
-        wait_for(lambda: self.status()["reason"] == "nominal thermal recovery required")
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis: 120s"))
         self.assertEqual(self.acquire("worker")[1], "leased")
-        self.assertIn(heavy, [q["token"] for q in self.status()["queue"]])
-        sample["thermalState"] = "nominal"
-        self.write("input.json", sample)
-        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis"))
         self.assertIn(heavy, [q["token"] for q in self.status()["queue"]])
         clock = self.root / "clock"
         clock.write_text(str(int(clock.read_text()) + 121))
+        wait_for(lambda: self.status()["reason"] == "ready")
         wait_for(lambda: heavy in self.status()["leases"])
+
+    def test_owner_restart_recovers_under_fair_thermal(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["thermalState"] = "fair"
+        self.write("input.json", sample)
+        self.stop()
+        self.start()
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis: 120s"))
+        clock = self.root / "clock"
+        clock.write_text(str(int(clock.read_text()) + 121))
+        wait_for(lambda: self.status()["reason"] == "ready")
 
     def test_unfittable_exclusive_does_not_block_workers_or_other_classes(self):
         self.assertEqual(self.acquire("worker", memory=6656)[1], "leased")
@@ -881,28 +890,44 @@ for variant in ("filtered", "full"):
         wait_for(lambda: not self.status()["leases"])
         self.assertFalse(self.status()["queue"])
 
-    def test_recovery_requires_continuous_nominal_observations(self):
+    def test_thermal_hold_recovers_after_doubled_fair_dwell(self):
         sample = copy.deepcopy(SAMPLE)
         sample["thermalState"] = "serious"
         self.write("input.json", sample)
         wait_for(lambda: "serious" in self.status()["reason"])
-        sample["thermalState"] = "nominal"
-        self.write("input.json", sample)
-        wait_for(lambda: "recovery hysteresis" in self.status()["reason"])
-        (self.root / "clock").write_text("181")
         sample["thermalState"] = "fair"
         self.write("input.json", sample)
-        wait_for(lambda: "nominal thermal recovery" in self.status()["reason"])
-        sample["thermalState"] = "nominal"
-        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis: 240s"))
         (self.root / "clock").write_text("242")
-        wait_for(lambda: "recovery hysteresis" in self.status()["reason"])
         self.assertEqual(self.call("run", "--wait-seconds", "0.1", "--", "true").returncode, 75)
-        (self.root / "clock").write_text("363")
-        wait_for(lambda: self.status()["reason"] == "ready")
+        # Re-heating restarts the doubled dwell rather than counting earlier time.
+        sample["thermalState"] = "serious"
+        self.write("input.json", sample)
+        wait_for(lambda: "serious" in self.status()["reason"])
         sample["thermalState"] = "fair"
         self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis: 240s"))
+        (self.root / "clock").write_text("363")
+        self.assertTrue(self.status()["reason"].startswith("recovery hysteresis"))
+        (self.root / "clock").write_text("483")
+        wait_for(lambda: self.status()["reason"] == "ready")
         self.assertEqual(self.call("run", "--wait-seconds", "3", "--", "true").returncode, 0)
+        # The doubled dwell applies once; a later non-thermal hold uses the base window.
+        sample["memory"]["pressure"] = "warning"
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"] == resource.MEMORY_WARNING)
+        sample["memory"]["pressure"] = "normal"
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis: 120s"))
+
+    def test_os_thermal_warning_also_takes_the_doubled_dwell(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["thermalWarning"] = True
+        self.write("input.json", sample)
+        wait_for(lambda: "thermal warning" in self.status()["reason"])
+        sample["thermalWarning"] = False
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis: 240s"))
 
     def test_fresh_post_sleep_sample_restarts_recovery(self):
         (self.root / "sleep-offset").write_text("60")

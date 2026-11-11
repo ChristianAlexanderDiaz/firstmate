@@ -119,7 +119,7 @@ Unknown or corrupt recovery state fails closed; preserve it for inspection rathe
 
 Missing, stale, unavailable, wrong-boot or malformed monitor samples hold new compute and resident workers.
 Resident workers may start under warning memory pressure, subject to the resident count, actual memory reservations and other telemetry checks; critical or unknown pressure holds new workers.
-Fair thermal awaiting nominal recovery, such as after warning pressure clears or an owner restart, also admits resident workers; serious or critical thermal holds them.
+Resident workers are also admitted during recovery hysteresis; serious or critical thermal holds them.
 Heavy and exclusive jobs remain held under warning pressure.
 The queue admits requests that fit the available capacity without reserving memory for waiting requests, so a queued exclusive job cannot block workers or smaller compute jobs behind it.
 Reconciliation drops queued requests whose controller identity is dead or whose controller was reparented to process 1 after it started waiting; such a controller cannot queue again.
@@ -129,7 +129,10 @@ The owner uses the monitor's observation time and uptime, restarts recovery afte
 An explicit `emergency --evidence` records an observed emergency sleep; a critical thermal reading also latches conservatively without asserting that sleep occurred.
 Dotfiles schema 1 does not report historical emergency sleeps, so an emergency that happened while both monitor and coordinator were absent must be recorded from inspected OS evidence before restoring work.
 Clear the latch only with `clear-emergency --evidence` after inspecting that evidence.
-Heavy compute must still satisfy continuous nominal recovery hysteresis after a clear, warning, wake or owner restart.
+Heavy compute must still satisfy continuous recovery hysteresis after a clear, warning, wake or owner restart: `recoverySeconds` of uninterrupted nominal or fair thermal, normal memory pressure and an unchanged power source and monitor.
+Fair is the ordinary thermal state of a Mac under sustained multi-worker load, below throttling, so it counts toward recovery and never holds admitted work.
+After the running owner observes serious or critical thermal, the OS thermal warning or the emergency latch, its next recovery needs twice `recoverySeconds`, and any further serious reading restarts it.
+The doubled-window marker is held in memory: an owner restart uses the base window unless it observes another thermal signal or the persisted emergency latch.
 
 The bounded private metrics ring records telemetry and numeric resource usage by lease, without prompts, cookies or environment contents.
 Transition history, current cause and quarantine status provide the Firstmate exception summary; there is no permanent AI health watcher.
