@@ -25,6 +25,15 @@ Start the owner explicitly with an absolute Python executable under the operator
 No client starts or repairs an owner automatically.
 For a LaunchAgent, use that exact argv, `RunAtLoad`, a conservative restart throttle and `Umask` 63; retain transition output with bounded logging.
 Keep the executable and configuration paths stable across Firstmate worktree cleanup.
+
+On owner startup, a capacity-only relaxation is accepted with live reservations: `maxResidentWorkers`, `memoryMiB` and `maxHeavyJobs` must all stay unchanged or increase, with at least one increase, and every other normalized policy field must remain identical.
+Schema validation still applies, including the current `maxHeavyJobs=1` restriction.
+The owner atomically saves the accepted normalized policy and digest with the carried-forward ledger, records one `host-budget-capacity-relaxed` transition naming the old and new capacities, and uses the new limits for admissions under the existing telemetry rules.
+Previously accepted policy digests remain compatible after a relaxation so running controllers can maintain their reservations across owner recovery.
+Editing the policy file does not reload a running owner; its replacement accepts the change without requiring workers to drain.
+Any decrease, mixed change, path change or other non-capacity change retains the policy-change refusal and requires reconciling the existing ledger before changing configuration.
+A legacy ledger containing only a digest cannot prove a relaxation; first start the updated owner with the matching original policy to record it, or reconcile the ledger before changing policy.
+
 `bin/fm-resource-run status` gives the compact exception view, active reservations, pending queue, monitor timestamp and last cause.
 The owner appends each cause change to its private `transitions.jsonl` and also emits it to stdout.
 For each supervising home with an existing state directory, run `bin/fm-resource-run register-check --directory /absolute/path/to/home/state` once with the same policy selected.

@@ -596,6 +596,136 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 75)
         self.assertEqual(ledger.read_text(), '{"incomplete":')
 
+    def test_capacity_relaxation_preserves_live_leases_queue_and_restart(self):
+        old_digest = resource.load_config(str(self.root / "config.json"))[2]
+        tokens = []
+        for _ in range(12):
+            token, state = self.acquire("worker")
+            self.assertEqual(state, "leased")
+            tokens.append(token)
+        queued, state = self.acquire("worker")
+        self.assertEqual(state, "queued")
+        before = self.status()
+        self.stop()
+        self.config["maxResidentWorkers"] = 14
+        self.write("config.json", self.config)
+        self.start()
+        after = wait_for(lambda: self.status().get("leases", {}).get(queued) and self.status())
+        for token in tokens:
+            self.assertEqual(after["leases"][token], before["leases"][token])
+        self.assertTrue(all(event in after["events"] for event in before["events"]))
+        self.assertEqual(self.acquire("worker")[1], "leased")
+        self.assertEqual(self.acquire("worker")[1], "queued")
+        path = self.root / "state/transitions.jsonl"
+        transitions = [json.loads(line) for line in path.read_text().splitlines()
+                       if json.loads(line)["event"] == "host-budget-capacity-relaxed"]
+        self.assertEqual(len(transitions), 1)
+        for capacity in ({"maxResidentWorkers": 12, "memoryMiB": 10240, "maxHeavyJobs": 1},
+                         {"maxResidentWorkers": 14, "memoryMiB": 10240, "maxHeavyJobs": 1}):
+            self.assertIn(json.dumps(capacity, sort_keys=True), transitions[0]["reason"])
+        self.stop()
+        ledger = json.loads((self.root / "state/ledger.json").read_text())
+        _, normalized, digest = resource.load_config(str(self.root / "config.json"))
+        self.assertEqual(ledger["configDigest"], digest)
+        self.assertEqual(ledger["configPolicy"], normalized)
+        self.start()
+        after = wait_for(lambda: self.status().get("leases") and self.status())
+        self.assertEqual(after["leases"], ledger["leases"])
+        self.assertEqual(after["queue"], ledger["queue"])
+        self.assertEqual(sum(json.loads(line)["event"] == "host-budget-capacity-relaxed"
+                             for line in path.read_text().splitlines()), 1)
+        # Controllers launched before the relaxation still maintain their leases.
+        self.assertTrue(resource.rpc(self.config, old_digest, op="heartbeat", token=tokens[0])["ok"])
+        self.assertTrue(resource.rpc(self.config, old_digest, op="release", token=tokens[0])["ok"])
+        with self.assertRaisesRegex(resource.Refusal, "client policy differs"):
+            resource.rpc(self.config, "unrelated-policy", op="status")
+
+    def test_memory_relaxation_admits_existing_queue_and_new_larger_reservation(self):
+        token, state = self.acquire("worker", memory=10240)
+        self.assertEqual(state, "leased")
+        queued, state = self.acquire("worker")
+        self.assertEqual(state, "queued")
+        self.stop()
+        self.config["memoryMiB"] = 12288
+        self.write("config.json", self.config)
+        self.start()
+        leases = wait_for(lambda: self.status().get("leases", {}).get(queued) and self.status()["leases"])
+        self.assertEqual(leases[token]["memoryMiB"], 10240)
+        self.request("release", token=token)
+        self.assertEqual(self.acquire("worker", memory=11264)[1], "leased")
+
+    def test_changed_policy_refuses_tightening_mixed_and_non_capacity_changes(self):
+        self.assertEqual(self.acquire("worker")[1], "leased")
+        self.stop()
+        ledger = self.root / "state/ledger.json"
+        before = ledger.read_bytes()
+        transitions = (self.root / "state/transitions.jsonl").read_bytes()
+        for changes in ({"maxResidentWorkers": 11}, {"memoryMiB": 9216},
+                {"memoryMiB": 12288, "maxResidentWorkers": 11},
+                {"maxResidentWorkers": 13, "recoverySeconds": 121},
+                {"maxResidentWorkers": 13, "graceSeconds": 2},
+                {"maxResidentWorkers": 13, "socketPath": str(self.root / "socket/new")},
+                {"maxResidentWorkers": 13, "monitorPath": str(self.root / "other-monitor.json")},
+                {"maxResidentWorkers": 13, "futureSetting": True}):
+            with self.subTest(changes=changes):
+                self.write("config.json", dict(self.config, **changes))
+                result = self.call("serve")
+                self.assertEqual(result.returncode, 75, result.stderr)
+                self.assertIn("policy changed; reconcile the existing ledger before changing configuration", result.stderr)
+                self.assertEqual(ledger.read_bytes(), before)
+                self.assertEqual((self.root / "state/transitions.jsonl").read_bytes(), transitions)
+
+    def test_capacity_relaxation_rejects_relocated_ledger_and_schema_changes(self):
+        self.assertEqual(self.acquire("worker")[1], "leased")
+        self.stop()
+        relocated = self.root / "relocated"
+        shutil.copytree(self.root / "state", relocated)
+        before = (relocated / "ledger.json").read_bytes()
+        self.write("config.json", dict(self.config, stateDirectory=str(relocated), maxResidentWorkers=13))
+        result = self.call("serve")
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertIn("policy changed; reconcile the existing ledger before changing configuration", result.stderr)
+        self.assertEqual((relocated / "ledger.json").read_bytes(), before)
+        for changes in ({"schemaVersion": 2}, {"maxHeavyJobs": 2}):
+            with self.subTest(changes=changes):
+                self.write("config.json", dict(self.config, maxResidentWorkers=13, **changes))
+                result = self.call("serve")
+                self.assertEqual(result.returncode, 75, result.stderr)
+                self.assertIn("only schemaVersion 1 and the uncalibrated one-heavy-job profile", result.stderr)
+
+    def test_legacy_policy_digest_requires_matching_config_before_relaxation(self):
+        token, state = self.acquire("worker")
+        self.assertEqual(state, "leased")
+        self.stop()
+        ledger = json.loads((self.root / "state/ledger.json").read_text())
+        ledger.pop("configPolicy")
+        self.write("state/ledger.json", ledger)
+        before = (self.root / "state/ledger.json").read_bytes()
+        self.write("config.json", dict(self.config, maxResidentWorkers=13))
+        result = self.call("serve")
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertIn("policy changed; reconcile the existing ledger before changing configuration", result.stderr)
+        self.assertEqual((self.root / "state/ledger.json").read_bytes(), before)
+        self.write("config.json", self.config)
+        self.start()
+        self.assertIn(token, wait_for(lambda: self.status().get("leases")))
+        self.stop()
+        self.config["maxResidentWorkers"] = 13
+        self.write("config.json", self.config)
+        self.start()
+        self.assertIn(token, wait_for(lambda: self.status().get("leases")))
+
+    def test_relaxation_refuses_policy_that_does_not_match_saved_digest(self):
+        self.assertEqual(self.acquire("worker")[1], "leased")
+        self.stop()
+        ledger = json.loads((self.root / "state/ledger.json").read_text())
+        ledger["configPolicy"]["maxResidentWorkers"] = 10
+        self.write("state/ledger.json", ledger)
+        self.write("config.json", dict(self.config, maxResidentWorkers=11))
+        result = self.call("serve")
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertIn("policy changed; reconcile the existing ledger before changing configuration", result.stderr)
+
     def test_external_group_cannot_be_bound_to_a_lease(self):
         victim = subprocess.Popen(["/bin/sleep", "30"], start_new_session=True)
         self.children.append(victim)
