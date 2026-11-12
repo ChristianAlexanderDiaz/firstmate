@@ -30,6 +30,7 @@ import uuid
 
 CLASSES = {"test": 1024, "build": 3072, "browser": 2048, "graph": 512,
            "exclusive": 4096, "worker": 512}
+CAPACITY_FIELDS = ("maxResidentWorkers", "memoryMiB", "maxHeavyJobs")
 MEMORY_WARNING = "memory warning: heavy compute held"
 STUCK_QUEUE_SECONDS = 10 * 60
 LONG_HELD_EXCLUSIVE_SECONDS = 60 * 60
@@ -181,6 +182,22 @@ def atomic_json(path, value):
             os.unlink(temporary)
 
 
+def config_digest(config):
+    return hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
+
+
+def capacity_relaxation(previous, config):
+    if not isinstance(previous, dict):
+        return False
+    if any(type(previous.get(key)) is not int for key in CAPACITY_FIELDS):
+        return False
+    old_other = {key: value for key, value in previous.items() if key not in CAPACITY_FIELDS}
+    new_other = {key: value for key, value in config.items() if key not in CAPACITY_FIELDS}
+    return (config_digest(old_other) == config_digest(new_other) and
+            all(config[key] >= previous[key] for key in CAPACITY_FIELDS) and
+            any(config[key] > previous[key] for key in CAPACITY_FIELDS))
+
+
 def load_config(name):
     name = name or os.environ.get("FM_RESOURCE_CONFIG") or str(Path.home() / ".config/firstmate/host-budget.json")
     config = json.loads(Path(name).read_text())
@@ -200,7 +217,7 @@ def load_config(name):
         if type(value) is not int or not low <= value <= high:
             raise Refusal(f"invalid {key}")
     config["maxHeavyJobs"] = 1
-    digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
+    digest = config_digest(config)
     return str(Path(name).resolve()), config, digest
 
 
@@ -226,15 +243,28 @@ class Budget:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise Refusal("a per-user budget owner already holds the ledger") from error
+        transition = None
         if self.path.exists():
             self.data = json.loads(self.path.read_text())
             if self.data.get("schemaVersion") != 1:
                 raise Refusal("unknown recovery ledger schema; preserve it for inspection")
             if self.data.get("configDigest") != digest:
-                raise Refusal("policy changed; reconcile the existing ledger before changing configuration")
+                previous = self.data.get("configPolicy")
+                if (not capacity_relaxation(previous, config) or
+                        config_digest(previous) != self.data.get("configDigest")):
+                    raise Refusal("policy changed; reconcile the existing ledger before changing configuration")
+                old_capacity = {key: previous[key] for key in CAPACITY_FIELDS}
+                new_capacity = {key: config[key] for key in CAPACITY_FIELDS}
+                transition = f"capacity relaxed: {json.dumps(old_capacity, sort_keys=True)} -> {json.dumps(new_capacity, sort_keys=True)}"
+                # Running controllers retain the digest loaded at launch. Only
+                # policies in this verified relaxation chain remain compatible.
+                self.data.setdefault("compatibleConfigDigests", []).append(self.data["configDigest"])
+                self.data["configDigest"] = digest
         else:
             self.data = {"schemaVersion": 1, "configDigest": digest, "leases": {},
                          "queue": [], "emergency": None, "events": []}
+        # A matching legacy digest proves this policy; a changed one cannot.
+        self.data["configPolicy"] = config
         self.healthy_since = None
         # Set by a serious/critical/OS thermal signal; lengthens the next recovery.
         self.thermal_hold = False
@@ -257,6 +287,8 @@ class Budget:
         self.exception = None
         self.table = process_table()
         self.reconcile()
+        if transition is not None:
+            self.record_event("host-budget-capacity-relaxed", transition)
         self.save()
 
     def save(self):
@@ -541,7 +573,8 @@ class Budget:
     def handle(self, request):
         if not isinstance(request, dict):
             raise Refusal("request must be a JSON object")
-        if request.get("configDigest") != self.digest:
+        if (request.get("configDigest") != self.digest and
+                request.get("configDigest") not in self.data.get("compatibleConfigDigests", [])):
             raise Refusal("client policy differs from the single running owner")
         op = request.get("op")
         self.reconcile()
