@@ -5894,4 +5894,183 @@ test_newer_failed_run_is_not_hidden_by_older_live_run
 test_unverifiable_run_selection_reports_unknown
 test_legacy_conflicting_run_records_report_unknown
 
+# Exercise the presentation through the authoritative public reader, including
+# transitions that must supersede an old declaration rather than tail it.
+test_work_state_emoji() {
+  reset_fakes
+  local d out declaration expected
+  d=$(new_case work-emoji)
+  make_repo_on_branch "$d/wt" fm/work-emoji
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/emoji.meta" "window=fm:fm-emoji" "worktree=$d/wt" "kind=ship" "harness=claude" "yolo=off"
+  arm_idle_record "$d/state" emoji
+  while IFS='|' read -r declaration expected; do
+    printf '%s\n' "$declaration" > "$d/state/emoji.status"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ "$out" = "$expected" ] || fail "emoji for $declaration: expected '$expected', got '$out'"
+  done <<'EOF'
+working: building|🔨
+needs-decision [key=pick]: pick a design|🙋
+blocked: credential missing|🙋
+paused [wait=captain]: review|🙋
+captain-held: review transferred|🙋
+paused: machine slot|💤
+paused: test lease|💤
+paused: until 2027-01-01T00:00Z|💤
+unknown: no declaration|
+EOF
+  printf 'needs-decision: old gate\n' > "$d/state/emoji.status"
+  FM_FAKE_AXI_STATUS="$(run_running fm/work-emoji)"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = 🔍 ] || fail "an active review must supersede the old decision: $out"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/work-emoji)"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = ⏳ ] || fail "CI must show checks, not the stale gate: $out"
+  FM_FAKE_CI_LOGS='all CI checks passed - still monitoring until merged or closed'
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = 🙋 ] || fail "green PR needs merge approval: $out"
+  printf 'yolo=on\n' >> "$d/state/emoji.meta"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = ⏳ ] || fail "automatic merge waits with checks: $out"
+  FM_FAKE_AXI_STATUS="$(run_ci_fixing fm/work-emoji)"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = 🔍 ] || fail "CI fixes return to review: $out"
+  : > "$d/state/emoji.status"
+  FM_FAKE_AXI_STATUS="$(run_parked fm/work-emoji)"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = 🙋 ] || fail "an authority finding needs a decision: $out"
+  FM_FAKE_AXI_STATUS="$(run_parked_crewmate_gate_with_ask_user_prose fm/work-emoji)"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = 🔍 ] || fail "the worker's own review gate stays in review: $out"
+  printf 'kind=secondmate\n' >> "$d/state/emoji.meta"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ -z "$out" ] || fail "secondmate must not have a state emoji: $out"
+  out=$(FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" absent --work-emoji)
+  [ -z "$out" ] || fail "missing task must not guess a state: $out"
+  pass "work-state emoji: building, review, CI, merge approval, external and captain waits, unknown and secondmate"
+}
+test_work_state_emoji
+
+test_work_state_emoji_reconciles_declarations() {
+  command -v jq >/dev/null 2>&1 || { pass "herdr emoji transitions skipped without jq"; return; }
+  reset_fakes
+  local d out declaration expected state gen
+  d=$(new_case work-emoji-transitions)
+  make_repo_on_branch "$d/wt" fm/work-emoji-transitions
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/emoji.meta" "backend=herdr" "window=default:w1:p2" \
+    "worktree=$d/wt" "kind=ship" "harness=claude"
+  export FM_FAKE_HERDR_AGENT_STATUS=idle FM_FAKE_HERDR_PROCESS=agent
+  while IFS='|' read -r declaration expected state; do
+    printf '%s\n' "$declaration" > "$d/state/emoji.status"
+    arm_idle_record "$d/state" emoji
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" "state: $state" "idle declaration: $declaration"
+    assert_contains "$out" 'source: status-log' "idle declaration: $declaration"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ "$out" = "$expected" ] || fail "current declaration $declaration: $out"
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" emoji)
+    "$ROOT/bin/fm-busy-event.sh" apply "$d/state" emoji busy --gen "$gen" \
+      --source claude-hook --event user-prompt-submit
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" 'state: working' "resumed declaration: $declaration"
+    assert_contains "$out" 'source: pane' "resumed declaration: $declaration"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ "$out" = 🔨 ] || fail "resumed declaration $declaration: $out"
+    FM_FAKE_HERDR_PROCESS=shell
+    FM_FAKE_HERDR_READ_FAIL=1
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" 'state: unknown' "stopped declaration: $declaration"
+    assert_contains "$out" 'pane shell remains' "stopped declaration: $declaration"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ -z "$out" ] || fail "stopped declaration $declaration: $out"
+    FM_FAKE_HERDR_PROCESS=agent
+    FM_FAKE_HERDR_READ_FAIL=0
+    "$ROOT/bin/fm-busy-event.sh" arm "$d/state" emoji --state unknown >/dev/null
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" 'state: unknown' "unverified declaration: $declaration"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ -z "$out" ] || fail "unverified declaration $declaration: $out"
+  done <<'EOF'
+paused: machine slot|💤|paused
+paused [wait=captain]: review|🙋|paused
+captain-held: review transferred|🙋|paused
+needs-decision [key=pick]: choose|🙋|parked
+blocked: credential missing|🙋|blocked
+EOF
+  pass 'work-state emoji reconciles current, resumed, stopped and unverified declarations'
+}
+test_work_state_emoji_reconciles_declarations
+
+test_work_state_emoji_busy_direct_pr() {
+  reset_fakes
+  local d out pr gen
+  d=$(new_case work-emoji-direct-pr)
+  make_repo_on_branch "$d/wt" fm/work-emoji-direct-pr
+  make_fakebin "$d" >/dev/null
+  for pr in '' https://github.com/o/r/pull/7; do
+    fm_write_meta "$d/state/emoji.meta" "window=fm:fm-emoji" "worktree=$d/wt" \
+      "kind=ship" "mode=direct-PR" "harness=claude" "pr=$pr"
+    printf 'paused: waiting for feedback\n' > "$d/state/emoji.status"
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" emoji)
+    "$ROOT/bin/fm-busy-event.sh" apply "$d/state" emoji busy --gen "$gen" \
+      --source claude-hook --event user-prompt-submit
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" 'state: working' "resumed direct-PR worker with PR '$pr'"
+    assert_contains "$out" 'source: pane' "resumed direct-PR worker with PR '$pr'"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ "$out" = 🔨 ] || fail "busy direct-PR worker with PR '$pr': $out"
+    arm_idle_record "$d/state" emoji
+    printf 'working: editing feedback\n' > "$d/state/emoji.status"
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" 'state: working' "working declaration with PR '$pr'"
+    assert_contains "$out" 'source: status-log' "working declaration with PR '$pr'"
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ "$out" = 🔨 ] || fail "working declaration with PR '$pr': $out"
+  done
+  pass 'direct-PR workers keep building with or without a recorded PR'
+}
+test_work_state_emoji_busy_direct_pr
+
+test_work_state_emoji_local_completion() {
+  reset_fakes
+  local d out yolo expected gen
+  d=$(new_case work-emoji-local-completion)
+  make_repo_on_branch "$d/wt" fm/local-ready
+  git -C "$d/wt" commit -q --allow-empty -m 'local change awaiting approval'
+  git init -q --bare "$d/project"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/emoji.meta" "window=fm:fm-emoji" "worktree=$d/wt" \
+    "project=$d/project" "kind=ship" "mode=local-only" "harness=claude" "yolo=off"
+  printf 'done: ready in branch fm/local-ready - local change\n' > "$d/state/emoji.status"
+  arm_idle_record "$d/state" emoji
+  out=$(run_crew_state "$d" emoji)
+  assert_contains "$out" 'state: blocked' 'unpreserved local completion is refused'
+  assert_contains "$out" 'unreachable outside the worker copy' 'completion authority refuses the named head'
+  git -C "$d/project" fetch -q "$d/wt" HEAD:refs/heads/fm/local-ready
+  while IFS='|' read -r yolo expected; do
+    fm_write_meta "$d/state/emoji.meta" "window=fm:fm-emoji" "worktree=$d/wt" \
+      "project=$d/project" "kind=ship" "mode=local-only" "harness=claude" "yolo=$yolo"
+    out=$(run_crew_state "$d" emoji)
+    assert_contains "$out" 'state: done' "preserved local completion with yolo '$yolo'"
+    assert_contains "$out" 'source: status-log' 'local completion uses the accepted declaration'
+    out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+    [ "$out" = "$expected" ] || fail "local completion with yolo '$yolo': expected '$expected', got '$out'"
+  done <<'EOF'
+off|🙋
+|🙋
+on|
+EOF
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" emoji)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" emoji busy --gen "$gen" \
+    --source claude-hook --event user-prompt-submit
+  out=$(run_crew_state "$d" emoji)
+  assert_contains "$out" 'state: working' 'resumed local worker supersedes completion'
+  assert_contains "$out" 'source: pane' 'resumed local worker uses current pane evidence'
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ "$out" = 🔨 ] || fail "resumed local worker must build: $out"
+  pass 'accepted local-only completion needs merge approval without a PR'
+}
+test_work_state_emoji_local_completion
+
 echo "all fm-crew-state tests passed"

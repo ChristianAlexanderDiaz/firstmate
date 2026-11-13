@@ -780,6 +780,86 @@ fm_backend_herdr_projection_workspace_label() {  # <task-id> <projection-id>
   printf '└ %s · p:%s' "$(fm_backend_herdr_projection_concise_task_label "$1")" "$2"
 }
 
+# Only these presentation prefixes are removable; the remaining label is identity
+# evidence. Keep this vocabulary aligned with the state reader's emoji output.
+fm_backend_herdr_work_state_label_base() {  # <label>
+  local label=$1
+  while :; do
+    case "$label" in
+      '🔨 '*|'🔍 '*|'⏳ '*|'🙋 '*|'💤 '*) label=${label#* } ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "$label"
+}
+
+# Display-only rename, serialized with spawn/reclaim/cleanup. The version 2
+# journal, or an exact flat task label, proves this is a worker-owned workspace
+# rather than a shared home space. No endpoint lifecycle is driven.
+# Failed reads or a busy lock retry on the next watcher sweep. The live label
+# is read every time, so a restart needs no cache invalidation; an already
+# matching label produces no rename. Remote homes execute this same path on
+# their own host.
+fm_backend_herdr_work_state_label_sync() {  # <meta> <state-dir> <id> <emoji>
+  local meta=$1 state=$2 id=$3 emoji=$4 session lock rc=0
+  case "$emoji" in ''|🔨|🔍|⏳|🙋|💤) ;; *) return 1 ;; esac
+  [ "$(fm_meta_get "$meta" backend)" = herdr ] || return 0
+  case "$(fm_meta_get "$meta" kind)" in ''|ship|scout) ;; *) return 0 ;; esac
+  case "$id" in 2ndmate-*) return 0 ;; esac
+  [ -z "$(fm_meta_get "$meta" remote_host)" ] || return 0
+  session=$(fm_meta_get "$meta" herdr_session)
+  [ -n "$session" ] || return 0
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$FM_BACKEND_HERDR_ROOT/bin/fm-wake-lib.sh"
+  lock=$(fm_backend_herdr_presentation_session_lock_path "$session") || return 1
+  fm_lock_try_acquire "$lock" || return 0
+  fm_backend_herdr_work_state_label_sync_locked "$meta" "$state" "$id" "$emoji" "$session" || rc=$?
+  fm_lock_release "$lock" || true
+  return "$rc"
+}
+
+fm_backend_herdr_work_state_label_sync_locked() {  # <meta> <state> <id> <emoji> <session>
+  local meta=$1 state=$2 id=$3 emoji=$4 session=$5 workspace pane tab home list label base desired info journal expected suffix=
+  workspace=$(fm_meta_get "$meta" herdr_workspace_id)
+  pane=$(fm_meta_get "$meta" herdr_pane_id)
+  tab=$(fm_meta_get "$meta" herdr_tab_id)
+  [ -n "$workspace" ] && [ -n "$pane" ] && [ -n "$tab" ] || return 0
+  journal="$state/$id$FM_BACKEND_HERDR_PRESENTATION_JOURNAL_SUFFIX"
+  expected="fm-$id"
+  if [ -e "$journal" ]; then
+    fm_backend_herdr_projection_journal_snapshot "$journal" "$id" || return 0
+    [ "$FM_BACKEND_HERDR_JOURNAL_VERSION" = 2 ] || return 0
+    home=$(fm_backend_herdr_projection_home_identity "$FM_HOME") || return 1
+    [ "$FM_BACKEND_HERDR_JOURNAL_HOME" = "$home" ] \
+      && [ "$FM_BACKEND_HERDR_JOURNAL_SESSION" = "$session" ] \
+      && [ "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" = "$workspace" ] \
+      && [ "$FM_BACKEND_HERDR_JOURNAL_PANE_ID" = "$pane" ] \
+      && [ "$FM_BACKEND_HERDR_JOURNAL_TAB_ID" = "$tab" ] \
+      && [ "$workspace" != "$FM_BACKEND_HERDR_JOURNAL_PARENT_WORKSPACE_ID" ] || return 0
+    expected=$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_LABEL
+    suffix=" · p:$FM_BACKEND_HERDR_JOURNAL_PROJECTION_ID"
+  fi
+  list=$(fm_backend_herdr_cli "$session" workspace list 2>/dev/null) || return 1
+  label=$(printf '%s' "$list" | jq -er --arg ws "$workspace" \
+    --arg suffix "$suffix" '
+      .result.workspaces as $spaces
+      | select(([$spaces[]? | select(.workspace_id == $ws)] | length) == 1)
+      | [$spaces[]? | select((.label | type) == "string" and
+          (if $suffix == "" then .workspace_id == $ws else (.label | endswith($suffix)) end))]
+      | select(length == 1 and .[0].workspace_id == $ws) | .[0].label
+    ' 2>/dev/null) || return 0
+  base=$(fm_backend_herdr_work_state_label_base "$label")
+  [ "$base" = "$expected" ] || return 0
+  desired="${emoji:+$emoji }$base"
+  [ "$desired" != "$label" ] || return 0
+  # The review viewer may share the worker's tab; it does not own the workspace.
+  info=$(fm_backend_herdr_cli "$session" pane get "$pane" 2>/dev/null) || return 1
+  printf '%s' "$info" | jq -e --arg ws "$workspace" --arg p "$pane" --arg t "$tab" '
+    .result.pane | .pane_id == $p and .workspace_id == $ws and .tab_id == $t
+  ' >/dev/null 2>&1 || return 0
+  fm_backend_herdr_cli "$session" workspace rename "$workspace" "$desired" >/dev/null 2>&1
+}
+
 # fm_backend_herdr_presentation_session_lock_path: one account-private lock
 # path per live named Herdr session/socket, shared across every Firstmate home
 # of this OS account that uses that session.
@@ -1660,7 +1740,7 @@ fm_backend_herdr_presentation_arrange_plan() {  # <owners-json> [<main-workspace
     def top_name: if is_main then "firstmate" else .label end;
     def legacy_owner:
       if (.label | type) == "string"
-      then ([.label | capture("^(?<o>firstmate|2ndmate-[^/]+)/.+ · p:[A-Za-z0-9_-]{22}$")] | .[0].o)
+      then ([.label | sub("^((🔨|🔍|⏳|🙋|💤) )+"; "") | capture("^(?<o>firstmate|2ndmate-[^/]+)/.+ · p:[A-Za-z0-9_-]{22}$")] | .[0].o)
       else null
       end;
     (.result.workspaces // null) as $s
@@ -2894,7 +2974,7 @@ fm_backend_herdr_projection_live_binding_matches() {  # <session> <token> <works
       (.result.workspaces // null) as $spaces
       | select(($spaces | type) == "array")
       | select(([$spaces[]? | select(.workspace_id == $workspace)] | length) == 1)
-      | select(([$spaces[]? | select(.workspace_id == $workspace and .label == $workspace_label)] | length) == 1)
+      | select(([$spaces[]? | select(.workspace_id == $workspace and (.label | sub("^((🔨|🔍|⏳|🙋|💤) )+"; "")) == $workspace_label)] | length) == 1)
       | select(([$spaces[]? | select((.label | type) == "string" and (.label | endswith(" · p:" + $token)))] | length) == 1)
       | select(([$spaces[]? | select((.label | type) == "string" and (.label | endswith(" · p:" + $token)) and .workspace_id == $workspace)] | length) == 1)
       | select(([$spaces[]? | select(.workspace_id == $parent_workspace and .label == $parent_label)] | length) == 1)
@@ -4300,12 +4380,12 @@ fm_backend_herdr_projection_order_best_effort() {  # <session> <created-workspac
       and ((.label == "firstmate") or (.label | test("^2ndmate-[^/]+$")));
     def is_new_child:
       (.label | type) == "string"
-      and (.label | test("^└ .+ · p:[A-Za-z0-9_-]{22}$"));
+      and (.label | sub("^((🔨|🔍|⏳|🙋|💤) )+"; "") | test("^└ .+ · p:[A-Za-z0-9_-]{22}$"));
     def is_legacy_child:
       (.label | type) == "string"
-      and (.label | test("^(firstmate|2ndmate-[^/]+)/.+ · p:[A-Za-z0-9_-]{22}$"));
+      and (.label | sub("^((🔨|🔍|⏳|🙋|💤) )+"; "") | test("^(firstmate|2ndmate-[^/]+)/.+ · p:[A-Za-z0-9_-]{22}$"));
     def is_legacy_child_for($owner):
-      is_legacy_child and (.label | startswith($owner + "/"));
+      is_legacy_child and (.label | sub("^((🔨|🔍|⏳|🙋|💤) )+"; "") | startswith($owner + "/"));
     def is_child_for($owner):
       is_new_child or is_legacy_child_for($owner);
     (.result.workspaces // null) as $spaces
