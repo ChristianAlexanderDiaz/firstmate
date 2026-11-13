@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Behavior through the executable, socket protocol and durable recovery ledger."""
 import copy
+import datetime
 import importlib.util
 import json
 import os
@@ -14,7 +15,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
+from unittest import mock
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1066,6 +1069,49 @@ for variant in ("filtered", "full"):
         (self.root / "clock").write_text("242")
         wait_for(lambda: self.status()["reason"] == "ready")
 
+    def test_wake_power_log_latches_cancels_and_survives_restart(self):
+        job = self.job("sleep 30")
+        wait_for(lambda: any(l.get("group") for l in self.status().get("leases", {}).values()))
+        # pmset has second precision; ensure the event is after the last sample.
+        self.server.send_signal(signal.SIGSTOP)
+        try:
+            time.sleep(1.1)
+            stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S %z")
+            self.write("pmset.json", {"output": stamp + " Sleep Entering Sleep state due to 'Thermal Emergency Sleep' Using Batt (Charge:68%)"})
+            sample = copy.deepcopy(SAMPLE)
+            sample["thermalState"] = "serious"
+            self.write("input.json", sample)
+            (self.root / "sleep-offset").write_text("60")
+        finally:
+            self.server.send_signal(signal.SIGCONT)
+        state = wait_for(lambda: self.status().get("emergency"))
+        self.assertIn(stamp, state["cause"])
+        self.assertNotEqual(job.wait(timeout=8), 0)
+        self.write("input.json", SAMPLE)
+        self.stop()
+        self.start()
+        self.assertEqual(self.status()["emergency"], state)
+        (self.root / "clock").write_text("1000")
+        self.assertEqual(self.call("run", "--wait-seconds", "0.1", "--", "true").returncode, 75)
+        self.assertIn(self.status()["powerLogCheck"]["state"], ("emergency", "clear"))
+        self.assertEqual(self.call("clear-emergency", "--evidence", "inspected simulated sleep evidence").returncode, 0)
+        self.assertIsNone(self.status()["emergency"])
+
+    def test_wake_log_absent_old_unrelated_and_failure_do_not_latch(self):
+        old = "2020-11-10 22:52:15 -0500 Sleep Entering Sleep state due to 'Thermal Emergency Sleep'"
+        for offset, fixture in enumerate(({}, {"output": old},
+                {"output": "2026-11-10 22:51:55 -0500 Sleep Entering Sleep state due to 'Clamshell Sleep'"},
+                {"returncode": 1}), 1):
+            with self.subTest(fixture=fixture):
+                previous = self.status().get("powerLogCheck")
+                self.write("pmset.json", fixture)
+                (self.root / "sleep-offset").write_text(str(offset * 60))
+                expected = "unavailable" if fixture.get("returncode") else "clear"
+                wait_for(lambda: self.status().get("powerLogCheck") != previous and
+                    (self.status().get("powerLogCheck") or {}).get("state") == expected)
+                self.assertIsNone(self.status()["emergency"])
+                self.assertIsNone(json.loads((self.root / "state/ledger.json").read_text())["emergency"])
+
     def test_ac_low_battery_blocks_and_cancels(self):
         job = self.job("sleep 30")
         wait_for(lambda: any(l.get("group") for l in self.status().get("leases", {}).values()))
@@ -1580,6 +1626,164 @@ print("EXITED", flush=True)
                         os.kill(pid, signal.SIGKILL)
                         os.waitpid(pid, 0)
                     os.close(master)
+
+
+class PowerLogTests(unittest.TestCase):
+    """Deterministic wake/boot clocks and pmset failures, using only lab state."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="fm-power-log-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.now = datetime.datetime.fromisoformat("2026-11-10T22:51:55-05:00").timestamp()
+        self.up = 1000
+        self.boot = "lab-boot"
+        self.sequence = 1
+        self.instance = "lab-monitor"
+        config = {"schemaVersion": 1, "stateDirectory": str(self.root / "state"),
+            "socketPath": str(self.root / "socket/owner"), "monitorPath": str(self.root / "monitor.json")}
+        (self.root / "config.json").write_text(json.dumps(config))
+        _, self.config, self.digest = resource.load_config(str(self.root / "config.json"))
+        reader = resource.thermal_sleep_log
+        self.reader = reader
+        patches = (
+            mock.patch.object(resource, "time", types.SimpleNamespace(time=lambda: self.now, monotonic=lambda: self.up)),
+            mock.patch.object(resource, "uptime", lambda: self.up),
+            mock.patch.object(resource, "boot_id", lambda: self.boot),
+            mock.patch.object(resource, "process_table", lambda: {}),
+            mock.patch.object(resource, "thermal_sleep_log", lambda since, until: reader(since, until, platform="darwin")),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        patch = mock.patch.object(resource.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", ""))
+        self.command = patch.start()
+        self.addCleanup(patch.stop)
+        self.owner = resource.Budget(self.config, self.digest, power_log_reader=resource.thermal_sleep_log)
+        self.addCleanup(lambda: self.owner.lock.close())
+        self.tick()
+
+    def tick(self, **changes):
+        sample = dict(copy.deepcopy(SAMPLE), timestamp=self.now, uptimeSeconds=self.up,
+            bootSessionUUID=self.boot, instanceUUID=self.instance, sequence=self.sequence, **changes)
+        (self.root / "monitor.json").write_text(json.dumps(sample))
+        self.owner.tick()
+        return self.owner.handle({"op": "status", "configDigest": self.digest})
+
+    def log(self, output):
+        self.command.return_value = subprocess.CompletedProcess([], 0, output, "")
+
+    def test_wall_gap_replays_emergency_but_normal_ticks_do_not_read_log(self):
+        self.now += 2
+        self.up += 2
+        self.sequence += 1
+        self.tick()
+        self.command.assert_not_called()
+        self.log("2026-11-10 22:52:15 -0500 Sleep Entering Sleep state due to 'Thermal Emergency Sleep'")
+        self.now += 60
+        state = self.tick(thermalState="serious")
+        self.assertIsNotNone(state["emergency"])
+        self.assertEqual(state["availableHeavySlots"], 0)
+        self.assertIn("22:52:15 -0500", state["emergency"]["cause"])
+        self.command.assert_called_once_with(("/usr/bin/pmset", "-g", "log"),
+            capture_output=True, text=True, timeout=3, check=True)
+
+    def test_restart_and_boot_gap_use_durable_cursor(self):
+        self.owner.lock.close()
+        self.now += 60
+        self.boot = "next-lab-boot"
+        self.up = 1
+        self.log("2026-11-11 03:52:15 +0000 Sleep Thermal Emergency Sleep")
+        self.owner = resource.Budget(self.config, self.digest, power_log_reader=resource.thermal_sleep_log)
+        self.assertIsNotNone(self.tick()["emergency"])
+
+    def test_monitor_restart_and_sequence_regression_check_log(self):
+        self.instance = "new-monitor"
+        self.now += 2
+        self.up += 2
+        self.tick()
+        self.assertEqual(self.command.call_count, 1)
+        self.sequence = 0
+        self.now += 2
+        self.up += 2
+        self.tick()
+        self.assertEqual(self.command.call_count, 2)
+        self.sequence += 20
+        self.now += 2
+        self.up += 2
+        self.tick()
+        self.assertEqual(self.command.call_count, 3)
+
+    def test_stale_monitor_gap_uses_last_observation(self):
+        self.log("2026-11-10 22:52:15 -0500 Sleep Thermal Emergency Sleep")
+        # Owner keeps ticking while its monitor is unavailable.
+        for _ in range(30):
+            self.now += 2
+            self.up += 2
+            (self.root / "monitor.json").write_text("{")
+            self.owner.tick()
+        self.command.assert_not_called()
+        self.assertIsNotNone(self.tick()["emergency"])
+
+    def test_missing_monitor_on_wake_still_latches(self):
+        self.log("2026-11-10 22:52:15 -0500 Sleep Thermal Emergency Sleep")
+        self.now += 60
+        (self.root / "monitor.json").unlink()
+        self.owner.tick()
+        self.assertIsNotNone(self.owner.handle({"op": "status", "configDigest": self.digest})["emergency"])
+        self.assertTrue(self.owner.policy()[1])
+        self.owner.handle({"op": "clear-emergency", "configDigest": self.digest,
+            "evidence": "inspected simulated emergency sleep"})
+        self.now += 2
+        self.up += 2
+        self.assertIsNone(self.tick()["emergency"])
+
+    def test_timeout_missing_command_and_failure_are_visible_without_latch(self):
+        for error in (subprocess.TimeoutExpired("pmset", 3), FileNotFoundError(),
+                subprocess.CalledProcessError(1, "pmset")):
+            with self.subTest(error=type(error).__name__):
+                self.command.side_effect = error
+                self.now += 60
+                state = self.tick()
+                self.assertIsNone(state["emergency"])
+                self.assertEqual(state["powerLogCheck"]["state"], "unavailable")
+                self.assertEqual(state["powerLogCheck"]["error"], type(error).__name__)
+
+    def test_old_future_malformed_and_unrelated_entries_are_ignored(self):
+        self.log("\n".join((
+            "2026-11-10 22:51:55 -0500 Sleep Thermal Emergency Sleep",
+            "2026-11-10 22:51:54 -0500 Sleep Thermal Emergency Sleep",
+            "2026-11-10 23:52:15 -0500 Sleep Thermal Emergency Sleep",
+            "2026-99-10 22:52:15 -0500 Sleep Thermal Emergency Sleep",
+            "Ignored DarkWake thermal emergency signal",
+            "2026-11-10 22:52:15 -0500 Sleep Clamshell Sleep")))
+        self.now += 60
+        self.assertIsNone(self.tick()["emergency"])
+
+    def test_linux_never_invokes_injected_command(self):
+        with mock.patch.object(resource.sys, "platform", "linux"):
+            self.assertEqual(self.reader(0, self.now, command=["must-not-run"]), {"state": "unsupported"})
+            self.command.assert_not_called()
+            self.owner.lock.close()
+            self.owner = resource.Budget(self.config, self.digest)
+            self.now += 60
+            self.tick()
+            self.command.assert_not_called()
+
+    def test_monitor_flag_remains_a_latch_and_updates_visible_telemetry(self):
+        state = self.tick(thermalEmergencySleep=True)
+        self.assertIsNotNone(state["emergency"])
+        self.assertTrue(self.owner.policy()[1])
+        state = self.tick(thermalState="fair")
+        self.assertEqual(state["telemetry"]["thermalState"], "fair")
+        self.assertEqual(state["availableHeavySlots"], 0)
+        self.command.assert_not_called()
+
+    def test_timestamp_without_offset_uses_local_timezone(self):
+        local = datetime.datetime.fromtimestamp(self.now + 20).strftime("%Y-%m-%d %H:%M:%S")
+        self.log(local + " Sleep Thermal Emergency Sleep")
+        self.now += 60
+        self.assertIsNotNone(self.tick()["emergency"])
 
 
 if __name__ == "__main__":
