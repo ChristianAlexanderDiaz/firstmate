@@ -1403,6 +1403,35 @@ fm_backend_herdr_pid_is_bare_shell() {  # <ps-bin> <pid>
   return 1
 }
 
+# fm_backend_herdr_pane_shell_tree: accept nested interactive shells left by a
+# worker launch. Unlike the agent classifier, this proof rejects EVERY non-shell
+# descendant, including background commands with no agent registration.
+fm_backend_herdr_pane_shell_tree() {  # <session> <pane-id>
+  local info root rows ps_bin=${FM_HERDR_PS_BIN:-ps}
+  info=$(fm_backend_herdr_cli "$1" pane process-info --pane "$2") || return 1
+  root=$(printf '%s' "$info" | jq -er --arg pane "$2" '
+    .result.process_info | select(.pane_id == $pane)
+    | .shell_pid | select(type == "number" and . > 1) | floor
+  ') || return 1
+  rows=$(LC_ALL=C "$ps_bin" -axo pid=,ppid=,stat=,comm=) || return 1
+  printf '%s\n' "$rows" | awk -v root="$root" '
+    { pid[NR]=$1; parent[NR]=$2; stat[NR]=$3; name[NR]=$4; if ($1 == root) found++ }
+    END {
+      if (found != 1) exit 1
+      tree[root]=1; changed=1
+      while (changed) {
+        changed=0
+        for (n=1; n<=NR; n++)
+          if ((parent[n] in tree) && !(pid[n] in tree)) { tree[pid[n]]=1; changed=1 }
+      }
+      for (n=1; n<=NR; n++) if (pid[n] in tree) {
+        sub(/^.*\//, "", name[n]); sub(/^-/, "", name[n])
+        if (name[n] !~ /^(sh|bash|zsh|dash|ksh|fish)$/ || stat[n] !~ /^[SI]/) exit 1
+      }
+    }
+  '
+}
+
 # fm_backend_herdr_pane_idle_shell_pid: print the shell pid of <pane-id> only
 # when the exact pane provably holds one lone idle recognized shell: pane
 # process-info agrees on the pane id, the shell pid is both the foreground
