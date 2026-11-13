@@ -2,7 +2,7 @@
 
 `bin/fm-resource-run` provides a deterministic owner for the local heavy-job budget shared by Firstmate homes.
 It requires Python 3 with its standard library and performs no model calls.
-The initial profile admits one heavy job, including on a stronger adapter; raising that limit requires a later coordinated calibration and implementation change.
+The default shadow policy preserves the existing one-heavy-job admission rules while recording the proposed level on every tick.
 `bin/fm-resource-run --help` and its subcommand help own configuration, command flags, reservations and the persisted protocol.
 
 ## Setup
@@ -26,15 +26,19 @@ No client starts or repairs an owner automatically.
 For a LaunchAgent, use that exact argv, `RunAtLoad`, a conservative restart throttle and `Umask` 63; retain transition output with bounded logging.
 Keep the executable and configuration paths stable across Firstmate worktree cleanup.
 
-On owner startup, a capacity-only relaxation is accepted with live reservations: `maxResidentWorkers`, `memoryMiB` and `maxHeavyJobs` must all stay unchanged or increase, with at least one increase, and every other normalized policy field must remain identical.
-Schema validation still applies, including the current `maxHeavyJobs=1` restriction.
+On owner startup, a capacity-only relaxation is accepted with live reservations: `maxResidentWorkers`, `memoryMiB` and `maxHeavyJobs` must all stay unchanged or increase, and `fullLevelEnabled` may change from false to true, with at least one increase and every other normalized policy field identical.
+Schema validation still applies, including the `maxHeavyJobs` range of 1 to 2.
+Changing `policyMode` changes cancellation and recovery semantics, so it is never classified as a live capacity relaxation.
+To change policy mode or reduce capacity, drain all leases and queued requests, stop the owner, change only those capacity/policy settings, and restart it against the same ledger.
+The owner verifies the saved policy digest and empty ledger, preserves emergency evidence and recorded peaks, discards the old client compatibility chain, and records the change.
+Never delete the ledger to bypass a latch or a live reservation.
 The owner atomically saves the accepted normalized policy and digest with the carried-forward ledger, records one `host-budget-capacity-relaxed` transition naming the old and new capacities, and uses the new limits for admissions under the existing telemetry rules.
 Previously accepted policy digests remain compatible after a relaxation so running controllers can maintain their reservations across owner recovery.
-Editing the policy file does not reload a running owner; its replacement accepts the change without requiring workers to drain.
-Any decrease, mixed change, path change or other non-capacity change retains the policy-change refusal and requires reconciling the existing ledger before changing configuration.
+Editing the policy file does not reload a running owner; its replacement accepts a capacity relaxation without requiring workers to drain.
+Any decrease or policy-mode change with live reservations or queued requests retains the policy-change refusal; path changes and other non-capacity changes remain outside this configuration-change path.
 A legacy ledger containing only a digest cannot prove a relaxation; first start the updated owner with the matching original policy to record it, or reconcile the ledger before changing policy.
 
-`bin/fm-resource-run status` gives the compact exception view, active reservations, pending queue, monitor timestamp and last cause.
+`bin/fm-resource-run status` gives the compact exception view, active reservations, pending queue, monitor timestamp and last cause, with a `summary` line containing the UTC clock, policy mode, level, reason, since time, waiting tasks and earliest step-up time.
 The owner appends cause changes with ISO-8601 UTC timestamps to its private `transitions.jsonl` and emits the same records to stdout.
 Ordinary ready/hold changes remain available for diagnosis, but quarantine-note flickers alone do not create transitions.
 An uninterrupted hold emits an additional record after ten minutes even when its reason never changes; its monotonic duration is recorded as `heldSeconds` and resets when admission becomes ready or the owner restarts.
@@ -91,7 +95,8 @@ The `npx chrome-devtools-mcp` adapter recovers the caller's existing browser res
 It restores the owned browser context and attaches the bridge process group to that reservation without queuing a second job; a launch without a live ancestor browser reservation queues for its own browser reservation.
 The wrapper exports `FM_RESOURCE_CPU_WORKERS` and `FM_RESOURCE_BROWSER_WORKERS` for project runners, and applies direct Vitest, Node test, Playwright, graphify and Nix caps where the command interface supports them.
 Package-script Vitest runs inherit `VITEST_MAX_WORKERS` and the older thread/fork environment limits, with minimum workers set to one; see [Vitest's environment variable migration](https://vitest.dev/guide/migration.html).
-Prepared launches and direct leased package-test runs install a Node PATH adapter that caps `node --test` before file arguments at two workers on desk power or one on portable power, including npm and pnpm package scripts.
+Prepared launches and direct leased package-test runs install a Node PATH adapter that caps `node --test` before file arguments, including npm and pnpm package scripts.
+Shadow operation retains two workers on desk power or one on portable power; enabled operation uses the admission level's worker count below.
 Portable power means a non-AC source, or AC while the owner's recent battery history shows the charge falling; AC that holds its charge is desk power whatever the adapter wattage.
 A client served by an owner that predates this classification applies the portable caps; one served by an owner without bridge recovery queues a bridge that lacks lease variables for its own browser reservation.
 Explicit Node concurrency limits at or below the cap are preserved, and other Node invocations pass through unchanged.
@@ -131,10 +136,52 @@ Unknown or corrupt recovery state fails closed; preserve it for inspection rathe
 
 ## Exceptions and rollout
 
+### Admission levels
+
+`policyMode` defaults to `shadow`: every tick computes the level and appends its timestamp, reason, since time and next step-up time alongside the input sample and actual decision in private `policy.jsonl`; the existing rules still decide admissions, reservations, cancellations and worker caps.
+The log retains the supplied wall, monotonic and uptime clocks and boot identity for offline replay without reconstructing freshness from a sample timestamp.
+The metrics ring and JSON status also include that observation.
+Retain at least 48 hours of this log for comparison before enabling `policyMode=on`; policy logs are separate from supervisor transition notifications.
+Replay the measured history, including available incident readings, against both policies and verify all safety stops before activation.
+Start enabled operation with `fullLevelEnabled=false` (the default), and consider Full only after a clean week and coordinated live calibration.
+The owner never changes either setting automatically.
+
+With `policyMode=on`, one level sets admission and caps:
+
+| Level | Measurements | Admission |
+|---|---|---|
+| Full | Wall power, nominal or fair thermal, normal memory, Full enabled | Up to two heavy jobs, at most one build or exclusive job, four test workers |
+| Normal | Healthy battery operation with lid open, or wall power with Full disabled | One heavy job, four test workers on wall power or two on battery |
+| Reduced | Memory warning without growing swap, or staged recovery | One test, graph or browser job, two test workers; builds and exclusive jobs wait |
+| Stop | Serious thermal, battery below 30%, missing/stale readings, growing swap during warning, sustained swap growth or AC discharge | No new compute; running jobs finish |
+| Stop and cancel | Critical thermal or memory, battery below 15%, emergency latch, lid closed without wall power | Running heavy jobs are cancelled using the configured grace period |
+
+`maxHeavyJobs` remains a ceiling: Full needs both `fullLevelEnabled=true` and `maxHeavyJobs=2` to expose two slots.
+Playwright stays at one worker at every admitted level.
+Worker caps are applied when a command starts; running tools retain their existing arguments, while new and nested commands receive the current owner cap without exceeding the outer command's cap.
+Nested work cannot upgrade a second small job into another build or exclusive job.
+No `memory.freePercent` reading is used.
+The resident-session exemption for warning memory pressure remains; sustained swap growth, unknown readings and critical pressure still hold resident admissions.
+
+Level reductions are immediate; recovery climbs only one level per uninterrupted dwell: 240 seconds after heat, 60 after memory, and 30 after missing readings, source changes or sampling discontinuities.
+A shorter intervening problem never shortens an outstanding heat dwell.
+Adapter wattage changes alone on wall power do not restart recovery.
+Thermal critical and emergency-sleep signals latch until explicit evidence-based clearing, including across owner recovery; critical memory, battery cancellation and lid cancellation do not create thermal latches.
+After clearing a thermal latch, each recovery rung still requires the heat dwell.
+
+Enabled reservations use the largest recorded per-class process-tree RSS peak plus 25% headroom, rounded up to 64 MiB; unmeasured classes retain their defaults and resident sessions retain 512 MiB.
+For example, a recorded 1,591 MiB exclusive peak reserves 2,048 MiB, and a 2,048 MiB browser peak reserves 2,560 MiB.
+Peaks accumulate in the durable ledger and are recovered from available metrics; status reports the resulting reservations for every class.
+An explicit reservation must meet that class's current measured minimum and the total configured budget.
+These observed peaks are planning estimates, not memory ceilings or proof that a different job of the same class will fit; request a larger reservation for a larger workload.
+The existing memory budget remains enforced, and measured pressure and swap growth remain independent safety inputs.
+
+### Legacy admission during shadow observation
+
 Missing, stale, unavailable, wrong-boot or malformed monitor samples hold new compute and resident workers.
 Resident workers may start under warning memory pressure, subject to the resident count, actual memory reservations and other telemetry checks; critical or unknown pressure holds new workers.
 Resident workers are also admitted during recovery hysteresis; serious or critical thermal holds them.
-Heavy and exclusive jobs remain held under warning pressure.
+During shadow observation, heavy and exclusive jobs remain held under warning pressure.
 A closed lid holds new compute and resident workers on battery, UPS or draining AC; steady AC permits admission subject to the other telemetry checks.
 A missing or non-boolean lid reading still holds admission.
 A closed lid on battery, UPS or draining AC cancels running heavy leases through the ordinary SIGTERM then SIGKILL path after `graceSeconds`, leaving resident worker leases running.
@@ -157,6 +204,8 @@ Heavy compute must still satisfy continuous recovery hysteresis after a clear, w
 Fair is the ordinary thermal state of a Mac under sustained multi-worker load, below throttling, so it counts toward recovery and never holds admitted work.
 After the running owner observes serious or critical thermal, the OS thermal warning or the emergency latch, its next recovery needs twice `recoverySeconds`, and any further serious reading restarts it.
 The doubled-window marker is held in memory: an owner restart uses the base window unless it observes another thermal signal or the persisted emergency latch.
+
+### Shared ownership and notifications
 
 The bounded private metrics ring records telemetry and numeric resource usage by lease, without prompts, cookies or environment contents.
 Transition history, current cause and quarantine status provide the Firstmate exception summary; there is no permanent AI health watcher.

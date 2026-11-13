@@ -83,6 +83,8 @@ def handle(budget, request):
     if legacy and request.get("op") == "inherit-browser":
         raise resource.Refusal("invalid request nonce")
     result = real_handle(budget, request)
+    if legacy:
+        result.pop("cpuWorkers", None)
     if legacy and request.get("op") == "status":
         result.pop("portable", None)
     return result

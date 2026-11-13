@@ -4,6 +4,8 @@
   "socketPath": "/private/tmp/firstmate-resource-501/owner.sock",
   "monitorPath": "/Users/you/Library/Application Support/mac-workload/status.json",
   "maxHeavyJobs": 1,
+  "policyMode": "shadow",
+  "fullLevelEnabled": false,
   "memoryMiB": 10240,
   "maxResidentWorkers": 12,
   "recoverySeconds": 120,
