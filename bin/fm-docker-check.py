@@ -10,6 +10,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import time
 
 from fm_resource import Refusal, atomic_json, check_directory
 
@@ -18,6 +19,8 @@ HERE = Path(__file__).resolve().parent
 
 def bounded(argv, timeout, env=None):
     """Discard tool output and reap the command group, including timed-out children."""
+    if timeout <= 0:
+        return False
     try:
         process = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True, env=env)
@@ -35,7 +38,7 @@ def bounded(argv, timeout, env=None):
         process.wait()
 
 
-def live_dependency(home, projects):
+def live_dependency(home, projects, deadline):
     # Use the existing backend abstraction for every supported task runtime.
     # Remote secondmates monitor their own local dependencies in their home.
     probe = '''
@@ -45,6 +48,9 @@ target=$(fm_backend_target_of_meta "$2")
 fm_backend_target_exists "$(fm_backend_of_meta "$2")" "$target" "fm-$3"
 '''
     for meta in sorted((home / "state").glob("*.meta")):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
         if meta.is_symlink():
             continue
         fields = dict(line.split("=", 1) for line in meta.read_text().splitlines() if "=" in line)
@@ -52,12 +58,16 @@ fm_backend_target_exists "$(fm_backend_of_meta "$2")" "$target" "fm-$3"
                 Path(fields.get("project", "")).name not in projects):
             continue
         if bounded(["/bin/bash", "-c", probe, "docker-check", str(HERE), str(meta), meta.stem],
-                2, env=dict(os.environ, FM_HOME=str(home))):
+                min(2, remaining), env=dict(os.environ, FM_HOME=str(home))):
             return True
     return False
 
 
 def check(args, home):
+    consumer_timeout = float(os.environ.get("FM_CHECK_TIMEOUT", "30"))
+    if not 0 < consumer_timeout < float("inf"):
+        raise ValueError("FM_CHECK_TIMEOUT must be positive and finite")
+    deadline = time.monotonic() + max(0, consumer_timeout - 2)
     state = home / "state"
     record = state / ".docker-unavailable"
     with os.fdopen(os.open(state / ".docker-check.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600), "a") as lock:
@@ -68,10 +78,10 @@ def check(args, home):
         config = home / "config/docker-projects"
         projects = {line.strip() for line in config.read_text().splitlines()
             if line.strip() and not line.lstrip().startswith("#")} if config.exists() else set()
-        if not projects or not live_dependency(home, projects):
+        if not projects or not live_dependency(home, projects, deadline):
             record.unlink(missing_ok=True)
             return
-        if bounded([args.docker, "info"], args.timeout):
+        if bounded([args.docker, "info"], min(args.timeout, deadline - time.monotonic())):
             record.unlink(missing_ok=True)
             return
         if record.exists():
@@ -106,6 +116,8 @@ No configuration or no matching live endpoint is silent and clears the episode.
 A healthy docker info also clears it; failure, timeout or missing executable
 prints one UTC-timestamped alarm per episode. Tool output is never relayed.
 --docker selects an executable (no shell expansion); --timeout bounds docker info.
+Endpoint discovery and Docker probing share FM_CHECK_TIMEOUT (default 30) minus
+two seconds reserved for recording and emitting the alarm.
 register-check creates and trusts HOME/state/docker.check.sh; retire it with
 FM_HOME=HOME bin/fm-check-unregister.sh docker before changing registration.
 Use a stable installed code path. This check never starts or restarts Docker.

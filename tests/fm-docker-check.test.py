@@ -20,13 +20,13 @@ class DockerCheckTests(unittest.TestCase):
         for directory in ("state", "config", "bin"):
             (self.home / directory).mkdir(mode=0o700)
         self.env = dict(os.environ, PATH=str(self.home / "bin") + os.pathsep + os.environ["PATH"],
-            FIXTURE_HOME=str(self.home), PYTHONDONTWRITEBYTECODE="1")
+            FIXTURE_HOME=str(self.home), PYTHONDONTWRITEBYTECODE="1", FM_CHECK_TIMEOUT="30")
         self.docker = self.home / "bin/docker-fixture"
         self.docker.write_text('''#!/bin/sh
 printf '%s\\n' "$*" >> "$FIXTURE_HOME/docker-calls"
 case "$(cat "$FIXTURE_HOME/docker-result")" in
   healthy) exit 0 ;;
-  hanging) exec sleep 30 ;;
+  hanging) exec sleep 60 ;;
   *) printf 'sensitive daemon details\\n' >&2; exit 1 ;;
 esac
 ''')
@@ -43,9 +43,9 @@ esac
         (self.home / "live").touch()
         self.run_cli("register-check")
 
-    def run_cli(self, action):
+    def run_cli(self, action, timeout=1):
         result = subprocess.run([sys.executable, str(ROOT / "bin/fm-docker-check.py"),
-            "--home", str(self.home), "--docker", str(self.docker), "--timeout", "1", action],
+            "--home", str(self.home), "--docker", str(self.docker), "--timeout", str(timeout), action],
             env=self.env, text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
@@ -114,6 +114,45 @@ esac
         self.assertEqual([child.returncode for child in children], [0, 0])
         self.assertEqual(sum(len(stdout.splitlines()) for stdout, _ in results), 1)
         self.assertTrue(all(stderr == "" for _, stderr in results))
+
+    def test_maximum_registered_timeout_alarms_before_consumer_deadline(self):
+        (self.home / "state/docker.check.sh").unlink()
+        self.run_cli("register-check", timeout=30)
+        (self.home / "docker-result").write_text("hanging")
+        start = time.monotonic()
+        result = subprocess.run([str(self.home / "state/docker.check.sh")],
+            env=self.env, text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("docker-unavailable:", result.stdout)
+        self.assertLess(time.monotonic() - start, 29.5)
+        self.assertTrue((self.home / "state/.docker-unavailable").exists())
+
+    def test_slow_endpoints_and_docker_share_consumer_budget(self):
+        self.env["FM_CHECK_TIMEOUT"] = "8"
+        for index in range(2):
+            (self.home / f"state/aaa-{index}.meta").write_text(
+                "project=/fixture/example\nwindow=@slow\n")
+        (self.home / "bin/tmux").write_text('''#!/bin/sh
+case "$1" in list-windows) exec sleep 60 ;; esac
+printf '%%17\\n'
+''')
+        (self.home / "docker-result").write_text("hanging")
+        start = time.monotonic()
+        result = self.run_cli("check", timeout=30)
+        self.assertIn("docker-unavailable:", result.stdout)
+        self.assertLess(time.monotonic() - start, 7.5)
+        self.assertEqual((self.home / "docker-calls").read_text().splitlines(), ["info"])
+
+    def test_endpoint_discovery_stops_at_shared_deadline(self):
+        self.env["FM_CHECK_TIMEOUT"] = "6"
+        for index in range(8):
+            (self.home / f"state/aaa-{index}.meta").write_text(
+                "project=/fixture/example\nwindow=%slow\n")
+        (self.home / "bin/tmux").write_text("#!/bin/sh\nexec sleep 60\n")
+        start = time.monotonic()
+        self.assertEqual(self.run_cli("check", timeout=30).stdout, "")
+        self.assertLess(time.monotonic() - start, 5.5)
+        self.assertFalse((self.home / "docker-calls").exists())
 
 
 if __name__ == "__main__":
