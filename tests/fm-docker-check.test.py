@@ -154,6 +154,47 @@ printf '%%17\\n'
         self.assertLess(time.monotonic() - start, 5.5)
         self.assertFalse((self.home / "docker-calls").exists())
 
+    def slow_prefix(self):
+        self.env["FM_CHECK_TIMEOUT"] = "6"
+        for index in range(3):
+            (self.home / f"state/aaa-{index}.meta").write_text(
+                "project=/fixture/example\nwindow=@slow\n")
+        (self.home / "bin/tmux").write_text('''#!/bin/sh
+case "$1" in list-windows) exec sleep 60 ;; esac
+[ -e "$FIXTURE_HOME/live" ] && printf '%%17\\n'
+''')
+
+    def test_later_live_endpoint_eventually_alarms(self):
+        self.slow_prefix()
+        (self.home / "docker-result").write_text("failed")
+        self.assertEqual(self.poll(), "")
+        self.assertFalse((self.home / "docker-calls").exists())
+        alarms = []
+        for _ in range(3):
+            start = time.monotonic()
+            alarm = self.poll()
+            self.assertLess(time.monotonic() - start, 5.5)
+            if alarm:
+                alarms.append(alarm)
+                break
+        self.assertEqual(len(alarms), 1)
+        self.assertIn("docker-unavailable:", alarms[0])
+
+    def test_incomplete_discovery_preserves_outage(self):
+        (self.home / "docker-result").write_text("failed")
+        self.assertIn("docker-unavailable:", self.poll())
+        record = self.home / "state/.docker-unavailable"
+        original = record.read_bytes()
+        self.slow_prefix()
+        for _ in range(2):
+            self.assertEqual(self.poll(), "")
+            self.assertEqual(record.read_bytes(), original)
+        (self.home / "live").unlink()
+        for meta in (self.home / "state").glob("aaa-*.meta"):
+            meta.unlink()
+        self.assertEqual(self.poll(), "")
+        self.assertFalse(record.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,7 @@
 import argparse
 from datetime import datetime, timezone
 import fcntl
+import json
 import os
 from pathlib import Path
 import shlex
@@ -20,7 +21,7 @@ HERE = Path(__file__).resolve().parent
 def bounded(argv, timeout, env=None):
     """Discard tool output and reap the command group, including timed-out children."""
     if timeout <= 0:
-        return False
+        return None
     try:
         process = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True, env=env)
@@ -29,7 +30,7 @@ def bounded(argv, timeout, env=None):
     try:
         return process.wait(timeout=timeout) == 0
     except subprocess.TimeoutExpired:
-        return False
+        return None
     finally:
         try:
             os.killpg(process.pid, signal.SIGKILL)
@@ -47,20 +48,32 @@ target=$(fm_backend_target_of_meta "$2")
 [ -n "$target" ] || exit 1
 fm_backend_target_exists "$(fm_backend_of_meta "$2")" "$target" "fm-$3"
 '''
-    for meta in sorted((home / "state").glob("*.meta")):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return False
-        if meta.is_symlink():
-            continue
-        fields = dict(line.split("=", 1) for line in meta.read_text().splitlines() if "=" in line)
-        if (fields.get("remote_host") or fields.get("kind") == "secondmate" or
-                Path(fields.get("project", "")).name not in projects):
-            continue
-        if bounded(["/bin/bash", "-c", probe, "docker-check", str(HERE), str(meta), meta.stem],
-                min(2, remaining), env=dict(os.environ, FM_HOME=str(home))):
-            return True
-    return False
+    cursor = home / "state/.docker-check-cursor"
+    after = json.loads(cursor.read_text())["after"] if cursor.exists() else ""
+    metas = sorted((home / "state").glob("*.meta"))
+    metas = [meta for meta in metas if meta.name > after] + [meta for meta in metas if meta.name <= after]
+    incomplete = False
+    last = None
+    try:
+        for meta in metas:
+            if deadline <= time.monotonic():
+                return None
+            last = meta.name
+            if meta.is_symlink():
+                continue
+            fields = dict(line.split("=", 1) for line in meta.read_text().splitlines() if "=" in line)
+            if (fields.get("remote_host") or fields.get("kind") == "secondmate" or
+                    Path(fields.get("project", "")).name not in projects):
+                continue
+            result = bounded(["/bin/bash", "-c", probe, "docker-check", str(HERE), str(meta), meta.stem],
+                min(2, deadline - time.monotonic()), env=dict(os.environ, FM_HOME=str(home)))
+            if result:
+                return True
+            incomplete = incomplete or result is None
+        return None if incomplete else False
+    finally:
+        if last is not None:
+            atomic_json(cursor, {"after": last})
 
 
 def check(args, home):
@@ -78,7 +91,10 @@ def check(args, home):
         config = home / "config/docker-projects"
         projects = {line.strip() for line in config.read_text().splitlines()
             if line.strip() and not line.lstrip().startswith("#")} if config.exists() else set()
-        if not projects or not live_dependency(home, projects, deadline):
+        dependency = live_dependency(home, projects, deadline) if projects else False
+        if dependency is None:
+            return
+        if not dependency:
             record.unlink(missing_ok=True)
             return
         if bounded([args.docker, "info"], min(args.timeout, deadline - time.monotonic())):
@@ -112,7 +128,8 @@ def main():
 Create HOME/config/docker-projects with one project directory basename per line
 (blank lines and # comments ignored). Only local non-secondmate task records
 with matching project names and an existing backend endpoint count as live.
-No configuration or no matching live endpoint is silent and clears the episode.
+No configuration or confirmed absence of matching live endpoints clears the episode.
+Incomplete discovery is silent, preserves the episode, and resumes across polls.
 A healthy docker info also clears it; failure, timeout or missing executable
 prints one UTC-timestamped alarm per episode. Tool output is never relayed.
 --docker selects an executable (no shell expansion); --timeout bounds docker info.
