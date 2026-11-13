@@ -68,6 +68,32 @@
 
 FM_WORKER_ACCOUNT_CHECK_SECONDS=${FM_WORKER_ACCOUNT_CHECK_SECONDS:-30}
 
+FM_WORKER_ACCOUNT_QUOTA_REUSE_SECONDS=60
+FM_WORKER_ACCOUNT_QUOTA_MAX_AGE_SECONDS=120
+
+# fm_worker_account_quota_read [force]
+# One host-wide quota-axi reuse policy, overridable in the operator environment.
+# Passing --max-age also probes all-accounts reuse support: legacy quota-axi
+# rejects that combination before fetching, so only that error retries without
+# the flag. Other failures never trigger a second vendor request.
+fm_worker_account_quota_read() {
+  local force=${1:-0} max_age=${QUOTA_AXI_MAX_AGE:-$FM_WORKER_ACCOUNT_QUOTA_REUSE_SECONDS} output rc
+  if [ "$force" = 1 ]; then
+    # Post-refresh verification must observe the newly refreshed credential.
+    QUOTA_AXI_MAX_AGE=0 quota-axi --all-accounts --json
+    return
+  fi
+  output=$(QUOTA_AXI_MAX_AGE="$max_age" quota-axi --all-accounts --json --max-age "$max_age" 2>&1)
+  rc=$?
+  if [ "$rc" != 0 ] && [[ $output == *'--all-accounts cannot be combined with --max-age'* ]]; then
+    # Legacy compatibility: this build cannot reuse named-account readings.
+    QUOTA_AXI_MAX_AGE=0 quota-axi --all-accounts --json
+    return
+  fi
+  printf '%s\n' "$output"
+  return "$rc"
+}
+
 # Credentials Claude Code ranks above the /login stored in its config root
 # (code.claude.com/docs/en/authentication, "Authentication precedence"; the
 # Claude Platform on AWS and Bedrock Mantle switches from
@@ -463,9 +489,9 @@ fm_worker_account_locked() {
 }
 
 # fm_worker_account_snapshot <config>
-# Share one vendor snapshot (including a failed attempt) for sixty seconds.
-# Locally timestamped readings retain their vendor stale/reused flags, which
-# still refuse at eligibility checks. Refreshing credentials
+# Share one quota snapshot (including a failed attempt) for sixty seconds.
+# Eligibility bounds the original reading age, including reused readings.
+# Refreshing credentials
 # explicitly invalidates the snapshot so the post-refresh decision is fresh.
 fm_worker_account_snapshot() {
   fm_worker_account_locked "$1" fm_worker_account_snapshot_read "$1"
@@ -520,7 +546,7 @@ fm_worker_account_snapshot_read() {
     jq -ec '.snapshot | select(type == "object")' "$cache"
     return
   fi
-  snapshot=$(env -u QUOTA_AXI_MAX_AGE quota-axi --all-accounts --json 2>/dev/null </dev/null) || snapshot=null
+  snapshot=$(fm_worker_account_quota_read "$force" 2>/dev/null </dev/null) || snapshot=null
   if ! printf '%s' "$snapshot" | jq -e 'type == "object" and (.providers | type == "array")' >/dev/null 2>&1; then
     snapshot=null
   fi
@@ -540,7 +566,8 @@ fm_worker_account_snapshot_read() {
 # Authentication failures take precedence over endpoint throttling. Keep the
 # vendor retryAfter measurement intact and derive display age from refreshedAt.
 fm_worker_account_diagnostics() {
-  printf '%s' "$1" | jq -c --argjson now "${2:-$(date +%s)}" '
+  printf '%s' "$1" | jq -c --argjson now "${2:-$(date +%s)}" \
+    --argjson max_age "$FM_WORKER_ACCOUNT_QUOTA_MAX_AGE_SECONDS" '
     def epoch: if type == "string" then try (sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) catch null else null end;
     [ .. | objects | select(((.account? // .provider?) | type) == "string") |
       . as $row | (.state // .) as $state |
@@ -557,6 +584,12 @@ fm_worker_account_diagnostics() {
           elif $limited then "quota endpoint rate limited until " +
             (if ($retry | type) == "number" then ($now + $retry | todateiso8601) else ($retry // "unknown" | tostring) end) +
             ", reading from " + (if $time != null and $time <= $now then "\($now - $time)s ago" else "unknown age" end)
+          elif .provider == "claude" and ($state.status // "") == "fresh" then
+            ($state.refreshedAt | epoch) as $reading_time |
+            if $reading_time == null then "quota reading has unknown age (maximum \($max_age)s)"
+            elif $reading_time > $now then "quota reading is dated in the future (maximum \($max_age)s old)"
+            elif $now - $reading_time > $max_age then "quota reading is \($now - $reading_time)s old (maximum \($max_age)s)"
+            else null end
           else null end) } ] |
     group_by([(.provider // "claude"), .name]) | map(sort_by(if .authExpired then 0 elif .rateLimited then 1 else 2 end) | .[0])'
 }
@@ -701,9 +734,9 @@ fm_worker_account_failover_quota() {
 # fm_worker_account_failover_select <config-dir> <name> <executable> <model>
 #                                   [snapshot-json] [parsed-map]
 # The launch-time decision for a worker recorded on a failover account: the
-# resolve above, the same sign-in check a pin gets, and a fresh quota reading
+# resolve above, the same sign-in check a pin gets, and an age-bounded quota reading
 # proving paid usage disabled and model quota above the fixed safety margin;
-# vendor-reused readings refuse. Without a supplied snapshot, uses the shared
+# reused readings within the age bound qualify. Without a supplied snapshot, uses the shared
 # sixty-second home snapshot. An expired-refreshable login gets one bounded
 # refresh ping before a new quota reading. Prints
 # "declared<TAB>root" on success; on refusal prints one error and returns 1.
@@ -742,14 +775,14 @@ fm_worker_account_failover_select() {
   fi
   if printf '%s' "$snapshot" | jq -e --arg name "$name" '
     any(.providers[]; .provider == "claude" and .account == $name and .state.status == "fresh"
-      and .state.stale != true and .state.reused != true
+      and .state.stale != true
       and any(.windows[]?; .kind == "credits" or .id == "extra_usage"))' >/dev/null 2>&1; then
     echo "error: Claude account '$name' has paid usage enabled (credits window)" >&2
     return 1
   fi
   if ! printf '%s' "$snapshot" | jq -e --arg name "$name" '
     [.providers[] | select(.provider == "claude" and .account == $name)] |
-    length == 1 and (.[0] | .state.status == "fresh" and .state.stale != true and .state.reused != true
+    length == 1 and (.[0] | .state.status == "fresh" and .state.stale != true
       and .quotaSemantics.status == "known" and (.windows | type) == "array"
       and any(.windows[]; .kind == "session" or .kind == "weekly")
       and all(.windows[]; .kind != "credits" and .id != "extra_usage"))' >/dev/null 2>&1; then
@@ -781,7 +814,7 @@ fm_worker_account_failover_select() {
 # bin/fm-account-failover.sh.
 #
 # An account is choosable only when it passes every failover launch check
-# (fm_worker_account_failover_select: signed in, a fresh unreused reading,
+# (fm_worker_account_failover_select: signed in, an age-bounded fresh reading,
 # paid usage disabled, model quota known and above the fixed 5 percent safety
 # margin). A missing, stale, or unreadable reading is never choosable.
 
