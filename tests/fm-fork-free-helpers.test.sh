@@ -225,9 +225,68 @@ SH
   pass "classify stat helpers resolve the kernel name once per process"
 }
 
+test_watcher_snapshots_refresh_without_mixing_cycles() {
+  local script="$TMP_ROOT/watch-snapshot.sh" state="$TMP_ROOT/snapshot-state"
+  mkdir -p "$state"
+  cat > "$script" <<'SH'
+set -eu
+export FM_HOME="$2" FM_STATE_OVERRIDE="$2" FM_CONFIG_OVERRIDE="$2/config"
+. "$1/bin/fm-watch.sh"
+printf 'window=lab:old\nkind=ship\nbackend=tmux\nharness=codex\n' > "$2/a.meta"
+printf 'paused [key=build]: external job\nresolved [key=review]: answered\n' > "$2/a.status"
+fm_meta_snapshot_begin "$2"
+fm_status_snapshot_begin "$2/a.status"
+watch_window lab:old
+[ "$WATCH_TASK:$WATCH_KIND:$WATCH_BACKEND" = a:ship:tmux ]
+[ "$FM_STATUS_SNAPSHOT_WAIT" = 'paused [key=build]: external job' ]
+printf 'window=lab:new\nterminal=terminal-id\nkind=secondmate\nbackend=orca\n' > "$2/a.meta"
+printf 'resolved [key=build]: finished\n' >> "$2/a.status"
+fm_meta_get "$2/a.meta" window value
+[ "$value" = lab:old ]
+[ "$(status_declared_wait_line "$2/a.status")" = 'paused [key=build]: external job' ]
+# A new cycle observes both writes, and the Orca terminal takes precedence.
+fm_meta_snapshot_begin "$2"
+fm_status_snapshot_begin "$2/a.status"
+fm_backend_target_of_meta "$2/a.meta" target
+[ "$target" = terminal-id ]
+watch_window terminal-id
+[ "$WATCH_TASK:$WATCH_KIND:$WATCH_BACKEND" = a:secondmate:orca ]
+[ -z "$FM_STATUS_SNAPSHOT_WAIT" ]
+[ "$FM_STATUS_SNAPSHOT_LAST" = 'resolved [key=build]: finished' ]
+# Non-metadata records stay live even while a metadata snapshot is active.
+printf 'run=first\n' > "$2/a.nm-review-pane"
+fm_meta_get "$2/a.nm-review-pane" run value
+[ "$value" = first ]
+printf 'run=second\n' > "$2/a.nm-review-pane"
+fm_meta_get "$2/a.nm-review-pane" run value
+[ "$value" = second ]
+# Rotation and deletion cannot leave a cached declaration in the next cycle.
+printf 'failed: replacement\n' > "$2/replacement"
+mv "$2/replacement" "$2/a.status"
+fm_status_snapshot_begin "$2/a.status"
+[ "$FM_STATUS_SNAPSHOT_LAST" = 'failed: replacement' ]
+rm "$2/a.status" "$2/a.meta"
+fm_meta_snapshot_begin "$2"
+fm_status_snapshot_begin "$2/a.status"
+fm_meta_get "$2/a.meta" window value
+[ -z "$value$FM_STATUS_SNAPSHOT_LAST$FM_STATUS_SNAPSHOT_WAIT" ]
+# The raw-byte cache must invalidate on a changed capture, including a change
+# with the same length; this preserves the stale marker's existing hash format.
+watch_pane_fingerprint lab:old 'idle one'
+first=$h
+watch_pane_fingerprint lab:old 'idle one'
+[ "$h" = "$first" ]
+watch_pane_fingerprint lab:old 'idle two'
+[ "$h" != "$first" ]
+SH
+  run_everywhere "watcher snapshots" "$script" "$state"
+  pass "watcher snapshots are coherent within a cycle and refresh status, endpoint and deletion on the next"
+}
+
 if [ -n "${FM_TEST_ONLY:-}" ]; then
   "$FM_TEST_ONLY"
 else
+  test_watcher_snapshots_refresh_without_mixing_cycles
   test_path_helpers_match_dirname_and_basename
   test_epoch_helper_matches_date_and_never_forks_more
   test_signal_seen_path_and_lock_abs_path_are_unchanged

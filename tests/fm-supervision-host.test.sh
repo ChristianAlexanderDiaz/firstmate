@@ -2383,7 +2383,7 @@ test_restarted_host_stops_what_a_killed_predecessor_left() {
   pass "host: a restarted host stops, by recorded identity, the cycle a killed predecessor left running"
 }
 
-test_park_exit_probe_uses_half_second_child_sleeps() {
+test_park_exit_probe_blocks_after_readiness() {
   local home host_pid
   home=$(make_home park-cadence attended)
   cat > "$home/fakebin/sleep" <<'SH'
@@ -2400,13 +2400,16 @@ SH
   chmod +x "$home/fakebin/sleep"
   start_host "$home"
   wait_until 150 watcher_live "$home" || fail "park-cadence: no watcher started"
+  wait_until 150 grep -Eq '^watcher: (started|attached) ' "$home/host.out" \
+    || fail "park-cadence: the host never reported readiness"
   host_pid=$(awk -F '\t' '$1 == "host" { print $2; exit }' "$home/state/.supervision-host")
   [ -n "$host_pid" ] || fail "park-cadence: no recorded host"
   printf '%s\n' "$host_pid" > "$home/probe-host"
-  wait_until 100 test -s "$home/park-sleeps" || fail "park-cadence: no child sleep observed"
-  [ "$(sort -u "$home/park-sleeps")" = 0.5 ] || fail "park-cadence: exit probing did not use half-second sleeps"
+  sleep 2
+  kill -0 "$host_pid" 2>/dev/null || fail "park-cadence: the idle host exited"
+  [ ! -s "$home/park-sleeps" ] || fail "park-cadence: the ready host repeatedly spawned sleep children"
   stop_home_processes "$home"
-  pass "host: parked child-exit sampling uses ordinary half-second sleeps"
+  pass "host: after readiness the idle park blocks without spawning sleep children"
 }
 
 test_park_boundary_ends_the_park_before_the_hook_timeout() {
@@ -3020,6 +3023,11 @@ test_sleep_cancels_an_active_host_turn() {
   pass 'sleep: active engine cancellation preserves the wake and does not increment the engine-error latch'
 }
 
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit
+fi
+
 test_sleep_holds_host_wakes_and_park_boundaries
 test_sleep_cancels_an_active_host_turn
 
@@ -3027,7 +3035,7 @@ test_claude_stop_hook_restores_handoff_when_successor_closed_before_exit_to_main
 test_claude_stop_hook_restores_handoff_when_successor_closed_mid_engine_turn
 test_claude_stop_hook_notifies_when_closed_successor_downtime_restore_fails
 test_claude_stop_hook_notifies_when_closed_announced_successor_downtime_restore_fails
-test_park_exit_probe_uses_half_second_child_sleeps
+test_park_exit_probe_blocks_after_readiness
 test_report_surface_enforces_actor_turn_and_scope
 test_report_after_the_return_is_queued_for_main
 test_dispatch_entry_scopes_rows_and_renders_the_away_tail

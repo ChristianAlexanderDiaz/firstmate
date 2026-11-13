@@ -58,6 +58,7 @@ p.write_text(json.dumps(s)); print(json.dumps({'result':result}))
 FAKE
 cat > "$TMP_ROOT/fakebin/no-mistakes" <<'FAKE'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_HOME/nm-calls"
 case "$*" in
   axi) cat "$FM_FAKE_NM_OVERVIEW" ;;
   'axi status'|'axi status --run '*) cat "$FM_FAKE_NM_STATUS" ;;
@@ -118,16 +119,28 @@ assert split[split.index('--direction')+1]=='down'
 assert split[split.index('--cwd')+1]==sys.argv[3]
 assert '--no-focus' in split and split[split.index('--ratio')+1]=='0.55'
 assert ['pane','rename','w1:p3','no-mistakes'] in calls
-assert json.load(open(sys.argv[2]))['panes']['w1:p3']['command'].endswith('no-mistakes attach --run run-one')
+assert json.load(open(sys.argv[2]))['panes']['w1:p3']['command'].endswith('no-mistakes attach --run run-one --exit-on completed,failed,cancelled,interrupted')
 PY
 pass 'attributed run opens one stacked viewer, preserving chat and focus'
 run_status run-one completed fm/panes deadbeef
 call
 call
 [ "$(count close)" = 1 ] && [ "$(count split)" = 1 ] || fail 'terminal run closes once and stays closed'
+cat > "$FM_FAKE_NM_OVERVIEW" <<EOF
+count: 1 of 1 total
+runs[1]{id,branch,status,head,pr}:
+  run-one,fm/panes,completed,$HEAD_SHA,
+EOF
+: > "$FM_HOME/nm-calls"
+call
+call
+! grep -q '^axi status' "$FM_HOME/nm-calls" || fail 'finished run was polled after its viewer closed'
+grep -q '^axi$' "$FM_HOME/nm-calls" || fail 'replacement discovery stopped with the finished run'
+pass 'finished viewer checks inventory for replacements without polling terminal status'
 run_status run-two running
 call
 [ "$(count split)" = 2 ] || fail 'new run must open a fresh viewer'
+grep -q '^axi status' "$FM_HOME/nm-calls" || fail 'live replacement run was not polled'
 run_status run-two completed
 call
 call

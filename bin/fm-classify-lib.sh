@@ -160,6 +160,11 @@ FM_CLASSIFY_EVENT_WINDOW_LINES=200
 # This is an event read; status_current_line below reconciles open decisions.
 last_status_line() {  # <status-file> [<previous-event-var>]
   local f=$1 scan=''
+  if [ "${FM_STATUS_SNAPSHOT_FILE:-}" = "$f" ]; then
+    [ "$#" -lt 2 ] || printf -v "$2" '%s' "$FM_STATUS_SNAPSHOT_PREVIOUS"
+    printf '%s\n' "$FM_STATUS_SNAPSHOT_LAST"
+    return 0
+  fi
   [ -f "$f" ] && [ -r "$f" ] || return 0
   if [ "$#" -gt 1 ]; then
     scan=$(_fm_status_event_scan < "$f") || :
@@ -281,7 +286,7 @@ _fm_classify_matches() {  # <line> <pattern>
 status_is_terminal_verb() {
   local line=$1 verb
   [ -n "$line" ] || return 1
-  verb=$(status_line_verb "$line")
+  status_line_verb "$line" verb
   case "$verb" in
     done|needs-decision|blocked|failed) return 0 ;;
     *) return 1 ;;
@@ -326,7 +331,7 @@ status_is_captain_relevant() {
 status_is_paused() {  # <status-line>
   local line=$1 verb
   [ -n "$line" ] || return 1
-  verb=$(status_line_verb "$line")
+  status_line_verb "$line" verb
   [ "$verb" = "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}" ]
 }
 
@@ -339,7 +344,7 @@ status_is_paused() {  # <status-line>
 status_is_captain_held() {  # <status-line>
   local line=$1 verb
   [ -n "$line" ] || return 1
-  verb=$(status_line_verb "$line")
+  status_line_verb "$line" verb
   [ "$verb" = "${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}" ]
 }
 
@@ -367,6 +372,10 @@ status_is_paused_or_captain_held() {  # <status-line>
 # resolved events widens the read to the whole file.
 status_declared_wait_line() {  # <status-file>
   local f=$1 last verb resolve legacy_re
+  if [ "${FM_STATUS_SNAPSHOT_FILE:-}" = "$f" ]; then
+    printf '%s\n' "$FM_STATUS_SNAPSHOT_WAIT"
+    return 0
+  fi
   last=$(last_status_line "$f")
   if status_is_paused_or_captain_held "$last"; then
     printf '%s\n' "$last"
@@ -379,6 +388,31 @@ status_declared_wait_line() {  # <status-file>
   tail -n "$FM_CLASSIFY_EVENT_WINDOW_LINES" "$f" 2>/dev/null \
     | _fm_status_declared_wait_scan "$resolve" "$legacy_re" \
     || _fm_status_declared_wait_scan "$resolve" "$legacy_re" < "$f" || :
+}
+
+# A watcher opts into one immutable per-window view, after signal coalescing.
+# The byte-range signal/presentation readers deliberately remain live: they
+# must never commit a cursor past bytes they actually classified. Refreshing at
+# the next window visit observes appends, replacement, deletion and truncation.
+fm_status_snapshot_begin() {  # <status-file>
+  local snapshot_text='' snapshot_scan snapshot_resolve snapshot_legacy snapshot_verb
+  FM_STATUS_SNAPSHOT_FILE=$1
+  FM_STATUS_SNAPSHOT_LAST='' FM_STATUS_SNAPSHOT_PREVIOUS='' FM_STATUS_SNAPSHOT_WAIT=''
+  [ -f "$1" ] && [ -r "$1" ] || return 0
+  IFS= read -r -d '' snapshot_text < "$1" 2>/dev/null || true
+  snapshot_scan=$(_fm_status_event_scan <<< "$snapshot_text") || true
+  FM_STATUS_SNAPSHOT_LAST=${snapshot_scan##*$'\n'}
+  FM_STATUS_SNAPSHOT_PREVIOUS=${snapshot_scan%%$'\n'*}
+  if status_is_paused_or_captain_held "$FM_STATUS_SNAPSHOT_LAST"; then
+    FM_STATUS_SNAPSHOT_WAIT=$FM_STATUS_SNAPSHOT_LAST
+  else
+    snapshot_resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
+    status_line_verb "$FM_STATUS_SNAPSHOT_LAST" snapshot_verb
+    if [ "$snapshot_verb" = "$snapshot_resolve" ]; then
+      snapshot_legacy="^[[:space:]]*(${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT})"
+      FM_STATUS_SNAPSHOT_WAIT=$(_fm_status_declared_wait_scan "$snapshot_resolve" "$snapshot_legacy" <<< "$snapshot_text") || true
+    fi
+  fi
 }
 
 # Optional pause owner: exactly one [wait=captain] field in the head declares
@@ -1217,20 +1251,18 @@ FM_OPEN_DECISIONS_FOLD_VERSION=9
 
 # Portable device:inode identity for the rotation/recreation check below.
 _fm_open_decisions_file_ident() {  # <file> -> strongest available identity
-  local f=$1 epoch birth ident
+  local f=$1 epoch birth ident fields
   if [ -n "${FM_STATUS_IDENTITY_READER:-}" ]; then
     "$FM_STATUS_IDENTITY_READER" "$f"
     return
   fi
   if [ "$_FM_CLASSIFY_UNAME_S" = Darwin ]; then
-    ident=$(LC_ALL=C /usr/bin/stat -f '%d:%i' "$f" 2>/dev/null) || return 1
-    epoch=$(LC_ALL=C /usr/bin/stat -f '%B' "$f" 2>/dev/null) || epoch=0
-    if [ "$epoch" != 0 ]; then birth=$(LC_ALL=C /usr/bin/stat -f '%FB' "$f" 2>/dev/null) || birth=''; else birth=''; fi
+    fields=$(LC_ALL=C /usr/bin/stat -f '%d:%i|%B|%FB' "$f" 2>/dev/null) || return 1
   else
-    ident=$(LC_ALL=C stat -c '%d:%i' "$f" 2>/dev/null) || return 1
-    epoch=$(LC_ALL=C stat -c '%W' "$f" 2>/dev/null) || epoch=0
-    if [ "$epoch" != 0 ]; then birth=$(LC_ALL=C stat -c '%w' "$f" 2>/dev/null) || birth=''; else birth=''; fi
+    fields=$(LC_ALL=C stat -c '%d:%i|%W|%w' "$f" 2>/dev/null) || return 1
   fi
+  IFS='|' read -r ident epoch birth <<< "$fields"
+  [ "$epoch" != 0 ] || birth=
   case "$ident$birth" in *$'\t'*|*$'\n'*|'') return 1 ;; esac
   if [ -n "$birth" ]; then printf 'strong:%s:%s' "$ident" "$birth"; else printf 'weak:%s' "$ident"; fi
 }
@@ -2015,7 +2047,7 @@ status_new_lines_since_cursor() {  # <status-file> [<captured-end-offset>]
 status_line_is_unread_surface() {  # <status-line>
   local line=$1 verb key note resolve held prefix
   [ -n "$line" ] || return 1
-  verb=$(status_line_verb "$line")
+  status_line_verb "$line" verb
   [ "$verb" = note ] && return 0
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
@@ -2122,7 +2154,7 @@ _fm_status_open_activities_stream() {
       *[![:space:]]*) ;;
       *) continue ;;
     esac
-    verb=$(status_line_verb "$line")
+    status_line_verb "$line" verb
     key=$(_fm_decision_key "$line" "$_FM_CLASSIFY_KEYLESS_PHASE") || continue
     case "$verb" in
       working|"$pause")
@@ -2354,7 +2386,7 @@ _fm_status_open_decision_origins() {  # <status-file> [<kind>]
     after=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind")
     [ -n "$after" ] || origins=''
     key=$(_fm_decision_key "$line") || { open=$after; continue; }
-    verb=$(status_line_verb "$line")
+    status_line_verb "$line" verb
     note=$(status_line_note "$line")
     case "$verb" in
       needs-decision|blocked)
@@ -2419,7 +2451,7 @@ status_span_first_actionable_record() {  # <status-file> <start-offset> [record-
       continue
     fi
     status_is_captain_relevant "$line" || continue
-    verb=$(status_line_verb "$line")
+    status_line_verb "$line" verb
     case "$verb" in
       needs-decision|blocked)
         key=$(_fm_decision_key "$line") || {

@@ -465,6 +465,32 @@ captain_held_silenced() {  # <status-line>
   status_is_captain_held "$1" && away_record_present
 }
 
+watch_read() {  # <file> <output-variable>
+  local wr_text=''
+  if [ -f "$1" ]; then IFS= read -r -d '' wr_text < "$1" 2>/dev/null || true; fi
+  while [[ "$wr_text" = *$'\n' ]]; do wr_text=${wr_text%$'\n'}; done
+  printf -v "$2" '%s' "$wr_text"
+}
+
+# Pane hashes and dialog parsing depend only on captured bytes, unlike busy
+# evidence. Retain them while those exact bytes stay identical across cycles.
+WATCH_PANE_WINDOWS=() WATCH_PANE_TEXTS=() WATCH_PANE_HASHES=() WATCH_PANE_DIALOGS=()
+watch_pane_fingerprint() {  # <window> <capture>; sets h and dialog
+  local pane_i=0
+  while [ "$pane_i" -lt "${#WATCH_PANE_WINDOWS[@]}" ]; do
+    [ "${WATCH_PANE_WINDOWS[pane_i]}" != "$1" ] || break
+    pane_i=$((pane_i + 1))
+  done
+  if [ "$pane_i" -lt "${#WATCH_PANE_WINDOWS[@]}" ] && [ "${WATCH_PANE_TEXTS[pane_i]}" = "$2" ]; then
+    h=${WATCH_PANE_HASHES[pane_i]} dialog=${WATCH_PANE_DIALOGS[pane_i]}
+    return
+  fi
+  dialog=$(fm_composer_blocking_dialog "$2") || dialog=
+  h=$(printf '%s' "$2" | hash_pane)
+  WATCH_PANE_WINDOWS[pane_i]=$1 WATCH_PANE_TEXTS[pane_i]=$2
+  WATCH_PANE_HASHES[pane_i]=$h WATCH_PANE_DIALOGS[pane_i]=$dialog
+}
+
 hash_pane() {
   if command -v md5 >/dev/null 2>&1; then md5 -q; else md5sum | cut -d' ' -f1; fi
 }
@@ -480,10 +506,10 @@ hash_pane() {
 # its fm-spawn seed from reading as provably working.
 window_is_busy() {  # <window> <tail40>
   local w=$1 tail40=$2 task meta verdict
-  task=$(window_to_task "$w" "$STATE")
-  meta="$STATE/$task.meta"
-  if [ -n "$task" ] && [ -f "$meta" ]; then
-    verdict=$(fm_busy_classify_meta "$meta" "$task" "$STATE" "$tail40")
+  watch_window "$w"
+  task=$WATCH_TASK meta=$WATCH_META
+  if [ -n "$task" ] && [ -n "$meta" ]; then
+    verdict=$(fm_busy_classify "$WATCH_BACKEND" "$w" "$WATCH_HARNESS" "$task" "$STATE" "$tail40")
   else
     verdict=$(fm_busy_classify "$(window_backend "$w")" "$w" "$(window_harness "$w")" \
       "${task:-unknown}" "$STATE" "$tail40")
@@ -491,45 +517,34 @@ window_is_busy() {  # <window> <tail40>
   [ "${verdict%% *}" = busy ]
 }
 
-window_kind() {
-  local w=$1 meta kind
-  meta=$(fm_backend_meta_for_window "$w" "$STATE" 2>/dev/null || true)
-  if [ -n "$meta" ]; then
-    kind=$(grep '^kind=' "$meta" | cut -d= -f2- || true)
-    [ -n "$kind" ] || kind=ship
-    echo "$kind"
-    return 0
-  fi
-  echo unknown
+# Resolve one recorded endpoint in the parent shell. Metadata is snapshotted
+# once per cycle; the same mapping serves capture, triage and the event wait.
+watch_window() {  # <window>
+  local ww_meta ww_window ww_terminal
+  WATCH_TASK=${1##*:}; WATCH_TASK=${WATCH_TASK#fm-}
+  WATCH_KIND=unknown WATCH_BACKEND=tmux WATCH_HARNESS='' WATCH_META=''
+  for ww_meta in "$STATE"/*.meta; do
+    [ -e "$ww_meta" ] || continue
+    fm_meta_get "$ww_meta" window ww_window
+    fm_meta_get "$ww_meta" terminal ww_terminal
+    [ "$ww_window" = "$1" ] || [ "$ww_terminal" = "$1" ] || continue
+    WATCH_META=$ww_meta
+    WATCH_TASK=${ww_meta##*/}; WATCH_TASK=${WATCH_TASK%.meta}
+    fm_meta_get "$ww_meta" kind WATCH_KIND
+    fm_meta_get "$ww_meta" backend WATCH_BACKEND
+    fm_meta_get "$ww_meta" harness WATCH_HARNESS
+    WATCH_KIND=${WATCH_KIND:-ship}; WATCH_BACKEND=${WATCH_BACKEND:-tmux}
+    break
+  done
+  WATCH_LABEL=
+  [ -z "$WATCH_TASK" ] || WATCH_LABEL=fm-$WATCH_TASK
+  window_key "$1" WATCH_KEY
 }
 
-# window_backend: the backend recorded in the meta whose window= matches <w>,
-# defaulting to tmux (absent backend= means tmux; the P1 compatibility
-# contract) when no matching meta carries the field, or none matches at all.
-window_backend() {
-  local w=$1 meta backend
-  meta=$(fm_backend_meta_for_window "$w" "$STATE" 2>/dev/null || true)
-  if [ -n "$meta" ]; then
-    backend=$(grep '^backend=' "$meta" | cut -d= -f2- || true)
-    [ -n "$backend" ] || backend=tmux
-    echo "$backend"
-    return 0
-  fi
-  echo tmux
-}
-
-window_harness() {
-  local w=$1 meta
-  meta=$(fm_backend_meta_for_window "$w" "$STATE" 2>/dev/null || true)
-  [ -n "$meta" ] || return 0
-  grep '^harness=' "$meta" | cut -d= -f2- || true
-}
-
-window_label() {
-  local w=$1 task
-  task=$(window_to_task "$w" "$STATE")
-  [ -n "$task" ] && printf 'fm-%s' "$task"
-}
+window_kind() { watch_window "$1"; printf '%s' "$WATCH_KIND"; }
+window_backend() { watch_window "$1"; printf '%s' "$WATCH_BACKEND"; }
+window_harness() { watch_window "$1"; printf '%s' "$WATCH_HARNESS"; }
+window_label() { watch_window "$1"; printf '%s' "$WATCH_LABEL"; }
 
 # The ONE derivation of a window's per-window marker key: `:`, `/` and `.` become
 # `_` so a window name is usable as a filename suffix. Every per-window file the
@@ -540,9 +555,9 @@ window_label() {
 # them. The helpers below take the derived key rather than re-deriving it, so one
 # poll of one window derives it once.
 window_key() {  # <window>
-  local key=${1//:/_}
-  key=${key//\//_}
-  printf '%s' "${key//./_}"
+  local wk_key=${1//:/_}
+  wk_key=${wk_key//\//_}
+  if [ "$#" -gt 1 ]; then printf -v "$2" '%s' "${wk_key//./_}"; else printf '%s' "${wk_key//./_}"; fi
 }
 
 inbox_steer_escalate_unavailable() {  # <window> <task> <record>
@@ -569,6 +584,7 @@ inbox_steer_escalate_unavailable() {  # <window> <task> <record>
 # being healthy, while an unacknowledged instruction can still be a stuck steer.
 inbox_steer_check() {  # <window> <task>
   local w=$1 task=$2 action verb rec count tail40 reason='' ring_rc backend agent_state
+  [ -d "$STATE/$task.inbox" ] || return 0
   action=$(fm_task_inbox_due_action "$STATE" "$task") || return 0
   verb=${action%% *}
   [ "$verb" != quiet ] || return 0
@@ -861,13 +877,14 @@ signal_turnend_panes_churned() {  # <file> ...
 }
 
 recorded_windows() {
-  local meta w seen=
+  local meta w presentation seen=
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || continue
     # Closed presentations remain in status/PR scans, but have no pane to
     # inspect, recover, or include in the native endpoint event subscription.
-    [ "$(fm_meta_get "$meta" presentation)" != closed ] || continue
-    w=$(fm_backend_target_of_meta "$meta")
+    fm_meta_get "$meta" presentation presentation
+    [ "$presentation" != closed ] || continue
+    fm_backend_target_of_meta "$meta" w
     [ -n "$w" ] || continue
     case "$seen" in
       *"|$w|"*) continue ;;
@@ -1063,7 +1080,7 @@ EOF
     [ "$episode_alerted" -eq 0 ] || continue
     idle=$((now - observed_at))
     [ "$idle" -ge "$threshold" ] || continue
-    w=$(fm_backend_target_of_meta "$meta")
+    fm_backend_target_of_meta "$meta" w
     ! secondmate_in_active_turn "$w" "$idle" || continue
     already_rung=0
     if [ -e "$ring_marker" ] || [ -L "$ring_marker" ]; then
@@ -1718,7 +1735,7 @@ wedge_defer_guard() {  # <window> <since-file> <triage-label> <idle-age> <guard-
 # never reaches it.
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task> <pane-hash> [dialog-name]
   local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 hash=$6 dialog=${7-} since age n reason evidence guard guard_note
-  since=$(cat "$since_file" 2>/dev/null || true)
+  watch_read "$since_file" since
   case "$since" in
     ''|*[!0-9]*)
       # Publish the repaired timer only after its old write-deferral chain is
@@ -2266,7 +2283,7 @@ scan_signals() {
     [ -n "$sig" ] || continue
     sf=$(fm_wake_signal_seen_path "$STATE" "$f")
     case "$f" in
-      *.status) fm_wake_signal_seen_current "$STATE" "$f" && continue ;;
+      *.status) fm_wake_signal_seen_current "$STATE" "$f" "$sig" && continue ;;
       *) [ "$sig" = "$(cat "$sf" 2>/dev/null)" ] && continue ;;
     esac
     printf '%s\t%s\t%s\n' "$sf" "$sig" "$f"
@@ -2610,13 +2627,14 @@ event_wait_or_sleep() {
   local w b session first_backend="" first_session="" rec rc
   local windows=()
   while IFS= read -r w; do
-    b=$(window_backend "$w")
+    watch_window "$w"
+    b=$WATCH_BACKEND
     fm_backend_has_push "$b" || continue
     # Secondmate endpoints are supervised via status writes, not pane/agent
     # state (an idle or blocked secondmate agent pane is healthy by design), so
     # they are excluded from the fast escalation exactly as the stale loop skips
     # them.
-    [ "$(window_kind "$w")" = secondmate ] && continue
+    [ "$WATCH_KIND" = secondmate ] && continue
     session=${w%%:*}
     if [ -z "$first_backend" ]; then first_backend=$b; first_session=$session; fi
     # One socket connection covers one backend+session; a home normally has a
@@ -2802,9 +2820,9 @@ home_summary_refresh_detached() {
 # child sweep; crew-state owns run attribution and the pane helper owns mutation.
 NM_REVIEW_PANE_PID=
 nm_review_pane_tick() {
-  local meta id
+  local meta id pane_backend pane_kind
   local metas=()
-  [ "$(age_of "$STATE/.last-nm-review-pane")" -ge 20 ] || return 0
+  [ "$(age_of "$STATE/.last-nm-review-pane")" -ge 60 ] || return 0
   if [ -n "$NM_REVIEW_PANE_PID" ]; then
     kill -0 "$NM_REVIEW_PANE_PID" 2>/dev/null && return 0
     wait "$NM_REVIEW_PANE_PID" 2>/dev/null || true
@@ -2812,8 +2830,10 @@ nm_review_pane_tick() {
   fi
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
-    grep -q '^backend=herdr$' "$meta" || continue
-    grep -q '^kind=ship$' "$meta" || continue
+    fm_meta_get "$meta" backend pane_backend
+    [ "$pane_backend" = herdr ] || continue
+    fm_meta_get "$meta" kind pane_kind
+    [ "$pane_kind" = ship ] || continue
     metas+=("$meta")
   done
   [ "${#metas[@]}" -gt 0 ] || return 0
@@ -2978,7 +2998,9 @@ while :; do
   # no-ops because the lock pid is not ours, so the survivor's lock is untouched.
   # This makes any duplicate self-resolve within one poll instead of persisting
   # and doubling every wake.
-  if [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" != "$WATCHER_PID" ]; then
+  lock_pid=
+  watch_read "$WATCH_LOCK/pid" lock_pid
+  if [ "$lock_pid" != "$WATCHER_PID" ]; then
     exit 0
   fi
 
@@ -2989,6 +3011,8 @@ while :; do
   # Sleep keeps this cycle alive without polling actions, relaunching mates,
   # or ringing inboxes. Status events remain on disk for the return drain.
   fm_sleep_wait "$STATE" watcher
+
+  fm_meta_snapshot_begin "$STATE"
 
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.
@@ -3332,13 +3356,14 @@ EOF
   # remembers the hash already classified, or the declaration a busy pane's
   # crossed turn bound already handed to the away-mode daemon).
   while IFS= read -r w; do
-    kind=$(window_kind "$w")
-    task=$(window_to_task "$w" "$STATE")
+    watch_window "$w"
+    kind=$WATCH_KIND task=$WATCH_TASK
+    fm_status_snapshot_begin "$STATE/$task.status"
     # Steering-inbox loss detection runs before the secondmate stale
     # exemption below, because a mate's steers land in an inbox too.
     [ -z "$task" ] || inbox_steer_check "$w" "$task"
-    key=$(window_key "$w")
-    last=$(status_declared_wait_line "$STATE/$task.status")
+    key=$WATCH_KEY
+    last=$FM_STATUS_SNAPSHOT_WAIT
     if ! status_is_paused_or_captain_held "$last" && [ -e "$STATE/.paused-$key" ]; then
       clear_pause_tracking "$key"
     fi
@@ -3352,28 +3377,30 @@ EOF
     if [ "$kind" = secondmate ] && ! status_is_paused_or_captain_held "$last"; then
       continue
     fi
-    watcher_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" || continue
+    watcher_capture "$WATCH_BACKEND" "$w" 40 "$WATCH_LABEL" || continue
     tail40=$WATCHER_CAPTURE
     # The matcher is already defined in this shell. It reads the capture this
     # poll already takes, and a miss drops a name the away daemon saved.
-    dialog=$(fm_composer_blocking_dialog "$tail40") || dialog=
+    watch_pane_fingerprint "$w" "$tail40"
     [ -n "$dialog" ] || clear_dialog_suffix "$task"
-    h=$(printf '%s' "$tail40" | hash_pane)
     hf="$STATE/.hash-$key"
     cf="$STATE/.count-$key"
     sf="$STATE/.stale-$key"
     ssf="$STATE/.stale-since-$key"
     ewf="$STATE/.wedge-escalations-$key"
     pf="$STATE/.paused-$key"   # flag: this key's stale is using the bounded pause cadence
-    prev=$(cat "$hf" 2>/dev/null || true)
+    watch_read "$hf" prev
     # Busy match: a backend's native semantic state when available (herdr), else
     # the last 6 non-blank lines only (the TUI footer area, where every verified
     # harness renders its busy indicator) so busy-looking strings in displayed
     # content cannot suppress stale detection. Read once per window per poll and
     # reused below so a busy verdict is consistent within one cycle.
+    stale_hash=
+    watch_read "$sf" stale_hash
     if window_is_busy "$w" "$tail40"; then busy_now=0; else busy_now=1; fi
     if [ "$h" = "$prev" ]; then
-      n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
+      watch_read "$cf" n
+      n=$(( ${n:-0} + 1 ))
       echo "$n" > "$cf"
       if [ "$n" -ge 2 ] && [ "$busy_now" -ne 0 ]; then
         # The pane is idle/stale at hash $h. Triage decides whether this wakes
@@ -3390,13 +3417,13 @@ EOF
           if captain_held_silenced "$last"; then
             printf '%s' "$h" > "$sf"
             triage_log "absorbed stale (captain-held, never rechecked while the away-posture record exists): $w"
-          elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
+          elif [ "$stale_hash" != "$h" ]; then
             stale_reason=$(stale_reason_naming_dialog "stale: $w" "$dialog")
             fm_wake_append stale "$w" "$stale_reason" || exit 1
             printf '%s' "$h" > "$sf"
             wake "$stale_reason"
           fi
-        elif stale_is_terminal "$w" "$STATE"; then
+        elif status_is_captain_relevant "$FM_STATUS_SNAPSHOT_LAST"; then
           # The log's latest status event is captain-relevant - but that alone is not
           # proof the crew is actually done: a crew's own status log gets no
           # new entry once firstmate hands it to a no-mistakes validation
@@ -3411,8 +3438,8 @@ EOF
           # line. On a NEW hash, give an active run/busy pane (the same
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
-          if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
+          if [ "$stale_hash" != "$h" ]; then
+            if crew_is_provably_working "$task"; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
               clear_write_tracking "$key"
@@ -3445,7 +3472,7 @@ EOF
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"
               clear_write_tracking "$key"
-              stale_status="$STATE/$(window_to_task "$w" "$STATE").status"
+              stale_status="$STATE/$task.status"
               stale_record=$(status_span_first_actionable_record "$stale_status" 0)
               case $? in
                 0|1) stale_end=${stale_record%%$'\t'*}; stale_rest=${stale_record#*$'\t'}; stale_ident=${stale_rest%%$'\t'*} ;;
@@ -3479,8 +3506,8 @@ EOF
           #     (it may be done via an interactive menu that wrote no done: status,
           #     waiting on a decision, or wedged) instead of leaving the finish to
           #     wait out the timer.
-          if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            task=$(window_to_task "$w" "$STATE")
+          if [ "$stale_hash" != "$h" ]; then
+            task=$WATCH_TASK
             case "$(pause_state_class "$w" "$task")" in
               working)
                 clear_pause_tracking "$key"
@@ -3496,8 +3523,8 @@ EOF
                 ;;
             esac
           else
-            task=$(window_to_task "$w" "$STATE")
-            if [ -e "$pf" ] || status_is_paused_or_captain_held "$(status_declared_wait_line "$STATE/$task.status")"; then
+            task=$WATCH_TASK
+            if [ -e "$pf" ] || status_is_paused_or_captain_held "$FM_STATUS_SNAPSHOT_WAIT"; then
               case "$(pause_state_class "$w" "$task")" in
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;
                 working) clear_pause_state "$key"
@@ -3527,7 +3554,7 @@ EOF
         # is cleared - but not in the same poll the declared-pause cadence just
         # recorded it, or the re-surface throttle it depends on would be erased and
         # the pause would re-surface every poll instead of once per long cadence.
-        if [ "$paused_bound" -ne 0 ] && [ -e "$pf" ] && { [ "$n" -ge 2 ] || ! status_is_paused_or_captain_held "$(status_declared_wait_line "$STATE/$(window_to_task "$w" "$STATE").status")"; }; then
+        if [ "$paused_bound" -ne 0 ] && [ -e "$pf" ] && { [ "$n" -ge 2 ] || ! status_is_paused_or_captain_held "$FM_STATUS_SNAPSHOT_WAIT"; }; then
           clear_pause_tracking "$key"
         fi
       fi
@@ -3541,8 +3568,8 @@ EOF
         rm -f "$ssf" "$ewf"
         clear_write_tracking "$key"
       fi
-      task=$(window_to_task "$w" "$STATE")
-      if ! afk_present && status_is_paused_or_captain_held "$(status_declared_wait_line "$STATE/$task.status")" && [ "$busy_now" -ne 0 ]; then
+      task=$WATCH_TASK
+      if ! afk_present && status_is_paused_or_captain_held "$FM_STATUS_SNAPSHOT_WAIT" && [ "$busy_now" -ne 0 ]; then
         case "$(pause_state_class "$w" "$task")" in
           paused) handle_paused_stale "$w" "$task" "$h" ;;
           # Inconclusive, but the declared wait itself still stands, so only the
@@ -3563,6 +3590,7 @@ EOF
       fi
     fi
   done < <(recorded_windows)
+  FM_STATUS_SNAPSHOT_FILE=
 
   # Heartbeat: the watcher runs a cheap fleet-scan at a regular cadence no matter
   # what. Time-based via .last-heartbeat mtime; interval doubles per consecutive

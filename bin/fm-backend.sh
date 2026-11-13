@@ -379,15 +379,41 @@ fm_backend_required_tool_available() {  # <backend> <tool>
 # fm_meta_get: the LAST value of `key=` in <meta-file>, or empty (never
 # errors) if the file or key is absent. Mirrors the ad hoc `grep '^key=' |
 # tail -1 | cut -d= -f2-` snippet every fm-*.sh script used to repeat inline.
-fm_meta_get() {  # <meta-file> <key>
-  local meta=$1 key=$2 line value=''
-  [ -f "$meta" ] || return 0
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      "$key="*) value=${line#*=} ;;
+fm_meta_get() {  # <meta-file> <key> [output-variable]
+  local mg_meta=$1 mg_key=$2 mg_line mg_value='' mg_snapshot_index mg_snapshot_text=''
+  if [ "${FM_META_SNAPSHOT_ACTIVE:-0}" = 1 ] && [ "${mg_meta%/*}" = "$FM_META_SNAPSHOT_STATE" ] && [[ "$mg_meta" = *.meta ]]; then
+    for ((mg_snapshot_index=0; mg_snapshot_index<${#FM_META_SNAPSHOT_PATHS[@]}; mg_snapshot_index++)); do
+      [ "${FM_META_SNAPSHOT_PATHS[mg_snapshot_index]}" = "$mg_meta" ] || continue
+      mg_snapshot_text=${FM_META_SNAPSHOT_TEXTS[mg_snapshot_index]}
+      break
+    done
+  elif [ -f "$mg_meta" ]; then
+    IFS= read -r -d '' mg_snapshot_text < "$mg_meta" 2>/dev/null || true
+  fi
+  while IFS= read -r mg_line || [ -n "$mg_line" ]; do
+    case "$mg_line" in
+      "$mg_key="*) mg_value=${mg_line#*=} ;;
     esac
-  done < "$meta" 2>/dev/null || true
-  printf '%s' "$value"
+  done <<< "$mg_snapshot_text"
+  if [ "$#" -ge 3 ]; then printf -v "$3" '%s' "$mg_value"; else printf '%s' "$mg_value"; fi
+}
+
+# Opt-in, process-local metadata snapshot. A polling caller refreshes this once
+# per cycle in its parent shell; command substitutions inherit the same view.
+# Other callers keep live reads. No paths are sourced or evaluated as shell code.
+fm_meta_snapshot_begin() {  # <state-directory>
+  local snapshot_path snapshot_text
+  FM_META_SNAPSHOT_STATE=$1
+  FM_META_SNAPSHOT_PATHS=()
+  FM_META_SNAPSHOT_TEXTS=()
+  for snapshot_path in "$1"/*.meta; do
+    [ -f "$snapshot_path" ] || continue
+    snapshot_text=
+    IFS= read -r -d '' snapshot_text < "$snapshot_path" 2>/dev/null || true
+    FM_META_SNAPSHOT_PATHS+=("$snapshot_path")
+    FM_META_SNAPSHOT_TEXTS+=("$snapshot_text")
+  done
+  FM_META_SNAPSHOT_ACTIVE=1
 }
 
 # fm_backend_of_meta: the backend recorded in <meta-file>, defaulting to
@@ -398,15 +424,16 @@ fm_backend_of_meta() {  # <meta-file>
   printf '%s' "${v:-tmux}"
 }
 
-fm_backend_target_of_meta() {  # <meta-file>
-  local meta=$1 backend terminal window
-  backend=$(fm_backend_of_meta "$meta")
-  if [ "$backend" = orca ]; then
-    terminal=$(fm_meta_get "$meta" terminal)
-    [ -n "$terminal" ] && { printf '%s' "$terminal"; return 0; }
+fm_backend_target_of_meta() {  # <meta-file> [output-variable]
+  local target_backend target_terminal='' target_window
+  fm_meta_get "$1" backend target_backend
+  if [ "$target_backend" = orca ]; then
+    fm_meta_get "$1" terminal target_terminal
   fi
-  window=$(fm_meta_get "$meta" window)
-  [ -n "$window" ] && printf '%s' "$window"
+  fm_meta_get "$1" window target_window
+  target_window=${target_terminal:-$target_window}
+  if [ "$#" -gt 1 ]; then printf -v "$2" '%s' "$target_window"; else printf '%s' "$target_window"; fi
+  [ -n "$target_window" ]
 }
 
 # fm_backend_validate_task_endpoint: validate a task cleanup record entirely

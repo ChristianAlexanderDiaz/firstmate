@@ -27,6 +27,9 @@
 # proves at least 240 columns, leaving about 108 for attach. Missing layout
 # support or dimensions keeps the stacked default. Layout is chosen on split.
 # A terminal run closes its pane; task teardown removes the tombstone too.
+# Finished viewers exit themselves. A tombstone consults only the run inventory
+# on later sweeps, so a finished run's status is not polled again; a replacement
+# run resumes ordinary attribution. The watcher spaces live sweeps by 60 seconds.
 # Already absent panes close successfully. Failed commands retain retry state.
 # Exit 0 after a reconciliation attempt; a failed or unsafe one warns on stderr
 # and retains the record. Exit 2: usage error.
@@ -37,6 +40,8 @@ FM_NM_REVIEW_PANE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$FM_NM_REVIEW_PANE_LIB_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$FM_NM_REVIEW_PANE_LIB_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-nm-run-lib.sh
+. "$FM_NM_REVIEW_PANE_LIB_DIR/fm-nm-run-lib.sh"
 
 fm_nm_review_pane_record_write() {  # <record> <pane> <run> <started>
   local record=$1 tmp
@@ -212,9 +217,27 @@ fm_nm_review_pane_sync_locked() {  # <state-dir> <task-id> <run-id> <active|term
     fm_nm_review_pane_presence "$pane" || return 1
   fi
   fm_backend_herdr_cli "$FM_NM_REVIEW_SESSION" pane rename "$pane" no-mistakes >/dev/null 2>&1 || return 1
-  printf -v cmd 'cd %q && no-mistakes attach --run %q' "$FM_NM_REVIEW_WORKTREE" "$run"
+  printf -v cmd 'cd %q && no-mistakes attach --run %q --exit-on completed,failed,cancelled,interrupted' "$FM_NM_REVIEW_WORKTREE" "$run"
   fm_backend_herdr_cli "$FM_NM_REVIEW_SESSION" pane run "$pane" "$cmd" >/dev/null 2>&1 || return 1
   fm_nm_review_pane_record_write "$record" "$pane" "$run" 1
+}
+
+fm_nm_review_pane_terminal_unchanged() {  # <state> <id>
+  local record="$1/$2.nm-review-pane" meta="$1/$2.meta" pane run wt branch overview choice selected status
+  [ -f "$record" ] && [ ! -L "$record" ] || return 1
+  fm_meta_get "$record" pane pane
+  [ -z "$pane" ] || return 1
+  fm_meta_get "$record" run run
+  [ -n "$run" ] || return 1
+  fm_meta_get "$meta" worktree wt
+  [ -d "$wt" ] || return 1
+  branch=$(git -C "$wt" symbolic-ref --short HEAD 2>/dev/null) || return 1
+  overview=$(fm_nm_run_checked "$wt" 10 axi) || return 1
+  choice=$(fm_nm_select_run "$branch" "$overview" "$wt" 10)
+  case "$choice" in selected\|*) ;; *) return 1 ;; esac
+  IFS='|' read -r _ selected status _ <<< "$choice"
+  [ "$selected" = "$run" ] || return 1
+  case "$status" in completed|failed|cancelled) return 0 ;; *) return 1 ;; esac
 }
 
 fm_nm_review_pane_main() {
@@ -227,6 +250,7 @@ fm_nm_review_pane_main() {
   state=${FM_STATE_OVERRIDE:-${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$FM_NM_REVIEW_PANE_LIB_DIR/.." && pwd)}}/state}
   [ "$(fm_meta_get "$state/$id.meta" backend)" = herdr ] || return 0
   [ -z "$(fm_meta_get "$state/$id.meta" remote_host)" ] || return 0
+  fm_nm_review_pane_terminal_unchanged "$state" "$id" && return 0
   FM_CREW_STATE_NO_FORGE=1 "$FM_NM_REVIEW_PANE_LIB_DIR/fm-crew-state.sh" "$id" --sync-review-pane >/dev/null
 }
 

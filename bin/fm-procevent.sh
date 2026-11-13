@@ -1556,8 +1556,17 @@ cmd_owner_watchdog() {  # <source-id> <runner-pid> <runner-identity> <ready-file
     || die "owning home lease is not fresh at owner guard initialization"
   printf 'ready\n' > "$ready" || die "cannot confirm owner guard initialization"
   trap - EXIT
+  # A single observer blocks on lease expiry instead of repeatedly launching
+  # shell/stat/clock helpers. Only this shell can authorize group cleanup.
+  local lease_path wait_rc
+  lease_path=$(fm_procevent_owner_lease_path "$STATE")
   while :; do
-    sleep "$half"
+    wait_rc=0
+    perl "$SCRIPT_DIR/fm-idle-wait.pl" lease "$pid" "$STATE" "$state_device" "$state_inode" "$lease_path" "$lease" "$half" "$identity" "$misses" || wait_rc=$?
+    # A failed cleanup retains the established debounce, so its next retry is
+    # still half an interval away rather than starting two misses over again.
+    [ "$wait_rc" -ne 1 ] || misses=2
+    [ "$wait_rc" -le 1 ] || sleep "$half"
     fm_procevent_pid_state "$pid" "$identity"
     pid_state=$?
     case "$pid_state" in
@@ -1565,27 +1574,17 @@ cmd_owner_watchdog() {  # <source-id> <runner-pid> <runner-identity> <ready-file
       0) ;;
       *) continue ;;
     esac
+    [ "$wait_rc" -eq 1 ] || continue
+    # The observer saw two consecutive misses. Reconfirm the current owner
+    # before acting, so recovery while it returned cannot stop a live source.
     state_identity=$(fm_procevent_claim_state_root_identity "$STATE" 2>/dev/null || true)
-    current_device=
-    current_inode=
-    [ -z "$state_identity" ] \
-      || IFS=$'\t' read -r _ current_device current_inode _ _ <<< "$state_identity"
-    if [ "$current_device" = "$state_device" ] \
-      && [ "$current_inode" = "$state_inode" ] \
-      && fm_procevent_owner_alive "$STATE" "$lease"; then
+    current_device='' current_inode=''
+    [ -z "$state_identity" ] || IFS=$'\t' read -r _ current_device current_inode _ _ <<< "$state_identity"
+    if [ "$current_device" = "$state_device" ] && [ "$current_inode" = "$state_inode" ] && fm_procevent_owner_alive "$STATE" "$lease"; then
       misses=0
       continue
     fi
-    # Two consecutive misses, so one unreadable read cannot end a live runner.
-    # They are half an interval apart, so requiring the second costs detection
-    # time inside the interval already budgeted rather than a second interval.
-    misses=$((misses + 1))
-    [ "$misses" -ge 2 ] || continue
-    if stop_runner_pid "$pid" "$identity"; then
-      exit 0
-    fi
-    # Identity/group inspection and signalling can fail transiently. Keep the
-    # guard alive so the next normal tick retries the same generation cleanup.
+    stop_runner_pid "$pid" "$identity" && exit 0
   done
 }
 

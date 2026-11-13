@@ -4402,6 +4402,7 @@ SH
 chmod +x "$BOUND_BIN/perl"
 bound_pe() {
   PATH="$BOUND_BIN:$PATH" GUARD_BOUND_STATE="$BOUND_STATE" \
+    FM_TEST_LEASE_READ_LOG="$BOUND_STATE/reads" \
     FM_PROCEVENT_OWNER_LEASE_SECONDS="$BOUND_LEASE_SECONDS" \
     FM_PROCEVENT_OWNER_CHECK_SECONDS="$BOUND_CHECK_SECONDS" \
     FM_HOME="$HBOUND" "$ROOT/bin/fm-procevent.sh" "$@"
@@ -4476,16 +4477,8 @@ pass "an orphaned runner is reaped within the lease plus ONE check interval"
 # failed closed and never listened.
 #
 # Asserted through the executable interface rather than by reading the source:
-# a real listener is started at each value, and the guard's actual sleep
-# argument is observed. Reading `10#` out of the script would prove nothing.
-INTERVAL_BIN=$(fm_fakebin "$TMP_ROOT/decimal-interval-bin")
-REAL_SLEEP=$(command -v sleep) || fail "this host has no sleep to observe guard intervals"
-cat > "$INTERVAL_BIN/sleep" <<SH
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "\$INTERVAL_SLEEP_LOG"
-exec "$REAL_SLEEP" "\$@"
-SH
-chmod +x "$INTERVAL_BIN/sleep"
+# a real listener is started at each value, and the interval between its
+# actual lease observations is measured. No child sleep is needed by the guard.
 for interval in 08 010; do
   case "$interval" in
     08) expected_half=4 ;;
@@ -4494,17 +4487,18 @@ for interval in 08 010; do
   HINTERVAL="$TMP_ROOT/decimal-interval-$interval"; new_home "$HINTERVAL"
   pe_register "$HINTERVAL" lavish "interval-$interval" \
     -- "$QUIET_STUB" "$HINTERVAL/poll" >/dev/null
-  PATH="$INTERVAL_BIN:$PATH" INTERVAL_SLEEP_LOG="$HINTERVAL/sleeps" \
+  FM_TEST_LEASE_READ_LOG="$HINTERVAL/reads" \
     FM_PROCEVENT_OWNER_CHECK_SECONDS="$interval" \
     pe "$HINTERVAL" reconcile >/dev/null
   wait_for "$HINTERVAL/poll.descendant" \
     || fail "a zero-prefixed decimal interval ($interval) prevented the listener from starting"
-  for _ in $(seq 1 100); do
-    grep -qx "$expected_half" "$HINTERVAL/sleeps" 2>/dev/null && break
-    sleep 0.1
-  done
-  grep -qx "$expected_half" "$HINTERVAL/sleeps" \
-    || fail "the guard did not sleep half of the decimal interval $interval (expected ${expected_half}s)"
+  wait_for_lines "$HINTERVAL/reads" 2 200 \
+    || fail "the guard did not observe the decimal-interval lease twice"
+  awk -F '\t' -v expected="$expected_half" '
+    NR == 1 { first=$1 }
+    NR == 2 { elapsed=$1-first; exit !(elapsed >= expected && elapsed < expected+1.5) }
+  ' "$HINTERVAL/reads" \
+    || fail "the guard did not check at half of decimal interval $interval (expected ${expected_half}s): $(cat "$HINTERVAL/reads")"
   pe "$HINTERVAL" retire "interval-$interval" >/dev/null \
     || fail "retiring the decimal-interval listener ($interval) reported failure"
   printf 'decimal interval: %s halves to %ss and its listener started\n' "$interval" "$expected_half"
@@ -4519,38 +4513,21 @@ pass "a zero-prefixed decimal interval starts its listener and halves as decimal
 # home that is still alive, an isolated failed read must not stop the runner.
 #
 # The failure is injected where the real path actually reads. ONE lease read
-# fails, exactly once, identified by the lease-age program's own text so no
-# other call in the runner is touched; every read before and after it is the
-# real command, and the home's lease stays long and fresh throughout. The single
+# fails, exactly once, through the test-only observer seam so no other read in
+# the runner is touched; every read before and after it is real, and the home's
+# lease stays long and fresh throughout. The single
 # failed read is therefore the only thing wrong that the guard can see.
 
 DEBOUNCE_HOME="$TMP_ROOT/lease-debounce"; new_home "$DEBOUNCE_HOME"
 fm_test_track_procevent_home "$DEBOUNCE_HOME"
 DEBOUNCE_STATE="$TMP_ROOT/lease-debounce-state"; mkdir -p "$DEBOUNCE_STATE"
-DEBOUNCE_BIN=$(fm_fakebin "$TMP_ROOT/lease-debounce-bin")
-REAL_PERL=$(command -v perl) || fail "this host has no perl to build the debounce fixture on"
-cat > "$DEBOUNCE_BIN/perl" <<SH
-#!/usr/bin/env bash
-if [ -s "\$LEASE_DEBOUNCE_STATE/armed" ] && [ ! -s "\$LEASE_DEBOUNCE_STATE/spent" ]; then
-  for arg in "\$@"; do
-    case \$arg in
-      *'int(\$now - \$value)'*)
-        printf 'spent\n' > "\$LEASE_DEBOUNCE_STATE/spent"
-        exit 1
-        ;;
-    esac
-  done
-fi
-exec "$REAL_PERL" "\$@"
-SH
-chmod +x "$DEBOUNCE_BIN/perl"
 
 # A long lease and a short check: many reads happen inside the observation
 # window, and none of them can go stale on their own during it.
 DEBOUNCE_LEASE_SECONDS=30
 DEBOUNCE_CHECK_SECONDS=1
 debounce_pe() {
-  PATH="$DEBOUNCE_BIN:$PATH" LEASE_DEBOUNCE_STATE="$DEBOUNCE_STATE" \
+  FM_TEST_LEASE_FAIL_ONCE_DIR="$DEBOUNCE_STATE" \
     FM_PROCEVENT_OWNER_LEASE_SECONDS="$DEBOUNCE_LEASE_SECONDS" \
     FM_PROCEVENT_OWNER_CHECK_SECONDS="$DEBOUNCE_CHECK_SECONDS" \
     FM_HOME="$DEBOUNCE_HOME" "$ROOT/bin/fm-procevent.sh" "$@"

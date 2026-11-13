@@ -166,10 +166,10 @@
 # successor cycle may take to verify), FM_SUPERVISION_HOST_POLL (1).
 # Park duration uses Bash's process-relative SECONDS counter (including Bash
 # 3.2), while durable timestamps still use epoch time. This is not a portable
-# monotonic-clock guarantee. Arm exit probes use ordinary 0.5-second child
-# sleeps within the unchanged POLL-cadence maintenance and boundary checks;
-# close observation and a shell-only caught signal may wait that interval plus
-# work/scheduling time. No stop-signal disposition or cleanup bound changes.
+# monotonic-clock guarantee. Once the arm is ready, one blocking Perl observer
+# checks exit and the park deadline every 0.5 seconds without spawning tools.
+# The host waits with the shell builtin so caught signals still run cleanup
+# immediately. No stop-signal disposition or cleanup bound changes.
 # FM_TEST_SUPERVISION_HOST_CLOCK names a file holding the park's elapsed
 # seconds, which the park and turn boundary checks read in place of SECONDS
 # only when FM_TEST_SEAM=1; tests/lib.sh arms the marker for isolated suites.
@@ -420,10 +420,16 @@ stop_engine_turn() {
   fi
 }
 
+HOST_WAIT_PID=
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
 cleanup() {
   local rc=$? f
   trap - EXIT HUP TERM INT
+  if [ -n "$HOST_WAIT_PID" ]; then
+    kill "$HOST_WAIT_PID" 2>/dev/null || true
+    wait "$HOST_WAIT_PID" 2>/dev/null || true
+    HOST_WAIT_PID=
+  fi
   if [ "$ENGINE_RUNNING" -eq 1 ]; then
     stop_engine_turn
   fi
@@ -542,11 +548,28 @@ stream_ready_line() {
 # Wait for the current arm to close. Returns 0 with ARM_TEXT set,
 # or 1 when the park boundary arrives first.
 await_close() {
-  local i
+  local i remaining test_clock='' wait_rc
   while fm_pid_alive "$ARM_PID"; do
     refresh_process "$ARM_PID"
     [ "$READY_PENDING" -eq 0 ] || stream_ready_line
     boundary_reached && return 1
+    if [ "$READY_PENDING" -eq 0 ]; then
+      park_elapsed
+      remaining=$((PARK_SECONDS - PARK_ELAPSED))
+      [ "$remaining" -gt 0 ] || remaining=0
+      if [ "${FM_TEST_SEAM:-}" = 1 ] && [ -n "${FM_TEST_SUPERVISION_HOST_CLOCK:-}" ]; then
+        test_clock=$FM_TEST_SUPERVISION_HOST_CLOCK
+        remaining=$PARK_SECONDS
+      fi
+      perl "$SCRIPT_DIR/fm-idle-wait.pl" arm "$ARM_PID" "$remaining" "$STATE" "$test_clock" &
+      HOST_WAIT_PID=$!
+      wait_rc=0
+      wait "$HOST_WAIT_PID" || wait_rc=$?
+      HOST_WAIT_PID=
+      [ "$wait_rc" -le 1 ] || return 1
+      boundary_reached && return 1
+      continue
+    fi
     # Probe the arm's exit twice a second between POLL-cadence checks, without
     # changing the outer identity refresh, readiness, or boundary cadence.
     i=$((POLL * 2))
