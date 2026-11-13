@@ -543,11 +543,13 @@ class Budget:
             while len(self.swap) > 1 and mono - self.swap[1][0] >= 60:
                 self.swap.popleft()
             self.portable = power["source"] != "ac" or self.draining(battery)
-            if thermal == "critical" or pressure == "critical" or battery < 15:
+            lid_closed = sample.get("lidClosed")
+            if (thermal == "critical" or pressure == "critical" or battery < 15 or
+                    (lid_closed is True and self.portable)):
                 cancel = True
             if thermal not in ("nominal", "fair") or pressure not in ("normal", "warning"):
                 raise Refusal(f"thermal={thermal} memory={pressure}")
-            if sample["lidClosed"] is not False:
+            if type(lid_closed) is not bool or (lid_closed and self.portable):
                 raise Refusal("portable lid is closed or unknown")
             if battery < 30 and pressure == "normal":
                 raise Refusal("battery below 30% admission reserve")

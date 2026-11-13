@@ -323,6 +323,60 @@ class ResourceTests(unittest.TestCase):
         wait_for(lambda: self.status()["reason"] == "ready")
         self.assertEqual(self.request("acquire", **legacy)["state"], "leased")
 
+    def test_closed_lid_on_stable_ac_admits_compute_and_workers(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["lidClosed"] = True
+        sample["power"].update(source="ac", adapterWatts=60, batteryPercent=100)
+        self.write("input.json", sample)
+        wait_for(lambda: self.status().get("telemetry", {}).get("power") == sample["power"])
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis"))
+        (self.root / "clock").write_text("242")
+        wait_for(lambda: self.status()["reason"] == "ready")
+        self.assertFalse(self.status()["portable"])
+        for kind in ("test", "worker"):
+            result = self.call("run", "--class", kind, "--", "true")
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_closed_lid_on_portable_power_holds_compute_and_workers(self):
+        for source in ("battery", "ups", "ac"):
+            with self.subTest(source=source):
+                sample = copy.deepcopy(SAMPLE)
+                sample["power"].update(source=source, adapterWatts=60 if source == "ac" else None)
+                self.write("input.json", sample)
+                wait_for(lambda: self.status().get("telemetry", {}).get("power") == sample["power"])
+                # An open-lid observation establishes charge history before
+                # testing draining AC as portable power.
+                time.sleep(0.12)
+                sample["lidClosed"] = True
+                if source == "ac":
+                    sample["power"]["batteryPercent"] = 79
+                self.write("input.json", sample)
+                wait_for(lambda: self.status()["reason"] == "portable lid is closed or unknown")
+                self.assertTrue(self.status()["portable"])
+                for kind in ("test", "worker"):
+                    token, state = self.acquire(kind)
+                    self.assertEqual(state, "queued")
+                    self.request("cancel-queued", token=token)
+
+    def test_unknown_lid_holds_even_on_ac(self):
+        for source in ("ac", "battery"):
+            for lid in (None, "unknown", "false", 0, 1, [], {}, "missing"):
+                with self.subTest(source=source, lid=lid):
+                    sample = copy.deepcopy(SAMPLE)
+                    sample["instanceUUID"] = uuid.uuid4().hex
+                    sample["power"].update(source=source, adapterWatts=60 if source == "ac" else None)
+                    if lid == "missing":
+                        sample.pop("lidClosed")
+                    else:
+                        sample["lidClosed"] = lid
+                    self.write("input.json", sample)
+                    wait_for(lambda: self.status().get("telemetry", {}).get("instanceUUID") == sample["instanceUUID"])
+                    wait_for(lambda: self.status()["reason"] == "portable lid is closed or unknown")
+                    for kind in ("test", "worker"):
+                        token, state = self.acquire(kind)
+                        self.assertEqual(state, "queued")
+                        self.request("cancel-queued", token=token)
+
     def test_low_watt_ac_is_desk_power_unless_the_battery_drains(self):
         probe = ["--", "/bin/sh", "-c", 'printf %s "$FM_RESOURCE_PORTABLE"']
         sample = copy.deepcopy(SAMPLE)
@@ -1926,6 +1980,109 @@ class PowerLogTests(unittest.TestCase):
         self.log(local + " Sleep Thermal Emergency Sleep")
         self.now += 60
         self.assertIsNotNone(self.tick()["emergency"])
+
+
+class ClosedLidPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="fm-lid-", dir="/tmp")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.clock = 1000.0
+        self.sample = copy.deepcopy(SAMPLE)
+        self.sample.update(lidClosed=True, bootSessionUUID="fixture-boot", sequence=0)
+        self.sample["power"].update(source="ac", adapterWatts=60)
+        config = {"schemaVersion": 1, "stateDirectory": str(self.root / "state"),
+            "socketPath": str(self.root / "socket" / "owner"),
+            "monitorPath": str(self.root / "monitor.json"), "graceSeconds": 5}
+        (self.root / "config.json").write_text(json.dumps(config))
+        for name, replacement in (("boot_id", lambda: "fixture-boot"),
+                ("uptime", lambda: self.clock), ("process_table", lambda: {})):
+            patch = mock.patch.object(resource, name, replacement)
+            patch.start()
+            self.addCleanup(patch.stop)
+        patch = mock.patch.object(resource, "time", mock.Mock(
+            time=lambda: self.clock, monotonic=lambda: self.clock))
+        patch.start()
+        self.addCleanup(patch.stop)
+        _, config, digest = resource.load_config(str(self.root / "config.json"))
+        self.budget = resource.Budget(config, digest)
+        self.addCleanup(self.budget.lock.close)
+        # Policy and tick run unchanged; only process discovery and signalling are fake.
+        self.budget.reconcile = mock.Mock()
+        self.budget.signal_lease = mock.Mock()
+        self.budget.event = mock.Mock()
+        self.tick()
+        self.tick(120)
+        self.assertEqual(self.budget.reason, "ready")
+        self.heavy = {"class": "test", "memoryMiB": 1024}
+        self.worker = {"class": "worker", "memoryMiB": 256}
+        self.budget.data["leases"] = {"heavy": self.heavy, "worker": self.worker}
+
+    def tick(self, advance=0):
+        self.clock += advance
+        self.sample.update(timestamp=self.clock, uptimeSeconds=self.clock,
+            sequence=self.sample["sequence"] + 1)
+        # Simulate intervening fresh owner observations when advancing recovery time.
+        if advance > 10:
+            self.budget.last_wall = self.clock
+            self.budget.last_uptime = self.clock
+        (self.root / "monitor.json").write_text(json.dumps(self.sample))
+        self.budget.tick()
+
+    def assert_cancel_grace(self):
+        self.assertEqual(self.heavy["cancelAt"], self.clock)
+        self.assertNotIn("cancelAt", self.worker)
+        self.budget.signal_lease.assert_called_with(self.heavy, signal.SIGTERM)
+        self.tick(4.99)
+        self.budget.signal_lease.assert_called_with(self.heavy, signal.SIGTERM)
+        self.tick(0.01)
+        self.budget.signal_lease.assert_called_with(self.heavy, signal.SIGKILL)
+        self.assertTrue(all(call.args[0] is self.heavy
+            for call in self.budget.signal_lease.call_args_list))
+
+    def test_unplug_closed_lid_cancels_with_normal_grace(self):
+        self.sample["power"].update(source="battery", adapterWatts=None)
+        self.tick()
+        self.assertEqual(self.budget.reason, "portable lid is closed or unknown")
+        self.assert_cancel_grace()
+
+    def test_closed_lid_ups_cancels_with_normal_grace(self):
+        self.sample["power"].update(source="ups", adapterWatts=None)
+        self.tick()
+        self.assert_cancel_grace()
+
+    def test_closed_lid_draining_ac_cancels_with_normal_grace(self):
+        self.sample["power"]["batteryPercent"] -= 1
+        self.tick()
+        self.assertTrue(self.budget.portable)
+        self.assert_cancel_grace()
+
+    def test_unplug_with_serious_thermal_still_cancels(self):
+        self.sample["power"].update(source="battery", adapterWatts=None)
+        self.sample["thermalState"] = "serious"
+        self.tick()
+        self.assert_cancel_grace()
+
+    def test_closed_lid_ac_serious_thermal_holds_without_cancelling(self):
+        self.sample["thermalState"] = "serious"
+        self.tick()
+        self.assertIn("thermal=serious", self.budget.reason)
+        self.assertTrue(self.budget.thermal_hold)
+        self.assertNotIn("cancelAt", self.heavy)
+        self.budget.signal_lease.assert_not_called()
+
+    def test_closed_lid_ac_critical_thermal_cancels_and_latches(self):
+        self.sample["thermalState"] = "critical"
+        self.tick()
+        self.assertIn("thermal=critical", self.budget.reason)
+        self.assertTrue(self.budget.data["emergency"])
+        self.assert_cancel_grace()
+
+    def test_closed_lid_ac_critical_memory_cancels(self):
+        self.sample["memory"]["pressure"] = "critical"
+        self.tick()
+        self.assertIn("memory=critical", self.budget.reason)
+        self.assert_cancel_grace()
 
 
 if __name__ == "__main__":
