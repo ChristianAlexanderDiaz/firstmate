@@ -9,12 +9,13 @@ Clients cannot grant leases.
 import argparse
 import collections
 import ctypes
-from datetime import datetime, timezone
+import datetime
 import fcntl
 import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import select
 import shlex
@@ -65,6 +66,33 @@ def uptime():
             raise Refusal("cannot read host uptime")
         return ts.seconds + ts.nanos / 1e9
     return float(Path("/proc/uptime").read_text().split()[0])
+
+
+def thermal_sleep_log(since, until, command=("/usr/bin/pmset", "-g", "log"), platform=None):
+    """Read historical emergency evidence only on macOS; injectable for labs."""
+    if (sys.platform if platform is None else platform) != "darwin":
+        return {"state": "unsupported"}
+    result = {"checkedAt": until, "since": since}
+    try:
+        output = subprocess.run(command, capture_output=True, text=True, timeout=3, check=True)
+    except (OSError, subprocess.SubprocessError, UnicodeError) as error:
+        # Do not copy arbitrary command output or local paths into status.
+        return dict(result, state="unavailable", error=type(error).__name__)
+    for line in output.stdout.splitlines():
+        if "Thermal Emergency Sleep" not in line:
+            continue
+        match = re.match(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)(?:\s*([+-]\d{4}))?", line)
+        if not match:
+            continue
+        stamp = match[1] + (" " + match[2] if match[2] else "")
+        try:
+            # Older pmset output omits the offset and uses the host's local time.
+            observed = datetime.datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S" + (" %z" if match[2] else "")).timestamp()
+        except (ValueError, OverflowError, OSError):
+            continue
+        if math.floor(since) <= observed <= until:
+            return dict(result, state="emergency", logTimestamp=stamp, timestamp=observed)
+    return dict(result, state="clear")
 
 
 def process_table():
@@ -233,8 +261,9 @@ def peer_uid(connection):
 
 
 class Budget:
-    def __init__(self, config, digest):
+    def __init__(self, config, digest, power_log_reader=None):
         self.config, self.digest = config, digest
+        self.power_log_reader = power_log_reader or (thermal_sleep_log if sys.platform == "darwin" else None)
         self.root = private_dir(config["stateDirectory"])
         self.path = self.root / "ledger.json"
         if (self.root / "owner.lock").is_symlink() or self.path.is_symlink():
@@ -268,7 +297,7 @@ class Budget:
         # A matching legacy digest proves this policy; a changed one cannot.
         self.data["configPolicy"] = config
         self.healthy_since = None
-        # Set by a serious/critical/OS thermal signal; lengthens the next recovery.
+        # Thermal signals or a persisted emergency latch lengthen the next recovery.
         self.thermal_hold = False
         self.source = None
         self.monitor_id = None
@@ -323,7 +352,7 @@ class Budget:
         now = time.time()
         self.data["events"].append({"timestamp": now, "reason": reason})
         self.data["events"] = self.data["events"][-100:]
-        record = json.dumps({"timestamp": datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z"),
+        record = json.dumps({"timestamp": datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
             "event": event, "reason": reason, **fields})
         with open(self.root / "transitions.jsonl", "a") as stream:
             stream.write(record + "\n")
@@ -409,18 +438,77 @@ class Budget:
             lease["longHeldNotified"] = True
             self.save()
 
+    def check_sleep_gap(self, now, host_uptime, sample):
+        if self.power_log_reader is None:
+            return
+        previous = self.data.get("powerLogSample")
+        current = {"wall": now, "uptime": host_uptime, "boot": boot_id()}
+        if isinstance(sample, dict):
+            stamp, sequence = sample.get("timestamp"), sample.get("sequence")
+            if (type(stamp) in (int, float) and math.isfinite(stamp) and
+                    -1 <= now - stamp <= 10 and type(sequence) is int and
+                    isinstance(sample.get("instanceUUID"), str) and
+                    sample.get("bootSessionUUID") == current["boot"]):
+                current["monitor"] = {"timestamp": stamp, "sequence": sequence,
+                    "instance": sample["instanceUUID"], "boot": sample["bootSessionUUID"]}
+        gap = False
+        pending = self.data.get("powerLogPendingSince")
+        if previous:
+            elapsed = now - previous["wall"]
+            gap = (previous["boot"] != current["boot"] or elapsed > 10 or
+                abs(elapsed - (host_uptime - previous["uptime"])) > 1)
+            before, after = previous.get("monitor"), current.get("monitor")
+            if before and after:
+                gap = gap or (before["instance"] != after["instance"] or
+                    before["boot"] != after["boot"] or
+                    after["timestamp"] - before["timestamp"] > 10 or
+                    after["sequence"] < before["sequence"] or
+                    after["sequence"] - before["sequence"] > 10)
+            if gap:
+                since = min(previous["wall"], before["timestamp"] if before else previous["wall"])
+                pending = since if pending is None else min(pending, since)
+            # Retain the last monitor observation through missing/stale input.
+            if "monitor" not in current and before:
+                current["monitor"] = before
+        self.data["powerLogSample"] = current
+        if pending is not None:
+            checked = self.data.get("powerLogCheck", {})
+            if checked.get("state") != "unavailable" or now - checked["checkedAt"] >= 10:
+                if checked.get("state") in ("clear", "emergency"):
+                    boundary = (checked["timestamp"] + 1 if checked["state"] == "emergency"
+                        else math.floor(checked["checkedAt"]))
+                    pending = max(pending, boundary)
+                pending = max(pending, self.data.get("powerLogConsumedThrough", pending - 1) + 1)
+                result = self.power_log_reader(pending, now)
+                self.data["powerLogCheck"] = result
+                if result["state"] == "emergency":
+                    self.data["emergency"] = self.data["emergency"] or {
+                        "timestamp": result["timestamp"],
+                        "cause": "Thermal Emergency Sleep at " + result["logTimestamp"]}
+                    self.thermal_hold = True
+                    self.data["powerLogConsumedThrough"] = result["timestamp"]
+                if result["state"] != "unavailable":
+                    pending = None
+            self.data["powerLogPendingSince"] = pending
+            self.save()
+
     def policy(self):
         now, mono = time.time(), time.monotonic()
         cancel = False
         self.portable = True
         try:
-            sample = json.loads(Path(self.config["monitorPath"]).read_text())
+            host_uptime = uptime()
+            try:
+                sample = json.loads(Path(self.config["monitorPath"]).read_text())
+            except (OSError, ValueError):
+                self.check_sleep_gap(now, host_uptime, None)
+                raise
+            self.check_sleep_gap(now, host_uptime, sample)
             if sample["schemaVersion"] != 1 or sample["lifecycle"] != "running":
                 raise Refusal("monitor schema or lifecycle is unavailable")
             if sample["bootSessionUUID"] != boot_id():
                 raise Refusal("old-boot monitor sample")
             age = now - float(sample["timestamp"])
-            host_uptime = uptime()
             uptime_age = host_uptime - float(sample["uptimeSeconds"])
             if not math.isfinite(age) or not math.isfinite(uptime_age) or not -1 <= age <= 10 or not -1 <= uptime_age <= 10:
                 raise Refusal("stale or future monitor sample")
@@ -499,6 +587,9 @@ class Budget:
             return "ready", cancel
         except (OSError, ValueError, KeyError, TypeError, Refusal) as error:
             self.healthy_since = None
+            if self.data["emergency"]:
+                self.thermal_hold = True
+                return "persistent emergency latch requires inspected evidence and explicit clear", True
             return str(error), cancel
 
     def tick(self):
@@ -605,7 +696,8 @@ class Budget:
         if op == "status":
             return {"ok": True, "reason": self.reason, "portable": self.portable, "availableHeavySlots": max(0, 1 - sum(l["class"] != "worker" for l in self.data["leases"].values())) if self.reason == "ready" else 0,
                 "leases": self.data["leases"], "queue": self.data["queue"],
-                "telemetry": self.telemetry, "events": self.data["events"], "emergency": self.data["emergency"]}
+                "telemetry": self.telemetry, "events": self.data["events"], "emergency": self.data["emergency"],
+                "powerLogCheck": self.data.get("powerLogCheck")}
         if op == "emergency":
             self.data["emergency"] = {"timestamp": time.time(), "cause": request["evidence"]}
             self.save()

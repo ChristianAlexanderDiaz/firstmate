@@ -17,11 +17,37 @@ import threading
 import time
 import types
 
+if sys.argv[1] == "--pmset":
+    fixture = json.loads(Path(sys.argv[2]).read_text())
+    print(fixture.get("output", ""))
+    sys.exit(fixture.get("returncode", 0))
+
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("resource", sys.argv[1])
 resource = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(resource)
 root = Path(sys.argv[2])
+real_thermal_sleep_log = resource.thermal_sleep_log
+
+
+def thermal_sleep_log(since, until):
+    fixture = root / "pmset.json"
+    if fixture.exists():
+        return real_thermal_sleep_log(since, until,
+            command=[sys.executable, __file__, "--pmset", str(fixture)], platform="darwin")
+    # Never read the host power log, even when this fixture runs on a Mac.
+    return {"state": "unsupported"}
+
+
+resource.thermal_sleep_log = thermal_sleep_log
+real_init = resource.Budget.__init__
+
+
+def init(budget, config, digest):
+    real_init(budget, config, digest, power_log_reader=thermal_sleep_log)
+
+
+resource.Budget.__init__ = init
 real_time = time
 real_uptime = resource.uptime
 real_process_table = resource.process_table
