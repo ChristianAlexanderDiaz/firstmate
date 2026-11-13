@@ -1063,6 +1063,7 @@ class Budget:
             self.reason, _ = self.policy()
             self.event(self.reason)
         if op == "status":
+<<<<<<< HEAD
             decision = self.decision or {}
             def clock(value):
                 return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value)) if value is not None else "-"
@@ -1078,6 +1079,13 @@ class Budget:
                 "leases": self.data["leases"], "queue": self.data["queue"],
                 "telemetry": self.telemetry, "events": self.data["events"], "emergency": self.data["emergency"],
                 "powerLogCheck": self.data.get("powerLogCheck"), "policyLogError": self.data.get("policyLogError")}
+=======
+            return {"ok": True, "reason": self.reason, "portable": self.portable, "availableHeavySlots": max(0, 1 - sum(l["class"] != "worker" for l in self.data["leases"].values())) if self.reason == "ready" else 0,
+                "leases": self.data["leases"],
+                "queue": [{**item, "waitedSeconds": max(0, int(time.monotonic() - item["queued"]))}
+                          for item in self.data["queue"]],
+                "telemetry": self.telemetry, "events": self.data["events"], "emergency": self.data["emergency"]}
+>>>>>>> e6544dd0 (WIP: scaffold shared sidebar status classification)
         if op == "emergency":
             self.data["emergency"] = {"timestamp": time.time(), "cause": request["evidence"]}
             self.save()
