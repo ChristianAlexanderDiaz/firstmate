@@ -19,7 +19,7 @@ HERE = Path(__file__).resolve().parent
 
 
 def bounded(argv, timeout, env=None):
-    """Discard tool output and reap the command group, including timed-out children."""
+    """Discard tool output, kill the command group, and reap the direct child."""
     if timeout <= 0:
         return None
     try:
