@@ -1738,6 +1738,47 @@ class PowerLogTests(unittest.TestCase):
         self.up += 2
         self.assertIsNone(self.tick()["emergency"])
 
+    def test_fractional_sample_second_is_checked_and_consumed(self):
+        self.now += 0.2
+        self.up += 0.2
+        self.tick()
+        self.log("2026-11-10 22:51:55 -0500 Sleep Thermal Emergency Sleep")
+        self.now += 60
+        self.assertIsNotNone(self.tick()["emergency"])
+        self.owner.handle({"op": "clear-emergency", "configDigest": self.digest,
+            "evidence": "inspected simulated emergency sleep"})
+        for _ in range(2):
+            self.now += 60
+            self.assertIsNone(self.tick()["emergency"])
+
+    def test_successful_check_keeps_its_fractional_second_in_scope(self):
+        self.now += 60.2
+        self.tick()
+        self.command.assert_called_once()
+        stamp = datetime.datetime.fromtimestamp(self.now, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000")
+        self.log(stamp + " Sleep Thermal Emergency Sleep")
+        self.now += 60
+        self.assertIsNotNone(self.tick()["emergency"])
+
+    def test_failed_history_retries_original_interval_after_restart(self):
+        self.command.side_effect = subprocess.TimeoutExpired("pmset", 3)
+        self.now += 60
+        self.assertIsNone(self.tick()["emergency"])
+        calls = self.command.call_count
+        self.owner.lock.close()
+        self.owner = resource.Budget(self.config, self.digest, power_log_reader=resource.thermal_sleep_log)
+        for _ in range(4):
+            self.now += 2
+            self.up += 2
+            self.assertIsNone(self.tick()["emergency"])
+        self.assertEqual(self.command.call_count, calls)
+        self.command.side_effect = None
+        self.log("2026-11-10 22:52:15 -0500 Sleep Thermal Emergency Sleep")
+        self.now += 2
+        self.up += 2
+        self.assertIsNotNone(self.tick()["emergency"])
+        self.assertEqual(self.command.call_count, calls + 1)
+
     def test_timeout_missing_command_and_failure_are_visible_without_latch(self):
         for error in (subprocess.TimeoutExpired("pmset", 3), FileNotFoundError(),
                 subprocess.CalledProcessError(1, "pmset")):
@@ -1751,7 +1792,6 @@ class PowerLogTests(unittest.TestCase):
 
     def test_old_future_malformed_and_unrelated_entries_are_ignored(self):
         self.log("\n".join((
-            "2026-11-10 22:51:55 -0500 Sleep Thermal Emergency Sleep",
             "2026-11-10 22:51:54 -0500 Sleep Thermal Emergency Sleep",
             "2026-11-10 23:52:15 -0500 Sleep Thermal Emergency Sleep",
             "2026-99-10 22:52:15 -0500 Sleep Thermal Emergency Sleep",

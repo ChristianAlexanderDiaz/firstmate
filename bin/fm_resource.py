@@ -89,7 +89,7 @@ def thermal_sleep_log(since, until, command=("/usr/bin/pmset", "-g", "log"), pla
             observed = datetime.datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S" + (" %z" if match[2] else "")).timestamp()
         except (ValueError, OverflowError, OSError):
             continue
-        if since < observed <= until:
+        if math.floor(since) <= observed <= until:
             return dict(result, state="emergency", logTimestamp=stamp, timestamp=observed)
     return dict(result, state="clear")
 
@@ -431,6 +431,7 @@ class Budget:
                 current["monitor"] = {"timestamp": stamp, "sequence": sequence,
                     "instance": sample["instanceUUID"], "boot": sample["bootSessionUUID"]}
         gap = False
+        pending = self.data.get("powerLogPendingSince")
         if previous:
             elapsed = now - previous["wall"]
             gap = (previous["boot"] != current["boot"] or elapsed > 10 or
@@ -444,22 +445,30 @@ class Budget:
                     after["sequence"] - before["sequence"] > 10)
             if gap:
                 since = min(previous["wall"], before["timestamp"] if before else previous["wall"])
-                checked = self.data.get("powerLogCheck", {})
+                pending = since if pending is None else min(pending, since)
+            # Retain the last monitor observation through missing/stale input.
+            if "monitor" not in current and before:
+                current["monitor"] = before
+        self.data["powerLogSample"] = current
+        if pending is not None:
+            checked = self.data.get("powerLogCheck", {})
+            if checked.get("state") != "unavailable" or now - checked["checkedAt"] >= 10:
                 if checked.get("state") in ("clear", "emergency"):
-                    since = max(since, checked["checkedAt"])
-                result = self.power_log_reader(since, now)
+                    boundary = (checked["timestamp"] + 1 if checked["state"] == "emergency"
+                        else math.floor(checked["checkedAt"]))
+                    pending = max(pending, boundary)
+                pending = max(pending, self.data.get("powerLogConsumedThrough", pending - 1) + 1)
+                result = self.power_log_reader(pending, now)
                 self.data["powerLogCheck"] = result
                 if result["state"] == "emergency":
                     self.data["emergency"] = self.data["emergency"] or {
                         "timestamp": result["timestamp"],
                         "cause": "Thermal Emergency Sleep at " + result["logTimestamp"]}
                     self.thermal_hold = True
-            # Retain the last monitor observation through missing/stale input.
-            if "monitor" not in current and before:
-                current["monitor"] = before
-        self.data["powerLogSample"] = current
-        if gap:
-            # Evidence and its cursor must survive a restart before the next tick.
+                    self.data["powerLogConsumedThrough"] = result["timestamp"]
+                if result["state"] != "unavailable":
+                    pending = None
+            self.data["powerLogPendingSince"] = pending
             self.save()
 
     def policy(self):

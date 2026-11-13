@@ -136,11 +136,13 @@ A controller whose parent was already process 1 when it first asked, such as one
 A request from a client or ledger that predates parent tracking records the controller's observed parent when the owner first sees it, so only a later transition to process 1 drops it.
 The owner uses the monitor's observation time and uptime, restarts recovery after source or monitor-instance changes, observed suspension or gaps longer than ten seconds, and persists its last blocking cause.
 An explicit `emergency --evidence` records an observed emergency sleep; a critical thermal reading also latches conservatively without asserting that sleep occurred.
-On macOS, an observed wake or monitor discontinuity also checks `pmset -g log` for `Thermal Emergency Sleep` after the last recorded sample, with a three-second command timeout.
+On macOS, an observed wake or monitor discontinuity also checks `pmset -g log` for `Thermal Emergency Sleep` from the second containing the last recorded sample, with a three-second command timeout.
 Wall-clock/uptime divergence, sampling gaps longer than ten seconds, monitor restarts, sequence regression or jumps exceeding ten samples, and boot changes trigger that check; its sampling cursor survives owner restart.
 A matching entry latches its log timestamp, cancels running heavy compute and refuses new compute even if current telemetry has cooled or is unavailable.
 The monitor's `thermalEmergencySleep` flag remains an independent latch source.
 Status exposes the latest `powerLogCheck`, including command unavailability or failure; these failures do not themselves latch, and Linux never runs the command.
+Failed reads retain their unchecked interval across owner restart and retry at most once every ten seconds.
+Consumed emergency timestamps are excluded from later reads so an explicit clear does not replay the same evidence.
 With no prior sampling cursor, historical emergencies still require inspected OS evidence and the explicit `emergency` command.
 Clear the latch only with `clear-emergency --evidence` after inspecting that evidence.
 Heavy compute must still satisfy continuous recovery hysteresis after a clear, warning, wake or owner restart: `recoverySeconds` of uninterrupted nominal or fair thermal, normal memory pressure and an unchanged power source and monitor.
