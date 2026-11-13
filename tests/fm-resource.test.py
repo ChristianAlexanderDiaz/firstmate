@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Executable/socket behavior and deterministic power-log recovery checks."""
+"""Executable and socket behavior, power-log recovery, and policy tests with mocked readings."""
 import copy
 import datetime
 import importlib.util
@@ -2007,7 +2007,8 @@ class ClosedLidPolicyTests(unittest.TestCase):
         _, config, digest = resource.load_config(str(self.root / "config.json"))
         self.budget = resource.Budget(config, digest)
         self.addCleanup(self.budget.lock.close)
-        # Policy and tick run unchanged; only process discovery and signalling are fake.
+        # Policy and tick run unchanged with controlled clocks and telemetry;
+        # reconciliation, signalling and transition reporting are mocked.
         self.budget.reconcile = mock.Mock()
         self.budget.signal_lease = mock.Mock()
         self.budget.event = mock.Mock()
