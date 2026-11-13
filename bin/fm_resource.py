@@ -296,7 +296,7 @@ class Budget:
         # A matching legacy digest proves this policy; a changed one cannot.
         self.data["configPolicy"] = config
         self.healthy_since = None
-        # Set by a serious/critical/OS thermal signal; lengthens the next recovery.
+        # Thermal signals or a persisted emergency latch lengthen the next recovery.
         self.thermal_hold = False
         self.source = None
         self.monitor_id = None

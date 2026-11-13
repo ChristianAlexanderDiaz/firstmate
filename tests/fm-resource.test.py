@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Behavior through the executable, socket protocol and durable recovery ledger."""
+"""Executable/socket behavior and deterministic power-log recovery checks."""
 import copy
 import datetime
 import importlib.util
