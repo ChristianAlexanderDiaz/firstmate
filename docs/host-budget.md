@@ -35,10 +35,15 @@ Any decrease, mixed change, path change or other non-capacity change retains the
 A legacy ledger containing only a digest cannot prove a relaxation; first start the updated owner with the matching original policy to record it, or reconcile the ledger before changing policy.
 
 `bin/fm-resource-run status` gives the compact exception view, active reservations, pending queue, monitor timestamp and last cause.
-The owner appends each cause change to its private `transitions.jsonl` and also emits it to stdout.
+The owner appends cause changes with ISO-8601 UTC timestamps to its private `transitions.jsonl` and emits the same records to stdout.
+Ordinary ready/hold changes remain available for diagnosis, but quarantine-note flickers alone do not create transitions.
+An uninterrupted hold emits an additional record after ten minutes even when its reason never changes; its monotonic duration is recorded as `heldSeconds` and resets when admission becomes ready or the owner restarts.
+The check relays only stuck-request alarms, long-held lease alarms, and hold records with `heldSeconds` greater than 600, preserving the timestamp when present and tolerating older untimestamped records.
 For each supervising home with an existing state directory, run `bin/fm-resource-run register-check --directory /absolute/path/to/home/state` once with the same policy selected.
+Before a fresh registration, use `bin/fm-resource-run transitions --cursor /absolute/path/to/home/state/.host-budget-cursor --start-at-end` to skip historical records without printing them.
+That option refuses to replace an existing cursor: preserve an obsolete cursor under a different name before initializing its replacement, with the check retired during the change.
 Existing state-directory permissions are preserved; generated check, trust, cursor and lock files are private.
-This creates `host-budget.check.sh` and authenticates it through `bin/fm-check-register.sh`; the ordinary watcher check sweep prints one line per new transition using that home's durable byte cursor.
+Registration creates `host-budget.check.sh` and authenticates it through `bin/fm-check-register.sh`; the ordinary watcher check sweep uses that home's durable byte cursor and advances past quiet records too.
 The transition file is append-only so a home that was offline can read its missed events.
 Retire the check with `bin/fm-check-unregister.sh host-budget` in that home before changing its registration.
 

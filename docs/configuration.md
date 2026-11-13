@@ -1427,6 +1427,13 @@ When stripping is enabled, the hooks directory is read-only, so a hook manager r
 The flag is a home-wide attribution choice, so it is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract and a secondmate's own workers keep AI trailers too.
 Per-machine Cursor `cli-config.json` attribution-off is not this contract: it does not travel with Firstmate, defaults back to on when unset, and only feeds the CLI's request to the server, so it suppresses the trailer rather than preventing it.
 
+## Docker availability checks (config/docker-projects)
+
+For Docker availability alarms, list the project directory names that require Docker in `config/docker-projects`, one per line, then run `python3 bin/fm-docker-check.py --home /absolute/path/to/home register-check` from a stable installation.
+The registered check stays quiet unless a matching local task has a live endpoint and `docker info` fails or times out; it emits one timestamped alarm per outage and rearms after recovery or confirmed absence of matching live tasks.
+Incomplete endpoint discovery stays quiet and preserves the outage record while scanning resumes across polls.
+`bin/fm-docker-check.py --help` owns the check's configuration, executable injection, timeout and retirement interface.
+
 ## Project capacity (config/project-capacity)
 
 The separate [per-user host budget](host-budget.md) provides optional shared admission for local compute across projects and homes; `bin/fm-resource-run --help` owns its policy and lease interface.

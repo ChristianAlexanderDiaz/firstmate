@@ -35,6 +35,7 @@ CLASSES = {"test": 1024, "build": 3072, "browser": 2048, "graph": 512,
 CAPACITY_FIELDS = ("maxResidentWorkers", "memoryMiB", "maxHeavyJobs")
 MEMORY_WARNING = "memory warning: heavy compute held"
 STUCK_QUEUE_SECONDS = 10 * 60
+HOLD_ALERT_SECONDS = 10 * 60
 LONG_HELD_EXCLUSIVE_SECONDS = 60 * 60
 HERE = Path(__file__).resolve().parent
 BOOT = None
@@ -315,6 +316,8 @@ class Budget:
                 if time.time() - 1800 <= sample["timestamp"] <= time.time() + 1:
                     self.metrics.append(sample)
         self.exception = None
+        self.hold_since = None
+        self.hold_notified = False
         self.table = process_table()
         self.reconcile()
         if transition is not None:
@@ -325,14 +328,32 @@ class Budget:
         atomic_json(self.path, self.data)
 
     def event(self, reason):
-        if reason != self.exception:
+        held = 0
+        if reason == "ready":
+            self.hold_since = None
+            self.hold_notified = False
+        else:
+            if self.hold_since is None:
+                self.hold_since = time.monotonic()
+            held = max(0, time.monotonic() - self.hold_since)
+        overdue = held > HOLD_ALERT_SECONDS
+        if reason != self.exception or (overdue and not self.hold_notified):
             self.exception = reason
-            self.record_event("host-budget-transition", reason)
+            # Quarantine remains visible on leases; its flicker is not a
+            # change of admission cause and must not restart the hold clock.
+            quarantined = sum(bool(l.get("quarantined")) for l in self.data["leases"].values())
+            note = f"; {quarantined} unverified process group(s) quarantined" if quarantined else ""
+            self.record_event("host-budget-transition", reason + note,
+                **({"heldSeconds": held} if reason != "ready" else {}))
+            if overdue:
+                self.hold_notified = True
 
-    def record_event(self, event, reason):
-        self.data["events"].append({"timestamp": time.time(), "reason": reason})
+    def record_event(self, event, reason, **fields):
+        now = time.time()
+        self.data["events"].append({"timestamp": now, "reason": reason})
         self.data["events"] = self.data["events"][-100:]
-        record = json.dumps({"event": event, "reason": reason})
+        record = json.dumps({"timestamp": datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+            "event": event, "reason": reason, **fields})
         with open(self.root / "transitions.jsonl", "a") as stream:
             stream.write(record + "\n")
             stream.flush()
@@ -582,8 +603,7 @@ class Budget:
             if "cancelAt" in lease:
                 self.signal_lease(lease, signal.SIGKILL if time.monotonic() - lease["cancelAt"] >= self.config["graceSeconds"] else signal.SIGTERM)
         self.admit()
-        quarantined = sum(bool(l.get("quarantined")) for l in self.data["leases"].values())
-        self.event(self.reason + (f"; {quarantined} unverified process group(s) quarantined" if quarantined else ""))
+        self.event(self.reason)
         usage = [{"lease": token, "class": lease["class"], "rssKiB": sum(
             self.table[m["pid"]]["rssKiB"] for m in lease.get("members", []) if matches(m, self.table)),
             "cpu": [self.table[m["pid"]].get("cpuTime", self.table[m["pid"]].get("cpuTicks"))
@@ -672,8 +692,7 @@ class Budget:
         self.reconcile()
         if op in ("acquire", "inherit"):
             self.reason, _ = self.policy()
-            quarantined = sum(bool(l.get("quarantined")) for l in self.data["leases"].values())
-            self.event(self.reason + (f"; {quarantined} unverified process group(s) quarantined" if quarantined else ""))
+            self.event(self.reason)
         if op == "status":
             return {"ok": True, "reason": self.reason, "portable": self.portable, "availableHeavySlots": max(0, 1 - sum(l["class"] != "worker" for l in self.data["leases"].values())) if self.reason == "ready" else 0,
                 "leases": self.data["leases"], "queue": self.data["queue"],
@@ -1336,30 +1355,43 @@ def transitions(args, config):
     check_directory(cursor.parent)
     with os.fdopen(os.open(str(cursor) + ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        if args.start_at_end and (cursor.exists() or cursor.is_symlink()):
+            raise Refusal("start-at-end requires a new cursor; preserve the existing cursor before replacing it")
         position = json.loads(cursor.read_text()) if cursor.exists() else 0
         path = Path(config["stateDirectory"]) / "transitions.jsonl"
+        if args.start_at_end and not path.exists():
+            atomic_json(cursor, 0)
+            return
         with path.open("rb") as stream:
             stream.seek(position)
             for line in stream:
                 if not line.endswith(b"\n"):
                     break
-                record = json.loads(line)
-                print(record["event"] + ": " + record["reason"], flush=True)
+                if not args.start_at_end:
+                    record = json.loads(line)
+                    held = record.get("heldSeconds", 0)
+                    if (record["event"] in ("host-budget-stuck", "host-budget-long-held") or
+                            (record["event"] == "host-budget-transition" and
+                             type(held) in (int, float) and held > HOLD_ALERT_SECONDS)):
+                        stamp = record.get("timestamp")
+                        duration = f"held={int(held)}s: " if record["event"] == "host-budget-transition" else ""
+                        print((str(stamp) + " " if stamp else "") + record["event"] + ": " + duration + record["reason"], flush=True)
                 position += len(line)
         atomic_json(cursor, position)
 
 
 def parser():
     p = argparse.ArgumentParser(description="One per-user atomic host budget. No auto-start or unlimited fallback.",
-        epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; maxHeavyJobs=1, memoryMiB=10240, maxResidentWorkers=12, recoverySeconds=120, graceSeconds=5. All homes must select the same config, via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger and 30-minute metrics ring are private atomic JSON; transitions append to transitions.jsonl. register-check --directory STATE requires an existing home state directory, creates private files and registers a host-budget custom watcher check; transitions --cursor PATH prints each new transition once per cursor. Critical thermal signals latch across boot; clear only after inspecting evidence. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; these are integration boundaries, not an OS sandbox. Direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
+        epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; maxHeavyJobs=1, memoryMiB=10240, maxResidentWorkers=12, recoverySeconds=120, graceSeconds=5. All homes must select the same config, via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger and 30-minute metrics ring are private atomic JSON; transitions append to transitions.jsonl. register-check --directory STATE requires an existing home state directory, creates private files and registers a host-budget custom watcher check; transitions --cursor PATH relays stuck/long-held alarms and holds over ten minutes once per cursor; --start-at-end initializes a new cursor without replay. Critical thermal signals latch across boot; clear only after inspecting evidence. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; these are integration boundaries, not an OS sandbox. Direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
     p.add_argument("--config")
     sub = p.add_subparsers(dest="action", required=True)
     sub.add_parser("serve", help="foreground single owner; operator may supervise it with launchd")
     sub.add_parser("status", help="compact JSON status, including queue and last cause")
     q = sub.add_parser("register-check", help="register the transition wake check in an explicit home state directory")
     q.add_argument("--directory", required=True)
-    q = sub.add_parser("transitions", help="print new transition lines and advance a private byte cursor")
+    q = sub.add_parser("transitions", help="print stuck/long-held alarms and holds over ten minutes; advance a private byte cursor")
     q.add_argument("--cursor", required=True)
+    q.add_argument("--start-at-end", action="store_true", help="initialize a new cursor after all complete log lines, emitting nothing; refuses an existing cursor")
     q = sub.add_parser("prepare", help="write a private restore manifest and command adapters")
     q.add_argument("--directory", required=True)
     q.add_argument("--worktree", required=True)

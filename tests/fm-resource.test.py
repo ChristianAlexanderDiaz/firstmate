@@ -1483,7 +1483,7 @@ setTimeout(() => fs.rmdirSync('active-test'), 300);
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertFalse((self.root / "active-test").exists())
 
-    def test_registered_check_emits_each_transition_once(self):
+    def test_registered_check_emits_stuck_and_overdue_hold_once(self):
         state = self.root / "home-state"
         state.mkdir(mode=0o755)
         state.chmod(0o755)
@@ -1496,20 +1496,122 @@ setTimeout(() => fs.rmdirSync('active-test'), 300);
             self.assertEqual(result.returncode, 0, result.stderr)
             return result.stdout.splitlines()
         first = poll()
-        self.assertTrue(first)
+        self.assertEqual(first, [])
         self.assertEqual(poll(), [])
         sample = copy.deepcopy(SAMPLE)
         sample["thermalState"] = "serious"
         self.write("input.json", sample)
         wait_for(lambda: "serious" in self.status()["reason"])
+        self.assertEqual(poll(), [])
+        token, state_name = self.acquire("test", task="held-job")
+        self.assertEqual(state_name, "queued")
+        (self.root / "clock").write_text("722")
+        wait_for(lambda: any(q.get("stuckNotified") for q in self.status()["queue"]))
         lines = wait_for(poll)
-        self.assertEqual(len(lines), 1)
-        self.assertIn("serious", lines[0])
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(any("host-budget-stuck" in line and token in line for line in lines))
+        self.assertTrue(any("host-budget-transition" in line and "serious" in line for line in lines))
+        for line in lines:
+            stamp = datetime.datetime.fromisoformat(line.split()[0].replace("Z", "+00:00"))
+            self.assertEqual(stamp.tzinfo, datetime.timezone.utc)
         self.assertEqual(poll(), [])
         self.assertEqual(state.stat().st_mode & 0o777, 0o755)
         for name, mode in (("host-budget.check.sh", 0o700), ("host-budget.check-trust", 0o600),
                 (".host-budget-cursor", 0o600), (".host-budget-cursor.lock", 0o600)):
             self.assertEqual((state / name).stat().st_mode & 0o777, mode)
+
+    def test_transition_filter_accepts_legacy_alarms_and_only_overdue_holds(self):
+        self.stop()
+        path = self.root / "state/transitions.jsonl"
+        records = [
+            {"event": "host-budget-stuck", "reason": "legacy stuck"},
+            {"event": "host-budget-long-held", "reason": "legacy lease"},
+            {"event": "host-budget-transition", "reason": "legacy hold"},
+            {"event": "host-budget-transition", "reason": "ready"},
+            {"event": "host-budget-transition", "reason": "short hold", "heldSeconds": 599},
+            {"event": "host-budget-transition", "reason": "boundary hold", "heldSeconds": 600},
+            {"event": "host-budget-transition", "reason": "overdue hold", "heldSeconds": 601},
+            {"event": "host-budget-capacity-relaxed", "reason": "capacity change"},
+        ]
+        path.write_text("".join(json.dumps(row) + "\n" for row in records))
+        self.assertEqual(self.poll_transitions(), ["host-budget-stuck: legacy stuck",
+            "host-budget-long-held: legacy lease", "host-budget-transition: held=601s: overdue hold"])
+        self.assertEqual(self.poll_transitions(), [])
+        self.assertEqual(json.loads((self.root / "cursor").read_text()), path.stat().st_size)
+
+    def test_new_cursor_starts_at_end_and_preserves_partial_record(self):
+        self.stop()
+        path = self.root / "state/transitions.jsonl"
+        old = json.dumps({"event": "host-budget-stuck", "reason": "old alarm"}) + "\n"
+        new = json.dumps({"event": "host-budget-stuck", "reason": "new alarm"}) + "\n"
+        path.write_text(old + new[:20])
+        cursor = self.root / "cursor"
+        result = self.call("transitions", "--cursor", str(cursor), "--start-at-end")
+        self.assertEqual((result.returncode, result.stdout), (0, ""), result.stderr)
+        self.assertEqual(json.loads(cursor.read_text()), len(old.encode()))
+        self.assertEqual(self.poll_transitions(), [])
+        with path.open("a") as stream:
+            stream.write(new[20:])
+        self.assertEqual(self.poll_transitions(), ["host-budget-stuck: new alarm"])
+        position = cursor.read_bytes()
+        result = self.call("transitions", "--cursor", str(cursor), "--start-at-end")
+        self.assertEqual(result.returncode, 75)
+        self.assertEqual(cursor.read_bytes(), position)
+        path.unlink()
+        result = self.call("transitions", "--cursor", str(self.root / "new-cursor"), "--start-at-end")
+        self.assertEqual((result.returncode, result.stdout), (0, ""), result.stderr)
+        self.assertEqual(json.loads((self.root / "new-cursor").read_text()), 0)
+
+    def test_transition_log_and_stdout_have_matching_utc_timestamps(self):
+        self.stop()
+        rows = [json.loads(line) for line in (self.root / "state/transitions.jsonl").read_text().splitlines()]
+        self.assertGreaterEqual(len(rows), 2)
+        self.log.seek(0)
+        self.assertEqual([json.loads(line) for line in self.log.read().splitlines()], rows)
+        for row in rows:
+            self.assertTrue(row["timestamp"].endswith("Z"))
+            stamp = datetime.datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
+            self.assertEqual(stamp.tzinfo, datetime.timezone.utc)
+            self.assertLess(abs(stamp.timestamp() - time.time()), 60)
+
+    def test_quarantine_changes_do_not_record_transitions_or_reset_hold(self):
+        token, rows, _ = self.held_fixture(kind="browser")
+        sample = copy.deepcopy(SAMPLE)
+        sample["memory"]["pressure"] = "warning"
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"] == resource.MEMORY_WARNING)
+        path = self.root / "state/transitions.jsonl"
+        before = path.read_bytes()
+        rows[900002]["start"] = "unverified"
+        self.write("process-table.json", rows)
+        wait_for(lambda: self.status()["leases"][token].get("quarantined"))
+        self.assertEqual(path.read_bytes(), before)
+        # The unverified group disappears while policy inputs stay identical.
+        del rows[900002]
+        self.write("process-table.json", rows)
+        wait_for(lambda: token not in self.status()["leases"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(self.poll_transitions(), [])
+        (self.root / "clock").write_text("722")
+        lines = wait_for(lambda: self.poll_transitions())
+        self.assertEqual(len(lines), 1)
+        self.assertIn(resource.MEMORY_WARNING, lines[0])
+        self.assertEqual(self.poll_transitions(), [])
+        # A new reason in a continuous hold is still overdue.
+        sample["lidClosed"] = True
+        self.write("input.json", sample)
+        wait_for(lambda: "lid" in self.status()["reason"])
+        self.assertEqual(len(self.poll_transitions()), 1)
+        # Ready ends the episode; a later short hold is quiet again.
+        self.write("input.json", SAMPLE)
+        wait_for(lambda: "recovery hysteresis" in self.status()["reason"])
+        self.poll_transitions()
+        (self.root / "clock").write_text("843")
+        wait_for(lambda: self.status()["reason"] == "ready")
+        self.assertEqual(self.poll_transitions(), [])
+        self.write("input.json", sample)
+        wait_for(lambda: "lid" in self.status()["reason"])
+        self.assertEqual(self.poll_transitions(), [])
 
     def test_read_only_package_queries_bypass_compute_veto(self):
         sample = copy.deepcopy(SAMPLE)
