@@ -59,6 +59,8 @@
 # stuck-busy reason without typing. A non-busy due check or acknowledgement resets
 # this budget. Fire-and-forget retries remain outside escalation. A positively
 # dead or missing endpoint skips delivery and the ladder and escalates directly.
+# The sender records that recovery immediately, including for fire-and-forget
+# steers; this is separate from the retry ladder's no-escalation policy.
 # This library owns the schedule, durable budgets, and escalation marker.
 # If delivery-attempt or busy-deferral bookkeeping fails while the record remains unhandled,
 # the caller surfaces that failure instead of retrying silently; a concurrently
@@ -334,6 +336,23 @@ fm_task_inbox_doorbell_line() {  # <record-path>
   printf ": Firstmate instruction waiting: list \"\$FM_TASK_INBOX\"/*.msg in your '%s' steering inbox, read and act on each in numeric order, then mv each into its handled/." \
     "$quoted"
 }
+
+# Record recovery at the point a sender or watcher proves the agent is gone.
+# Queue before marking escalation, so a failed append can never silence retry.
+# The ordinary inbox acknowledgement owns clearance; a wake is an event, not
+# a new open decision that a replacement worker would have to close.
+fm_task_inbox_queue_unavailable() {  # <state-dir> <task> <target> <record>
+  local state=$1 task=$2 target=$3 rec=$4
+  local STATE=$1 FM_WAKE_QUEUE="$1/.wake-queue" FM_WAKE_QUEUE_LOCK="$1/.wake-queue.lock"
+  [ -f "$rec" ] || return 0
+  if [ "$(cat "${rec%/*}/.escalated" 2>/dev/null || true)" = "${rec##*/}" ]; then
+    return 0
+  fi
+  fm_wake_append stale "$target" \
+    "stale: $target (agent-recovery: task $task unread firstmate instruction: $rec is unhandled and the worker's agent has exited or its endpoint is missing; recover the worker)" || return 1
+  fm_task_inbox_record_escalated "$state" "$task" "$rec"
+}
+
 
 # Ring the doorbell, best-effort: one endpoint-liveness pre-check, one advisory
 # composer pre-check, then the backend's submit machinery with a minimal retry

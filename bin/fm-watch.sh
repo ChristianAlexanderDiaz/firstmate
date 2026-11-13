@@ -17,7 +17,15 @@
 # while an away record (state/.afk-contract, never quiet mode's) exists an
 # item held for the captain is never rechecked at all, in either posture.
 # While state/.afk exists, the daemon owns triage and this watcher queues and exits
-# on every wake. Printed reason lines:
+# on every wake.
+# A confirmed exited ordinary worker waiting at a gate or under a declared pause
+# bypasses that long cadence, before capture or busy classification. Probe every
+# FM_WAIT_AGENT_CHECK_SECS (default 60), with a 20s bound on the current-state
+# read: detection takes at most 60s + one poll + that read (95s at the default
+# 15s poll), plus other work in the serial poll. Repeat recovery wakes use
+# FM_STALE_ESCALATE_SECS, not every poll. Only tmux and herdr currently provide
+# recovery-grade agent liveness; unknown/unverified backends keep existing behavior.
+# Printed reason lines:
 #   signal: <file>...      status/turn-end signals, surfaced when a listed status
 #                          span has a captain-relevant event OR a no-verb signal lacks
 #                          positive execution evidence, unless afk is active
@@ -372,6 +380,8 @@ TURNEND_CHURN_ABSORB_SECS=${FM_TURNEND_CHURN_ABSORB_SECS:-900}  # longest a task
 # daemon owns triage, so this watcher reverts to one-shot (enqueue + exit on every
 # wake) and never double-triages - and never runs the costly provably-working read.
 STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provably-working stale escalates as a possible wedge
+WAIT_AGENT_CHECK_SECS=${FM_WAIT_AGENT_CHECK_SECS:-60}
+case "$WAIT_AGENT_CHECK_SECS" in ''|*[!0-9]*|0) WAIT_AGENT_CHECK_SECS=60 ;; esac
 # A busy pane is unconditional proof of liveness with no built-in duration bound,
 # so a hung foreground call can remain hidden even while its rendered busy
 # footer changes every poll. BUSY_TURN_MAX_SECS bounds how long any busy pane
@@ -415,8 +425,9 @@ SECONDMATE_LIVENESS_WINDOW_SECS=${FM_SECONDMATE_LIVENESS_WINDOW_SECS:-}
 case "$SECONDMATE_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_WINDOW_SECS=3600 ;; esac
 # A crew that declared a pause is idling on a known external wait, so its stale
 # pane is absorbed rather than wedge-escalated.
-# A captain-held or paused crew whose agent has confidently exited uses the same
-# bounded cadence, while a live or ambiguously read agent surfaces on first sight
+# A paused crew whose agent has confidently exited is handled first by
+# exited_wait_check. A captain-held crew keeps this bounded cadence, while a
+# live or ambiguously read agent surfaces on first sight
 # and is then held to that same cadence; a secondmate earns the cadence on its
 # declaration alone, because its endpoint liveness is deliberately never read
 # (pause_state_class owns that split).
@@ -545,16 +556,75 @@ window_key() {  # <window>
   printf '%s' "${key//./_}"
 }
 
+# Independent of display churn and pause absorption. Probe liveness before
+# spending a run read, and retain the recovery throttle across watcher restarts.
+# A new busy generation re-arms even if a successor dies before a live probe.
+# No status decision is manufactured: the stale wake requests recovery, not an
+# answer to gate findings. The usual supervisor recovery playbook owns action.
+exited_wait_check() {  # <window> <task> <kind>
+  local win=$1 task=$2 kind=$3 key probe marker gen identity agent line last detail run findings reason
+  [ -n "$task" ] && [ "$kind" != secondmate ] || return 1
+  key=$(window_key "$win")
+  probe="$STATE/.wait-agent-probed-$key"
+  marker="$STATE/.wait-agent-reported-$key"
+  gen=$(fm_busy_current_gen "$STATE" "$task" 2>/dev/null) || gen=unknown
+  if [ "$(cat "$probe" 2>/dev/null || true)" = "$gen" ] \
+    && [ "$(age_of "$probe")" -lt "$WAIT_AGENT_CHECK_SECS" ]; then
+    [ -f "$marker" ] && return 0
+    return 1
+  fi
+  printf '%s' "$gen" > "$probe"
+  agent=$(fm_backend_agent_state "$(window_backend "$win")" "$win" 2>/dev/null) || agent=unreadable
+  case "$agent" in
+    dead|missing) ;;
+    *) rm -f "$marker"; return 1 ;;
+  esac
+  line=$(fm_run_timed 20 "$FM_CREW_STATE_BIN" "$task" 2>/dev/null) || line=
+  last=$(status_declared_wait_line "$STATE/$task.status")
+  detail=
+  case "$line" in
+    'state: parked · source: run-step · '*) detail=${line#*source: run-step · } ;;
+    'state: working · source: run-step · '*) rm -f "$marker"; return 1 ;;
+    *)
+      if status_is_paused "$last"; then detail=$last; fi
+      ;;
+  esac
+  [ -n "$detail" ] || { rm -f "$marker"; return 1; }
+  # The gate snapshot is owned by the task's ask-user escalation contract.
+  # Select only this run's exact file, never an older run's findings by glob.
+  case "$line" in
+    *' · run: '*)
+      run=${line##* · run: }; run=${run%% · *}
+      case "$run" in
+        ''|*[!A-Za-z0-9_-]*) ;;
+        *)
+          findings="${FM_DATA_OVERRIDE:-$FM_HOME/data}/$task/nm-$run-findings.txt"
+          [ ! -f "$findings" ] || detail="$detail; findings file=$findings"
+          ;;
+      esac
+      ;;
+  esac
+  identity="$gen $agent $detail"
+  if [ "$(cat "$marker" 2>/dev/null || true)" = "$identity" ] \
+    && [ "$(age_of "$marker")" -lt "$STALE_ESCALATE_SECS" ]; then
+    return 0
+  fi
+  reason="stale: $win (agent-recovery: task $task agent $agent while $detail; recover the exited worker and reconcile the wait)"
+  fm_wake_append stale "$win" "$reason" || exit 1
+  printf '%s' "$identity" > "$marker"
+  clear_stale_hash_tracking "$key"
+  wake "$reason"
+}
+
 inbox_steer_escalate_unavailable() {  # <window> <task> <record>
   local w=$1 task=$2 rec=$3 reason
-  reason="stale: $w (unread firstmate instruction: $rec is unhandled and the worker's agent has exited or its endpoint is missing, so the doorbell was not typed; recover the worker)"
+  reason="stale: $w (agent-recovery: task $task unread firstmate instruction: $rec is unhandled and the worker's agent has exited or its endpoint is missing; recover the worker)"
   if [ ! -d "${rec%/*}" ] || [ ! -f "$rec" ]; then
     fm_task_inbox_due_action "$STATE" "$task" >/dev/null || true
     return 0
   fi
-  fm_wake_append stale "$w" "$reason" || exit 1
-  if ! fm_task_inbox_record_escalated "$STATE" "$task" "$rec"; then
-    echo "error: stale wake was queued for $task but its inbox escalation marker could not be written" >&2
+  if ! fm_task_inbox_queue_unavailable "$STATE" "$task" "$w" "$rec"; then
+    echo "error: could not record the recovery wake or inbox escalation marker for $task" >&2
     exit 1
   fi
   wake "$reason"
@@ -3414,6 +3484,7 @@ EOF
     # Steering-inbox loss detection runs before the secondmate stale
     # exemption below, because a mate's steers land in an inbox too.
     [ -z "$task" ] || inbox_steer_check "$w" "$task"
+    exited_wait_check "$w" "$task" "$kind" && continue
     key=$(window_key "$w")
     last=$(status_declared_wait_line "$STATE/$task.status")
     if ! status_is_paused_or_captain_held "$last" && [ -e "$STATE/.paused-$key" ]; then
