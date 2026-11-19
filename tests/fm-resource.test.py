@@ -2027,6 +2027,8 @@ class ClosedLidPolicyTests(unittest.TestCase):
         if advance > 10:
             self.budget.last_wall = self.clock
             self.budget.last_uptime = self.clock
+            self.budget.battery_last_wall = self.clock
+            self.budget.battery_last_uptime = self.clock
         (self.root / "monitor.json").write_text(json.dumps(self.sample))
         self.budget.tick()
 
@@ -2066,6 +2068,29 @@ class ClosedLidPolicyTests(unittest.TestCase):
             self.tick(2)
         self.assertFalse(self.budget.portable)
         self.assertEqual(self.budget.reason, "ready")
+
+    def test_observation_gap_discards_old_charge(self):
+        self.clock += 3600
+        self.sample["power"]["batteryPercent"] -= 1
+        self.tick()
+        self.assertNotIn("cancelAt", self.heavy)
+        self.assertFalse(self.budget.portable)
+        self.assertTrue(self.budget.reason.startswith("recovery hysteresis"))
+        self.tick(2)
+        self.assertNotIn("cancelAt", self.heavy)
+
+    def test_adapter_reading_failure_preserves_discharge_history(self):
+        self.sample["power"]["adapterWatts"] = None
+        self.sample["power"]["batteryPercent"] -= 1
+        self.sample["unavailable"] = ["power.adapterWatts"]
+        self.tick(2)
+        self.assertIn("cancelAt", self.heavy)
+        self.assertNotIn("cancelAt", self.worker)
+        self.sample["power"]["adapterWatts"] = 60
+        self.sample["unavailable"] = []
+        self.tick(2)
+        self.assertTrue(self.budget.portable)
+        self.assertEqual(self.budget.reason, "portable lid is closed or unknown")
 
     def test_unplug_cancels_despite_unrelated_missing_readings(self):
         for field in ("thermalState", "memory", "batteryPercent", "isCharging", "unavailable"):

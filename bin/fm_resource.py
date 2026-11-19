@@ -309,6 +309,8 @@ class Budget:
         self.battery_history = collections.deque()
         self.battery_source = None
         self.battery_sample_id = None
+        self.battery_last_wall = None
+        self.battery_last_uptime = None
         self.swap_bad = 0
         self.reason = "starting: reconciliation and recovery hysteresis required"
         self.telemetry = None
@@ -525,8 +527,11 @@ class Budget:
             unavailable = sample.get("unavailable", [])
             source = power.get("source")
             battery = power.get("batteryPercent")
-            power_key = (monitor_id, source, power.get("adapterWatts"))
-            if power_key != self.battery_source:
+            power_key = (monitor_id, source)
+            battery_gap = (self.battery_last_wall is not None and
+                (now - self.battery_last_wall > 10 or
+                 abs((now - self.battery_last_wall) - (host_uptime - self.battery_last_uptime)) > 1))
+            if power_key != self.battery_source or battery_gap:
                 self.battery_history.clear()
                 self.battery_source = power_key
                 self.battery_sample_id = None
@@ -543,6 +548,7 @@ class Budget:
                 if battery_sample_id != self.battery_sample_id:
                     self.battery_history.append((mono, battery))
                     self.battery_sample_id = battery_sample_id
+                    self.battery_last_wall, self.battery_last_uptime = now, host_uptime
             thermal, pressure = sample["thermalState"], sample["memory"]["pressure"]
             cancel = cancel or thermal == "critical" or pressure == "critical"
             if thermal in ("serious", "critical") or sample.get("thermalWarning", False):
