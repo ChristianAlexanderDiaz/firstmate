@@ -2058,6 +2058,32 @@ class ClosedLidPolicyTests(unittest.TestCase):
         self.assertTrue(self.budget.portable)
         self.assert_cancel_grace()
 
+    def test_stable_ac_recovers_after_discharge(self):
+        self.sample["power"]["batteryPercent"] -= 1
+        self.tick()
+        self.assertTrue(self.budget.portable)
+        for _ in range(100):
+            self.tick(2)
+        self.assertFalse(self.budget.portable)
+        self.assertEqual(self.budget.reason, "ready")
+
+    def test_unplug_cancels_despite_unrelated_missing_readings(self):
+        for field in ("thermalState", "memory", "batteryPercent", "isCharging", "unavailable"):
+            with self.subTest(field=field):
+                sample = copy.deepcopy(self.sample)
+                self.sample["power"].update(source="battery", adapterWatts=None)
+                if field == "unavailable":
+                    self.sample[field] = ["memory.pressure"]
+                elif field in ("batteryPercent", "isCharging"):
+                    del self.sample["power"][field]
+                else:
+                    del self.sample[field]
+                self.heavy.pop("cancelAt", None)
+                self.tick()
+                self.assertIn("cancelAt", self.heavy)
+                self.assertNotIn("cancelAt", self.worker)
+                self.sample = sample
+
     def test_unplug_with_serious_thermal_still_cancels(self):
         self.sample["power"].update(source="battery", adapterWatts=None)
         self.sample["thermalState"] = "serious"
@@ -2075,7 +2101,7 @@ class ClosedLidPolicyTests(unittest.TestCase):
     def test_closed_lid_ac_critical_thermal_cancels_and_latches(self):
         self.sample["thermalState"] = "critical"
         self.tick()
-        self.assertIn("thermal=critical", self.budget.reason)
+        self.assertIn("persistent emergency latch", self.budget.reason)
         self.assertTrue(self.budget.data["emergency"])
         self.assert_cancel_grace()
 

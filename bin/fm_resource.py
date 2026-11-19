@@ -306,6 +306,9 @@ class Budget:
         self.last_wall = None
         self.last_sequence = None
         self.swap = collections.deque()
+        self.battery_history = collections.deque()
+        self.battery_source = None
+        self.battery_sample_id = None
         self.swap_bad = 0
         self.reason = "starting: reconciliation and recovery hysteresis required"
         self.telemetry = None
@@ -364,7 +367,7 @@ class Budget:
         return parent != 1 and self.table[controller["pid"]]["ppid"] == 1
 
     def draining(self, battery):
-        return bool(self.swap) and battery < self.swap[0][2]
+        return bool(self.battery_history) and battery < self.battery_history[0][1]
 
     def cleanup_browser(self, token, lease):
         directory = self.root / "browser-jobs" / token
@@ -512,8 +515,36 @@ class Budget:
             uptime_age = host_uptime - float(sample["uptimeSeconds"])
             if not math.isfinite(age) or not math.isfinite(uptime_age) or not -1 <= age <= 10 or not -1 <= uptime_age <= 10:
                 raise Refusal("stale or future monitor sample")
+            monitor_id, sequence = sample["instanceUUID"], sample["sequence"]
+            if monitor_id == self.monitor_id and self.last_sequence is not None and sequence < self.last_sequence:
+                raise Refusal("monitor sequence regressed")
+            if (self.battery_sample_id is not None and monitor_id == self.battery_sample_id[0] and
+                    sequence < self.battery_sample_id[1]):
+                raise Refusal("monitor sequence regressed")
+            power = sample.get("power") or {}
+            unavailable = sample.get("unavailable", [])
+            source = power.get("source")
+            battery = power.get("batteryPercent")
+            power_key = (monitor_id, source, power.get("adapterWatts"))
+            if power_key != self.battery_source:
+                self.battery_history.clear()
+                self.battery_source = power_key
+                self.battery_sample_id = None
+            while len(self.battery_history) > 1 and mono - self.battery_history[1][0] >= 60:
+                self.battery_history.popleft()
+            valid_battery = (type(battery) in (int, float) and 0 <= battery <= 100 and
+                "power.batteryPercent" not in unavailable)
+            portable = source in ("battery", "ups") or (source == "ac" and valid_battery and self.draining(battery))
+            if (sample.get("lidClosed") is True and "lidClosed" not in unavailable and
+                    "power.source" not in unavailable and portable):
+                cancel = True
+            if valid_battery and source in ("ac", "battery", "ups") and "power.source" not in unavailable:
+                battery_sample_id = (monitor_id, sequence)
+                if battery_sample_id != self.battery_sample_id:
+                    self.battery_history.append((mono, battery))
+                    self.battery_sample_id = battery_sample_id
             thermal, pressure = sample["thermalState"], sample["memory"]["pressure"]
-            cancel = thermal == "critical" or pressure == "critical"
+            cancel = cancel or thermal == "critical" or pressure == "critical"
             if thermal in ("serious", "critical") or sample.get("thermalWarning", False):
                 self.thermal_hold = True
             if sample.get("thermalEmergencySleep") is True or thermal == "critical":
@@ -527,8 +558,6 @@ class Budget:
                 self.healthy_since = None
                 self.swap.clear()
                 self.swap_bad = 0
-            if monitor_id == self.monitor_id and self.last_sequence is not None and sequence < self.last_sequence:
-                raise Refusal("monitor sequence regressed")
             self.monitor_id, self.source, self.last_sequence = monitor_id, source, sequence
             self.last_uptime, self.last_wall = host_uptime, now
             self.telemetry = sample
