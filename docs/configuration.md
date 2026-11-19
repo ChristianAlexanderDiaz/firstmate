@@ -1292,7 +1292,7 @@ Each canonical Claude ship and scout spawn and relaunch that does not name an ac
 3. An account is choosable only when it passes the shared [model-aware failover launch checks](#limits).
 
 The launch runs on the chosen account like a failover account, and the task record carries `claude_account=<name>` plus `claude_account_reason=`, one line naming each account's week left, weekly reset, and pace, and any account refused at launch.
-Every paced relaunch chooses afresh rather than keeping the last account, while a relaunch that names `--claude-account`, including a failover move, uses that literal account for its replacement.
+Every paced ship or scout relaunch chooses afresh rather than keeping the last account, while a relaunch that names `--claude-account`, including a failover move, uses that literal account for its replacement.
 Control checks a pacing choice before stopping the current worker, and spawn chooses again using the shared home snapshot before launching its replacement.
 
 ### When no account is choosable

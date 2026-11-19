@@ -3045,8 +3045,8 @@ if [ -n "$WORKER_ACCOUNT" ] && [ "$HARNESS" = claude ]; then
   fi
 fi
 # Claude account failover (header above): a relaunch onto a named account of
-# config/claude-failover, and every later relaunch of a task already moved,
-# resolves, sign-in checks, and checks paid usage and model quota here,
+# config/claude-failover, and later relaunches retaining a moved task's account,
+# resolve, sign-in check, and check paid usage and model quota here,
 # before any endpoint changes. Every account name is literal. A task never
 # moved, and every launch in a home without the map, selects nothing here,
 # except where config/claude-account `paced` chooses an account per launch.
@@ -3076,7 +3076,8 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fi
 elif [ "$KIND" = secondmate ] && [ "$HARNESS" = claude ] && [ -f "$STATE/$ID.meta" ]; then
   # Endpoint-dead recovery uses --secondmate, rather than --relaunch. Retain
-  # the recorded account when usable; a paced home can recover on another.
+  # the recorded account when usable unless a fixed pin replaces it; a paced
+  # home can recover on another.
   CLAUDE_ACCOUNT=$(fm_meta_get "$STATE/$ID.meta" claude_account)
   if [ -n "$CLAUDE_ACCOUNT" ] && [ -z "$WORKER_ACCOUNT" ] && fm_worker_account_paced "$CONFIG"; then
     if ! CLAUDE_ACCOUNT_RECOVERY_CHECK=$(fm_worker_account_failover_select "$CONFIG" "$CLAUDE_ACCOUNT" claude "$MODEL" 2>&1); then
