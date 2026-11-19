@@ -454,8 +454,10 @@
 #   sign-in, paid-usage, and model-quota checked before any endpoint changes,
 #   launched like a pinned root, and recorded as claude_account= in the task record and on the spawned
 #   line; later relaunches retain it unless another literal account name, a
-#   harness change, or pacing overrides it. It refuses beside a
-#   config/claude-account that fixes one account. Every Claude ship, scout, and local secondmate StopFailure hook runs
+#   harness change, pacing, or a fixed pin overrides it. A fixed pin drops a
+#   recorded account on relaunch or secondmate recovery, logging the old name
+#   and pin to stderr and claude_account_reason. An explicit --claude-account
+#   still refuses beside a fixed config/claude-account. Every Claude ship, scout, and local secondmate StopFailure hook runs
 #   bin/fm-account-failover.sh record, which writes nothing without the map;
 #   that script owns the move.
 # Claude account pacing (config/claude-account `paced`): every canonical
@@ -3072,8 +3074,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   elif [ "$HARNESS" = claude ] && [ "$CLAUDE_ACCOUNT_PACED" = 0 ]; then
     CLAUDE_ACCOUNT=${CLAUDE_ACCOUNT_PRIOR:-}
   fi
-elif [ "$KIND" = secondmate ] && [ "$HARNESS" = claude ] && [ -f "$STATE/$ID.meta" ] \
-  && { [ ! -e "$CONFIG/claude-account" ] || fm_worker_account_paced "$CONFIG"; }; then
+elif [ "$KIND" = secondmate ] && [ "$HARNESS" = claude ] && [ -f "$STATE/$ID.meta" ]; then
   # Endpoint-dead recovery uses --secondmate, rather than --relaunch. Retain
   # the recorded account when usable; a paced home can recover on another.
   CLAUDE_ACCOUNT=$(fm_meta_get "$STATE/$ID.meta" claude_account)
@@ -3084,6 +3085,14 @@ elif [ "$KIND" = secondmate ] && [ "$HARNESS" = claude ] && [ -f "$STATE/$ID.met
       CLAUDE_ACCOUNT_PACED=1
     fi
   fi
+fi
+if [ "$CLAUDE_ACCOUNT_SET" -eq 0 ] && [ "$HARNESS" = claude ] \
+  && [ -n "$WORKER_ACCOUNT" ] && [ -n "$CLAUDE_ACCOUNT" ]; then
+  # Only inherited accounts yield to the already validated fixed pin. Keep
+  # explicit requests on the ordinary failover validation path below.
+  CLAUDE_ACCOUNT_REASON="dropped recorded Claude account '$CLAUDE_ACCOUNT'; using fixed pin '$WORKER_ACCOUNT_DECLARED'"
+  printf '%s\n' "$CLAUDE_ACCOUNT_REASON" >&2
+  CLAUDE_ACCOUNT=
 fi
 if [ "$CLAUDE_ACCOUNT_PACED" = 1 ]; then
   # Claude account pacing (header above): a fresh choice on every launch.

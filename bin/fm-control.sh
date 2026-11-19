@@ -90,7 +90,8 @@
 #              that named account of config/claude-failover (docs/configuration.md
 #              "Claude account failover"); every name is literal. Without an
 #              override, a moved task retains its account unless this home's
-#              pacing setting chooses afresh (bin/fm-worker-account-lib.sh).
+#              pacing setting chooses afresh or a fixed pin replaces the recorded
+#              account (bin/fm-spawn.sh owns the drop log).
 #              The account is resolved,
 #              sign-in checked, and checked for paid usage and model quota
 #              before the old agent stops.
@@ -1051,11 +1052,11 @@ resolve_relaunch_profile() {
   # The launch owner applies this home's worker account pin too, but only after
   # the old agent has been stopped, so a pin that no longer resolves or is
   # signed out must refuse here, while nothing has changed yet.
-  local account_model=$TARGET_MODEL account_mate=
+  local account_model=$TARGET_MODEL account_mate='' account_selection
   [ "$account_model" != default ] || account_model=
   [ "$KIND" != secondmate ] || account_mate=$ID
-  fm_worker_account_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
-    "$account_model" "$TARGET_HARNESS" "" "$account_mate" >/dev/null || return 1
+  account_selection=$(fm_worker_account_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
+    "$account_model" "$TARGET_HARNESS" "" "$account_mate") || return 1
   # Likewise polytoken's launch profile and wiring refusals
   # (bin/fm-polytoken-lib.sh owns them). The launch owner retires the prior
   # incarnation's own generated hook layer and facet, so only wiring it did not generate
@@ -1087,6 +1088,10 @@ resolve_relaunch_profile() {
   PRIOR_CLAUDE_ACCOUNT=$(fm_meta_get "$META" claude_account)
   if [ "$CLAUDE_ACCOUNT_SET" = 1 ]; then
     TARGET_CLAUDE_ACCOUNT=$NEW_CLAUDE_ACCOUNT
+  elif [ "$TARGET_HARNESS" = claude ] && [ -n "$account_selection" ]; then
+    # A validated fixed pin replaces only a carried-forward account. Spawn
+    # records the drop once when it adopts the original task metadata.
+    TARGET_CLAUDE_ACCOUNT=
   elif [ "$TARGET_HARNESS" = claude ] && { [ "$KIND" = ship ] || [ "$KIND" = scout ]; } \
     && fm_worker_account_paced "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"; then
     TARGET_CLAUDE_ACCOUNT=

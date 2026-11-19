@@ -1245,7 +1245,8 @@ Firstmate's monitoring then, within one cycle:
 The move always starts a fresh agent and never resumes the old conversation.
 Prompt caching does not carry across accounts, so resuming would resend the whole transcript uncached, while a fresh agent reads only the task's instructions, its local copy with every uncommitted change, and a short note.
 
-The task record then carries `claude_account=<name>`; later relaunches retain it unless an explicit account or harness change overrides it, or [pacing](#claude-account-pacing-configclaude-account-paced) chooses afresh.
+The task record then carries `claude_account=<name>`; later relaunches retain it unless an explicit account or harness change overrides it, a fixed worker account pin replaces it, or [pacing](#claude-account-pacing-configclaude-account-paced) chooses afresh.
+When a fixed pin replaces a recorded account on relaunch or secondmate recovery, the launch clears the recorded failover account and logs its name and the pin used to stderr and `claude_account_reason` in the task record.
 Every selected account name, including `default`, resolves literally through the map.
 When no account qualifies, the worker stays stopped; the launching home emits one `blocked:` outcome naming each account's remaining quota and reset time across all affected tasks.
 A fresh failover snapshot or the watcher's periodic maintenance re-arms that notice only when an account qualifies for the model recorded at exhaustion; room for an unrelated model alone does not re-arm it.
@@ -1257,7 +1258,7 @@ Local secondmates use the same failover path and retain their home, charter, chi
 Endpoint-dead recovery retains the selected account when it remains usable; a launching home with `config/claude-account` set to `paced` tries another mapped account when that recorded account refuses, recording both the refusal and the selected account's reason.
 Their workers still use their own home's [worker account configuration](#worker-account-pin-configclaude-account-configpi-account).
 Remote secondmate routes remain a follow-up: local control refuses endpoints on another host.
-A `config/claude-account` that names one account pins every Claude worker to it, so a home with both files leaves limited workers stopped and says so; the `paced` value pins nothing, and failover moves its workers as usual.
+A `config/claude-account` that names one account pins every Claude worker to it, so explicit failover requests still refuse and automatic failover leaves limited workers stopped; the `paced` value pins nothing, and failover moves its workers as usual.
 Accounts with a paid credits window or unknown paid usage status never qualify, even when their plan has room.
 Selection, control, and spawn capture one snapshot for the complete launch decision, including pacing and quota-plan admission.
 Separate decisions share the home-local snapshot for sixty seconds, including failed reads; vendor-stale or vendor-reused readings still refuse.
