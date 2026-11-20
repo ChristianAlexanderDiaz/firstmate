@@ -2305,7 +2305,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted=""
+  local key reason captured="" stranded="" unstarted="" attention=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" "$STATE" || return 1
@@ -2320,6 +2320,7 @@ procevent_surface_queued() {
     case "$key" in
       procevent:*:stranded:*) stranded="$stranded $key" ;;
       procevent:*:launch-failed:*) unstarted="$unstarted $key" ;;
+      procevent:*:attention:*) attention="$attention $key" ;;
       *) captured="$captured $key" ;;
     esac
   done < <(fm_wake_queued_keys_locked check)
@@ -2329,6 +2330,10 @@ procevent_surface_queued() {
   fi
   reason="check:"
   [ -z "$captured" ] || reason="$reason process-event result captured:$captured"
+  if [ -n "$attention" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason process-event board needs attention:$attention"
+  fi
   if [ -n "$stranded" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason process-event source stranded:$stranded"

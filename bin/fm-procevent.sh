@@ -71,6 +71,10 @@
 #            no open task-owned round. This is liveness repair only - it never
 #            discovers results by
 #            polling the source, because the child blocks on the source itself.
+#            Built-in adapters may implement `attention <source-id>` to report
+#            local-record-only reminders as <key><tab><message>. Each key is
+#            queued once per board generation, under the source lock; no reply
+#            or ownership transfer is performed. Lavish owns its board policy.
 #            A start is REPORTED only once it is confirmed: starting a runner is
 #            detached and its errors reach no caller, so a source that cannot
 #            start would otherwise be counted exactly like one that is
@@ -1060,6 +1064,14 @@ cmd_start() {
       die "extension registration owner is unreadable: $id"
       ;;
   esac
+  CLAIM_REGISTRATION_GENERATION=$(fm_procevent_registration_generation "$(source_file "$id")") || {
+    fm_procevent_source_lock_release "$id"
+    die "cannot read registration generation: $id"
+  }
+  CLAIM_BOARD_GENERATION=$(fm_procevent_board_generation "$(source_file "$id")") || {
+    fm_procevent_source_lock_release "$id"
+    die "cannot read registration generation: $id"
+  }
   exec 7<"$(source_file "$id")" || {
     fm_procevent_source_lock_release "$id"
     die "cannot retain registration identity: $id"
@@ -1148,6 +1160,8 @@ cmd_start() {
         return 1
       fi
       CLAIM_REG_IDENTITY=$current
+      CLAIM_REGISTRATION_GENERATION=$(fm_procevent_registration_generation "$registration") || { fm_procevent_source_lock_release "$id"; return 1; }
+      CLAIM_BOARD_GENERATION=$(fm_procevent_board_generation "$registration") || { fm_procevent_source_lock_release "$id"; return 1; }
     fi
     fm_procevent_source_lock_release "$id" || return 1
     exec 7<"$registration" || return 1
@@ -1354,11 +1368,14 @@ EOF
   if [ "$extension_owner" -eq 1 ]; then
     :
   else
+    if [ "$(fm_procevent_registration_generation "$(source_file "$id")" 2>/dev/null)" = "$CLAIM_REGISTRATION_GENERATION" ]; then
+      CLAIM_BOARD_GENERATION=$(fm_procevent_board_generation "$(source_file "$id")") || die "cannot read board generation"
+    fi
     if [ -n "$task_owner" ]; then
-      durable=$(fm_procevent_capture "$STATE" "$id" "$adapter" "$out" "$task_owner") \
+      durable=$(FM_PROCEVENT_CAPTURE_REGISTRATION="$CLAIM_BOARD_GENERATION" fm_procevent_capture "$STATE" "$id" "$adapter" "$out" "$task_owner") \
         || { rm -f -- "$out"; die "cannot durably capture the result"; }
     else
-      durable=$(fm_procevent_capture "$STATE" "$id" "$adapter" "$out") \
+      durable=$(FM_PROCEVENT_CAPTURE_REGISTRATION="$CLAIM_BOARD_GENERATION" fm_procevent_capture "$STATE" "$id" "$adapter" "$out") \
         || { rm -f -- "$out"; die "cannot durably capture the result"; }
     fi
   fi
@@ -1687,6 +1704,25 @@ stranded_leaderless_detail() {  # <source-id>
   printf '%s' "its runner died and its polling child may still be attached to the source's session, so reconcile preserves that claim and starts no replacement, and nothing automatic will touch that group. Verify whether anything is still polling $1; once that process group is empty, the next reconcile reclaims the source on its own."
 }
 
+source_attention_locked() {  # <source-id>
+  local id=$1 adapter script rows key message identity
+  identity=$(fm_procevent_board_generation "$(source_file "$id")") || return 0
+  [ "$(source_field "$id" owner)" != extension ] || return 0
+  adapter=$(source_field "$id" adapter)
+  fm_procevent_adapter_valid "$adapter" || return 0
+  script=$(adapter_script "$adapter")
+  [ -f "$script" ] && [ ! -L "$script" ] || return 0
+  rows=$("$script" attention "$id" 2>/dev/null) || return 0
+  while IFS=$'\t' read -r key message; do
+    case "$key" in ''|*[!a-z0-9-]*) continue ;; esac
+    [ -n "$message" ] || continue
+    announce_source_once "$REG/.$id.attention-$key" "$identity" \
+      "procevent:$id:attention:$key" "check: $message" || true
+  done <<EOF
+$rows
+EOF
+}
+
 cmd_reconcile() {
   local rec id published started=0 stopped=0 uncertain=0 failed=0 claim owner pid token identity claim_state stop_state task_pending
   local launch_identity launch_stamp launch_mark unconfirmed entry
@@ -1748,6 +1784,7 @@ cmd_reconcile() {
       fm_procevent_source_id_valid "$id" || continue
       fm_procevent_source_lock_acquire "$id" || continue
       if [ -f "$(source_file "$id")" ] && [ ! -L "$(source_file "$id")" ]; then
+        source_attention_locked "$id"
         fm_procevent_claim_state_locked "$id"
         claim_state=$?
         if [ "$(source_kind "$id" 2>/dev/null || true)" = task-owned ]; then

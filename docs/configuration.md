@@ -2438,6 +2438,10 @@ An already-armed Lavish source keeps its registered listener command until it is
 
 ### Crew-hosted Lavish review boards
 
+Local board reminders use the existing supervision cycle and captured results; [`fm-procevent-lavish.sh attention`](../bin/fm-procevent-lavish.sh) describes eligibility, timing, deduplication, and liveness limitations.
+A board rewritten in place can have old answers suppress its new reminders, and replacement or rebuild transitions do not guarantee isolation from earlier feedback.
+Automatic closure after the last pick is not supported.
+
 **Arm and confirm a listener**
 
 A live task that hosts a Lavish board owns its listener, so firstmate must never arm that board.
