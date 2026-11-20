@@ -33,10 +33,15 @@ import uuid
 CLASSES = {"test": 1024, "build": 3072, "browser": 2048, "graph": 512,
            "exclusive": 4096, "worker": 512}
 CAPACITY_FIELDS = ("maxResidentWorkers", "memoryMiB", "maxHeavyJobs")
+LEVELS = ("Stop and cancel", "Stop", "Reduced", "Normal", "Full")
+SMALL_CLASSES = ("test", "graph", "browser")
+LARGE_CLASSES = ("build", "exclusive")
 MEMORY_WARNING = "memory warning: heavy compute held"
 STUCK_QUEUE_SECONDS = 10 * 60
 HOLD_ALERT_SECONDS = 10 * 60
 LONG_HELD_EXCLUSIVE_SECONDS = 60 * 60
+POLICY_LOG_LIMIT = 64 * 1024 * 1024
+POLICY_LOG_RETENTION = 48 * 60 * 60
 HERE = Path(__file__).resolve().parent
 BOOT = None
 
@@ -221,11 +226,16 @@ def capacity_relaxation(previous, config):
         return False
     if any(type(previous.get(key)) is not int for key in CAPACITY_FIELDS):
         return False
-    old_other = {key: value for key, value in previous.items() if key not in CAPACITY_FIELDS}
-    new_other = {key: value for key, value in config.items() if key not in CAPACITY_FIELDS}
+    # Switching policy changes safety/cancellation semantics as well as capacity,
+    # so it is never a live relaxation. Full may only be enabled, never disabled.
+    fields = (*CAPACITY_FIELDS, "fullLevelEnabled")
+    old_other = {key: value for key, value in previous.items() if key not in fields}
+    new_other = {key: value for key, value in config.items() if key not in fields}
+    full_increase = not previous.get("fullLevelEnabled", False) and config.get("fullLevelEnabled", False)
     return (config_digest(old_other) == config_digest(new_other) and
+            (not previous.get("fullLevelEnabled", False) or config.get("fullLevelEnabled", False)) and
             all(config[key] >= previous[key] for key in CAPACITY_FIELDS) and
-            any(config[key] > previous[key] for key in CAPACITY_FIELDS))
+            (full_increase or any(config[key] > previous[key] for key in CAPACITY_FIELDS)))
 
 
 def load_config(name):
@@ -233,8 +243,12 @@ def load_config(name):
     config = json.loads(Path(name).read_text())
     if not isinstance(config, dict):
         raise Refusal("host budget policy must be a JSON object")
-    if config.get("schemaVersion") != 1 or config.get("maxHeavyJobs", 1) != 1:
-        raise Refusal("only schemaVersion 1 and the uncalibrated one-heavy-job profile are supported")
+    if config.get("schemaVersion") != 1:
+        raise Refusal("only schemaVersion 1 is supported")
+    if config.get("policyMode", "shadow") not in ("shadow", "on"):
+        raise Refusal("invalid policyMode: expected shadow or on")
+    if type(config.get("fullLevelEnabled", False)) is not bool:
+        raise Refusal("invalid fullLevelEnabled")
     for key in ("stateDirectory", "socketPath", "monitorPath"):
         if not isinstance(config.get(key), str) or not Path(config[key]).is_absolute():
             raise Refusal(f"configuration requires absolute {key}")
@@ -242,11 +256,10 @@ def load_config(name):
         raise Refusal("Unix socket path exceeds portable 100-byte limit")
     for key, default, low, high in (("memoryMiB", 10240, 4096, 1048576),
             ("maxResidentWorkers", 12, 1, 128), ("recoverySeconds", 120, 120, 3600),
-            ("graceSeconds", 5, 1, 60)):
+            ("graceSeconds", 5, 1, 60), ("maxHeavyJobs", 1, 1, 2)):
         value = config.setdefault(key, default)
         if type(value) is not int or not low <= value <= high:
             raise Refusal(f"invalid {key}")
-    config["maxHeavyJobs"] = 1
     digest = config_digest(config)
     return str(Path(name).resolve()), config, digest
 
@@ -258,6 +271,197 @@ def peer_uid(connection):
             raise Refusal("cannot authenticate socket peer")
         return uid.value
     return struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1]
+
+
+class AdmissionPolicy:
+    """One measurement-to-level state machine, also used by offline replay.
+
+    Levels step down immediately and recover one rung per cause-specific dwell.
+    All clocks are supplied by the caller; this class never reads or signals a host.
+    """
+    def __init__(self, config, saved=None):
+        self.config = config
+        self.level = 0 if (saved or {}).get("level") == "Stop and cancel" else 1
+        self.reason = "starting: fresh readings required"
+        self.since = None
+        self.recovering = None
+        self.dwell = max(30, (saved or {}).get("dwellSeconds", 30))
+        self.cause = (saved or {}).get("cause", "missing reading")
+        self.emergency = (saved or {}).get("emergency")
+        self.previous = None
+        self.samples = collections.deque()
+        self.sample_id = None
+        self.swap_bad = 0
+        self.portable = True
+        self.workers_allowed = False
+
+    def target(self, sample, now, mono, host_uptime, boot, emergency):
+        self.portable = True
+        self.workers_allowed = False
+        self.emergency = emergency or self.emergency
+        changed = False
+        continuity_error = None
+        try:
+            if sample["schemaVersion"] != 1 or sample["lifecycle"] != "running" or sample["bootSessionUUID"] != boot:
+                raise Refusal("monitor continuity is unavailable")
+            age = now - float(sample["timestamp"])
+            uptime_age = host_uptime - float(sample["uptimeSeconds"])
+            if not math.isfinite(age) or not math.isfinite(uptime_age) or not -1 <= age <= 10 or not -1 <= uptime_age <= 10:
+                raise Refusal("stale or future monitor sample")
+            if not isinstance(sample["unavailable"], list) or not all(isinstance(item, str) for item in sample["unavailable"]):
+                raise Refusal("monitor unavailable readings list is invalid")
+            if sample["unavailable"]:
+                raise Refusal("monitor has unavailable readings")
+            monitor, sequence, source = sample["instanceUUID"], sample["sequence"], sample["power"]["source"]
+            if not isinstance(monitor, str) or not monitor or type(sequence) is not int or source not in ("ac", "battery", "ups"):
+                raise Refusal("monitor identity, sequence or source is unavailable")
+            if self.previous:
+                old_monitor, old_sequence, old_source, old_wall, old_uptime = self.previous
+                if monitor == old_monitor and sequence < old_sequence:
+                    raise Refusal("monitor sequence regressed")
+                changed = (monitor != old_monitor or source != old_source or now - old_wall > 10 or
+                           abs((now - old_wall) - (host_uptime - old_uptime)) > 1)
+            self.previous = (monitor, sequence, source, now, host_uptime)
+        except (ValueError, KeyError, TypeError, Refusal) as error:
+            continuity_error = error
+            changed = True
+            self.previous = None
+        if changed:
+            self.samples.clear()
+            self.swap_bad = 0
+            self.sample_id = None
+        # Known critical readings and the durable latch cannot be hidden by an
+        # unrelated missing field. Stale data alone never clears that latch.
+        if isinstance(sample, dict):
+            thermal = sample.get("thermalState")
+            memory = sample.get("memory")
+            power = sample.get("power")
+            pressure = memory.get("pressure") if isinstance(memory, dict) else None
+            if thermal == "critical" or sample.get("thermalEmergencySleep") is True:
+                self.emergency = self.emergency or {"timestamp": now, "cause": "critical thermal signal / emergency sleep"}
+            if self.emergency:
+                return 0, "persistent emergency latch requires inspected evidence and explicit clear", "heat", 240
+            if pressure == "critical":
+                if thermal == "serious" or sample.get("thermalWarning", False):
+                    return 0, "critical memory pressure and thermal warning", "heat", 240
+                return 0, "critical memory pressure", "memory", 60
+            if isinstance(power, dict):
+                battery = power.get("batteryPercent")
+                heat = thermal == "serious" or bool(sample.get("thermalWarning", False))
+                if type(battery) in (int, float) and 0 <= battery < 15:
+                    return 0, "battery below 15% cancellation reserve", "heat" if heat else "power", 240 if heat else 30
+                if power.get("source") in ("battery", "ups") and sample.get("lidClosed") is True:
+                    return 0, "lid closed on battery", "heat" if heat else "power", 240 if heat else 30
+            if thermal == "serious" or sample.get("thermalWarning", False):
+                return 1, "serious thermal / OS thermal warning", "heat", 240
+        elif self.emergency:
+            return 0, "persistent emergency latch requires inspected evidence and explicit clear", "heat", 240
+        try:
+            if continuity_error:
+                raise continuity_error
+            if not isinstance(sample, dict):
+                raise Refusal("monitor reading missing or malformed")
+            if sample["schemaVersion"] != 1 or sample["lifecycle"] != "running":
+                raise Refusal("monitor schema or lifecycle is unavailable")
+            if sample["bootSessionUUID"] != boot:
+                raise Refusal("old-boot monitor sample")
+            age = now - float(sample["timestamp"])
+            uptime_age = host_uptime - float(sample["uptimeSeconds"])
+            if not math.isfinite(age) or not math.isfinite(uptime_age) or not -1 <= age <= 10 or not -1 <= uptime_age <= 10:
+                raise Refusal("stale or future monitor sample")
+            if thermal not in ("nominal", "fair") or pressure not in ("normal", "warning"):
+                raise Refusal(f"thermal={thermal} memory={pressure}")
+            battery, swap = power["batteryPercent"], memory["swapUsedBytes"]
+            if type(battery) not in (int, float) or not 0 <= battery <= 100:
+                raise Refusal("battery reading is unavailable")
+            if type(swap) not in (int, float) or not math.isfinite(swap) or swap < 0:
+                raise Refusal("swap reading is unavailable")
+            source = power["source"]
+            if source not in ("ac", "battery", "ups") or type(power["isCharging"]) is not bool:
+                raise Refusal("power source is unavailable")
+            watts = power["adapterWatts"]
+            if source == "ac" and (type(watts) not in (int, float) or not math.isfinite(watts) or watts <= 0):
+                raise Refusal("negotiated AC supply is unavailable")
+            if type(sample["lidClosed"]) is not bool:
+                raise Refusal("lid reading is unavailable")
+            monitor, sequence = sample["instanceUUID"], sample["sequence"]
+            if not isinstance(monitor, str) or not monitor or type(sequence) is not int:
+                raise Refusal("monitor identity or sequence is unavailable")
+            while len(self.samples) > 1 and mono - self.samples[1][0] >= 60:
+                self.samples.popleft()
+            if (monitor, sequence) != self.sample_id:
+                self.samples.append((mono, swap, battery))
+                if mono - self.samples[0][0] >= 60:
+                    self.swap_bad = self.swap_bad + 1 if swap - self.samples[0][1] >= 256 * 1024 * 1024 else 0
+                self.sample_id = (monitor, sequence)
+            draining = battery < self.samples[0][2]
+            growing = swap > self.samples[0][1]
+            self.portable = source != "ac" or draining
+            if changed:
+                return 1, "source, monitor or observation continuity changed", "missing reading", 30
+            if sample["lidClosed"] and self.portable:
+                return 0, "lid closed without wall power", "power", 30
+            if battery < 30:
+                self.workers_allowed = True
+                return 1, "battery below 30% admission reserve", "power", 30
+            if sample.get("performanceWarning", False):
+                return 1, "secondary OS performance warning", "heat", 240
+            if self.swap_bad >= 2:
+                return 1, "swap growth under memory pressure", "memory", 60
+            if source == "ac" and draining and mono - self.samples[0][0] >= 60:
+                return 1, "sustained AC battery discharge", "power", 30
+            self.workers_allowed = True
+            if pressure == "warning" and growing:
+                return 1, "memory warning with growing swap: compute held", "memory", 60
+            if pressure == "warning":
+                return 2, "memory warning: small jobs only", "memory", 60
+            if source == "ac" and not draining and self.config.get("fullLevelEnabled", False):
+                return 4, "ready", "ready", 0
+            return 3, "ready", "ready", 0
+        except (ValueError, KeyError, TypeError, Refusal) as error:
+            return 1, str(error), "missing reading", 30
+
+    def update(self, sample, now, mono, host_uptime, boot, emergency=None):
+        target, reason, cause, dwell = self.target(sample, now, mono, host_uptime, boot, emergency)
+        old_level, old_reason = self.level, self.reason
+        if cause != "ready" and dwell > self.dwell:
+            # A warning encountered during staged recovery still owns its
+            # full dwell, even when its target is above the current level.
+            self.cause, self.dwell = cause, dwell
+            self.recovering = None
+        if target <= self.level:
+            self.level = target
+            self.recovering = None
+            if cause != "ready":
+                if dwell >= self.dwell:
+                    self.cause, self.dwell = cause, dwell
+            else:
+                self.cause, self.dwell = "missing reading", 30
+            self.reason = reason
+        else:
+            if self.recovering is None:
+                self.recovering = mono
+            if mono - self.recovering >= self.dwell:
+                self.level += 1
+                self.recovering = mono if self.level < target else None
+            if self.level < target:
+                self.reason = f"recovery hysteresis: {self.dwell}s after {self.cause} per level"
+            else:
+                self.reason = reason
+                if cause == "ready":
+                    self.cause, self.dwell = "missing reading", 30
+                elif dwell >= self.dwell:
+                    self.cause, self.dwell = cause, dwell
+        if self.since is None or (self.level, self.reason) != (old_level, old_reason):
+            self.since = now
+        next_step = now + max(0, self.dwell - (mono - self.recovering)) if self.recovering is not None else None
+        slots = 0 if self.level < 2 else min(self.config["maxHeavyJobs"], 2 if self.level == 4 else 1)
+        workers = 0 if self.level < 2 else 2 if self.level == 2 or self.portable else 4
+        return {"level": LEVELS[self.level], "reason": self.reason, "since": self.since,
+                "nextStepUp": next_step, "heavySlots": slots, "cpuWorkers": workers,
+                "smallOnly": self.level == 2, "cancel": self.level == 0,
+                "workersAllowed": self.level >= 2 and self.workers_allowed, "portable": self.portable,
+                "cause": self.cause, "dwellSeconds": self.dwell, "emergency": self.emergency}
 
 
 class Budget:
@@ -275,27 +479,47 @@ class Budget:
         except BlockingIOError as error:
             raise Refusal("a per-user budget owner already holds the ledger") from error
         transition = None
+        transition_kind = "host-budget-capacity-relaxed"
         if self.path.exists():
             self.data = json.loads(self.path.read_text())
             if self.data.get("schemaVersion") != 1:
                 raise Refusal("unknown recovery ledger schema; preserve it for inspection")
             if self.data.get("configDigest") != digest:
                 previous = self.data.get("configPolicy")
-                if (not capacity_relaxation(previous, config) or
-                        config_digest(previous) != self.data.get("configDigest")):
+                verified = isinstance(previous, dict) and config_digest(previous) == self.data.get("configDigest")
+                relaxed = verified and capacity_relaxation(previous, config)
+                policy_fields = (*CAPACITY_FIELDS, "policyMode", "fullLevelEnabled")
+                empty_change = (verified and not self.data["leases"] and not self.data["queue"] and
+                    {k: v for k, v in previous.items() if k not in policy_fields} ==
+                    {k: v for k, v in config.items() if k not in policy_fields})
+                if not relaxed and not empty_change:
+                    self.lock.close()
                     raise Refusal("policy changed; reconcile the existing ledger before changing configuration")
                 old_capacity = {key: previous[key] for key in CAPACITY_FIELDS}
                 new_capacity = {key: config[key] for key in CAPACITY_FIELDS}
+                if previous.get("fullLevelEnabled", False) != config.get("fullLevelEnabled", False):
+                    old_capacity["fullLevelEnabled"] = previous.get("fullLevelEnabled", False)
+                    new_capacity["fullLevelEnabled"] = config.get("fullLevelEnabled", False)
                 transition = f"capacity relaxed: {json.dumps(old_capacity, sort_keys=True)} -> {json.dumps(new_capacity, sort_keys=True)}"
                 # Running controllers retain the digest loaded at launch. Only
                 # policies in this verified relaxation chain remain compatible.
-                self.data.setdefault("compatibleConfigDigests", []).append(self.data["configDigest"])
+                if relaxed:
+                    self.data.setdefault("compatibleConfigDigests", []).append(self.data["configDigest"])
+                else:
+                    transition_kind = "host-budget-policy-changed"
+                    transition = (f"empty-ledger policy change: mode={previous.get('policyMode', 'shadow')} -> "
+                                  f"{config.get('policyMode', 'shadow')}; capacity={old_capacity} -> {new_capacity}")
+                    self.data["compatibleConfigDigests"] = []
+                    # Keep the emergency evidence, but restart observation and
+                    # recovery under the chosen policy with its retained cause.
                 self.data["configDigest"] = digest
         else:
             self.data = {"schemaVersion": 1, "configDigest": digest, "leases": {},
                          "queue": [], "emergency": None, "events": []}
         # A matching legacy digest proves this policy; a changed one cannot.
         self.data["configPolicy"] = config
+        self.level_policy = AdmissionPolicy(config, self.data.get("levelPolicy"))
+        self.decision = None
         self.healthy_since = None
         # Thermal signals or a persisted emergency latch lengthen the next recovery.
         self.thermal_hold = False
@@ -314,19 +538,26 @@ class Budget:
         self.swap_bad = 0
         self.reason = "starting: reconciliation and recovery hysteresis required"
         self.telemetry = None
+        self.portable = True
         self.metrics = collections.deque(maxlen=900)
         metrics_file = self.root / "metrics.json"
         if metrics_file.exists():
             for sample in json.loads(metrics_file.read_text()):
                 if time.time() - 1800 <= sample["timestamp"] <= time.time() + 1:
                     self.metrics.append(sample)
+        peaks = self.data.setdefault("classPeakMiB", {})
+        for metric in self.metrics:
+            for job in metric.get("jobs", []):
+                rss = job.get("rssKiB", 0)
+                if job.get("class") in CLASSES and type(rss) in (int, float) and math.isfinite(rss) and rss > 0:
+                    peaks[job["class"]] = max(peaks.get(job["class"], 0), math.ceil(rss / 1024))
         self.exception = None
         self.hold_since = None
         self.hold_notified = False
         self.table = process_table()
         self.reconcile()
         if transition is not None:
-            self.record_event("host-budget-capacity-relaxed", transition)
+            self.record_event(transition_kind, transition)
         self.save()
 
     def save(self):
@@ -498,17 +729,35 @@ class Budget:
             self.save()
 
     def policy(self):
+        read_error = None
+        try:
+            sample = json.loads(Path(self.config["monitorPath"]).read_text())
+        except (OSError, ValueError) as error:
+            sample = None
+            read_error = str(error)
+        self.policy_sample = sample
+        self.policy_clock = {"wall": time.time(), "monotonic": time.monotonic(),
+                             "uptime": uptime(), "boot": boot_id()}
+        self.check_sleep_gap(self.policy_clock["wall"], self.policy_clock["uptime"], sample)
+        self.decision = self.level_policy.update(sample, self.policy_clock["wall"],
+            self.policy_clock["monotonic"], self.policy_clock["uptime"],
+            self.policy_clock["boot"], self.data["emergency"])
+        self.data["levelPolicy"] = self.decision
+        if self.config.get("policyMode", "shadow") == "on":
+            self.data["emergency"] = self.decision["emergency"]
+            self.telemetry = sample if isinstance(sample, dict) else None
+            self.portable = self.decision["portable"]
+            return self.decision["reason"], self.decision["cancel"]
+        return self.legacy_policy(sample, read_error)
+
+    def legacy_policy(self, sample, read_error=None):
         now, mono = time.time(), time.monotonic()
         cancel = False
         self.portable = True
         try:
             host_uptime = uptime()
-            try:
-                sample = json.loads(Path(self.config["monitorPath"]).read_text())
-            except (OSError, ValueError):
-                self.check_sleep_gap(now, host_uptime, None)
-                raise
-            self.check_sleep_gap(now, host_uptime, sample)
+            if read_error is not None:
+                raise Refusal(read_error)
             if sample["schemaVersion"] != 1 or sample["lifecycle"] != "running":
                 raise Refusal("monitor schema or lifecycle is unavailable")
             if sample["bootSessionUUID"] != boot_id():
@@ -661,12 +910,45 @@ class Budget:
             "cpu": [self.table[m["pid"]].get("cpuTime", self.table[m["pid"]].get("cpuTicks"))
                     for m in lease.get("members", []) if matches(m, self.table)]}
             for token, lease in self.data["leases"].items()]
+        peaks = self.data.setdefault("classPeakMiB", {})
+        for job in usage:
+            if job["rssKiB"] > 0:
+                peak = math.ceil(job["rssKiB"] / 1024)
+                peaks[job["class"]] = max(peaks.get(job["class"], 0), peak)
+                self.data["leases"][job["lease"]]["peakMiB"] = max(
+                    self.data["leases"][job["lease"]].get("peakMiB", 0), peak)
+        policy_record = {"timestamp": time.time(), "mode": self.config.get("policyMode", "shadow"),
+                         "decision": self.reason, "cancel": cancel,
+                         "policy": self.decision, "sample": self.policy_sample,
+                         "clock": self.policy_clock}
+        self.log_policy(policy_record)
         self.metrics.append({"timestamp": time.time(), "reason": self.reason,
+            "policy": self.decision,
             "power": self.telemetry.get("power") if self.telemetry else None,
             "thermal": self.telemetry.get("thermalState") if self.telemetry else None,
             "memory": self.telemetry.get("memory") if self.telemetry else None, "jobs": usage})
         atomic_json(self.root / "metrics.json", list(self.metrics))
         self.save()
+
+    def log_policy(self, record):
+        path = self.root / "policy.jsonl"
+        archive = self.root / "policy.jsonl.1"
+        try:
+            if self.data.get("policyLogError"):
+                record["previousLoggingError"] = self.data["policyLogError"]
+            line = (json.dumps(record) + "\n").encode()
+            if len(line) > POLICY_LOG_LIMIT:
+                raise OSError("policy log capacity exhausted: observation exceeds log limit")
+            if path.exists() and path.stat().st_size + len(line) > POLICY_LOG_LIMIT:
+                if archive.exists() and time.time() - archive.stat().st_mtime < POLICY_LOG_RETENTION:
+                    raise OSError("policy log capacity exhausted before 48-hour retention")
+                os.replace(path, archive)
+            with open(path, "ab") as stream:
+                stream.write(line)
+            self.data.pop("policyLogError", None)
+        except OSError as error:
+            self.data["policyLogError"] = str(error)
+            print(f"fm-resource: policy observation missing: {error}", file=sys.stderr)
 
     def signal_lease(self, lease, sig):
         # Never signal a reused PID or an unverified group. Signal individual
@@ -681,25 +963,60 @@ class Budget:
                 except ProcessLookupError:
                     pass
 
+    def heavy_slots(self):
+        if self.config.get("policyMode", "shadow") == "on":
+            return self.decision["heavySlots"] if self.decision else 0
+        return 1 if self.reason == "ready" else 0
+
+    def class_allowed(self, kind, excluding=None):
+        if not self.heavy_slots():
+            return False
+        if self.config.get("policyMode", "shadow") == "on":
+            if self.decision["smallOnly"] and kind not in SMALL_CLASSES:
+                return False
+            if kind in LARGE_CLASSES and any(l["class"] in LARGE_CLASSES
+                    for token, l in self.data["leases"].items() if token != excluding):
+                return False
+        return True
+
+    def reservation(self, kind):
+        peak = self.data.get("classPeakMiB", {}).get(kind)
+        if (self.config.get("policyMode", "shadow") == "on" and kind != "worker" and
+                type(peak) in (int, float) and math.isfinite(peak) and peak > 0):
+            # 25% headroom, rounded up to 64 MiB, from the largest observed
+            # process-tree RSS for this class. Unmeasured classes keep defaults.
+            return max(64, math.ceil(peak * 1.25 / 64) * 64)
+        return CLASSES[kind]
+
+    def cpu_workers(self):
+        if self.config.get("policyMode", "shadow") == "on":
+            return self.decision["cpuWorkers"] if self.decision else 0
+        return 1 if self.portable else 2
+
     def admit(self):
         leases = self.data["leases"]
         # Scan for work that fits; queued reservations do not consume capacity
         # or prevent another class from using its independently available cap.
         for request in list(self.data["queue"]):
             worker = request["class"] == "worker"
-            if not worker and self.reason != "ready":
+            if request.get("automaticReservation"):
+                request["memoryMiB"] = self.reservation(request["class"])
+            if not worker and not self.class_allowed(request["class"]):
                 continue
             active_heavy = sum(l["class"] != "worker" for l in leases.values())
             resident = sum(l["class"] == "worker" for l in leases.values())
             memory = sum(l["memoryMiB"] for l in leases.values())
-            if (worker and resident >= self.config["maxResidentWorkers"]) or (not worker and active_heavy >= 1) or memory + request["memoryMiB"] > self.config["memoryMiB"]:
+            if (worker and resident >= self.config["maxResidentWorkers"]) or (not worker and active_heavy >= self.heavy_slots()) or memory + request["memoryMiB"] > self.config["memoryMiB"]:
                 continue
-            # Resident CLIs need their own admission check even without compute;
-            # Warning pressure and recovery hysteresis permit residents, but
-            # never unknown telemetry.
-            if worker and (self.telemetry is None or self.telemetry["memory"]["pressure"] not in ("normal", "warning") or self.reason not in ("ready", MEMORY_WARNING, "battery below 30% admission reserve") and not self.reason.startswith("recovery hysteresis")):
-                continue
-            lease = dict(request, acquired=time.monotonic(), heartbeat=time.monotonic())
+            # Resident CLIs need their own admission check even without compute.
+            if worker:
+                if self.config.get("policyMode", "shadow") == "on":
+                    if not self.decision or not self.decision["workersAllowed"]:
+                        continue
+                elif (self.telemetry is None or self.telemetry["memory"]["pressure"] not in ("normal", "warning") or self.reason not in ("ready", MEMORY_WARNING, "battery below 30% admission reserve") and not self.reason.startswith("recovery hysteresis")):
+                    continue
+            lease = dict(request, acquired=time.monotonic(), heartbeat=time.monotonic(),
+                         cpuWorkers=self.cpu_workers())
             leases[request["token"]] = lease
             self.data["queue"].remove(request)
             self.save()  # Reservation reaches durable storage before response.
@@ -746,10 +1063,21 @@ class Budget:
             self.reason, _ = self.policy()
             self.event(self.reason)
         if op == "status":
-            return {"ok": True, "reason": self.reason, "portable": self.portable, "availableHeavySlots": max(0, 1 - sum(l["class"] != "worker" for l in self.data["leases"].values())) if self.reason == "ready" else 0,
+            decision = self.decision or {}
+            def clock(value):
+                return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value)) if value is not None else "-"
+            summary = (f"{clock(time.time())} {self.config.get('policyMode', 'shadow')}: "
+                       f"{decision.get('level', 'Stop')} - {decision.get('reason', self.reason)}; "
+                       f"since={clock(decision.get('since'))}; "
+                       f"waiting={','.join(q['task'] for q in self.data['queue']) or 'none'}; "
+                       f"earliest-step-up={clock(decision.get('nextStepUp'))}")
+            return {"ok": True, "reason": self.reason, "portable": self.portable,
+                "policy": decision, "summary": summary, "cpuWorkers": self.cpu_workers(),
+                "reservationsMiB": {kind: self.reservation(kind) for kind in CLASSES},
+                "availableHeavySlots": max(0, self.heavy_slots() - sum(l["class"] != "worker" for l in self.data["leases"].values())),
                 "leases": self.data["leases"], "queue": self.data["queue"],
                 "telemetry": self.telemetry, "events": self.data["events"], "emergency": self.data["emergency"],
-                "powerLogCheck": self.data.get("powerLogCheck")}
+                "powerLogCheck": self.data.get("powerLogCheck"), "policyLogError": self.data.get("policyLogError")}
         if op == "emergency":
             self.data["emergency"] = {"timestamp": time.time(), "cause": request["evidence"]}
             self.save()
@@ -759,6 +1087,10 @@ class Budget:
             if len(request.get("evidence", "").strip()) < 12:
                 raise Refusal("clearing requires an inspection note of at least 12 characters")
             self.data["emergency"] = None
+            self.level_policy.emergency = None
+            self.level_policy.recovering = None
+            if self.data.get("levelPolicy"):
+                self.data["levelPolicy"]["emergency"] = None
             self.healthy_since = None
             self.event("emergency cleared after inspection: " + request["evidence"])
             self.save()
@@ -800,17 +1132,23 @@ class Budget:
                 raise Refusal("orphaned controller cannot acquire a lease")
             if existing is None:
                 kind = request["class"]
-                memory = request["memoryMiB"]
-                if kind not in CLASSES or type(memory) is not int or not CLASSES[kind] <= memory <= self.config["memoryMiB"]:
+                if kind not in CLASSES:
+                    raise Refusal("invalid workload class")
+                memory = request.get("memoryMiB")
+                minimum = self.reservation(kind)
+                memory = minimum if memory is None else memory
+                if type(memory) is not int or not minimum <= memory <= self.config["memoryMiB"]:
                     raise Refusal("invalid or oversized reservation")
                 self.data["queue"].append({"token": token, "controller": controller,
                     "parent": parent, "class": kind, "memoryMiB": memory,
+                    "automaticReservation": request.get("memoryMiB") is None,
                     "task": request.get("task", "ad-hoc"), "queued": time.monotonic()})
             elif existing["controller"] != controller:
                 raise Refusal("nonce belongs to another controller")
             self.admit()
             self.save()
-            return {"ok": True, "state": "leased" if token in self.data["leases"] else "queued", "reason": self.reason}
+            return {"ok": True, "state": "leased" if token in self.data["leases"] else "queued", "reason": self.reason,
+                    "cpuWorkers": self.data["leases"].get(token, {}).get("cpuWorkers", self.cpu_workers())}
         lease = self.data["leases"].get(token)
         if op == "cancel-queued":
             self.data["queue"] = [q for q in self.data["queue"] if q["token"] != token]
@@ -841,17 +1179,30 @@ class Budget:
             groups = [lease.get("group", {}), *lease.get("browserGroups", [])]
             if not matches(owner, self.table) or self.table[owner["pid"]]["pgid"] not in [g.get("pid") for g in groups]:
                 raise Refusal("inherited lease caller is outside its owned process group")
-            if request["memoryMiB"] > lease["memoryMiB"]:
+            kind = request.get("class", lease["class"])
+            if kind not in CLASSES or kind == "worker":
+                raise Refusal("invalid nested workload class")
+            if self.config.get("policyMode", "shadow") == "on" and not self.class_allowed(kind, excluding=token):
+                raise Refusal("nested workload class is held by admission policy")
+            memory = request.get("memoryMiB")
+            minimum = self.reservation(kind)
+            memory = minimum if memory is None else memory
+            if type(memory) is not int or memory < minimum:
+                raise Refusal("invalid nested reservation")
+            if memory > lease["memoryMiB"]:
                 # Atomic in-place upgrade, never acquire a second slot while
                 # holding one. Fail rather than wait if it cannot fit.
                 others = sum(l["memoryMiB"] for k, l in self.data["leases"].items() if k != token)
-                if others + request["memoryMiB"] > self.config["memoryMiB"]:
+                if others + memory > self.config["memoryMiB"]:
                     raise Refusal("nested lease upgrade cannot fit; declare composite reservation at outer stage")
-                lease["memoryMiB"] = request["memoryMiB"]
+                lease["memoryMiB"] = memory
+            if (self.config.get("policyMode", "shadow") == "on" and
+                    kind in LARGE_CLASSES and lease["class"] != "exclusive"):
+                lease["class"] = kind
         else:
             raise Refusal("unknown request operation")
         self.save()
-        return {"ok": True}
+        return {"ok": True, "cpuWorkers": min(lease.get("cpuWorkers", self.cpu_workers()), self.cpu_workers()) if lease else self.cpu_workers()}
 
 
 def serve(config, digest):
@@ -1184,8 +1535,8 @@ def package_test_runner(command):
     return runner
 
 
-def caps(command, kind, portable, config_name, config):
-    workers = 1 if portable else 2
+def caps(command, kind, portable, config_name, config, workers=None):
+    workers = max(1, workers) if workers is not None else (1 if portable else 2)
     env = os.environ.copy()
     env.update({"GRAPHIFY_MAX_WORKERS": str(workers),
         "FM_RESOURCE_CPU_WORKERS": str(workers), "FM_RESOURCE_BROWSER_WORKERS": "1",
@@ -1286,14 +1637,14 @@ def run_job(args, config_name, config, digest):
     if args.manifest:
         validate_manifest(args.manifest, command, args.task)
     kind = args.resource_class
-    memory = args.memory_mib or CLASSES[kind]
-    if memory < CLASSES[kind]:
-        raise Refusal("reservation cannot be smaller than its workload class")
+    memory = args.memory_mib
+    if memory is None and config.get("policyMode", "shadow") == "shadow":
+        memory = CLASSES[kind]  # Also understood by owners predating level policy.
     owner = identity(os.getpid())
     parent = os.getppid()
     if inherited and kind != "worker":
-        rpc(config, digest, op="inherit", token=inherited, controller=owner, memoryMiB=memory)
-        command, env = caps(command, kind, os.environ.get("FM_RESOURCE_PORTABLE") == "1", config_name, config)
+        result = rpc(config, digest, op="inherit", token=inherited, controller=owner, memoryMiB=memory, **{"class": kind})
+        command, env = caps(command, kind, os.environ.get("FM_RESOURCE_PORTABLE") == "1", config_name, config, result.get("cpuWorkers"))
         if kind == "browser" and not env.get("FM_RESOURCE_BROWSER_PROFILE"):
             browser_environment(config, inherited, env)
         os.execvpe(command[0], command, env)
@@ -1324,7 +1675,7 @@ def run_job(args, config_name, config, digest):
             time.sleep(0.2)
         state = rpc(config, digest, op="status")
         portable = state.get("portable", True)
-        command, env = caps(command, kind, portable, config_name, config)
+        command, env = caps(command, kind, portable, config_name, config, result.get("cpuWorkers"))
         env.update(FM_RESOURCE_CONFIG=config_name, FM_RESOURCE_PORTABLE="1" if portable else "0")
         if kind == "browser":
             browser_environment(config, token, env)
@@ -1434,7 +1785,7 @@ def transitions(args, config):
 
 def parser():
     p = argparse.ArgumentParser(description="One per-user atomic host budget. No auto-start or unlimited fallback.",
-        epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; maxHeavyJobs=1, memoryMiB=10240, maxResidentWorkers=12, recoverySeconds=120, graceSeconds=5. All homes must select the same config, via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger and 30-minute metrics ring are private atomic JSON; transitions append to transitions.jsonl. register-check --directory STATE requires an existing home state directory, creates private files and registers a host-budget custom watcher check; transitions --cursor PATH relays stuck/long-held alarms and holds over ten minutes once per cursor; --start-at-end initializes a new cursor without replay. Critical thermal signals latch across boot; clear only after inspecting evidence. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; these are integration boundaries, not an OS sandbox. Direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
+        epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; maxHeavyJobs=1 (range 1..2), memoryMiB=10240, maxResidentWorkers=12, recoverySeconds=120 (legacy dwell), graceSeconds=5. policyMode=shadow|on defaults to shadow, fullLevelEnabled is boolean and defaults to false. Shadow preserves legacy decisions and logs proposed levels each tick in policy.jsonl. On uses 240s heat, 60s memory, 30s missing/source recovery per level, with no reset for AC wattage alone; Full needs fullLevelEnabled=true and maxHeavyJobs=2 for two slots, at most one build/exclusive. Reservations use recorded class RSS peaks plus 25%, rounded to 64 MiB, otherwise class defaults. Status includes a clocked summary and reservationsMiB. Capacity increases and enabling Full can carry live leases; mode changes or decreases require an empty queue and lease ledger at owner restart, preserving emergency evidence. All homes must select the same config, via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger and 30-minute metrics ring are private atomic JSON; transitions append to transitions.jsonl. register-check --directory STATE requires an existing home state directory, creates private files and registers a host-budget custom watcher check; transitions --cursor PATH relays stuck/long-held alarms and holds over ten minutes once per cursor; --start-at-end initializes a new cursor without replay. Critical thermal signals latch across boot; clear only after inspecting evidence. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; these are integration boundaries, not an OS sandbox. Direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
     p.add_argument("--config")
     sub = p.add_subparsers(dest="action", required=True)
     sub.add_parser("serve", help="foreground single owner; operator may supervise it with launchd")
@@ -1460,8 +1811,8 @@ def parser():
         q.add_argument("--evidence", required=True, help="inspection/cause note; never credentials")
     q = sub.add_parser("run", help="lease a bounded process group; descendants retain reservation after parent exit")
     q.add_argument("--class", dest="resource_class", choices=CLASSES, default="exclusive",
-        help="minimum MiB: test=1024, build=3072, browser=2048, graph=512, exclusive=4096, worker=512")
-    q.add_argument("--memory-mib", type=int, help="larger planning reservation for an oversized project")
+        help="fallback reservation MiB: test=1024, build=3072, browser=2048, graph=512, exclusive=4096, worker=512")
+    q.add_argument("--memory-mib", type=int, help="explicit planning reservation; otherwise owner uses the class peak/default")
     q.add_argument("--task", default=os.environ.get("FM_TASK_ID", "ad-hoc"))
     q.add_argument("--manifest")
     q.add_argument("--wait-seconds", type=float, default=0, help="queue deadline; exit 75 on expiry, 0 waits indefinitely")

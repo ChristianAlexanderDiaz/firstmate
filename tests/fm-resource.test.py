@@ -406,8 +406,34 @@ class ResourceTests(unittest.TestCase):
         self.assertFalse(self.status()["portable"])
         (self.root / "legacy-owner").write_text("")
         self.assertNotIn("portable", self.status())
-        result = self.call("run", "--class", "test", "--", "/bin/sh", "-c", 'printf %s "$FM_RESOURCE_PORTABLE"')
-        self.assertEqual((result.returncode, result.stdout), (0, "1"), result.stderr)
+        result = self.call("run", "--class", "test", "--", "/bin/sh", "-c",
+                           'printf "%s,%s" "$FM_RESOURCE_PORTABLE" "$FM_RESOURCE_CPU_WORKERS"')
+        self.assertEqual((result.returncode, result.stdout), (0, "1,1"), result.stderr)
+
+    def test_enabled_policy_caps_and_class_slots_through_socket(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["power"].update(source="ac", adapterWatts=94, isCharging=True)
+        self.write("input.json", sample)
+        self.stop()
+        self.config.update(policyMode="on", fullLevelEnabled=True, maxHeavyJobs=2)
+        self.write("config.json", self.config)
+        self.start()
+        wait_for(lambda: self.status().get("policy", {}).get("nextStepUp"))
+        clock = self.root / "clock"
+        for level in ("Reduced", "Normal", "Full"):
+            clock.write_text(str(int(clock.read_text()) + 31))
+            wait_for(lambda: self.status().get("policy", {}).get("level") == level)
+        result = self.call("run", "--class", "test", "--", "/bin/sh", "-c",
+                           'printf "%s,%s" "$FM_RESOURCE_CPU_WORKERS" "$FM_RESOURCE_BROWSER_WORKERS"')
+        self.assertEqual((result.returncode, result.stdout), (0, "4,1"), result.stderr)
+        self.assertEqual(self.acquire("build")[1], "leased")
+        self.assertEqual(self.acquire("exclusive")[1], "queued")
+        self.assertEqual(self.acquire("graph")[1], "leased")
+        sample["memory"]["pressure"] = "warning"
+        self.write("input.json", sample)
+        wait_for(lambda: self.status().get("policy", {}).get("level") == "Reduced")
+        self.assertEqual(self.acquire("worker")[1], "leased")
+        self.assertEqual(self.acquire("test")[1], "queued")
 
     def test_long_queued_request_emits_one_wake_naming_the_holder(self):
         self.job("sleep 30", kind="exclusive")
@@ -743,12 +769,13 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 75, result.stderr)
         self.assertIn("policy changed; reconcile the existing ledger before changing configuration", result.stderr)
         self.assertEqual((relocated / "ledger.json").read_bytes(), before)
-        for changes in ({"schemaVersion": 2}, {"maxHeavyJobs": 2}):
+        for changes, message in (({"schemaVersion": 2}, "only schemaVersion 1"),
+                                 ({"maxHeavyJobs": 3}, "invalid maxHeavyJobs")):
             with self.subTest(changes=changes):
                 self.write("config.json", dict(self.config, maxResidentWorkers=13, **changes))
                 result = self.call("serve")
                 self.assertEqual(result.returncode, 75, result.stderr)
-                self.assertIn("only schemaVersion 1 and the uncalibrated one-heavy-job profile", result.stderr)
+                self.assertIn(message, result.stderr)
 
     def test_legacy_policy_digest_requires_matching_config_before_relaxation(self):
         token, state = self.acquire("worker")
@@ -2233,6 +2260,450 @@ class ClosedLidPolicyTests(unittest.TestCase):
         self.tick()
         self.assertIn("memory=critical", self.budget.reason)
         self.assert_cancel_grace()
+
+
+class LevelPolicyTests(unittest.TestCase):
+    """Mocked readings exercise the policy and owner API without a host monitor."""
+    def setUp(self):
+        self.now = 1000
+        self.sample = copy.deepcopy(SAMPLE)
+        self.sample["power"].update(source="ac", adapterWatts=94, isCharging=True)
+        self.policy = resource.AdmissionPolicy({"maxHeavyJobs": 2, "fullLevelEnabled": True})
+
+    def observe(self, seconds=0, **changes):
+        self.sample.update(changes)
+        end = self.now + seconds
+        # Continuous 2-second observation, not a fictional jump across a gap.
+        for t in range(self.now, end + 1, 2):
+            sample = dict(self.sample, timestamp=t, uptimeSeconds=t, sequence=t,
+                          bootSessionUUID="fixture-boot")
+            result = self.policy.update(sample, t, t, t, "fixture-boot")
+        self.now = end
+        return result
+
+    def ready(self):
+        self.assertEqual(self.observe(90)["level"], "Full")
+
+    def test_levels_and_worker_limits(self):
+        self.assertEqual(self.observe()["level"], "Stop")
+        self.assertEqual(self.observe(30)["level"], "Reduced")
+        normal = self.observe(30)
+        self.assertEqual((normal["level"], normal["cpuWorkers"], normal["heavySlots"]), ("Normal", 4, 1))
+        full = self.observe(30)
+        self.assertEqual((full["level"], full["cpuWorkers"], full["heavySlots"]), ("Full", 4, 2))
+        self.sample["memory"]["pressure"] = "warning"
+        reduced = self.observe()
+        self.assertEqual((reduced["level"], reduced["cpuWorkers"], reduced["heavySlots"]), ("Reduced", 2, 1))
+        self.assertTrue(reduced["smallOnly"])
+        self.assertTrue(reduced["workersAllowed"])
+        self.assertEqual(reduced["reason"], "memory warning: small jobs only")
+        self.assertNotIn("freePercent", self.sample["memory"])
+
+    def test_full_disabled_and_battery_normal(self):
+        self.policy.config["fullLevelEnabled"] = False
+        self.assertEqual(self.observe(120)["level"], "Normal")
+        self.sample["power"].update(source="battery", adapterWatts=None, isCharging=False)
+        result = self.observe(120)
+        self.assertEqual((result["level"], result["cpuWorkers"], result["heavySlots"]), ("Normal", 2, 1))
+        self.sample["power"]["batteryPercent"] = 30
+        self.assertEqual(self.observe()["level"], "Normal")
+        self.sample["power"]["batteryPercent"] = 29
+        self.assertEqual(self.observe()["level"], "Stop")
+        self.sample["memory"]["pressure"] = "warning"
+        self.assertEqual(self.observe()["level"], "Stop")
+        self.sample["power"]["batteryPercent"] = 15
+        self.assertFalse(self.observe()["cancel"])
+        self.sample["power"]["batteryPercent"] = 14
+        self.assertTrue(self.observe()["cancel"])
+
+    def test_invalid_unavailable_and_stop_recovery_block_workers(self):
+        self.ready()
+        for invalid in (None, False, 0, "", {}, [1], ["power", None]):
+            with self.subTest(invalid=invalid):
+                result = self.observe(unavailable=invalid)
+                self.assertEqual(result["level"], "Stop")
+                self.assertFalse(result["workersAllowed"])
+        self.sample["memory"]["pressure"] = "critical"
+        self.assertEqual(self.observe(unavailable=[])["level"], "Stop and cancel")
+        self.sample["memory"]["pressure"] = "normal"
+        self.assertFalse(self.observe(58)["workersAllowed"])
+        self.assertFalse(self.observe(2)["workersAllowed"])
+        self.assertTrue(self.observe(60)["workersAllowed"])
+
+    def test_heat_dwell_is_240_seconds_per_rung(self):
+        self.ready()
+        self.assertEqual(self.observe(thermalState="serious")["level"], "Stop")
+        start = self.observe(thermalState="fair")
+        self.assertEqual(start["nextStepUp"], self.now + 240)
+        self.assertEqual(self.observe(238)["level"], "Stop")
+        self.assertEqual(self.observe(2)["level"], "Reduced")
+        self.assertEqual(self.observe(238)["level"], "Reduced")
+        self.assertEqual(self.observe(2)["level"], "Normal")
+        self.assertEqual(self.observe(240)["level"], "Full")
+
+    def test_continuity_during_safety_stops(self):
+        for hazard in ("heat", "memory", "battery", "lid"):
+            with self.subTest(hazard=hazard):
+                self.setUp()
+                self.ready()
+                self.sample["memory"]["swapUsedBytes"] = 500 * 1024 * 1024
+                if hazard == "heat":
+                    self.sample["thermalState"] = "serious"
+                elif hazard == "memory":
+                    self.sample["memory"]["pressure"] = "critical"
+                elif hazard == "battery":
+                    self.sample["power"]["batteryPercent"] = 14
+                else:
+                    self.sample["power"].update(source="battery", adapterWatts=None)
+                    self.sample["lidClosed"] = True
+                self.observe(120)
+                self.sample["instanceUUID"] = "new-monitor"
+                self.observe(2)
+                self.sample["thermalState"] = "nominal"
+                self.sample["memory"].update(pressure="normal", swapUsedBytes=0)
+                self.sample["power"]["batteryPercent"] = 80
+                self.sample["lidClosed"] = False
+                recovered = self.observe(2)
+                # The first healthy observation occurs two seconds before self.now.
+                self.assertEqual(recovered["nextStepUp"], self.now - 2 + (240 if hazard == "heat" else 60 if hazard == "memory" else 30))
+                self.assertEqual(self.observe(240 if hazard == "heat" else 60 if hazard == "memory" else 30)["level"], "Reduced" if hazard == "heat" else "Stop")
+
+    def test_memory_dwell_60_and_missing_dwell_30(self):
+        self.ready()
+        self.sample["memory"]["pressure"] = "warning"
+        self.assertEqual(self.observe()["level"], "Reduced")
+        self.sample["memory"]["pressure"] = "normal"
+        self.assertEqual(self.observe(58)["level"], "Reduced")
+        self.assertEqual(self.observe(2)["level"], "Normal")
+        self.assertEqual(self.observe(60)["level"], "Full")
+        self.assertEqual(self.observe(unavailable=["lid"])["level"], "Stop")
+        self.assertEqual(self.observe(28, unavailable=[])["level"], "Stop")
+        self.assertEqual(self.observe(2)["level"], "Reduced")
+
+    def test_memory_blip_does_not_shorten_heat_dwell(self):
+        self.ready()
+        self.observe(thermalState="serious")
+        self.sample["memory"]["pressure"] = "warning"
+        self.assertEqual(self.observe(60, thermalState="fair")["level"], "Stop")
+        self.sample["memory"]["pressure"] = "normal"
+        self.assertEqual(self.observe(178)["level"], "Stop")
+        self.assertEqual(self.observe(2)["level"], "Reduced")
+
+    def test_warning_during_missing_reading_recovery_gets_memory_dwell(self):
+        self.ready()
+        self.observe(unavailable=["memory"])
+        self.observe(20, unavailable=[])
+        self.sample["memory"]["pressure"] = "warning"
+        warning = self.observe()
+        self.assertEqual(warning["nextStepUp"], self.now + 60)
+        self.assertEqual(self.observe(58)["level"], "Stop")
+        self.assertEqual(self.observe(2)["level"], "Reduced")
+
+    def test_wattage_change_never_resets_recovery_or_ready(self):
+        self.ready()
+        self.sample["power"]["adapterWatts"] = 60
+        self.assertEqual(self.observe()["level"], "Full")
+        self.observe(thermalState="serious")
+        self.observe(120, thermalState="nominal")
+        self.sample["power"]["adapterWatts"] = 94
+        self.assertEqual(self.observe(120)["level"], "Reduced")
+
+    def test_secondary_thermal_warning_and_combined_causes_keep_heat_dwell(self):
+        self.ready()
+        self.assertEqual(self.observe(thermalWarning=True)["level"], "Stop")
+        self.assertEqual(self.observe(238, thermalWarning=False)["level"], "Stop")
+        self.assertEqual(self.observe(2)["level"], "Reduced")
+        for memory, battery, lid in (("critical", 80, False), ("normal", 14, False), ("normal", 80, True)):
+            self.policy = resource.AdmissionPolicy({"maxHeavyJobs": 2})
+            self.sample["memory"]["pressure"] = memory
+            self.sample["power"].update(source="battery", adapterWatts=None, batteryPercent=battery)
+            self.sample["lidClosed"] = lid
+            result = self.observe(thermalState="serious")
+            self.assertTrue(result["cancel"])
+            self.assertEqual(result["dwellSeconds"], 240)
+
+    def test_strict_cancellation_precedence_and_lid(self):
+        for change in ({"thermalState": "critical"},
+                       {"memory": {"pressure": "critical"}},
+                       {"thermalEmergencySleep": True}):
+            with self.subTest(change=change):
+                self.policy = resource.AdmissionPolicy({"maxHeavyJobs": 2})
+                sample = dict(copy.deepcopy(self.sample), unavailable=["power"], **change)
+                self.assertTrue(self.policy.update(sample, 0, 0, 0, "fixture")["cancel"])
+        self.policy = resource.AdmissionPolicy({"maxHeavyJobs": 2})
+        self.sample["lidClosed"] = True
+        self.assertEqual(self.observe(120)["level"], "Normal")
+        self.sample["power"]["source"] = "battery"
+        self.assertEqual(self.observe()["level"], "Stop and cancel")
+
+    def test_october_22_incident_is_mocked_not_historical_replay(self):
+        # No historical reading for the crash day is available. This is only a
+        # synthetic serious/critical heat and memory safety boundary regression.
+        self.ready()
+        self.assertEqual(self.observe(thermalState="serious")["level"], "Stop")
+        self.assertTrue(self.observe(thermalState="critical")["cancel"])
+        self.assertTrue(self.observe(600, thermalState="nominal")["cancel"])
+
+    def test_missing_invalid_and_stale_readings_stop_new_work(self):
+        for change in ({"timestamp": 0}, {"uptimeSeconds": 0}, {"bootSessionUUID": "old"},
+                       {"thermalState": "unknown"}, {"lidClosed": None},
+                       {"memory": {"pressure": "normal", "swapUsedBytes": float("nan")}},
+                       {"power": {"source": "ac", "batteryPercent": 80, "isCharging": True,
+                                  "adapterWatts": float("inf")}}):
+            with self.subTest(change=change):
+                self.ready()
+                sample = dict(self.sample, timestamp=self.now, uptimeSeconds=self.now,
+                              bootSessionUUID="fixture-boot", sequence=self.now)
+                sample.update(change)
+                result = self.policy.update(sample, self.now, self.now, self.now, "fixture-boot")
+                self.assertEqual(result["heavySlots"], 0)
+                self.assertFalse(result["workersAllowed"])
+        self.assertEqual(self.policy.update(None, self.now, self.now, self.now, "fixture-boot")["level"], "Stop")
+
+    def test_swap_growth_rejects_warning_and_sustained_growth(self):
+        self.ready()
+        self.sample["memory"].update(pressure="warning", swapUsedBytes=1024)
+        self.assertEqual(self.observe()["level"], "Stop")
+        self.sample["memory"]["pressure"] = "normal"
+        self.observe(120)
+        self.sample["memory"]["swapUsedBytes"] = 300 * 1024 * 1024
+        self.observe()
+        self.assertEqual(self.observe(4)["level"], "Stop")
+
+    def test_caps_follow_owner_and_playwright_stays_one(self):
+        for workers in (1, 2, 4):
+            for command in (["vitest", "run"], ["node", "--test"], ["playwright", "test"]):
+                argv, env = resource.caps(command, "test", False, "/unused", {}, workers)
+                self.assertEqual(env["FM_RESOURCE_CPU_WORKERS"], str(workers))
+                self.assertEqual(env["FM_RESOURCE_BROWSER_WORKERS"], "1")
+                if command[0] == "playwright":
+                    self.assertIn("--workers=1", argv)
+                elif command[0] == "node":
+                    self.assertIn(f"--test-concurrency={workers}", argv)
+                else:
+                    self.assertIn(f"--maxWorkers={workers}", argv)
+
+
+class LevelOwnerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="fm-level-", dir="/tmp")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.config = dict(schemaVersion=1, stateDirectory=str(self.root / "state"),
+                           socketPath=str(self.root / "socket"), monitorPath=str(self.root / "sample"),
+                           policyMode="on", fullLevelEnabled=True, maxHeavyJobs=2,
+                           maxResidentWorkers=12, memoryMiB=10240, recoverySeconds=120, graceSeconds=1)
+        self.now = 1000
+        self.rows = {100: {"start": "fixture-start", "ppid": 99, "pgid": 100, "rssKiB": 0}}
+        for name, value in (("process_table", lambda: self.rows), ("boot_id", lambda: "fixture-boot"),
+                            ("uptime", lambda: self.now), ("time.time", lambda: self.now),
+                            ("time.monotonic", lambda: self.now)):
+            patcher = mock.patch.object(resource, name, value) if "." not in name else mock.patch.object(resource.time, name.split(".")[1], value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.sample = copy.deepcopy(SAMPLE)
+        self.sample["power"].update(source="ac", adapterWatts=94, isCharging=True)
+        self.budget = resource.Budget(self.config, resource.config_digest(self.config))
+        self.addCleanup(self.budget.lock.close)
+        self.step(90)
+
+    def step(self, seconds=0):
+        for _ in range(seconds // 2 + 1):
+            self.now += 2
+            self.sample.update(timestamp=self.now, uptimeSeconds=self.now,
+                               sequence=self.now, bootSessionUUID="fixture-boot")
+            (self.root / "sample").write_text(json.dumps(self.sample))
+            self.budget.tick()
+
+    def request(self, op, **values):
+        return self.budget.handle(dict(op=op, configDigest=self.budget.digest, **values))
+
+    def acquire(self, kind, **values):
+        token = uuid.uuid4().hex
+        result = self.request("acquire", token=token, controller={"boot": "fixture-boot", "pid": 100,
+                              "start": "fixture-start"}, parent=99, **{"class": kind, "task": "fixture", **values})
+        return token, result["state"]
+
+    def test_class_pair_limit_and_memory_reservations(self):
+        self.assertEqual(self.acquire("build")[1], "leased")
+        self.assertEqual(self.acquire("exclusive")[1], "queued")
+        self.assertEqual(self.acquire("test")[1], "leased")
+        self.assertEqual(self.acquire("graph")[1], "queued")
+        self.assertEqual(self.request("status")["availableHeavySlots"], 0)
+
+    def test_policy_log_capacity_and_write_failure_do_not_stop_safety(self):
+        path = self.root / "state/policy.jsonl"
+        archive = self.root / "state/policy.jsonl.1"
+        with mock.patch.object(resource, "POLICY_LOG_LIMIT", path.stat().st_size + 1):
+            self.step()
+            self.assertTrue(archive.exists())
+        with mock.patch.object(resource, "POLICY_LOG_LIMIT", path.stat().st_size + 1):
+            self.sample["memory"]["pressure"] = "critical"
+            with mock.patch("sys.stderr"):
+                self.step()
+            self.assertIn("capacity exhausted", self.request("status")["policyLogError"])
+            self.assertEqual(self.budget.decision["level"], "Stop and cancel")
+        self.budget.lock.close()
+        self.budget = resource.Budget(self.config, resource.config_digest(self.config))
+        self.addCleanup(self.budget.lock.close)
+        self.assertIn("capacity exhausted", self.request("status")["policyLogError"])
+        self.step()
+        record = json.loads(path.read_text().splitlines()[-1])
+        self.assertIn("capacity exhausted", record["previousLoggingError"])
+        self.assertIsNone(self.request("status")["policyLogError"])
+
+    def test_warning_allows_one_small_and_resident_sessions(self):
+        self.sample["memory"]["pressure"] = "warning"
+        self.step()
+        self.assertEqual(self.acquire("build")[1], "queued")
+        self.assertEqual(self.acquire("worker")[1], "leased")
+        token, state = self.acquire("browser")
+        self.assertEqual(state, "leased")
+        self.assertEqual(self.budget.data["leases"][token]["cpuWorkers"], 2)
+        self.assertEqual(self.acquire("test")[1], "queued")
+
+    def test_resident_waits_for_stop_recovery(self):
+        self.sample["memory"]["pressure"] = "critical"
+        self.step()
+        self.sample["memory"]["pressure"] = "normal"
+        self.step()
+        token, state = self.acquire("worker")
+        self.assertEqual(state, "queued")
+        self.step(58)
+        self.assertNotIn(token, self.budget.data["leases"])
+        self.step(60)
+        self.assertIn(token, self.budget.data["leases"])
+
+    def test_shadow_preserves_legacy_slot_memory_lid_and_worker_caps(self):
+        self.config["policyMode"] = "shadow"
+        self.step(122)
+        self.assertEqual(self.budget.reason, "ready")
+        self.assertEqual(self.budget.decision["level"], "Full")
+        token, state = self.acquire("test")
+        self.assertEqual(state, "leased")
+        self.assertEqual(self.budget.data["leases"][token]["cpuWorkers"], 2)
+        self.assertEqual(self.acquire("graph")[1], "queued")
+        self.request("release", token=token)
+        self.sample["memory"]["pressure"] = "warning"
+        self.step()
+        self.assertEqual(self.budget.reason, resource.MEMORY_WARNING)
+        self.assertEqual(self.budget.heavy_slots(), 0)
+        self.assertEqual(self.acquire("worker")[1], "leased")
+        self.sample["lidClosed"] = True
+        self.step()
+        self.assertEqual(self.budget.reason, resource.MEMORY_WARNING)
+        self.assertEqual(self.budget.decision["level"], "Reduced")
+        record = json.loads((self.root / "state/policy.jsonl").read_text().splitlines()[-1])
+        self.assertEqual(record["mode"], "shadow")
+        self.assertEqual(record["decision"], self.budget.reason)
+        self.assertEqual(record["clock"], {"wall": self.now, "monotonic": self.now,
+                                           "uptime": self.now, "boot": "fixture-boot"})
+
+    def test_measured_peaks_and_defaults_are_exposed(self):
+        self.budget.data["classPeakMiB"] = {"exclusive": 1591, "browser": 2048}
+        status = self.request("status")
+        self.assertEqual(status["reservationsMiB"], dict(resource.CLASSES, exclusive=2048, browser=2560))
+        token, state = self.acquire("exclusive")
+        self.assertEqual(state, "leased")
+        self.assertEqual(self.budget.data["leases"][token]["memoryMiB"], 2048)
+        self.assertIn("earliest-step-up=", status["summary"])
+        self.assertIn("since=", status["summary"])
+        self.config["policyMode"] = "shadow"
+        self.assertEqual(self.budget.reservation("exclusive"), 4096)
+
+    def test_shadow_preserves_legacy_battery_lid_cancellation(self):
+        self.config["policyMode"] = "shadow"
+        self.step(122)
+        token, state = self.acquire("test")
+        self.assertEqual(state, "leased")
+        self.sample["power"].update(source="battery", adapterWatts=None, isCharging=False)
+        self.sample["lidClosed"] = True
+        self.step()
+        self.assertTrue(self.budget.decision["cancel"])
+        self.assertIn("cancelAt", self.budget.data["leases"][token])
+
+    def test_recorded_process_tree_peak_survives_release_and_restart(self):
+        token, _ = self.acquire("test")
+        self.rows[101] = {"start": "fixture-child", "ppid": 100, "pgid": 101, "rssKiB": 1024000}
+        self.request("bind", token=token, group={"boot": "fixture-boot", "pid": 101, "start": "fixture-child"})
+        self.step()
+        self.assertEqual(self.budget.data["leases"][token]["peakMiB"], 1000)
+        self.assertEqual(self.budget.reservation("test"), 1280)
+        self.rows.pop(101)
+        with mock.patch.object(resource, "group_exists", return_value=False):
+            self.step()
+        self.assertNotIn(token, self.budget.data["leases"])
+        self.budget.lock.close()
+        replacement = resource.Budget(self.config, resource.config_digest(self.config))
+        self.addCleanup(replacement.lock.close)
+        self.assertEqual(replacement.reservation("test"), 1280)
+
+    def test_critical_cancels_only_compute_and_latch_requires_clear(self):
+        token, _ = self.acquire("test")
+        worker, _ = self.acquire("worker")
+        self.sample["thermalState"] = "critical"
+        self.step()
+        self.assertIn("cancelAt", self.budget.data["leases"][token])
+        self.assertNotIn("cancelAt", self.budget.data["leases"][worker])
+        self.sample["thermalState"] = "nominal"
+        self.step(600)
+        self.assertEqual(self.budget.decision["level"], "Stop and cancel")
+        self.request("clear-emergency", evidence="Inspected synthetic emergency evidence")
+        self.step(238)
+        self.assertEqual(self.budget.decision["level"], "Stop and cancel")
+        self.step(2)
+        self.assertEqual(self.budget.decision["level"], "Stop")
+        self.assertIsNone(self.budget.data["levelPolicy"]["emergency"])
+
+    def test_nested_large_upgrade_cannot_bypass_class_rule(self):
+        self.acquire("build")
+        token, _ = self.acquire("test")
+        self.budget.data["leases"][token]["group"] = {"pid": 100, "boot": "fixture-boot", "start": "fixture-start"}
+        with self.assertRaisesRegex(resource.Refusal, "nested workload class"):
+            self.request("inherit", token=token, controller={"boot": "fixture-boot", "pid": 100,
+                         "start": "fixture-start"}, **{"class": "exclusive"})
+
+    def test_config_validation_and_relaxation_direction(self):
+        path = self.root / "config.json"
+        for changes in ({"policyMode": "automatic"}, {"fullLevelEnabled": 1},
+                        {"maxHeavyJobs": 3}, {"maxHeavyJobs": True}):
+            path.write_text(json.dumps(dict(self.config, **changes)))
+            with self.assertRaises(resource.Refusal):
+                resource.load_config(str(path))
+        previous = dict(self.config, fullLevelEnabled=False, maxHeavyJobs=1)
+        self.assertTrue(resource.capacity_relaxation(previous, self.config))
+        self.assertFalse(resource.capacity_relaxation(self.config, previous))
+        self.assertFalse(resource.capacity_relaxation(dict(previous, policyMode="shadow"), self.config))
+        self.assertFalse(resource.capacity_relaxation(previous, dict(self.config, graceSeconds=2)))
+
+    def test_empty_policy_change_preserves_latch_and_rejects_live_change(self):
+        token, _ = self.acquire("worker")
+        self.budget.save()
+        self.budget.lock.close()
+        changed = dict(self.config, policyMode="shadow", fullLevelEnabled=False)
+        with self.assertRaisesRegex(resource.Refusal, "policy changed"):
+            resource.Budget(changed, resource.config_digest(changed))
+        self.budget.data["leases"].pop(token)
+        self.budget.data["emergency"] = {"timestamp": self.now, "cause": "synthetic emergency"}
+        self.budget.save()
+        replacement = resource.Budget(changed, resource.config_digest(changed))
+        self.addCleanup(replacement.lock.close)
+        self.assertEqual(replacement.data["emergency"], self.budget.data["emergency"])
+        self.assertEqual(replacement.data["compatibleConfigDigests"], [])
+        self.assertEqual(replacement.data["configDigest"], resource.config_digest(changed))
+
+    def test_full_enable_relaxation_carries_live_lease(self):
+        token, _ = self.acquire("worker")
+        self.config["fullLevelEnabled"] = False
+        self.budget.data["configPolicy"] = dict(self.config)
+        self.budget.data["configDigest"] = resource.config_digest(self.config)
+        self.budget.save()
+        self.budget.lock.close()
+        changed = dict(self.config, fullLevelEnabled=True)
+        replacement = resource.Budget(changed, resource.config_digest(changed))
+        self.addCleanup(replacement.lock.close)
+        self.assertIn(token, replacement.data["leases"])
+        self.assertEqual(replacement.data["compatibleConfigDigests"], [resource.config_digest(self.config)])
 
 
 if __name__ == "__main__":
