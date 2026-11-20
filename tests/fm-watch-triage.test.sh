@@ -7410,7 +7410,7 @@ test_exited_wait_recovery() {
       printf "working: validation running\n" > "$dir/state/parked.status"
       prime_status_seen "$dir/state" "$dir/state/parked.status"
       assert_contains "$(exited_wait_state "$dir")" 'state: parked · source: run-step · parked at review' "fixture must bind the current parked run"
-      rm "$dir/data/parked/nm-LABRUN-findings.txt"
+      printf 'finding from an earlier gate\n' > "$dir/data/parked/nm-LABRUN-findings.txt"
     fi
     if [ "$detail" = pause ]; then
       sed -e 's/status: awaiting_approval/status: running/' -e '/awaiting_agent:/,$d' "$dir/run" > "$dir/run.new"
@@ -7439,6 +7439,7 @@ test_exited_wait_recovery() {
       assert_grep 'parked at review' "$dir/watch.out" "must name gate"
       assert_grep "findings file=$dir/data/parked/nm-LABRUN-recovery-status.txt" "$dir/watch.out" "must name findings"
       assert_grep 'r1,warning,example.sh,1,ask-user,choose behavior' "$dir/data/parked/nm-LABRUN-recovery-status.txt" "snapshot must contain the gate finding"
+      assert_grep 'finding from an earlier gate' "$dir/data/parked/nm-LABRUN-findings.txt" "prior decision snapshot must remain unchanged"
     else
       assert_grep 'paused: waiting for validation' "$dir/watch.out" "must name pause"
     fi
@@ -7490,7 +7491,7 @@ STUB
   pid=$EXITED_WAIT_PID
   wait_for_exit "$pid" 150 || { reap "$pid"; fail "Herdr exited gate did not wake"; }
   assert_grep 'task parked agent dead while parked at review' "$dir/watch.out" "Herdr must request gate recovery"
-  assert_grep "findings file=$dir/data/parked/nm-LABRUN-findings.txt" "$dir/watch.out" "Herdr must name findings"
+  assert_grep "findings file=$dir/data/parked/nm-LABRUN-recovery-status.txt" "$dir/watch.out" "Herdr must name findings"
 }
 
 # CI's stock macOS Bash lane sets FM_TEST_ONLY to run just the bash-3.2

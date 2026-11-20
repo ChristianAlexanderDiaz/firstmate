@@ -595,16 +595,13 @@ exited_wait_check() {  # <window> <task> <kind>
       case "$run" in
         ''|*[!A-Za-z0-9_-]*) ;;
         *)
-          findings="${FM_DATA_OVERRIDE:-$FM_HOME/data}/$task/nm-$run-findings.txt"
-          if [ ! -f "$findings" ]; then
-            wt=$(fm_meta_get "$STATE/$task.meta" worktree)
-            output=$(fm_nm_run_checked "$wt" 3 axi status --run "$run") || output=
-            if [ -n "$output" ]; then
-              findings="${FM_DATA_OVERRIDE:-$FM_HOME/data}/$task/nm-$run-recovery-status.txt"
-              mkdir -p "${findings%/*}" && printf '%s\n' "$output" > "$findings" || findings=
-            else
-              findings=
-            fi
+          wt=$(fm_meta_get "$STATE/$task.meta" worktree)
+          output=$(fm_nm_run_checked "$wt" 3 axi status --run "$run") || output=
+          if [ -n "$output" ]; then
+            findings="${FM_DATA_OVERRIDE:-$FM_HOME/data}/$task/nm-$run-recovery-status.txt"
+            mkdir -p "${findings%/*}" && printf '%s\n' "$output" > "$findings" || findings=
+          else
+            findings=
           fi
           if [ -n "$findings" ]; then
             detail="$detail; findings file=$findings"
