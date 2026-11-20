@@ -1702,6 +1702,98 @@ test_failover_refreshes_expired_alternative() {
   pass "failover: expired alternative refreshes before eligibility filtering"
 }
 
+test_recorded_account_yields_to_a_fixed_pin() {
+  local mode kind pin out rc id=pin-relaunch reason
+  for mode in control spawn recovery; do
+    for pin in ordinary path; do
+      kind=secondmate
+      [ "$mode" != spawn ] || kind=ship
+      new_case "fixed-pin-$mode-$pin" "$id" "$kind"
+      rm -f "$CASE/fake/screen"
+      printf 'claude_account=spare\n' >> "$CASE/home/state/$id.meta"
+      if [ "$pin" = path ]; then
+        mkdir -p "$CASE/accounts/team"
+        printf '{}\n' > "$CASE/accounts/team/.credentials.json"
+        pin="$CASE/accounts/team"
+      fi
+      printf '%s\n' "$pin" > "$CASE/home/config/claude-account"
+      # A retired failover account must not need its old map or login.
+      rm "$CASE/home/config/claude-failover" "$CASE/accounts/spare/.credentials.json"
+      case "$mode" in
+        control) out=$(case_env "$CONTROL" "$id" relaunch --note 'use current pin' 2>&1); rc=$? ;;
+        spawn)
+          printf zsh > "$CASE/fake/command"
+          out=$(case_env "$ROOT/bin/fm-spawn.sh" "$id" --relaunch 2>&1); rc=$?
+          ;;
+        recovery)
+          printf zsh > "$CASE/fake/command"
+          : > "$CASE/fake/windows"
+          out=$(case_env "$ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1); rc=$?
+          ;;
+      esac
+      expect_code 0 "$rc" "$mode must launch on the fixed pin: $out"
+      reason="dropped recorded Claude account 'spare'; using fixed pin '$pin'"
+      assert_contains "$out" "$reason" "$mode logs the account change"
+      assert_equals 1 "$(printf '%s\n' "$out" | grep -cF "$reason")" "$mode logs the drop once"
+      assert_grep "claude_account_reason=$reason" "$CASE/home/state/$id.meta" "$mode records the drop"
+      assert_no_grep 'claude_account=' "$CASE/home/state/$id.meta" "$mode clears the recorded failover account"
+      assert_grep "account=$pin" "$CASE/home/state/$id.meta" "$mode records the fixed pin"
+      if [ "$pin" = ordinary ]; then
+        assert_no_grep 'CLAUDE_CONFIG_DIR=' "$CASE/fake/literal" "$mode uses the ordinary account"
+      else
+        assert_grep "CLAUDE_CONFIG_DIR='$pin'" "$CASE/fake/literal" "$mode launches on the fixed root"
+      fi
+    done
+  done
+  pass "relaunch: control, spawn, and secondmate recovery drop and log recorded accounts under fixed pins"
+}
+
+test_paced_relaunch_keeps_secondmate_account() {
+  local out rc mode id=pin-paced
+  for mode in control spawn; do
+    new_case "paced-retain-$mode" "$id" secondmate
+    rm -f "$CASE/fake/screen"
+    printf 'paced\n' > "$CASE/home/config/claude-account"
+    printf 'claude_account=spare\n' >> "$CASE/home/state/$id.meta"
+    if [ "$mode" = control ]; then
+      out=$(case_env "$CONTROL" "$id" relaunch --note 'keep paced account' 2>&1); rc=$?
+    else
+      printf zsh > "$CASE/fake/command"
+      out=$(case_env "$ROOT/bin/fm-spawn.sh" "$id" --relaunch 2>&1); rc=$?
+    fi
+    expect_code 0 "$rc" "$mode retains a usable recorded account under pacing: $out"
+    assert_grep 'claude_account=spare' "$CASE/home/state/$id.meta" "pacing keeps the recorded secondmate account"
+    assert_grep "CLAUDE_CONFIG_DIR='$CASE/accounts/spare'" "$CASE/fake/literal" "pacing launches on the recorded root"
+    assert_not_contains "$out" 'dropped recorded Claude account' "paced accounts are not dropped"
+  done
+  pass "relaunch: paced secondmates keep their recorded account"
+}
+
+test_explicit_account_still_refuses_under_a_fixed_pin() {
+  local mode out rc id=pin-explicit
+  for mode in control spawn; do
+    new_case "fixed-explicit-$mode" "$id"
+    rm -f "$CASE/fake/screen"
+    printf 'ordinary\n' > "$CASE/home/config/claude-account"
+    printf 'claude_account=spare\n' >> "$CASE/home/state/$id.meta"
+    if [ "$mode" = control ]; then
+      out=$(case_env "$CONTROL" "$id" relaunch --claude-account spare --note 'explicit request' 2>&1); rc=$?
+    else
+      printf zsh > "$CASE/fake/command"
+      out=$(case_env "$ROOT/bin/fm-spawn.sh" "$id" --relaunch --claude-account spare 2>&1); rc=$?
+    fi
+    expect_code 1 "$rc" "$mode must refuse an explicit account even when it matches the record: $out"
+    assert_contains "$out" 'config/claude-account pins every Claude worker' "the refusal explains the conflict"
+    assert_not_contains "$out" 'dropped recorded Claude account' "an explicit account must not be silently dropped"
+    assert_no_grep '/exit' "$CASE/fake/literal" "the refusal precedes stopping the worker"
+    assert_grep 'claude_account=spare' "$CASE/home/state/$id.meta" "the refusal preserves the old record"
+  done
+  pass "relaunch: explicit failover requests still refuse under a fixed pin"
+}
+
+test_recorded_account_yields_to_a_fixed_pin
+test_paced_relaunch_keeps_secondmate_account
+test_explicit_account_still_refuses_under_a_fixed_pin
 test_failover_refreshes_expired_alternative
 test_rate_limit_refusals_and_measurements
 test_dead_secondmate_retries_share_the_decision
