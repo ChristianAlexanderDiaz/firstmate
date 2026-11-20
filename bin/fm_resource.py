@@ -1272,6 +1272,69 @@ def restore_browser_environment(config, token, manifest, env):
     env.pop("CHROME_DEVTOOLS_AXI_WS_HEADERS", None)
 
 
+def gaming_flag():
+    home = Path(os.environ.get("FM_HOME") or os.environ.get("FM_ROOT_OVERRIDE") or HERE.parent)
+    return Path(os.environ.get("FM_STATE_OVERRIDE") or home / "state") / ".gaming"
+
+
+def gaming_lock(deadline=None, interrupted=lambda: False):
+    """Prospective home admission, independent of the optional host policy.
+
+    Recheck the flag while queued: removing it restores normal admission even
+    while the current holder runs. Never unlink the shared lock inode.
+    """
+    flag = gaming_flag()
+    if not flag.exists():
+        return None
+    lock = flag.parent / ".heavy-job.lock"
+    inherited = [os.environ.get("FM_RESOURCE_GAMING_FD", "")]
+    # Existing `flock LOCK command` wrappers pass their locked descriptor to
+    # the command without our environment marker. Reuse that same open file
+    # description instead of waiting for our own ancestor to release it.
+    try:
+        inherited.extend(os.listdir("/dev/fd"))
+    except OSError:
+        pass
+    for candidate in inherited:
+        try:
+            fd = int(candidate)
+            if os.path.samestat(os.fstat(fd), lock.stat()):
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return os.dup(fd)
+        except (OSError, ValueError):
+            pass
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+    announced = False
+    try:
+        while flag.exists():
+            if interrupted() or deadline is not None and time.monotonic() >= deadline:
+                break
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fd
+            except BlockingIOError:
+                if not announced:
+                    print("fm-resource-run: waiting for gaming heavy-job lock", file=sys.stderr, flush=True)
+                    announced = True
+                time.sleep(0.1)
+    except BaseException:
+        os.close(fd)
+        raise
+    os.close(fd)
+    return None
+
+
+def gaming_run(command):
+    command = command[1:] if command and command[0] == "--" else command
+    if not command:
+        raise Refusal("gaming-run requires an argv after --")
+    fd = gaming_lock()
+    if fd is not None:
+        os.set_inheritable(fd, True)
+        os.environ["FM_RESOURCE_GAMING_FD"] = str(fd)
+    os.execvpe(command[0], command, os.environ)
+
+
 def run_job(args, config_name, config, digest):
     command = args.argv
     if command and command[0] == "--":
@@ -1312,7 +1375,10 @@ def run_job(args, config_name, config, digest):
     signal.signal(signal.SIGTERM, interrupt)
     signal.signal(signal.SIGINT, interrupt)
     deadline = time.monotonic() + args.wait_seconds if args.wait_seconds else None
+    gaming_fd = None
     try:
+        if kind != "worker":
+            gaming_fd = gaming_lock(deadline, lambda: interrupted)
         while True:
             if interrupted or deadline and time.monotonic() >= deadline:
                 rpc(config, digest, op="cancel-queued", token=token)
@@ -1320,12 +1386,18 @@ def run_job(args, config_name, config, digest):
             result = rpc(config, digest, op="acquire", token=token, controller=owner, parent=parent,
                 **{"class": kind, "memoryMiB": memory, "task": args.task})
             if result["state"] == "leased":
+                if kind != "worker" and gaming_fd is None and gaming_flag().exists():
+                    rpc(config, digest, op="release", token=token)
+                    gaming_fd = gaming_lock(deadline, lambda: interrupted)
+                    continue
                 break
             time.sleep(0.2)
         state = rpc(config, digest, op="status")
         portable = state.get("portable", True)
         command, env = caps(command, kind, portable, config_name, config)
         env.update(FM_RESOURCE_CONFIG=config_name, FM_RESOURCE_PORTABLE="1" if portable else "0")
+        if gaming_fd is not None:
+            env["FM_RESOURCE_GAMING_FD"] = str(gaming_fd)
         if kind == "browser":
             browser_environment(config, token, env)
         if kind != "worker":
@@ -1337,7 +1409,7 @@ def run_job(args, config_name, config, digest):
         read_fd, write_fd = os.pipe()
         try:
             child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "_barrier", str(read_fd), *command],
-                pass_fds=(read_fd,), start_new_session=terminal is None,
+                pass_fds=(read_fd,) + ((gaming_fd,) if gaming_fd is not None else ()), start_new_session=terminal is None,
                 preexec_fn=os.setpgrp if terminal is not None else None, env=env)
             os.close(read_fd)
             read_fd = -1
@@ -1367,6 +1439,8 @@ def run_job(args, config_name, config, digest):
         returncode = child.wait()
         return 128 - returncode if returncode < 0 else returncode
     finally:
+        if gaming_fd is not None:
+            os.close(gaming_fd)
         if terminal is not None and child is not None:
             signal.signal(signal.SIGTTOU, signal.SIG_IGN)
             if os.tcgetpgrp(terminal) == child.pid:
@@ -1437,6 +1511,9 @@ def parser():
         epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; maxHeavyJobs=1, memoryMiB=10240, maxResidentWorkers=12, recoverySeconds=120, graceSeconds=5. All homes must select the same config, via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger and 30-minute metrics ring are private atomic JSON; transitions append to transitions.jsonl. register-check --directory STATE requires an existing home state directory, creates private files and registers a host-budget custom watcher check; transitions --cursor PATH relays stuck/long-held alarms and holds over ten minutes once per cursor; --start-at-end initializes a new cursor without replay. Critical thermal signals latch across boot; clear only after inspecting evidence. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; these are integration boundaries, not an OS sandbox. Direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
     p.add_argument("--config")
     sub = p.add_subparsers(dest="action", required=True)
+    q = sub.add_parser("gaming-run", help="run with the home gaming gate only; no host policy required",
+        description="While STATE/.gaming exists, serialize new heavy stages with STATE/.heavy-job.lock. STATE is FM_STATE_OVERRIDE, else FM_HOME/state, FM_ROOT_OVERRIDE/state, or the installation's state directory. Queued stages recheck the flag; removal restores normal capacity. Existing work is not interrupted. Never delete the lock file. Nested stages inherit the lock. Worker residency is not heavy compute.")
+    q.add_argument("argv", nargs=argparse.REMAINDER)
     sub.add_parser("serve", help="foreground single owner; operator may supervise it with launchd")
     sub.add_parser("status", help="compact JSON status, including queue and last cause")
     q = sub.add_parser("register-check", help="register the transition wake check in an explicit home state directory")
@@ -1476,6 +1553,8 @@ def main():
                 return 125
         os.execvpe(sys.argv[3], sys.argv[3:], os.environ)
     args = parser().parse_args()
+    if args.action == "gaming-run":
+        return gaming_run(args.argv)
     name, config, digest = load_config(args.config)
     if args.action == "register-check":
         register_check(args, name)

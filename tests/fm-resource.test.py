@@ -2,6 +2,7 @@
 """Executable and socket behavior, power-log recovery, and policy tests with mocked readings."""
 import copy
 import datetime
+import fcntl
 import importlib.util
 import json
 import os
@@ -41,6 +42,128 @@ def wait_for(predicate, seconds=12):
             return value
         time.sleep(0.05)
     raise AssertionError("bounded condition wait expired")
+
+
+class GamingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="fm-gaming-")
+        self.root = Path(self.temp.name).resolve()
+        self.state = self.root / "state"
+        self.state.mkdir()
+        self.flag = self.state / ".gaming"
+        self.env = dict(os.environ, HOME=str(self.root), FM_HOME=str(self.root))
+        for key in ("FM_RESOURCE_CONFIG", "FM_RESOURCE_LEASE", "FM_RESOURCE_STAGE_ENTRY",
+                    "FM_RESOURCE_GAMING_FD", "FM_STATE_OVERRIDE"):
+            self.env.pop(key, None)
+        self.children = []
+
+    def tearDown(self):
+        for index, child in enumerate(self.children):
+            (self.root / f"release-{index}").touch()
+        self.flag.unlink(missing_ok=True)
+        for child in self.children:
+            try:
+                child.communicate(timeout=12)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.communicate()
+        self.temp.cleanup()
+
+    def stage(self, nested=False, kind="exclusive", inherited_fd=None):
+        index = len(self.children)
+        marker = self.root / f"started-{index}"
+        release = self.root / f"release-{index}"
+        code = f'touch {shlex.quote(str(marker))}; while [ ! -e {shlex.quote(str(release))} ]; do sleep 0.1; done'
+        command = [str(ROOT / "bin/fm-resource-stage.sh"), "--class", kind, "--"]
+        if nested:
+            command += [CLI, "gaming-run", "--"]
+        child = subprocess.Popen(command + ["/bin/sh", "-c", code], env=self.env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            pass_fds=() if inherited_fd is None else (inherited_fd,))
+        self.children.append(child)
+        return child, marker, release
+
+    def queued(self, child, marker):
+        self.assertTrue(select.select([child.stderr], [], [], 12)[0], "stage did not queue")
+        self.assertIn("waiting for gaming heavy-job lock", child.stderr.readline())
+        self.assertFalse(marker.exists())
+        self.assertIsNone(child.poll())
+
+    def test_flag_serializes_and_completion_admits_next_stage(self):
+        self.flag.touch()
+        first, started, release = self.stage()
+        wait_for(started.exists)
+        second, started_second, _ = self.stage()
+        self.queued(second, started_second)
+        release.touch()
+        self.assertEqual(first.wait(timeout=12), 0)
+        wait_for(started_second.exists)
+
+    def test_absent_flag_preserves_parallel_capacity(self):
+        first, started, _ = self.stage()
+        wait_for(started.exists)
+        _, started_second, _ = self.stage()
+        wait_for(started_second.exists)
+        self.assertIsNone(first.poll())
+        self.assertFalse((self.state / ".heavy-job.lock").exists())
+
+    def test_removing_flag_releases_all_waiters_while_holder_runs(self):
+        self.flag.touch()
+        first, started, _ = self.stage()
+        wait_for(started.exists)
+        markers = []
+        for _ in range(2):
+            child, marker, _ = self.stage()
+            self.queued(child, marker)
+            markers.append(marker)
+        self.flag.unlink()
+        for marker in markers:
+            wait_for(marker.exists)
+        self.assertIsNone(first.poll())
+
+    def test_nested_stage_reuses_lock_and_preserves_exit_status(self):
+        self.flag.touch()
+        first, started, release = self.stage(nested=True)
+        wait_for(started.exists)
+        second, marker, _ = self.stage()
+        self.queued(second, marker)
+        release.touch()
+        self.assertEqual(first.wait(timeout=12), 0)
+        wait_for(marker.exists)
+        self.flag.unlink()
+        result = subprocess.run([CLI, "gaming-run", "--", "/bin/sh", "-c", "exit 23"], env=self.env)
+        self.assertEqual(result.returncode, 23)
+
+    def test_worker_residency_does_not_wait(self):
+        self.flag.touch()
+        _, started, _ = self.stage()
+        wait_for(started.exists)
+        _, worker_started, _ = self.stage(kind="worker")
+        wait_for(worker_started.exists)
+
+    def test_existing_shared_lock_and_state_override_are_respected(self):
+        alternate = self.root / "alternate-state"
+        alternate.mkdir()
+        self.env["FM_STATE_OVERRIDE"] = str(alternate)
+        (alternate / ".gaming").touch()
+        with (alternate / ".heavy-job.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            child, marker, _ = self.stage()
+            self.queued(child, marker)
+        wait_for(marker.exists)
+
+    def test_inherited_external_lock_does_not_wait_on_its_parent(self):
+        self.flag.touch()
+        with (self.state / ".heavy-job.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            first, started, release = self.stage(inherited_fd=lock.fileno())
+            wait_for(started.exists)
+            second, marker, _ = self.stage()
+            self.queued(second, marker)
+            release.touch()
+            self.assertEqual(first.wait(timeout=12), 0)
+            self.assertFalse(marker.exists(), "outer lock must still protect the stage")
+        wait_for(marker.exists)
 
 
 class ResourceTests(unittest.TestCase):
@@ -616,6 +739,46 @@ class ResourceTests(unittest.TestCase):
         result = subprocess.run([str(ROOT / "bin/fm-resource-stage.sh"), "--", "/bin/sh", "-c", 'echo "$FM_RESOURCE_CPU_WORKERS"'], env=env, text=True, capture_output=True, timeout=12)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "1\n")
+
+    def test_configured_run_honors_gaming_lock_and_queue_deadline(self):
+        (self.root / "state/.gaming").touch()
+        env = dict(os.environ, FM_HOME=str(self.root))
+        env.pop("FM_STATE_OVERRIDE", None)
+        with (self.root / "state/.heavy-job.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            result = self.call("run", "--wait-seconds", "0.2", "--", "echo", "started", env=env)
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertNotIn("started", result.stdout)
+            self.assertFalse(self.status()["leases"])
+        result = self.call("run", "--", CLI, "--config", str(self.root / "config.json"),
+            "run", "--", "echo", "nested-started", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("nested-started", result.stdout)
+
+    def test_queued_run_rechecks_gaming_before_starting(self):
+        env = dict(os.environ, FM_HOME=str(self.root))
+        env.pop("FM_STATE_OVERRIDE", None)
+        token, state = self.acquire("test")
+        self.assertEqual(state, "leased")
+        marker = self.root / "configured-started"
+        job = self.job(f'touch {shlex.quote(str(marker))}', env=env)
+        wait_for(lambda: self.status().get("queue"))
+        (self.root / "state/.gaming").touch()
+        holder_started = self.root / "holder-started"
+        holder_release = self.root / "holder-release"
+        code = f'touch {shlex.quote(str(holder_started))}; while [ ! -e {shlex.quote(str(holder_release))} ]; do sleep 0.1; done'
+        holder = subprocess.Popen([CLI, "gaming-run", "--", "/bin/sh", "-c", code], env=env)
+        self.children.append(holder)
+        wait_for(holder_started.exists)
+        self.request("release", token=token)
+        wait_for(lambda: select.select([job.stderr], [], [], 0)[0])
+        self.assertIn("waiting for gaming heavy-job lock", job.stderr.readline())
+        self.assertFalse(marker.exists())
+        self.assertFalse(self.status()["leases"])
+        holder_release.touch()
+        self.assertEqual(holder.wait(timeout=12), 0)
+        self.assertEqual(job.wait(timeout=12), 0)
+        self.assertTrue(marker.exists())
 
     def test_monitor_restart_and_source_change_restart_hysteresis(self):
         sample = copy.deepcopy(SAMPLE)
