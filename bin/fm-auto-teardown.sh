@@ -70,6 +70,7 @@ eligible() {
   case "$current" in
     "state: done "*) ;;
     'state: unknown · source: none · no current-state source available'|\
+    'state: unknown · source: status-log · presentation closed; waiting declaration changed · presentation: closed'|\
     'state: paused · source: status-log · '*|\
     'state: parked · source: status-log · '*)
       last=$(status_last_work_line "$STATE/$id.status") || return 1
@@ -77,7 +78,10 @@ eligible() {
       case "$verb" in
         done)
           # Only the resolution-only fallback may recover an earlier done.
-          case "$current" in 'state: unknown · source: none · '*) ;; *) return 1 ;; esac
+          case "$current" in
+            'state: unknown · source: none · '*|'state: unknown · source: status-log · presentation closed; waiting declaration changed · presentation: closed') ;;
+            *) return 1 ;;
+          esac
           fm_dod_accept_ship_done "$kind" "$(meta_value "$meta" mode)" \
             "$(meta_value "$meta" worktree)" "$(meta_value "$meta" project)" \
             "$last" "$STATE" "$id" "$meta" >/dev/null || return 1

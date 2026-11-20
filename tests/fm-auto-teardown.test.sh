@@ -19,11 +19,12 @@ make_case() {
   fi
   mkdir -p "$CASE/state" "$CASE/config" "$CASE/data/task-a" "$CASE/user-home"
   FAKEBIN=$(fm_fakebin "$CASE")
-  fm_fake_exit0 "$FAKEBIN" tmux treehouse no-mistakes gh gh-axi
+  fm_fake_exit0 "$FAKEBIN" tmux treehouse no-mistakes gh gh-axi herdr
   cat > "$FAKEBIN/tmux" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
   list-windows) printf 'fm-task-a\nfm-task-b\n' ;;
+  capture-pane) cat "$FM_HOME/pane-output" 2>/dev/null || printf 'idle\n' ;;
 esac
 exit 0
 SH
@@ -91,6 +92,8 @@ make_case resolved-completion
 land
 printf 'resolved [key=review]: recorded\nresolved: acknowledged\n' >> "$CASE/state/task-a.status"
 in_home "$ROOT/bin/fm-auto-teardown.sh" --eligible task-a auto-teardown-test || fail 'done followed only by resolutions was not eligible'
+printf 'backend=herdr\npresentation=closed\n' >> "$CASE/state/task-a.meta"
+in_home "$ROOT/bin/fm-auto-teardown.sh" --eligible task-a auto-teardown-test || fail 'closed presentation hid resolved completion'
 printf 'working: resumed\nresolved: acknowledged\n' >> "$CASE/state/task-a.status"
 if in_home "$ROOT/bin/fm-auto-teardown.sh" --eligible task-a auto-teardown-test; then fail 'resolved hid resumed work'; fi
 printf 'done: ready\nneeds-decision [key=still-open]: choose\nresolved [key=other]: unrelated\n' > "$CASE/state/task-a.status"
@@ -119,10 +122,11 @@ make_case merge-wait-batch
 git -C "$CASE/wt" update-ref refs/remotes/origin/fm/task-a HEAD
 sed 's/mode=local-only/mode=no-mistakes/' "$CASE/state/task-a.meta" > "$CASE/meta"
 mv "$CASE/meta" "$CASE/state/task-a.meta"
+printf 'backend=herdr\npresentation=closed\n' >> "$CASE/state/task-a.meta"
 printf 'pr=https://github.com/example/sample/pull/7\n' >> "$CASE/state/task-a.meta"
 printf 'pr_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' >> "$CASE/state/task-a.meta"
 printf 'done: PR https://github.com/example/sample/pull/7\nresolved: recorded\n' > "$CASE/state/task-a.status"
-sed 's/task-a/task-b/g; s@pull/7@pull/8@; s/mode=no-mistakes/mode=direct-PR/; /^pr_head=/d' "$CASE/state/task-a.meta" > "$CASE/state/task-b.meta"
+sed 's/task-a/task-b/g; s@pull/7@pull/8@; s/mode=no-mistakes/mode=direct-PR/; /^pr_head=/d; /^backend=/d; /^presentation=/d' "$CASE/state/task-a.meta" > "$CASE/state/task-b.meta"
 printf 'done: PR https://github.com/example/sample/pull/8\n' > "$CASE/state/task-b.status"
 in_home "$ROOT/bin/fm-busy-event.sh" arm "$CASE/state" task-b --state idle --source claude-hook --event Stop >/dev/null
 for id in task-a task-b; do
@@ -174,6 +178,17 @@ printf 'working: resumed\n' >> "$FM_STATE_OVERRIDE/task-a.status"
 if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a; then exit 1; fi
 fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b
 [ "$FM_MERGE_WAIT_VERDICT" = waiting ]
+sed 's/harness=claude/harness=grok/' "$FM_STATE_OVERRIDE/task-b.meta" > "$FM_HOME/meta"
+mv "$FM_HOME/meta" "$FM_STATE_OVERRIDE/task-b.meta"
+rm "$FM_STATE_OVERRIDE/task-b.busy-state" "$FM_STATE_OVERRIDE/task-b.busy-gen"
+printf 'done: PR https://github.com/example/sample/pull/7\nresolved: recorded\n' > "$FM_STATE_OVERRIDE/task-a.status"
+fm_merge_wait_collect "$FM_STATE_OVERRIDE" "$1/bin"
+FM_MERGE_WAIT_RESULTS=$(fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
+fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b
+[ "$FM_MERGE_WAIT_VERDICT" = waiting ]
+printf 'Ctrl+c:cancel\n' > "$FM_HOME/pane-output"
+if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b; then exit 1; fi
+rm "$FM_HOME/pane-output"
 printf 'spawn_gen=replaced\n' >> "$FM_STATE_OVERRIDE/task-b.meta"
 if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b; then exit 1; fi
 SH
@@ -183,6 +198,11 @@ in_home bash "$CASE/batch-test.sh" "$ROOT" || fail 'batched merge waiting or rel
 printf 'done: PR https://github.com/example/sample/pull/7\nresolved: recorded\n' > "$CASE/state/task-a.status"
 sed '/^spawn_gen=replaced$/d' "$CASE/state/task-b.meta" > "$CASE/meta"
 mv "$CASE/meta" "$CASE/state/task-b.meta"
+sed '/^backend=herdr$/d; /^presentation=closed$/d; s/harness=grok/harness=claude/' "$CASE/state/task-a.meta" > "$CASE/meta"
+mv "$CASE/meta" "$CASE/state/task-a.meta"
+sed 's/harness=grok/harness=claude/' "$CASE/state/task-b.meta" > "$CASE/meta"
+mv "$CASE/meta" "$CASE/state/task-b.meta"
+in_home "$ROOT/bin/fm-busy-event.sh" arm "$CASE/state" task-b --state idle --source claude-hook --event Stop >/dev/null
 : > "$CASE/batch-calls"
 OUT=$(in_home env FM_TEST_PR_STATE=MERGED FM_CHECK_INTERVAL=0 FM_SIGNAL_GRACE=0 \
   FM_HEARTBEAT=999999 timeout 60 bash "$ROOT/bin/fm-watch.sh") || fail "batch watcher failed: $OUT"
