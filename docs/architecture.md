@@ -104,9 +104,11 @@ A `kind=secondmate` task's status stream doubles as its parent-directed reply ch
 Its bare turn-ended signal is absorbed only by the ordinary authoritative working proof because an active secondmate does not enter the staleness backbone that would resurface deferred pane-churn evidence.
 A crew that declares `paused:` for a known external wait, or carries a verified `captain-held` transfer, is separately absorbed while idle and re-surfaced only on the longer pause cadence, rather than being treated as a possible wedge, except that a captain-held transfer is not rechecked while the away-posture record exists.
 An ordinary worker whose agent is confidently dead or missing while its run is parked at a gate or it declares a pause instead enters the independent recovery check in `bin/fm-watch.sh` (`exited_wait_check`), before pane capture, busy classification, or pause absorption.
-That check names the task, gate or pause, and the current run's task findings snapshot when present; its script header owns the detection budget and repeat cadence.
+That check names the task and gate or pause.
+For a parked run with a usable run ID, it captures a fresh run-status snapshot when it can confirm the same gate; otherwise it supplies a command to read the findings.
+Its script header owns the detection budget and repeat cadence.
 Its recovery event also bypasses the away daemon's declared-wait absorption.
-An executing run retains its existing treatment because its controller may continue without the worker's agent.
+An executing run without a declared pause retains its existing treatment because its controller may continue without the worker's agent.
 The check reuses the recovery-grade backend classifier: tmux and Herdr provide proof, while ambiguous or unsupported backends keep their existing behavior.
 Live or inconclusive liveness remains fail-open at that initial surface, so a worker genuinely waiting on a decision is never silenced.
 Its later sights are still held to that same bounded cadence rather than re-alarming on every pane-hash change, because the throttle is keyed to the declaration and not to the pane an idle parked worker keeps ticking.
