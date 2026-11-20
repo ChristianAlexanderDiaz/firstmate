@@ -137,10 +137,23 @@ call
 ! grep -q '^axi status' "$FM_HOME/nm-calls" || fail 'finished run was polled after its viewer closed'
 grep -q '^axi$' "$FM_HOME/nm-calls" || fail 'replacement discovery stopped with the finished run'
 pass 'finished viewer checks inventory for replacements without polling terminal status'
+rm "$FM_FAKE_NM_OVERVIEW"
+: > "$FM_HOME/nm-calls"
+call
+printf '%s\n' 'unreadable inventory' > "$FM_FAKE_NM_OVERVIEW"
+call
+! grep -q '^axi status' "$FM_HOME/nm-calls" || fail 'unavailable inventory polled the finished run'
+[ "$(count split)" = 1 ] || fail 'unavailable inventory reopened the finished viewer'
 run_status run-two running
+cat > "$FM_FAKE_NM_OVERVIEW" <<EOF
+count: 1 of 1 total
+runs[1]{id,branch,status,head,pr}:
+  run-two,fm/panes,running,$HEAD_SHA,
+EOF
 call
 [ "$(count split)" = 2 ] || fail 'new run must open a fresh viewer'
 grep -q '^axi status' "$FM_HOME/nm-calls" || fail 'live replacement run was not polled'
+pass 'inventory recovery discovers a replacement after unreadable inventory'
 run_status run-two completed
 call
 call

@@ -223,21 +223,20 @@ fm_nm_review_pane_sync_locked() {  # <state-dir> <task-id> <run-id> <active|term
 }
 
 fm_nm_review_pane_terminal_unchanged() {  # <state> <id>
-  local record="$1/$2.nm-review-pane" meta="$1/$2.meta" pane run wt branch overview choice selected status
+  local record="$1/$2.nm-review-pane" meta="$1/$2.meta" pane run wt branch overview choice selected
   [ -f "$record" ] && [ ! -L "$record" ] || return 1
   fm_meta_get "$record" pane pane
   [ -z "$pane" ] || return 1
   fm_meta_get "$record" run run
   [ -n "$run" ] || return 1
   fm_meta_get "$meta" worktree wt
-  [ -d "$wt" ] || return 1
-  branch=$(git -C "$wt" symbolic-ref --short HEAD 2>/dev/null) || return 1
-  overview=$(fm_nm_run_checked "$wt" 10 axi) || return 1
+  [ -d "$wt" ] || return 0
+  branch=$(git -C "$wt" symbolic-ref --short HEAD 2>/dev/null) || return 0
+  overview=$(fm_nm_run_checked "$wt" 10 axi) || return 0
   choice=$(fm_nm_select_run "$branch" "$overview" "$wt" 10)
-  case "$choice" in selected\|*) ;; *) return 1 ;; esac
-  IFS='|' read -r _ selected status _ <<< "$choice"
-  [ "$selected" = "$run" ] || return 1
-  case "$status" in completed|failed|cancelled) return 0 ;; *) return 1 ;; esac
+  case "$choice" in selected\|*) ;; *) return 0 ;; esac
+  IFS='|' read -r _ selected _ <<< "$choice"
+  [ "$selected" = "$run" ]
 }
 
 fm_nm_review_pane_main() {
