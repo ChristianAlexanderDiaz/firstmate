@@ -1272,18 +1272,21 @@ def restore_browser_environment(config, token, manifest, env):
     env.pop("CHROME_DEVTOOLS_AXI_WS_HEADERS", None)
 
 
+def gaming_flag():
+    home = Path(os.environ.get("FM_HOME") or os.environ.get("FM_ROOT_OVERRIDE") or HERE.parent)
+    return Path(os.environ.get("FM_STATE_OVERRIDE") or home / "state") / ".gaming"
+
+
 def gaming_lock(deadline=None, interrupted=lambda: False):
     """Prospective home admission, independent of the optional host policy.
 
     Recheck the flag while queued: removing it restores normal admission even
     while the current holder runs. Never unlink the shared lock inode.
     """
-    home = Path(os.environ.get("FM_HOME") or os.environ.get("FM_ROOT_OVERRIDE") or HERE.parent)
-    state = Path(os.environ.get("FM_STATE_OVERRIDE") or home / "state")
-    flag = state / ".gaming"
+    flag = gaming_flag()
     if not flag.exists():
         return None
-    lock = state / ".heavy-job.lock"
+    lock = flag.parent / ".heavy-job.lock"
     inherited = [os.environ.get("FM_RESOURCE_GAMING_FD", "")]
     # Existing `flock LOCK command` wrappers pass their locked descriptor to
     # the command without our environment marker. Reuse that same open file
@@ -1383,6 +1386,10 @@ def run_job(args, config_name, config, digest):
             result = rpc(config, digest, op="acquire", token=token, controller=owner, parent=parent,
                 **{"class": kind, "memoryMiB": memory, "task": args.task})
             if result["state"] == "leased":
+                if kind != "worker" and gaming_fd is None and gaming_flag().exists():
+                    rpc(config, digest, op="release", token=token)
+                    gaming_fd = gaming_lock(deadline, lambda: interrupted)
+                    continue
                 break
             time.sleep(0.2)
         state = rpc(config, digest, op="status")

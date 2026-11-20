@@ -755,6 +755,31 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("nested-started", result.stdout)
 
+    def test_queued_run_rechecks_gaming_before_starting(self):
+        env = dict(os.environ, FM_HOME=str(self.root))
+        env.pop("FM_STATE_OVERRIDE", None)
+        token, state = self.acquire("test")
+        self.assertEqual(state, "leased")
+        marker = self.root / "configured-started"
+        job = self.job(f'touch {shlex.quote(str(marker))}', env=env)
+        wait_for(lambda: self.status().get("queue"))
+        (self.root / "state/.gaming").touch()
+        holder_started = self.root / "holder-started"
+        holder_release = self.root / "holder-release"
+        code = f'touch {shlex.quote(str(holder_started))}; while [ ! -e {shlex.quote(str(holder_release))} ]; do sleep 0.1; done'
+        holder = subprocess.Popen([CLI, "gaming-run", "--", "/bin/sh", "-c", code], env=env)
+        self.children.append(holder)
+        wait_for(holder_started.exists)
+        self.request("release", token=token)
+        wait_for(lambda: select.select([job.stderr], [], [], 0)[0])
+        self.assertIn("waiting for gaming heavy-job lock", job.stderr.readline())
+        self.assertFalse(marker.exists())
+        self.assertFalse(self.status()["leases"])
+        holder_release.touch()
+        self.assertEqual(holder.wait(timeout=12), 0)
+        self.assertEqual(job.wait(timeout=12), 0)
+        self.assertTrue(marker.exists())
+
     def test_monitor_restart_and_source_change_restart_hysteresis(self):
         sample = copy.deepcopy(SAMPLE)
         sample["instanceUUID"] = "restarted-monitor"
