@@ -2483,7 +2483,7 @@ watcher_capture() {  # <backend> <target> <lines> [expected-label]
   return "$rc"
 }
 
-# Request a corrected report once per done occurrence, across polls/restarts.
+# Deduplicate recorded reminders per done occurrence across polls and restarts.
 # Record only successful deliveries so failed attempts can be retried.
 # Delivery failures remain visible in the triage log and the ordinary done wake;
 # the reminder never suppresses or rewrites status events.
