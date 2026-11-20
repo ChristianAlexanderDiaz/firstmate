@@ -9,8 +9,10 @@
 # branch reachable from the project's checked-out default branch (origin/HEAD,
 # falling back to a local main or master branch).
 # Scouts require their report and the existing captain-call verify gate.
-# All kinds require current-state done from fm-crew-state.sh, an idle harness,
-# and no unhandled steering inbox records.
+# Done followed only by resolved events is also complete. Scouts may finish
+# with a recorded, fully answered captain-call inventory instead of done.
+# All kinds require an idle harness and no unhandled steering inbox records;
+# active runs, resumed work, and open status decisions remain ineligible.
 # fm-teardown.sh rechecks eligibility and incarnation under its lifecycle locks
 # and owns every ordinary safety check.
 # Refusals are reduced to one output line; no force, retries, or discard here.
@@ -36,6 +38,10 @@ if [ "${1:-}" = --eligible ]; then CHECK_ONLY=1; shift; fi
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 if [ "$CHECK_ONLY" -eq 1 ]; then
   [ "$#" -eq 2 ] && [ -n "$2" ] || exit 2
 else
@@ -45,7 +51,7 @@ fm_pr_task_id_valid "$1" || exit 2
 
 meta_value() { sed -n "s/^$2=//p" "$1" | tail -1; }
 eligible() {
-  local meta=$1 id=$2 kind mode project branch default ref current inbox record activity
+  local meta=$1 id=$2 kind mode project branch default ref current inbox record activity last verb
   grep -qx 'keep_open=1' "$meta" && return 1
   inbox=$(fm_task_inbox_dir "$STATE" "$id")
   if [ -e "$inbox" ] || [ -L "$inbox" ]; then
@@ -58,8 +64,37 @@ eligible() {
   case "$activity" in "idle "*) ;; *) return 1 ;; esac
   current=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
     FM_CONFIG_OVERRIDE="$CONFIG" FM_CREW_STATE_NO_FORGE=1 "$SCRIPT_DIR/fm-crew-state.sh" "$id") || return 1
-  case "$current" in "state: done "*) ;; *) return 1 ;; esac
   kind=$(meta_value "$meta" kind)
+  kind=${kind:-ship}
+  [ -z "$(status_open_decisions "$STATE/$id.status" "$kind")" ] || return 1
+  case "$current" in
+    "state: done "*) ;;
+    'state: unknown · source: none · no current-state source available'|\
+    'state: paused · source: status-log · '*|\
+    'state: parked · source: status-log · '*)
+      last=$(status_last_work_line "$STATE/$id.status") || return 1
+      verb=$(status_line_verb "$last")
+      case "$verb" in
+        done)
+          # Only the resolution-only fallback may recover an earlier done.
+          case "$current" in 'state: unknown · source: none · '*) ;; *) return 1 ;; esac
+          fm_dod_accept_ship_done "$kind" "$(meta_value "$meta" mode)" \
+            "$(meta_value "$meta" worktree)" "$(meta_value "$meta" project)" \
+            "$last" "$STATE" "$id" "$meta" >/dev/null || return 1
+          ;;
+        paused|captain-held|needs-decision)
+          [ "$kind" = scout ] || return 1
+          if [ "$verb" = paused ]; then
+            [ "$(status_declared_wait_owner "$last")" = captain ] || return 1
+          fi
+          FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+            FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-captain-hold.sh" verify "$id" --answered >/dev/null 2>&1 || return 1
+          ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
   case "$kind" in
     scout)
       [ -f "$DATA/$id/report.md" ] || return 1
