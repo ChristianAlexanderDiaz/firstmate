@@ -207,8 +207,11 @@ SH
     # shellcheck disable=SC1090,SC1091
     . "$1"
     SCRIPT_DIR=$2
-    fm_nm_run_checked() { [ ! -e "$STATE/publication-fails" ] || return 1; printf "overview\n"; }
-    fm_nm_select_run() { printf "absent\n"; }
+    fm_nm_run_checked() {
+      [ ! -e "$STATE/publication-fails" ] || return 1
+      case "$*" in *"status --run gerrit-run"*) printf "steps[3]{step,status,findings,duration_ms}:\n  review,completed,0,1\n  push,skipped,0,0\n  pr,skipped,0,0\n" ;; *) printf "overview\n" ;; esac
+    }
+    fm_nm_select_run() { case "$1" in gerrit-branch) printf "selected|gerrit-run|completed|gerrit-run\n" ;; *) printf "absent\n" ;; esac; }
     git init -q "$STATE/repo"
     git -C "$STATE/repo" -c user.name=test -c user.email=test@example.com commit --allow-empty -qm init
     git -C "$STATE/repo" update-ref refs/remotes/origin/task HEAD
@@ -219,6 +222,8 @@ SH
     done
     printf "kind=ship\nmode=no-mistakes\nbranch=unpublished\nworktree=%s/repo\nproject=%s/repo\n" "$STATE" "$STATE" > "$STATE/handoff.meta"
     printf "done: ready for validation\n" > "$STATE/handoff.status"
+    printf "kind=ship\nmode=no-mistakes\nforge=gerrit\nbranch=gerrit-branch\nworktree=%s/repo\nproject=%s/repo\n" "$STATE" "$STATE" > "$STATE/gerrit-unlinked.meta"
+    printf "done: change published for review\n" > "$STATE/gerrit-unlinked.status"
     printf "kind=ship\nmode=direct-PR\n" > "$STATE/gerrit.meta"
     printf "done: PR https://review.example/c/project/+/42 published for review\n" > "$STATE/gerrit.status"
     printf "kind=ship\nmode=direct-PR\n" > "$STATE/external.meta"
