@@ -2,8 +2,8 @@
 # Shared sidebar collector and display-only publisher.
 # Usage: fm-sidebar-state.sh <task> [--refresh] | --sweep | --help
 # A plain read and crew-state --sidebar have no side effects. --refresh also
-# reports Herdr metadata, queues newly actionable Needs me notifications, and
-# recovers a Checking -> non-captain gate transition once per run/gate/findings.
+# reports Herdr metadata and recovers a current unattended non-captain gate
+# once per run/gate/findings, including gates reached between observations.
 # --sweep rotates through one local Herdr task (including secondmates).
 # The watcher owns one bounded child at a time, polling every five seconds.
 # With N eligible tasks, the conservative refresh bound is N*(120+5+FM_POLL)
@@ -11,11 +11,11 @@
 # exited-wait, dead-inbox and wedge alarms retain their own faster bounds;
 # they own Stuck notifications, never a competing sidebar alarm.
 #
-# state/<task>.sidebar is display history only (endpoint, word, checking run).
+# state/<task>.sidebar is display history only (endpoint, word, CI queue time).
 # .sidebar-relaunched stores claimed gate fingerprints BEFORE control starts:
 # a failed/timed-out relaunch is reported, never automatically repeated.
 # Capability absence quietly omits metadata. Tokens fm_status/fm_status_detail belong to
-# source firstmate-status and expire after 30 minutes if refresh stops.
+# source firstmate-status; lifetime covers the fleet refresh bound plus 30m.
 # No agent status, task title, workspace lifecycle, or budget policy is changed.
 # bash -c bodies deliberately expand positional arguments in the bounded child.
 # shellcheck disable=SC2016
@@ -77,9 +77,11 @@ sidebar_collect() {  # <task>
   if fm_pr_poll_retirement_receipt_valid "$STATE" "$id" 2>/dev/null; then landed=yes; fi
   run=$(fm_nm_strip_quotes "$(fm_nm_field "$run_out" id)")
   case "$run" in *[!A-Za-z0-9_-]*) run= ;; esac
-  prior=no
-  if [ -n "$run" ] && [ "$(fm_meta_get "$record" endpoint)" = "$endpoint" ] \
-    && [ "$(fm_meta_get "$record" checking)" = "$run" ]; then prior=yes; fi
+  busy=unknown
+  if [ "$kind" = secondmate ] && [ "$backend" = herdr ] && [ "$agent" = alive ]; then
+    busy=$(fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; fm_backend_herdr_classify_agent_status "$(fm_backend_herdr_agent_status_raw "$2" "$3")"' \
+      bash "$SCRIPT_DIR" "$session" "$pane" 2>/dev/null) || busy=unknown
+  fi
   machine='' service='' stall='' ci_progress='' ci_queue='' ci_since=''
   key=$(fm_window_marker_key "$window")
   # The watcher owns the threshold and clears this count on renewed progress.
@@ -89,7 +91,7 @@ sidebar_collect() {  # <task>
   [ "$escalations" -le 0 ] || stall='no progress past watcher threshold'
   if [ "$backend" = herdr ]; then sidebar_machine_service; fi
   sidebar_ci_evidence
-  fm_sidebar_classify "$line" "$agent" "$kind" "$captain" "$landed" "$machine" "$service" "$stall" "$prior"
+  fm_sidebar_classify "$line" "$agent" "$kind" "$captain" "$landed" "$machine" "$service" "$stall" '' "$busy"
   if [ "$FM_SIDEBAR_WORD" = Checking ] && [ -n "$ci_progress" ]; then
     FM_SIDEBAR_DETAIL="CI $ci_progress - no agent"
   fi
@@ -152,52 +154,55 @@ sidebar_ci_evidence() {
 }
 
 sidebar_publish() {
-  local panes
+  local panes aggregate workspace_word workspace_detail count=0 candidate poll ttl
   [ "$backend" = herdr ] && [ -n "$FM_SIDEBAR_WORD" ] || return 0
   [ "$(fm_meta_get "$meta" presentation)" != closed ] || return 0
   fm_backend_source herdr || return 0
   # An old CLI rejects help; it must not receive a mutation it cannot support.
   fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
     bash "$SCRIPT_DIR" "$session" workspace report-metadata --help >/dev/null 2>&1 || return 0
-  # A shared workspace cannot represent one task's status. Only publish its
-  # label when the live inventory proves this task owns its sole pane.
+  # Read other panes' published display tokens, substituting this fresh result.
+  # The shared vocabulary owns urgency; no extra task/run reads are needed.
   panes=$(fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
     bash "$SCRIPT_DIR" "$session" pane list 2>/dev/null) || panes='{}'
-  if printf '%s' "$panes" | jq -e --arg workspace "$workspace" --arg pane "$pane" '
+  aggregate=$(printf '%s' "$panes" | jq -cer --arg workspace "$workspace" --arg pane "$pane" \
+    --arg word "$FM_SIDEBAR_WORD" --arg detail "$FM_SIDEBAR_DETAIL" --argjson order "$FM_SIDEBAR_PRIORITY" '
     [.result.panes[] | select(.workspace_id == $workspace)]
-    | length == 1 and .[0].pane_id == $pane' >/dev/null 2>&1; then
+    | select(any(.pane_id == $pane))
+    | map(if .pane_id == $pane then {word:$word, detail:$detail}
+          else {word:.tokens.fm_status, detail:(.tokens.fm_status_detail // "")} end)
+    | map(. as $p | select($order | index($p.word)))
+    | sort_by(.word as $w | $order | index($w)) | first') || aggregate=''
+  for candidate in "$STATE"/*.meta; do [ ! -f "$candidate" ] || count=$((count + 1)); done
+  poll=${FM_POLL:-15}
+  case "$poll" in ''|*[!0-9]*) poll=15 ;; esac
+  ttl=$(((count + 1) * (125 + poll) * 1000 + 1800000))
+  if [ -n "$aggregate" ]; then
+    workspace_word=$(printf '%s' "$aggregate" | jq -r '.word')
+    workspace_detail=$(printf '%s' "$aggregate" | jq -j '.detail' | tr '\n\r\t' '   ' | cut -c1-300)
     fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
       bash "$SCRIPT_DIR" "$session" workspace report-metadata --source firstmate-status "$workspace" \
-      --token "fm_status=$FM_SIDEBAR_WORD" --token "fm_status_detail=$FM_SIDEBAR_DETAIL" --ttl-ms 1800000 >/dev/null 2>&1 || true
+      --token "fm_status=$workspace_word" --token "fm_status_detail=$workspace_detail" --ttl-ms "$ttl" >/dev/null 2>&1 || true
   fi
   fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
     bash "$SCRIPT_DIR" "$session" pane report-metadata --source firstmate-status "$pane" \
-    --token "fm_status=$FM_SIDEBAR_WORD" --token "fm_status_detail=$FM_SIDEBAR_DETAIL" --ttl-ms 1800000 >/dev/null 2>&1 || true
+    --token "fm_status=$FM_SIDEBAR_WORD" --token "fm_status_detail=$FM_SIDEBAR_DETAIL" --ttl-ms "$ttl" >/dev/null 2>&1 || true
 }
 
 sidebar_refresh() (
-  local id=$1 lock="$STATE/.$1.sidebar.lock" snapshot gate mark note rc=0 checking=''
+  local id=$1 lock="$STATE/.$1.sidebar.lock" snapshot gate note rc=0
   fm_lock_try_acquire "$lock" || exit 0
   trap 'fm_lock_release "$lock"' EXIT
   sidebar_collect "$id" || exit 0
   [ "$backend" = herdr ] || exit 0
   sidebar_publish
-  if [ "$FM_SIDEBAR_WORD" = 'Needs me' ] \
-    && [ "$(fm_sidebar_wake_owner "$agent" "$stall")" = sidebar ]; then
-    mark="$endpoint $line"
-    if [ "$(fm_meta_get "$record" notified)" != "$mark" ]; then
-      fm_wake_append check "sidebar-$id" "check: sidebar $id Needs me - $FM_SIDEBAR_DETAIL; reconcile the task" || exit 1
-    fi
-  else mark=; fi
-  [ "$prior" != yes ] || checking=$run
-  [ "$FM_SIDEBAR_WORD" != Checking ] || checking=$run
-  # No previous Checking identity survives a changed run or endpoint.
+  # Alerts are owned by the watcher's independent status-span/liveness sweep.
   snapshot=$(mktemp "$record.XXXXXX") || exit 1
-  printf 'endpoint=%s\nword=%s\nchecking=%s\nnotified=%s\nci_queue=%s\nci_since=%s\n' \
-    "$endpoint" "$FM_SIDEBAR_WORD" "$checking" "$mark" "$ci_queue" "$ci_since" > "$snapshot"
+  printf 'endpoint=%s\nword=%s\nci_queue=%s\nci_since=%s\n' \
+    "$endpoint" "$FM_SIDEBAR_WORD" "$ci_queue" "$ci_since" > "$snapshot"
   mv "$snapshot" "$record" || exit 1
   case "$line" in 'state: parked · source: run-step · '*) ;; *) exit 0 ;; esac
-  [ "$prior" = yes ] && [ "$captain" = no ] && [ "$FM_SIDEBAR_WORD" = 'Needs me' ] || exit 0
+  [ -n "$run" ] && [ "$captain" = no ] && [ "$FM_SIDEBAR_WORD" = 'Needs me' ] || exit 0
   case "$kind" in ship|scout) ;; *) exit 0 ;; esac
   fm_sleep_active "$STATE" && exit 0
   case "$agent" in dead|missing) ;; *) exit 0 ;; esac

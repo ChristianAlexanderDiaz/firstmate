@@ -1503,6 +1503,7 @@ Verification entry points:
 ```sh
 bash bin/fm-test-run.sh --jobs 1 tests/fm-sidebar-state.test.sh
 FM_TEST_ONLY=test_gone_endpoint_reports_once_instead_of_escalating_forever bash bin/fm-test-run.sh --jobs 1 tests/fm-watch-triage.test.sh
+FM_TEST_ONLY=test_sidebar_rotation_does_not_delay_blocker_wake bash bin/fm-test-run.sh --jobs 1 tests/fm-watch-triage.test.sh
 PYTHONDONTWRITEBYTECODE=1 python3 tests/fm-resource.test.py ResourceTests.test_unfittable_exclusive_does_not_block_workers_or_other_classes
 ```
 
@@ -1514,6 +1515,8 @@ ok - Checking transition recovers exactly once and names gate findings
 exited-worker wake: dead in 6s (test wedge threshold: 1s)
 exited-worker wake: missing in 6s (test wedge threshold: 1s)
 ok - a record whose endpoint is dead or missing reports itself once and is never re-escalated
+needs-me wake with slow display: 2s (display read: 60s)
+ok - all-task status scan wakes for a blocker independently of display rotation
 ```
 
 These are offline classifier, metadata protocol, and existing watcher-alert results, not evidence of real Herdr rendering.

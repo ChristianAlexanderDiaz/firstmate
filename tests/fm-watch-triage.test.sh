@@ -3934,6 +3934,39 @@ gone_endpoint_env() {  # <dead|missing> -> assignments for the round below
   esac
 }
 
+test_sidebar_rotation_does_not_delay_blocker_wake() {
+  local dir state fakebin out old_watch file pid started elapsed i
+  dir=$(make_case sidebar-blocker); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  mkdir -p "$dir/bin"
+  for file in "$ROOT"/bin/*; do ln -s "$file" "$dir/bin/${file##*/}"; done
+  rm "$dir/bin/fm-sidebar-state.sh"
+  cat > "$dir/bin/fm-sidebar-state.sh" <<'SH'
+#!/usr/bin/env bash
+touch "$FM_STATE_OVERRIDE/.slow-sidebar-started"
+sleep 60
+touch "$FM_STATE_OVERRIDE/.slow-sidebar-finished"
+SH
+  chmod +x "$dir/bin/fm-sidebar-state.sh"
+  printf 'working: background task\n' > "$state/early.status"
+  printf 'working: later task\n' > "$state/late.status"
+  prime_status_seen "$state" "$state/early.status"
+  prime_status_seen "$state" "$state/late.status"
+  old_watch=$WATCH; WATCH="$dir/bin/fm-watch.sh"
+  watch_bg "$state" "$fakebin" "$out" env FM_FAKE_CREW_STATE='state: working · source: run-step · running'
+  pid=$!
+  WATCH=$old_watch
+  for ((i=0;i<100;i++)); do [ ! -f "$state/.slow-sidebar-started" ] || break; sleep 0.1; done
+  [ -f "$state/.slow-sidebar-started" ] || { reap "$pid"; fail 'slow display reader never started'; }
+  started=$(date +%s)
+  printf 'blocked: actionable firstmate blocker\n' >> "$state/late.status"
+  wait_for_exit "$pid" 150 || { reap "$pid"; fail 'blocker waited for display rotation'; }
+  elapsed=$(( $(date +%s) - started ))
+  [ ! -f "$state/.slow-sidebar-finished" ] || fail 'wake waited for slow display reader'
+  grep -q 'late.status' "$state/.wake-queue" || fail 'blocker was not queued'
+  printf 'needs-me wake with slow display: %ss (display read: 60s)\n' "$elapsed"
+  pass 'all-task status scan wakes for a blocker independently of display rotation'
+}
+
 test_gone_endpoint_reports_once_instead_of_escalating_forever() {
   local dir state fakebin out capture window key verdict round started elapsed
   local failed='state: failed · source: run-step · run failed'
@@ -7690,6 +7723,7 @@ test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active
 test_gone_endpoint_reports_once_instead_of_escalating_forever
+test_sidebar_rotation_does_not_delay_blocker_wake
 test_live_and_unproven_endpoints_still_wedge_escalate
 test_wedge_guards_absent_config_keeps_the_unchanged_ladder
 test_wedge_guard_critical_defers_one_window_at_a_time_up_to_the_cap

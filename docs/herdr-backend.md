@@ -667,7 +667,8 @@ To repeat the check on a live session, turn the feature on, wait one watcher pol
 ## Plain sidebar status
 
 Each home's watcher publishes reconciled status as display-only workspace and pane metadata, independently of project groups.
-Workspace metadata requires a live inventory containing only the task's pane; shared workspaces receive per-pane status instead.
+For shared workspaces, the workspace row shows the most urgent published pane status, using the fresh result for the pane being refreshed.
+Urgency is Needs me, Stuck, Needs you, Waiting for machine, Checking, Working, Serving, Idle, then Done; each pane retains its own status.
 `bin/fm-sidebar-state.sh` collects the existing crew, endpoint, captain-hold, and host-budget evidence; `bin/fm-sidebar-lib.sh` is the shared vocabulary and precedence owner.
 `fm-crew-state.sh <task> --sidebar` exposes that same reading without publishing metadata or relaunching anything.
 
@@ -678,17 +679,21 @@ Workspace metadata requires a live inventory containing only the task's pane; sh
 | Needs you | A captain-owned decision or review; available PR links appear in the detail. |
 | Needs me | Firstmate must handle a blocker or gate. |
 | Waiting for machine | A pane-owned budget request or an explicitly queued CI runner; detail includes elapsed wait. |
-| Stuck | An exited worker has unfinished work, an unattended gate has no recovery history, or the watcher already reported stalled progress. |
+| Stuck | An exited worker has unfinished work or the watcher already reported stalled progress. |
 | Serving | The pane's process tree owns a listening TCP service. |
 | Done | Positive merged-PR evidence, never merely a worker's `done` declaration. |
 | Idle | A healthy secondmate is ready for work. |
 
 Captain ownership takes priority over recovery, and existing stalled-progress evidence takes priority over Checking.
-A Checking task that reaches a non-captain gate without an agent is relaunched once for that run, gate, and findings; unknown ownership prevents relaunch.
+A current non-captain validation gate without an agent is Needs me and eligible for one relaunch per run, gate, and findings; unknown ownership prevents relaunch.
+Recovery does not require a previous Checking observation, so gates reached between sweeps or before watcher startup remain eligible.
+Secondmate Working and Idle use Herdr's native busy signal after the existing liveness reader proves the agent alive, rather than a possibly stale status declaration.
 The replacement receives the gate and findings location, with no permission to answer ask-user findings itself.
 The existing exited-worker and no-progress notification paths retain ownership of their alerts, so the display does not add duplicate recovery alerts.
-The reporter queues newly observed firstmate blockers itself.
-The reporter header owns the bounded sweep schedule and fleet-size-dependent refresh bound.
+The watcher's existing all-task status-span scan evaluates declared blockers every sweep, independently of display rotation, and remains the single notification owner for them.
+The reporter adds no duplicate blocker or exited-worker alarm.
+With N eligible tasks, display refresh has a conservative bound of N times (120 + 5 + poll interval) seconds plus scheduler delay; the existing status-signal path uses the poll interval and signal grace instead of that rotation.
+The reporter header owns the sweep mechanics; existing endpoint and stalled-progress readers retain their own alert thresholds.
 
 The tokens are `fm_status` and `fm_status_detail`, under source `firstmate-status`.
 Herdr renders them only when its sidebar rows name them; the generated project-group rows now use these tokens, and existing custom configurations need the same row update.
@@ -707,7 +712,7 @@ The legacy group token `fm_state` remains a declaration-based group sort categor
 Unsupported `report-metadata` quietly omits the labels; it never blocks supervision.
 Closed presentations receive no metadata writes, and workspace closure stays with the presentation lifecycle owner.
 Remote tasks are reported by their owning home, not by querying another home's endpoint namespace.
-Metadata expires if refresh stops, rather than persisting an indefinitely stale claim.
+Metadata lifetime covers the current inventory's conservative refresh bound plus 30 minutes, then expires if refresh stops.
 
 `tests/fm-sidebar-state.test.sh` exercises all nine labels against a stub Herdr CLI, including recovery, unsupported capability, and kernel listener ownership.
 Real rendering still requires a guarded Herdr lab check: configure the rows, drive all nine states, capture the sidebar, and verify labels survive a refresh and disappear when the presentation closes.

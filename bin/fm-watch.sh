@@ -3034,6 +3034,8 @@ RECONCILE_REQUEST_PID=
 # Sidebar refresh runs in one bounded child, never in the per-window hot loop.
 # The child rotates the home-local inventory; it also uses the shared classifier
 # exposed by crew-state --sidebar. No additional supervision cycle is created.
+# Alerts stay in this watcher's existing all-task status-span and endpoint
+# checks below: a slow display read cannot postpone Needs me or Stuck triggers.
 SIDEBAR_PID=
 SIDEBAR_NEXT=0
 sidebar_tick() {
@@ -3044,7 +3046,7 @@ sidebar_tick() {
     SIDEBAR_PID=
   fi
   SIDEBAR_NEXT=$((SECONDS + 5))
-  (fm_exec_timed 120 2 "$SCRIPT_DIR/fm-sidebar-state.sh" --sweep) \
+  (FM_POLL="$POLL" fm_exec_timed 120 2 "$SCRIPT_DIR/fm-sidebar-state.sh" --sweep) \
     </dev/null >/dev/null 2>"$STATE/.sidebar.log" &
   SIDEBAR_PID=$!
 }

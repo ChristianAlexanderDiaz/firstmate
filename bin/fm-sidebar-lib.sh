@@ -2,13 +2,15 @@
 # Display vocabulary owner. Sources no state and performs no I/O.
 # fm_sidebar_classify <crew-line> <agent-state> <kind> <captain-call>
 #                     <landed> <machine-detail> <service-detail> <stall-detail>
-#                     [checking-run]
+#                     [unused] [backend-busy-state]
 # Sets FM_SIDEBAR_WORD and FM_SIDEBAR_DETAIL. Empty word means insufficient
 # evidence, never a claim that an unreadable endpoint is dead.
 # The watcher reporter and crew-state --sidebar use this same classifier.
 # Captain ownership wins over recovery; landed is positive merge evidence,
 # never the worker's done declaration. A parked ask-user is Needs me even when
-# its worker exited; an unattended ordinary gate is Stuck until recovery.
+# its worker exited; current unattended gates are eligible for recovery.
+# Shared workspace urgency is separate from evidence precedence within a task.
+FM_SIDEBAR_PRIORITY='["Needs me","Stuck","Needs you","Waiting for machine","Checking","Working","Serving","Idle","Done"]'
 fm_sidebar_classify() {
   local line=$1 agent=$2 kind=$3 captain=$4 landed=$5 machine=$6 service=$7 stall=$8
   local state source detail part human=0
@@ -25,13 +27,18 @@ fm_sidebar_classify() {
     FM_SIDEBAR_WORD='Needs you'; FM_SIDEBAR_DETAIL=$detail
   elif [ "$landed" = yes ]; then
     FM_SIDEBAR_WORD=Done; FM_SIDEBAR_DETAIL=landed
-  elif [ -n "$stall" ]; then
-    FM_SIDEBAR_WORD=Stuck; FM_SIDEBAR_DETAIL=$stall
   elif [ "$state" = blocked ] || { [ "$state" = parked ] && { [ "$human" = 1 ] || [ "$source" = status-log ]; }; }; then
     FM_SIDEBAR_WORD='Needs me'; FM_SIDEBAR_DETAIL=$detail
   elif [ "$state" = parked ] && { [ "$agent" = dead ] || [ "$agent" = missing ]; }; then
-    if [ "${9:-}" = yes ]; then FM_SIDEBAR_WORD='Needs me'; else FM_SIDEBAR_WORD=Stuck; fi
+    FM_SIDEBAR_WORD='Needs me'
     FM_SIDEBAR_DETAIL="$detail - no agent"
+  elif [ -n "$stall" ]; then
+    FM_SIDEBAR_WORD=Stuck; FM_SIDEBAR_DETAIL=$stall
+  elif [ "$kind" = secondmate ] && [ "$agent" = alive ] && [ "$state" != failed ] && [ "$state" != parked ]; then
+    case "${10:-unknown}" in
+      busy) FM_SIDEBAR_WORD=Working; FM_SIDEBAR_DETAIL='agent busy' ;;
+      idle) FM_SIDEBAR_WORD=Idle; FM_SIDEBAR_DETAIL='ready for work' ;;
+    esac
   elif [ -n "$machine" ]; then
     FM_SIDEBAR_WORD='Waiting for machine'; FM_SIDEBAR_DETAIL=$machine
   elif [ -n "$service" ] && { [ "$state" != working ] || [ "$agent" != alive ]; }; then
@@ -46,17 +53,14 @@ fm_sidebar_classify() {
     FM_SIDEBAR_WORD=Working; FM_SIDEBAR_DETAIL=$detail
   elif [ "$state" = failed ] || [ "$state" = parked ]; then
     FM_SIDEBAR_WORD='Needs me'; FM_SIDEBAR_DETAIL=$detail
-  elif [ "$kind" = secondmate ] && [ "$agent" = alive ]; then
-    FM_SIDEBAR_WORD=Idle; FM_SIDEBAR_DETAIL='ready for work'
   elif [ "$agent" = alive ]; then
     FM_SIDEBAR_WORD='Needs me'; FM_SIDEBAR_DETAIL='agent idle with work pending'
   fi
 }
 
-# Recovery notification ownership. Existing watcher paths own exited agents,
-# unavailable inbox delivery, and no-progress escalation. Display never creates
-# a competing recovery detector or alarm for those conditions.
+# Notification ownership. The watcher's status-span scan, exited-agent paths,
+# unavailable inbox delivery, and no-progress escalation own alerts each sweep.
+# Display never creates a competing detector or alarm.
 fm_sidebar_wake_owner() {  # <agent-state> <stall-detail>
-  case "$1" in dead|missing) printf 'watcher'; return ;; esac
-  if [ -n "$2" ]; then printf 'watcher'; else printf 'sidebar'; fi
+  printf 'watcher'
 }

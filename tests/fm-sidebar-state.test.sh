@@ -65,14 +65,16 @@ elif a[:2] == ['pane', 'get']:
 elif a[:2] == ['pane', 'list']:
     result = {'panes': [{'pane_id': 'w1:p1', 'workspace_id': 'w1'}]}
     if os.environ.get('LAB_SHARED') == '1':
-        result['panes'].append({'pane_id': 'w1:p2', 'workspace_id': 'w1'})
+        result['panes'].append({'pane_id': 'w1:p2', 'workspace_id': 'w1', 'tokens': {
+            'fm_status': os.environ.get('LAB_OTHER_WORD', 'Needs me'),
+            'fm_status_detail': 'other pane detail'}})
 elif a[:2] == ['agent', 'get']:
     agent = os.environ['LAB_AGENT']
     if os.environ.get('LAB_AGENT_FILE'):
         agent = open(os.environ['LAB_AGENT_FILE']).read().strip()
     if agent == 'dead':
         print(json.dumps({'error': {'code': 'agent_not_found'}})); sys.exit(1)
-    result = {'agent': {'agent_status': 'working'}}
+    result = {'agent': {'agent_status': os.environ.get('LAB_BUSY', 'working')}}
 elif a[:2] == ['pane', 'process-info']:
     result = {'type': 'pane_process_info', 'process_info': {
         'pane_id': 'w1:p1', 'shell_pid': int(os.environ['LAB_SHELL']),
@@ -132,7 +134,7 @@ bash "$script" sample --refresh
 [ "$(wc -l < "$LAB_CALLS")" -eq 1 ] || fail 'gate relaunched more than once'
 grep -q 'findings file .*sidebar-gate.txt' "$LAB_CALLS" || fail 'relaunch note omitted findings'
 pass 'Checking transition recovers exactly once and names gate findings'
-# Ownership must be positively known, and the previous Checking run must match.
+# Ownership must be positively known before recovering a current gate.
 export LAB_LINE='state: working · source: run-step · ci running · run: run2'
 export LAB_RUN=$'run:\n  id: run2\n  status: ci'
 bash "$script" sample --refresh
@@ -149,35 +151,43 @@ bash "$script" sample --refresh
 [ "$(wc -l < "$LAB_CALLS")" -eq 1 ] || fail 'captain status wait relaunched a gate'
 rm "$FM_HOME/state/sample.status"
 export LAB_RUN=$'run:\n  id: replacement\n  status: awaiting_approval'
+export LAB_LINE='state: parked · source: run-step · parked at review · run: replacement'
 bash "$script" sample --refresh
-[ "$(wc -l < "$LAB_CALLS")" -eq 1 ] || fail 'different run inherited recovery authority'
-pass 'captain holds, unknown ownership, and run replacement prevent relaunch'
+[ "$(wc -l < "$LAB_CALLS")" -eq 2 ] || fail 'current unattended replacement gate was not recovered'
+pass 'captain holds and unknown ownership prevent relaunch; current gates need no history'
+for fresh in between_sweeps late_watcher; do
+  rm -f "$FM_HOME/state/sample.sidebar"
+  export LAB_RUN="run:
+  id: $fresh
+  status: awaiting_approval"
+  export LAB_LINE="state: parked · source: run-step · parked at review · run: $fresh"
+  expect 'Needs me'
+  bash "$script" sample --refresh
+done
+[ "$(wc -l < "$LAB_CALLS")" -eq 4 ] || fail 'unobserved gates did not each recover exactly once'
+pass 'between-sweeps and late-watcher gates recover once without Checking history'
+call_count=$(wc -l < "$LAB_CALLS")
 export LAB_LINE='state: working · source: run-step · ci running · run: run4'
 export LAB_RUN=$'run:\n  id: run4\n  status: ci'
 bash "$script" sample --refresh
 export LAB_LINE='state: parked · source: run-step · parked at lint · run: run4'
 export LAB_RUN=$'run:\n  id: run4\n  status: awaiting_approval' LAB_MUTATE_META=1
 bash "$script" sample --refresh
-[ "$(wc -l < "$LAB_CALLS")" -eq 1 ] || fail 'changed endpoint metadata allowed stale recovery'
+[ "$(wc -l < "$LAB_CALLS")" -eq "$call_count" ] || fail 'changed endpoint metadata allowed stale recovery'
 unset LAB_MUTATE_META
 export LAB_AGENT_FILE="$TMP_ROOT/agent" LAB_WAKE_AGENT=1
 printf 'dead\n' > "$LAB_AGENT_FILE"
 bash "$script" sample --refresh
-[ "$(wc -l < "$LAB_CALLS")" -eq 1 ] || fail 'an agent that returned during the read was relaunched'
+[ "$(wc -l < "$LAB_CALLS")" -eq "$call_count" ] || fail 'an agent that returned during the read was relaunched'
 unset LAB_AGENT_FILE LAB_WAKE_AGENT
 pass 'changed metadata and a returning agent refuse stale recovery'
 rm -f "$FM_HOME/state/sample.sidebar"
 export LAB_LINE='state: paused · source: status-log · waiting' LAB_RUN=''
 expect Stuck
 export LAB_AGENT=alive LAB_LINE='state: blocked · source: status-log · help needed'
-start=$(date +%s)
 expect 'Needs me'
-elapsed=$(( $(date +%s) - start ))
-grep -q 'Needs me' "$FM_HOME/state/.wake-queue" || fail 'Needs me did not queue a notification'
-printf 'needs-me wake elapsed: %ss\n' "$elapsed"
-before=$(wc -l < "$FM_HOME/state/.wake-queue")
 bash "$script" sample --refresh
-[ "$(wc -l < "$FM_HOME/state/.wake-queue")" -eq "$before" ] || fail 'duplicate Needs me notification'
+[ ! -s "$FM_HOME/state/.wake-queue" ] || fail 'display duplicated the watcher alert owner'
 export LAB_LINE='state: done · source: run-step · run passed: PR merged'
 expect Done
 export LAB_AGENT=dead LAB_LINE='state: working · source: run-step · ci running · run: run3'
@@ -188,7 +198,14 @@ expect Checking
 export LAB_AGENT=alive LAB_RUN='' LAB_CI=''
 write_meta secondmate
 export LAB_LINE='state: paused · source: status-log · ready'
+export LAB_BUSY=idle
 expect Idle
+export LAB_BUSY=working
+expect Working
+export LAB_BUSY=idle LAB_LINE='state: working · source: status-log · old working declaration'
+expect Idle
+unset LAB_BUSY
+pass 'secondmate busy and idle follow backend state, not stale declarations'
 write_meta
 # Positive kernel evidence: a child listener in the exact pane-shell subtree.
 python3 - "$TMP_ROOT/ready" <<'PY' &
@@ -225,12 +242,34 @@ bash "$script" sample --refresh
 python3 - "$LAB_LOG" "$before" <<'PY'
 import json, sys
 calls = [json.loads(line) for line in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]
-assert len(calls) == 1 and calls[0][:2] == ['pane', 'report-metadata'], calls
+workspace = next(c for c in calls if c[:2] == ['workspace', 'report-metadata'])
+pane = next(c for c in calls if c[:2] == ['pane', 'report-metadata'])
+assert 'fm_status=Needs me' in workspace and 'fm_status_detail=other pane detail' in workspace, calls
+assert 'fm_status=Working' in pane, calls
+PY
+export LAB_OTHER_WORD=Checking LAB_LINE='state: blocked · source: status-log · urgent current pane'
+bash "$script" sample --refresh
+python3 - "$LAB_LOG" <<'PY'
+import json, sys
+call = json.loads(open(sys.argv[1]).readlines()[-2])
+assert call[:2] == ['workspace', 'report-metadata'] and 'fm_status=Needs me' in call, call
 PY
 unset LAB_SHARED
-pass 'shared workspace receives only pane status'
+unset LAB_OTHER_WORD
+pass 'shared workspace reports the most urgent pane in both directions'
+for ((i=0;i<20;i++)); do touch "$FM_HOME/state/extra$i.meta"; done
+bash "$script" sample --refresh
+python3 - "$LAB_LOG" <<'PY'
+import json, sys
+call = json.loads(open(sys.argv[1]).readlines()[-1])
+assert int(call[call.index('--ttl-ms') + 1]) > 21 * 135 * 1000, call
+PY
+rm "$FM_HOME/state/extra"*.meta
+pass 'metadata lifetime exceeds the fleet refresh bound'
 fm_sidebar_classify 'state: working · source: run-step · ci' dead ship no no '' '' stalled yes
 [ "$FM_SIDEBAR_WORD" = Stuck ] || fail 'Stuck must beat Checking'
+fm_sidebar_classify 'state: parked · source: run-step · gate' dead ship no no '' '' stalled
+[ "$FM_SIDEBAR_WORD" = 'Needs me' ] || fail 'a current unanswered gate must remain eligible for recovery'
 fm_sidebar_classify 'state: parked · source: run-step · gate' dead ship yes no '' '' stalled yes
 [ "$FM_SIDEBAR_WORD" = 'Needs you' ] || fail 'captain ownership must beat recovery'
 [ "$(fm_sidebar_wake_owner dead '')" = watcher ] || fail 'exited recovery ownership duplicated'
