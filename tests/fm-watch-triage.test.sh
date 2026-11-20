@@ -207,6 +207,8 @@ SH
     # shellcheck disable=SC1090,SC1091
     . "$1"
     SCRIPT_DIR=$2
+    fm_nm_run_checked() { [ ! -e "$STATE/publication-fails" ] || return 1; printf "overview\n"; }
+    fm_nm_select_run() { printf "absent\n"; }
     git init -q "$STATE/repo"
     git -C "$STATE/repo" -c user.name=test -c user.email=test@example.com commit --allow-empty -qm init
     git -C "$STATE/repo" update-ref refs/remotes/origin/task HEAD
@@ -245,16 +247,33 @@ SH
       fm_wake_status_seen_commit "$STATE" "$f" "$end" "$ident" || exit 11
       mark_surfaced "$f" "$end" "$ident" || exit 11
     done <<< "$FM_SIGNAL_SURFACE_ENDPOINTS"
+    stale_record=$(status_span_first_actionable_record "$STATE/nm.status" 0)
+    stale_end=${stale_record%%$'"'"'\t'"'"'*}
+    stale_rest=${stale_record#*$'"'"'\t'"'"'}
+    stale_ident=${stale_rest%%$'"'"'\t'"'"'*}
+    mark_surfaced "$STATE/nm.status" "$stale_end" "$stale_ident" || exit 12
     heartbeat_scan_finds_actionable || exit 12
     mark_all_captain_relevant_surfaced || exit 12
-    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 5 ] || exit 12
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 6 ] || exit 12
     rm "$STATE/send-fails"
     heartbeat_scan_finds_actionable || exit 14
     mark_all_captain_relevant_surfaced || exit 14
-    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 6 ] || exit 15
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 7 ] || exit 15
     printf "done [at=125]: link still missing\n" >> "$STATE/nm.status"
     signal_files_actionable "$STATE/nm.status" || exit 16
-    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 7 ] || exit 17
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 8 ] || exit 17
+    printf "kind=ship\nmode=no-mistakes\nbranch=later\nworktree=%s/repo\nproject=%s/repo\n" "$STATE" "$STATE" > "$STATE/later.meta"
+    printf "done: review ready\n" > "$STATE/later.status"
+    touch "$STATE/publication-fails"
+    signal_files_actionable "$STATE/later.status" || exit 18
+    [ -z "$FM_SIGNAL_SURFACE_ENDPOINTS" ] || exit 19
+    stale_record=$(status_span_first_actionable_record "$STATE/later.status" 0)
+    stale_end=${stale_record%%$'"'"'\t'"'"'*}; stale_rest=${stale_record#*$'"'"'\t'"'"'}; stale_ident=${stale_rest%%$'"'"'\t'"'"'*}
+    mark_surfaced "$STATE/later.status" "$stale_end" "$stale_ident" || exit 20
+    rm "$STATE/publication-fails"
+    git -C "$STATE/repo" update-ref refs/remotes/origin/later HEAD
+    heartbeat_scan_finds_actionable || exit 21
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 9 ] || exit 22
     grep -F "reminder delivery failed for nm" "$STATE/.watch-triage.log" || exit 13
   ' _ "$WATCH" "$dir/fakebin" > "$dir/result" 2>&1 \
     || fail "missing PR bounce failed: $(cat "$dir/result")"
@@ -264,7 +283,7 @@ SH
     . "$1"
     SCRIPT_DIR=$2
     signal_files_actionable "$STATE/nm.status" || exit 1
-    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 7 ]
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 9 ]
   ' _ "$WATCH" "$dir/fakebin" || fail "restart repeated the same reminder"
   pass "publishing ships get one PR-link reminder per done line; linked, local-only and scout reports are exempt"
 }

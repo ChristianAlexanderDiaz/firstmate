@@ -2492,17 +2492,24 @@ bounce_done_without_pr() {  # <task> <done-lines> <identity>
   [ -n "$lines" ] || return 0
   kind=$(fm_meta_get "$STATE/$task.meta" kind)
   mode=$(fm_meta_get "$STATE/$task.meta" mode)
+  while IFS=$'\t' read -r offset line; do
+    status_done_needs_pr_url "$line" "$kind" "$mode" && break
+  done <<EOF
+$lines
+EOF
+  status_done_needs_pr_url "$line" "$kind" "$mode" || return 0
   if [ "$mode" = no-mistakes ]; then
     branch=$(fm_meta_get "$STATE/$task.meta" branch)
     wt=$(fm_meta_get "$STATE/$task.meta" worktree)
     project=$(fm_meta_get "$STATE/$task.meta" project)
     if [ -z "$branch" ] || ! { git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$branch" 2>/dev/null || git -C "$project" show-ref --verify --quiet "refs/remotes/origin/$branch" 2>/dev/null; }; then
-      [ -n "$branch" ] && [ -n "$wt" ] || return 0
-      overview=$(fm_nm_run_checked "$wt" 3 axi) || return 0
+      [ -n "$branch" ] && [ -n "$wt" ] || return 1
+      overview=$(fm_nm_run_checked "$wt" 3 axi) || return 1
       choice=$(fm_nm_select_run "$branch" "$overview" "$wt" 3)
-      case "$choice" in selected\|*) ;; *) return 0 ;; esac
+      case "$choice" in selected\|*) ;; absent) return 0 ;; *) return 1 ;; esac
       IFS='|' read -r _ run_id _ <<< "$choice"
-      run_out=$(fm_nm_run_checked "$wt" 3 axi status --run "$run_id") || return 0
+      run_out=$(fm_nm_run_checked "$wt" 3 axi status --run "$run_id") || return 1
+      printf '%s\n' "$run_out" | grep -Eq '^[[:space:]]*steps\[[0-9]+\]\{' || return 1
       printf '%s\n' "$run_out" | grep -Eq '^[[:space:]]*(push|pr),[[:space:]]*(running|fixing|completed|passed|failed)' || return 0
     fi
   fi
@@ -2527,6 +2534,20 @@ bounce_done_without_pr() {  # <task> <done-lines> <identity>
 $lines
 EOF
   return "$result"
+}
+
+mark_surfaced() {  # <status-file> <captured-end-offset> <captured-identity>
+  local f=$1 task record rest ident done_lines rc
+  case "$f" in *.status) ;; *) return 0 ;; esac
+  [ -n "$2" ] && [ -n "$3" ] || return 0
+  task=$(basename "$f"); task=${task%.status}
+  status_span_first_actionable_record "$f" "$(hb_surfaced_offset "$task")" record '' done_lines
+  rc=$?
+  [ "$rc" -ne 2 ] || return 0
+  rest=${record#*$'\t'}; ident=${rest%%$'\t'*}
+  [ "$ident" = "$3" ] || return 0
+  bounce_done_without_pr "$task" "$done_lines" "$ident" || return 0
+  status_presentation_marker_commit "$(_hb_surfaced_path "$task")" "$f" "$2" "$3"
 }
 
 # 0 when any signaled status file carries a captain-relevant event in the bytes
