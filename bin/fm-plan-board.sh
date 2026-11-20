@@ -22,7 +22,8 @@
 #    "builder_detail":"Implementation notes and evidence belong here."}
 # Decisions need unique keys, at least two uniquely valued options, and a
 # recommended value belonging to those options. Keys/values are 1-128 ASCII
-# letters, digits, dots, underscores or dashes. Every text field is nonblank.
+# letters, digits, dots, underscores or dashes; option values cannot be reconcile.
+# Every text field is nonblank.
 # The template supplies a free-text answer box for every decision.
 #
 # Pre-show lint requires TL;DR as the first body/main content block and a closed
@@ -91,6 +92,7 @@ def validate(data):
         for option in options:
             fields(option, 'value label detail', 'option')
             slug(option['value'], 'option value')
+            require(option['value'] != 'reconcile', 'option value reconcile is reserved')
             require(option['value'] not in values, 'duplicate option value')
             values.add(option['value'])
             text(option['label'], 'option label')

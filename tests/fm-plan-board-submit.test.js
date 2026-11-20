@@ -22,9 +22,9 @@ function submit(answer, note) {
   values = { answer, note };
   form.submit({ preventDefault() {} });
 }
-submit('reconcile', 'review again');
+submit('pick', 'review again');
 assert.deepStrictEqual(JSON.parse(JSON.stringify(queued[0].context.data)), {
-  schema: 'fm-bearings-answer.v1', question: 'decision.one', selection: 'reconcile', note: 'review again',
+  schema: 'fm-bearings-answer.v1', question: 'decision.one', selection: 'pick', note: 'review again',
 });
 submit('', 'é'.repeat(256));
 assert.strictEqual(queued.length, 2);

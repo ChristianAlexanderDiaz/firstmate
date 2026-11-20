@@ -89,6 +89,7 @@ for field, value, expected in cases:
     build(bad, expected)
 for mutate, expected in [
     (lambda d: d.update(recommended='absent'), 'must match an option'),
+    (lambda d: d['options'][1].update(value='reconcile'), 'option value reconcile is reserved'),
     (lambda d: d.update(options=d['options'][:1]), 'at least two options'),
     (lambda d: d['options'][1].update(value=d['options'][0]['value']), 'duplicate option'),
     (lambda d: d.update(key='bad key'), 'invalid identifier'),
@@ -97,6 +98,10 @@ for mutate, expected in [
     bad = copy.deepcopy(sample)
     mutate(bad['decisions'][0])
     build(bad, expected)
+bad = copy.deepcopy(sample)
+bad['decisions'][0]['options'][0]['value'] = 'reconcile'
+bad['decisions'][0]['recommended'] = 'reconcile'
+build(bad, 'option value reconcile is reserved')
 bad = copy.deepcopy(sample)
 bad['decisions'].append(bad['decisions'][0])
 build(bad, 'duplicate decision')
