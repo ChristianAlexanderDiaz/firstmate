@@ -96,6 +96,10 @@ if [ "${args[0]:-}" = pane ] && [ "${args[1]:-}" = send-text ]; then
   esac
 fi
 if [ "${FM_PRESENTATION_STUB:-0}" = 1 ]; then
+  if [ -f "$FM_HERDR_FIXTURE/stall" ]; then
+    : > "$FM_HERDR_FIXTURE/stalled"
+    exec sleep 60
+  fi
   if [ "${args[0]:-}" = --version ]; then args=(status --json); fi
   exec python3 "$FM_PRESENTATION_FIXTURE" "${args[@]}" --session "$HERDR_LAB_SESSION"
 fi
@@ -219,6 +223,33 @@ if [ -n "${FM_PRESENTATION_BASELINE_ROOT:-}" ]; then
   [ "$(count_open)" = 2 ] || fail 'baseline unexpectedly closed waiting workspaces'
 fi
 printf 'branch_before=%s\n' "$(count_open)"
+if [ "${FM_PRESENTATION_STUB:-0}" = 1 ]; then
+  : > "$FM_HERDR_FIXTURE/stall"
+  python3 - "$ROOT/bin/fm-presentation-close.sh" "$FM_HERDR_FIXTURE/stalled" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+import time
+
+process = subprocess.Popen([sys.argv[1], '--heartbeat'], start_new_session=True)
+try:
+    deadline = time.monotonic() + 15
+    while not os.path.exists(sys.argv[2]) and time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise SystemExit('sweep exited before reaching the stalled call')
+        time.sleep(0.05)
+    if not os.path.exists(sys.argv[2]):
+        raise SystemExit('sweep did not reach the stalled call')
+finally:
+    os.killpg(process.pid, signal.SIGTERM)
+    process.wait(timeout=10)
+PY
+  rm "$FM_HERDR_FIXTURE/stall"
+  "$ROOT/bin/fm-presentation-close.sh" --heartbeat
+  [ "$(field sample presentation)" = closed ] || fail 'interrupted candidate starved later workspace'
+  pass 'interrupted candidate does not starve a later waiting workspace'
+fi
 heartbeat "$ROOT"
 printf 'branch_after=%s\n' "$(count_open)"
 for id in live foreign; do

@@ -184,8 +184,8 @@ case "${1:---heartbeat}" in
         else [ "$pass" = before ] || continue; fi
         [ "$(fm_meta_get "$candidate" backend)" = herdr ] || continue
         [ "$(fm_meta_get "$candidate" presentation)" != closed ] || continue
-        close_one "$id" || true
         printf '%s\n' "$id" > "$STATE/.presentation-close-cursor"
+        close_one "$id" || true
         count=$((count + 1))
         if [ "$count" -ge 20 ] || [ "$(( $(date +%s) - start ))" -ge 30 ]; then exit 0; fi
       done
