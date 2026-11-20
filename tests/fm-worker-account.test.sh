@@ -423,9 +423,9 @@ pace_snapshot() {
   local clock
   clock=$(cat "$CASE/clock")
   printf '%s\n' "$((clock + 61))" > "$CASE/clock"
-  jq -n --argjson nw "$1" --argjson nr "$2" --argjson fw "$3" --argjson fr "$4" '
+  jq -n --argjson now "$((clock + 61))" --argjson nw "$1" --argjson nr "$2" --argjson fw "$3" --argjson fr "$4" '
     def row($name; $week; $reserve; $resets):
-      { provider: "claude", account: $name, state: { status: "fresh", stale: false },
+      { provider: "claude", account: $name, state: { status: "fresh", stale: false, refreshedAt: ($now | todateiso8601) },
         windows: [
           { id: "five_hour", kind: "session", resetsAt: "2026-10-14T18:00:00.000000+00:00", percentRemaining: 90 },
           { id: "seven_day", kind: "weekly", resetsAt: $resets, percentRemaining: $week,
