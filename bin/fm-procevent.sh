@@ -1067,6 +1067,10 @@ cmd_start() {
       die "extension registration owner is unreadable: $id"
       ;;
   esac
+  CLAIM_REGISTRATION_GENERATION=$(fm_procevent_registration_generation "$(source_file "$id")") || {
+    fm_procevent_source_lock_release "$id"
+    die "cannot read registration generation: $id"
+  }
   CLAIM_BOARD_GENERATION=$(fm_procevent_board_generation "$(source_file "$id")") || {
     fm_procevent_source_lock_release "$id"
     die "cannot read registration generation: $id"
@@ -1159,6 +1163,7 @@ cmd_start() {
         return 1
       fi
       CLAIM_REG_IDENTITY=$current
+      CLAIM_REGISTRATION_GENERATION=$(fm_procevent_registration_generation "$registration") || { fm_procevent_source_lock_release "$id"; return 1; }
       CLAIM_BOARD_GENERATION=$(fm_procevent_board_generation "$registration") || { fm_procevent_source_lock_release "$id"; return 1; }
     fi
     fm_procevent_source_lock_release "$id" || return 1
@@ -1366,6 +1371,9 @@ EOF
   if [ "$extension_owner" -eq 1 ]; then
     :
   else
+    if [ "$(fm_procevent_registration_generation "$(source_file "$id")" 2>/dev/null)" = "$CLAIM_REGISTRATION_GENERATION" ]; then
+      CLAIM_BOARD_GENERATION=$(fm_procevent_board_generation "$(source_file "$id")") || die "cannot read board generation"
+    fi
     if [ -n "$task_owner" ]; then
       durable=$(FM_PROCEVENT_CAPTURE_REGISTRATION="$CLAIM_BOARD_GENERATION" fm_procevent_capture "$STATE" "$id" "$adapter" "$out" "$task_owner") \
         || { rm -f -- "$out"; die "cannot durably capture the result"; }
@@ -1718,18 +1726,6 @@ $rows
 EOF
 }
 
-# Optional adapter completion hook. The adapter closes its external surface;
-# the runner alone retires the registration, preserving pending task captures.
-source_settled_locked() {  # <source-id>
-  local id=$1 adapter script
-  [ "$(source_field "$id" owner)" != extension ] || return 1
-  adapter=$(source_field "$id" adapter)
-  fm_procevent_adapter_valid "$adapter" || return 1
-  script=$(adapter_script "$adapter")
-  [ -f "$script" ] && [ ! -L "$script" ] || return 1
-  "$script" settle "$id" >/dev/null 2>&1
-}
-
 cmd_reconcile() {
   local rec id published started=0 stopped=0 uncertain=0 failed=0 claim owner pid token identity claim_state stop_state task_pending
   local launch_identity launch_stamp launch_mark unconfirmed entry
@@ -1791,20 +1787,6 @@ cmd_reconcile() {
       fm_procevent_source_id_valid "$id" || continue
       fm_procevent_source_lock_acquire "$id" || continue
       if [ -f "$(source_file "$id")" ] && [ ! -L "$(source_file "$id")" ]; then
-        if source_settled_locked "$id"; then
-          if source_retirement_blocked_locked "$id"; then
-            fm_procevent_source_lock_release "$id"
-            continue
-          fi
-          local settled_identity
-          if settled_identity=$(fm_pr_file_identity "$(source_file "$id")"); then
-            fm_procevent_source_lock_release "$id"
-            "$SCRIPT_DIR/fm-procevent.sh" retire "$id" --if-registration "$settled_identity" >/dev/null 2>&1 || true
-          else
-            fm_procevent_source_lock_release "$id"
-          fi
-          continue
-        fi
         source_attention_locked "$id"
         fm_procevent_claim_state_locked "$id"
         claim_state=$?

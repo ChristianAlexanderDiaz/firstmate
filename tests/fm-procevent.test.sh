@@ -321,6 +321,12 @@ att_reconcile
 printf 'session:\n  status: ended\n  session_ended: true\n' > "$ATT/state/procevent-inbox/$att_id.1.result"
 att_reconcile
 [ "$(att_count owner-stopped)" = 0 ] && [ "$(att_count unanswered)" = 0 ] || fail 'closed board raised a reminder'
+printf '<h1>rebuilt review</h1>\n' > "$ATT/rebuilt.html"
+mv "$ATT/rebuilt.html" "$ATT_ART"
+printf '%s\n' "$(($(date +%s) + 172800))" > "$ATT/clock"
+: > "$ATT/state/.wake-queue"
+att_reconcile
+[ "$(att_count owner-stopped)" = 1 ] && [ "$(att_count unanswered)" = 1 ] || fail 'rebuilt board inherited old feedback or reminder receipts'
 PATH="$ATT_BIN:$PATH" pe "$ATT" handled "$att_id" 1 >/dev/null
 pass 'board attention scopes feedback and closure to the current registration'
 
@@ -1056,8 +1062,9 @@ PATH="$MULTI_BIN:$PATH" pe "$HMULTI" handled "$multi_id" 3 >/dev/null
 PATH="$MULTI_BIN:$PATH" pe "$HMULTI" reconcile >/dev/null 2>&1 || true
 [ "$(cat "$MULTI_ROOT/count")" = 3 ] \
   || fail "the concluded board was polled again: $(cat "$MULTI_ROOT/count") polls"
-[ -z "$(wake_payloads "$HMULTI")" ] \
-  || fail "worker-owned rounds produced a firstmate wake: $(wake_payloads "$HMULTI")"
+multi_capture_wakes=$(awk -F '\t' -v id="$multi_id" '$4 ~ ("^procevent:" id ":[0-9]+$") { print $5 }' "$HMULTI/state/.wake-queue" 2>/dev/null)
+[ -z "$multi_capture_wakes" ] \
+  || fail "worker-owned rounds produced a firstmate capture wake: $multi_capture_wakes"
 pass "worker-owned Lavish rounds deliver to the worker, acknowledge on re-arm, and stop at session end"
 
 # --- end-user-aligned regression: a half-written capture does not wedge -----

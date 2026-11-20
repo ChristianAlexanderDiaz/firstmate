@@ -31,7 +31,6 @@
 #   fm-captain-hold.sh complete <origin-id> (--none | <task-id>...)
 #   fm-captain-hold.sh verify <origin-id>
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
-#   fm-captain-hold.sh answered <task-id>
 #   fm-captain-hold.sh diverged
 #   fm-captain-hold.sh reconcile list
 #   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
@@ -2084,26 +2083,6 @@ EOF
 # exist holds nothing. Every read failure over a record that DOES exist is a 2,
 # printed to stderr, because a mechanical closer must never read "cannot tell"
 # as permission to close.
-# Read-only positive evidence for automatic board completion. A closed task,
-# a reconciliation, or an old answer beneath a new captain hold is insufficient.
-# Exit 0 proves a recorded answer; 1 means unproved and 2 means unreadable.
-command_answered() {  # <task-id>
-  local id=${1:-} show body mode
-  [ "$#" -eq 1 ] || return 2
-  validate_slug task-id "$id"
-  task_show_under_control_lock "$id" || return 2
-  show=$TASK_SHOW_OUTPUT
-  if [ "$(show_field "$show" state)" != "done" ] \
-    && [ "$(show_field_value "$show" hold_kind)" = captain ]; then
-    return 1
-  fi
-  body=$(show_field "$show" body)
-  body_has_resolution_record "$body" || return 1
-  mode=$(recorded_resolution_mode "$body")
-  case "$mode" in answered|released|repaired|routed) return 0 ;; esac
-  return 1
-}
-
 command_open() {  # <task-id> [--identity] [--distinguish-absent]
   local id='' identity=0 distinguish_absent=0 data state root file backend show shown_body
   while [ "$#" -gt 0 ]; do
@@ -2181,7 +2160,6 @@ case "${1:-}" in
   complete) shift; command_complete "$@" ;;
   verify) shift; command_verify "$@" ;;
   open) shift; command_open "$@" ;;
-  answered) shift; command_answered "$@" ;;
   diverged) shift; command_diverged "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;

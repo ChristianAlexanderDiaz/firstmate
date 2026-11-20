@@ -369,12 +369,27 @@ fm_procevent_registered_at() {  # <source-file>
   printf '%s\n' "$stamp"
 }
 
-fm_procevent_board_generation() {  # <source-file>
+fm_procevent_registration_generation() {  # <source-file>
   local generation
   [ -f "$1" ] && [ ! -L "$1" ] || return 1
   generation=$(sed -n '/^argv:$/q; s/^board_generation=//p' "$1")
   [ -n "$generation" ] || generation=$(fm_pr_file_identity "$1") || return 1
   case "$generation" in *[!0-9:]*|:*|*:) return 1 ;; *:*) printf '%s\n' "$generation" ;; *) return 1 ;; esac
+}
+
+fm_procevent_board_generation() {  # <source-file>
+  local record=$1 generation adapter mode artifact artifact_identity
+  generation=$(fm_procevent_registration_generation "$record") || return 1
+  adapter=$(sed -n '/^argv:$/q; s/^adapter=//p' "$record")
+  if [ "$adapter" = lavish ]; then
+    mode=$(awk '/^argv:$/ { getline; getline; print; exit }' "$record")
+    artifact=$(awk '/^argv:$/ { getline; getline; getline; print; exit }' "$record")
+    if [ "$mode" = poll ] && [ -f "$artifact" ]; then
+      artifact_identity=$(fm_pr_file_identity "$artifact") || return 1
+      generation="$generation:$artifact_identity"
+    fi
+  fi
+  printf '%s\n' "$generation"
 }
 
 fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> <argv...>
@@ -391,7 +406,7 @@ fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> <a
   [ -d "$reg" ] && [ ! -L "$reg" ] || return 1
   dest="$reg/$id.source"
   tmp=$(umask 077; mktemp "$reg/.source.XXXXXX") || return 1
-  generation=$(fm_procevent_board_generation "$dest" 2>/dev/null) || {
+  generation=$(fm_procevent_registration_generation "$dest" 2>/dev/null) || {
     generation=$(od -An -N16 -tu4 /dev/urandom | tr -d " \n") || { rm -f -- "$tmp"; return 1; }
     [ -n "$generation" ] || { rm -f -- "$tmp"; return 1; }
     generation="1:$generation"
@@ -431,7 +446,7 @@ fm_procevent_task_registration_publish_locked() {  # <state> <adapter> <source-i
   [ -d "$reg" ] && [ ! -L "$reg" ] || return 1
   dest="$reg/$id.source"
   tmp=$(umask 077; mktemp "$reg/.source.XXXXXX") || return 1
-  generation=$(fm_procevent_board_generation "$dest" 2>/dev/null) || {
+  generation=$(fm_procevent_registration_generation "$dest" 2>/dev/null) || {
     generation=$(od -An -N16 -tu4 /dev/urandom | tr -d " \n") || { rm -f -- "$tmp"; return 1; }
     [ -n "$generation" ] || { rm -f -- "$tmp"; return 1; }
     generation="1:$generation"

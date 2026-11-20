@@ -2438,7 +2438,7 @@ An already-armed Lavish source keeps its registered listener command until it is
 
 ### Crew-hosted Lavish review boards
 
-Local board lifecycle checks use the existing supervision cycle and captured results; [`fm-procevent-lavish.sh attention` and `settle`](../bin/fm-procevent-lavish.sh) own reminder eligibility, timing, deduplication, liveness limitations, and closing boards whose declared picks all have recorded answers.
+Local board reminders use the existing supervision cycle and captured results; [`fm-procevent-lavish.sh attention`](../bin/fm-procevent-lavish.sh) owns eligibility, timing, deduplication, and liveness limitations.
 
 **Arm and confirm a listener**
 
