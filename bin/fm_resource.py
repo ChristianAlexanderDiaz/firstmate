@@ -40,6 +40,8 @@ MEMORY_WARNING = "memory warning: heavy compute held"
 STUCK_QUEUE_SECONDS = 10 * 60
 HOLD_ALERT_SECONDS = 10 * 60
 LONG_HELD_EXCLUSIVE_SECONDS = 60 * 60
+POLICY_LOG_LIMIT = 64 * 1024 * 1024
+POLICY_LOG_RETENTION = 48 * 60 * 60
 HERE = Path(__file__).resolve().parent
 BOOT = None
 
@@ -448,6 +450,7 @@ class Budget:
         self.config, self.digest = config, digest
         self.power_log_reader = power_log_reader or (thermal_sleep_log if sys.platform == "darwin" else None)
         self.root = private_dir(config["stateDirectory"])
+        self.policy_log_error = None
         self.path = self.root / "ledger.json"
         if (self.root / "owner.lock").is_symlink() or self.path.is_symlink():
             raise Refusal("symlink in recovery ledger/lock")
@@ -899,10 +902,7 @@ class Budget:
                          "decision": self.reason, "cancel": cancel,
                          "policy": self.decision, "sample": self.policy_sample,
                          "clock": self.policy_clock}
-        # Separate from supervisor transitions: shadow observations are evidence,
-        # not new work notifications. Keep the complete rollout/replay log.
-        with open(self.root / "policy.jsonl", "a") as stream:
-            stream.write(json.dumps(policy_record) + "\n")
+        self.log_policy(policy_record)
         self.metrics.append({"timestamp": time.time(), "reason": self.reason,
             "policy": self.decision,
             "power": self.telemetry.get("power") if self.telemetry else None,
@@ -910,6 +910,26 @@ class Budget:
             "memory": self.telemetry.get("memory") if self.telemetry else None, "jobs": usage})
         atomic_json(self.root / "metrics.json", list(self.metrics))
         self.save()
+
+    def log_policy(self, record):
+        path = self.root / "policy.jsonl"
+        archive = self.root / "policy.jsonl.1"
+        try:
+            if self.policy_log_error:
+                record["previousLoggingError"] = self.policy_log_error
+            line = (json.dumps(record) + "\n").encode()
+            if len(line) > POLICY_LOG_LIMIT:
+                raise OSError("policy observation exceeds log limit")
+            if path.exists() and path.stat().st_size + len(line) > POLICY_LOG_LIMIT:
+                if archive.exists() and time.time() - archive.stat().st_mtime < POLICY_LOG_RETENTION:
+                    raise OSError("policy log capacity exhausted before 48-hour retention")
+                os.replace(path, archive)
+            with open(path, "ab") as stream:
+                stream.write(line)
+            self.policy_log_error = None
+        except OSError as error:
+            self.policy_log_error = str(error)
+            print(f"fm-resource: policy observation missing: {error}", file=sys.stderr)
 
     def signal_lease(self, lease, sig):
         # Never signal a reused PID or an unverified group. Signal individual
@@ -1040,7 +1060,7 @@ class Budget:
                 "availableHeavySlots": max(0, self.heavy_slots() - sum(l["class"] != "worker" for l in self.data["leases"].values())),
                 "leases": self.data["leases"], "queue": self.data["queue"],
                 "telemetry": self.telemetry, "events": self.data["events"], "emergency": self.data["emergency"],
-                "powerLogCheck": self.data.get("powerLogCheck")}
+                "powerLogCheck": self.data.get("powerLogCheck"), "policyLogError": self.policy_log_error}
         if op == "emergency":
             self.data["emergency"] = {"timestamp": time.time(), "cause": request["evidence"]}
             self.save()

@@ -2490,6 +2490,23 @@ class LevelOwnerTests(unittest.TestCase):
         self.assertEqual(self.acquire("graph")[1], "queued")
         self.assertEqual(self.request("status")["availableHeavySlots"], 0)
 
+    def test_policy_log_capacity_and_write_failure_do_not_stop_safety(self):
+        path = self.root / "state/policy.jsonl"
+        archive = self.root / "state/policy.jsonl.1"
+        with mock.patch.object(resource, "POLICY_LOG_LIMIT", path.stat().st_size + 1):
+            self.step()
+            self.assertTrue(archive.exists())
+        with mock.patch.object(resource, "POLICY_LOG_LIMIT", path.stat().st_size + 1):
+            self.sample["memory"]["pressure"] = "critical"
+            with mock.patch("sys.stderr"):
+                self.step()
+            self.assertIn("capacity exhausted", self.request("status")["policyLogError"])
+            self.assertEqual(self.budget.decision["level"], "Stop and cancel")
+        self.step()
+        record = json.loads(path.read_text().splitlines()[-1])
+        self.assertIn("capacity exhausted", record["previousLoggingError"])
+        self.assertIsNone(self.request("status")["policyLogError"])
+
     def test_warning_allows_one_small_and_resident_sessions(self):
         self.sample["memory"]["pressure"] = "warning"
         self.step()
