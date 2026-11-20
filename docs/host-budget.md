@@ -141,9 +141,10 @@ Unknown or corrupt recovery state fails closed; preserve it for inspection rathe
 `policyMode` defaults to `shadow`: every tick computes the level and appends its timestamp, reason, since time and next step-up time alongside the input sample and actual decision in private `policy.jsonl`; the existing rules still decide admissions, reservations, cancellations and worker caps.
 The log retains the supplied wall, monotonic and uptime clocks and boot identity for offline replay without reconstructing freshness from a sample timestamp.
 Observation storage is limited to two 64 MiB files, `policy.jsonl.1` followed by `policy.jsonl`; the owner will not replace an archive less than 48 hours old.
-If storage fills or a write fails, the owner continues safety operations and reports the missing observation in status and stderr; the next successful record also identifies the preceding logging error.
+If a policy log append fails or its retention limit is reached, the owner reports the missing observation in status and stderr; the next successful record also identifies the preceding logging error.
+Other persistence failures, including a full filesystem, can stop the owner and prevent the error marker from being saved.
 Such gaps make the observation window incomplete and unsuitable as rollout proof.
-The metrics ring and JSON status also include that observation.
+The metrics ring and JSON status also include the policy decision.
 Retain at least 48 hours of this log for comparison before enabling `policyMode=on`; policy logs are separate from supervisor transition notifications.
 Replay the measured history, including available incident readings, against both policies and verify all safety stops before activation.
 Start enabled operation with `fullLevelEnabled=false` (the default), and consider Full only after a clean week and coordinated live calibration.

@@ -2591,7 +2591,7 @@ class LevelOwnerTests(unittest.TestCase):
         self.assertEqual(self.acquire("worker")[1], "leased")
         self.sample["lidClosed"] = True
         self.step()
-        self.assertIn("lid", self.budget.reason)
+        self.assertEqual(self.budget.reason, resource.MEMORY_WARNING)
         self.assertEqual(self.budget.decision["level"], "Reduced")
         record = json.loads((self.root / "state/policy.jsonl").read_text().splitlines()[-1])
         self.assertEqual(record["mode"], "shadow")
@@ -2611,7 +2611,7 @@ class LevelOwnerTests(unittest.TestCase):
         self.config["policyMode"] = "shadow"
         self.assertEqual(self.budget.reservation("exclusive"), 4096)
 
-    def test_shadow_does_not_apply_proposed_lid_cancellation(self):
+    def test_shadow_preserves_legacy_battery_lid_cancellation(self):
         self.config["policyMode"] = "shadow"
         self.step(122)
         token, state = self.acquire("test")
@@ -2620,7 +2620,7 @@ class LevelOwnerTests(unittest.TestCase):
         self.sample["lidClosed"] = True
         self.step()
         self.assertTrue(self.budget.decision["cancel"])
-        self.assertNotIn("cancelAt", self.budget.data["leases"][token])
+        self.assertIn("cancelAt", self.budget.data["leases"][token])
 
     def test_recorded_process_tree_peak_survives_release_and_restart(self):
         token, _ = self.acquire("test")
