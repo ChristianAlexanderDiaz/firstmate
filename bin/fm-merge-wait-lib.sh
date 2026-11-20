@@ -4,25 +4,33 @@
 # GitHub ready ships share one GraphQL state read. Other forge providers retain
 # their existing authenticated polls. No merge authority is granted here.
 # The list is process-local: restarting the watcher rebuilds it. Each row binds
-# the task metadata, status, busy generation/state, local head and authenticated
+# the task metadata, status, activity, local head and authenticated
 # poll registration. A change invalidates the row before it can suppress a poll
 # or pane capture. Failed/partial reads never suppress ordinary handling.
 
 fm_merge_wait_signature() {  # <state> <id>
-  local state=$1 id=$2 wt head
+  local state=$1 id=$2 wt head activity file
   wt=$(fm_meta_get "$state/$id.meta" worktree)
   head=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || return 1
+  activity=$(fm_busy_classify_meta "$state/$id.meta" "$id" "$state") || return 1
+  case "$activity" in 'idle '*) ;; *) return 1 ;; esac
   FM_MERGE_WAIT_HEAD=$head
   FM_MERGE_WAIT_SIGNATURE=$( {
-    cksum "$state/$id.meta" "$state/$id.status" \
-      "$state/$id.busy-state" "$state/$id.busy-gen" 2>/dev/null || return 1
-    printf '%s\n' "$head"
+    cksum "$state/$id.meta" "$state/$id.status" 2>/dev/null || return 1
+    for file in "$state/$id.busy-state" "$state/$id.busy-gen"; do
+      if [ -e "$file" ] || [ -L "$file" ]; then
+        cksum "$file" 2>/dev/null || return 1
+      else
+        printf 'absent %s\n' "$file"
+      fi
+    done
+    printf '%s\n%s\n' "$head" "$activity"
   } ) || return 1
   FM_MERGE_WAIT_SIGNATURE=$(printf '%s' "$FM_MERGE_WAIT_SIGNATURE" | cksum)
 }
 
 fm_merge_wait_collect() {  # <state> <bin-dir>; sets requests and GraphQL query
-  local state=$1 scripts=$2 meta id kind last activity current signature head recorded_head index=0
+  local state=$1 scripts=$2 meta id kind last current signature head recorded_head index=0
   FM_MERGE_WAIT_REQUESTS=
   FM_MERGE_WAIT_QUERY=
   FM_MERGE_WAIT_RESULTS=
@@ -43,12 +51,11 @@ fm_merge_wait_collect() {  # <state> <bin-dir>; sets requests and GraphQL query
     last=$(status_last_work_line "$state/$id.status") || continue
     fm_dod_done_reports_ready_pr "$last" || continue
     [ -z "$(status_open_decisions "$state/$id.status" "$kind")" ] || continue
-    activity=$(fm_busy_classify_meta "$meta" "$id" "$state") || continue
-    case "$activity" in 'idle '*) ;; *) continue ;; esac
     current=$(FM_CREW_STATE_NO_FORGE=1 "$scripts/fm-crew-state.sh" "$id") || continue
     case "$current" in
       'state: done '*) ;;
       'state: unknown · source: none · no current-state source available') ;;
+      'state: unknown · source: status-log · presentation closed; waiting declaration changed · presentation: closed') ;;
       *) continue ;;
     esac
     fm_pr_poll_snapshot_capture "$state" "$id" "$scripts/fm-pr-poll.sh" || continue
