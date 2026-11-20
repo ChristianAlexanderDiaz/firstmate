@@ -2316,6 +2316,20 @@ class LevelPolicyTests(unittest.TestCase):
         self.sample["power"]["batteryPercent"] = 14
         self.assertTrue(self.observe()["cancel"])
 
+    def test_invalid_unavailable_and_stop_recovery_block_workers(self):
+        self.ready()
+        for invalid in (None, False, 0, "", {}, [1], ["power", None]):
+            with self.subTest(invalid=invalid):
+                result = self.observe(unavailable=invalid)
+                self.assertEqual(result["level"], "Stop")
+                self.assertFalse(result["workersAllowed"])
+        self.sample["memory"]["pressure"] = "critical"
+        self.assertEqual(self.observe(unavailable=[])["level"], "Stop and cancel")
+        self.sample["memory"]["pressure"] = "normal"
+        self.assertFalse(self.observe(58)["workersAllowed"])
+        self.assertFalse(self.observe(2)["workersAllowed"])
+        self.assertTrue(self.observe(60)["workersAllowed"])
+
     def test_heat_dwell_is_240_seconds_per_rung(self):
         self.ready()
         self.assertEqual(self.observe(thermalState="serious")["level"], "Stop")
@@ -2502,6 +2516,10 @@ class LevelOwnerTests(unittest.TestCase):
                 self.step()
             self.assertIn("capacity exhausted", self.request("status")["policyLogError"])
             self.assertEqual(self.budget.decision["level"], "Stop and cancel")
+        self.budget.lock.close()
+        self.budget = resource.Budget(self.config, resource.config_digest(self.config))
+        self.addCleanup(self.budget.lock.close)
+        self.assertIn("capacity exhausted", self.request("status")["policyLogError"])
         self.step()
         record = json.loads(path.read_text().splitlines()[-1])
         self.assertIn("capacity exhausted", record["previousLoggingError"])
@@ -2516,6 +2534,18 @@ class LevelOwnerTests(unittest.TestCase):
         self.assertEqual(state, "leased")
         self.assertEqual(self.budget.data["leases"][token]["cpuWorkers"], 2)
         self.assertEqual(self.acquire("test")[1], "queued")
+
+    def test_resident_waits_for_stop_recovery(self):
+        self.sample["memory"]["pressure"] = "critical"
+        self.step()
+        self.sample["memory"]["pressure"] = "normal"
+        self.step()
+        token, state = self.acquire("worker")
+        self.assertEqual(state, "queued")
+        self.step(58)
+        self.assertNotIn(token, self.budget.data["leases"])
+        self.step(60)
+        self.assertIn(token, self.budget.data["leases"])
 
     def test_shadow_preserves_legacy_slot_memory_lid_and_worker_caps(self):
         self.config["policyMode"] = "shadow"

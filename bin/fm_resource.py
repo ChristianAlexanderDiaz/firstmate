@@ -336,6 +336,8 @@ class AdmissionPolicy:
             uptime_age = host_uptime - float(sample["uptimeSeconds"])
             if not math.isfinite(age) or not math.isfinite(uptime_age) or not -1 <= age <= 10 or not -1 <= uptime_age <= 10:
                 raise Refusal("stale or future monitor sample")
+            if not isinstance(sample["unavailable"], list) or not all(isinstance(item, str) for item in sample["unavailable"]):
+                raise Refusal("monitor unavailable readings list is invalid")
             if sample["unavailable"]:
                 raise Refusal("monitor has unavailable readings")
             if thermal not in ("nominal", "fair") or pressure not in ("normal", "warning"):
@@ -441,7 +443,7 @@ class AdmissionPolicy:
         return {"level": LEVELS[self.level], "reason": self.reason, "since": self.since,
                 "nextStepUp": next_step, "heavySlots": slots, "cpuWorkers": workers,
                 "smallOnly": self.level == 2, "cancel": self.level == 0,
-                "workersAllowed": self.workers_allowed, "portable": self.portable,
+                "workersAllowed": self.level >= 2 and self.workers_allowed, "portable": self.portable,
                 "cause": self.cause, "dwellSeconds": self.dwell, "emergency": self.emergency}
 
 
@@ -450,7 +452,6 @@ class Budget:
         self.config, self.digest = config, digest
         self.power_log_reader = power_log_reader or (thermal_sleep_log if sys.platform == "darwin" else None)
         self.root = private_dir(config["stateDirectory"])
-        self.policy_log_error = None
         self.path = self.root / "ledger.json"
         if (self.root / "owner.lock").is_symlink() or self.path.is_symlink():
             raise Refusal("symlink in recovery ledger/lock")
@@ -915,8 +916,8 @@ class Budget:
         path = self.root / "policy.jsonl"
         archive = self.root / "policy.jsonl.1"
         try:
-            if self.policy_log_error:
-                record["previousLoggingError"] = self.policy_log_error
+            if self.data.get("policyLogError"):
+                record["previousLoggingError"] = self.data["policyLogError"]
             line = (json.dumps(record) + "\n").encode()
             if len(line) > POLICY_LOG_LIMIT:
                 raise OSError("policy observation exceeds log limit")
@@ -926,9 +927,9 @@ class Budget:
                 os.replace(path, archive)
             with open(path, "ab") as stream:
                 stream.write(line)
-            self.policy_log_error = None
+            self.data.pop("policyLogError", None)
         except OSError as error:
-            self.policy_log_error = str(error)
+            self.data["policyLogError"] = str(error)
             print(f"fm-resource: policy observation missing: {error}", file=sys.stderr)
 
     def signal_lease(self, lease, sig):
@@ -989,9 +990,7 @@ class Budget:
             memory = sum(l["memoryMiB"] for l in leases.values())
             if (worker and resident >= self.config["maxResidentWorkers"]) or (not worker and active_heavy >= self.heavy_slots()) or memory + request["memoryMiB"] > self.config["memoryMiB"]:
                 continue
-            # Resident CLIs need their own admission check even without compute;
-            # Warning pressure and recovery hysteresis permit residents, but
-            # never unknown telemetry.
+            # Resident CLIs need their own admission check even without compute.
             if worker:
                 if self.config.get("policyMode", "shadow") == "on":
                     if not self.decision or not self.decision["workersAllowed"]:
@@ -1060,7 +1059,7 @@ class Budget:
                 "availableHeavySlots": max(0, self.heavy_slots() - sum(l["class"] != "worker" for l in self.data["leases"].values())),
                 "leases": self.data["leases"], "queue": self.data["queue"],
                 "telemetry": self.telemetry, "events": self.data["events"], "emergency": self.data["emergency"],
-                "powerLogCheck": self.data.get("powerLogCheck"), "policyLogError": self.policy_log_error}
+                "powerLogCheck": self.data.get("powerLogCheck"), "policyLogError": self.data.get("policyLogError")}
         if op == "emergency":
             self.data["emergency"] = {"timestamp": time.time(), "cause": request["evidence"]}
             self.save()
