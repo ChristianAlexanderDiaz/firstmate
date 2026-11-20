@@ -2183,6 +2183,30 @@ class ClosedLidPolicyTests(unittest.TestCase):
                         sample["sequence"] = self.sample["sequence"]
                         self.sample = sample
 
+    def test_malformed_availability_holds_and_preserves_stops(self):
+        for unavailable in (None, 1, "invalid", {}, [1], ["memory.pressure", None]):
+            for hazard in ("none", "battery", "ups", "thermal", "memory"):
+                with self.subTest(unavailable=unavailable, hazard=hazard):
+                    self.budget.data["emergency"] = None
+                    self.heavy.pop("cancelAt", None)
+                    self.sample["unavailable"] = unavailable
+                    self.sample["thermalState"] = "critical" if hazard == "thermal" else "nominal"
+                    self.sample["memory"]["pressure"] = "critical" if hazard == "memory" else "normal"
+                    self.sample["power"]["source"] = hazard if hazard in ("battery", "ups") else "ac"
+                    self.tick(2)
+                    self.assertNotEqual(self.budget.reason, "ready")
+                    self.assertEqual("cancelAt" in self.heavy, hazard != "none")
+                    self.assertNotIn("cancelAt", self.worker)
+
+    def test_invalid_sequence_does_not_mask_unplug(self):
+        self.sample["power"]["source"] = "battery"
+        self.sample["sequence"] = "invalid"
+        self.sample.update(timestamp=self.clock, uptimeSeconds=self.clock)
+        (self.root / "monitor.json").write_text(json.dumps(self.sample))
+        self.budget.tick()
+        self.assertIn("cancelAt", self.heavy)
+        self.assertEqual(self.budget.reason, "monitor sequence is unavailable")
+
     def test_unplug_with_serious_thermal_still_cancels(self):
         self.sample["power"].update(source="battery", adapterWatts=None)
         self.sample["thermalState"] = "serious"
