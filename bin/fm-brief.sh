@@ -688,6 +688,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 
 $TASK_SECTION
 
+For a plan review board, use \`$FM_ROOT/bin/fm-plan-board.sh\` and its shipped template; its \`--help\` owns payload composition and the required pre-show lint.
+
 $HERDR_SECTION
 
 # Setup
@@ -758,6 +760,8 @@ cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
 $TASK_SECTION
+
+For a plan review board, use \`$FM_ROOT/bin/fm-plan-board.sh\` and its shipped template; its \`--help\` owns payload composition and the required pre-show lint.
 
 $HERDR_SECTION
 

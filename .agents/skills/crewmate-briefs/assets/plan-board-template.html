@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en" data-lavish-annotate="off">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan review</title>
+<style>
+:root { color-scheme: light dark; --bg:#f4f3ef; --paper:#fff; --ink:#202b29; --muted:#56635e; --line:#d5ded7; --accent:#21624b; --wash:#edf5ef; }
+@media (prefers-color-scheme: dark) { :root { --bg:#121a18; --paper:#1c2723; --ink:#eaf0ec; --muted:#b0c0b6; --line:#3c5146; --accent:#a4dfbe; --wash:#263d30; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,sans-serif; }
+main { max-width:980px; padding:32px 24px 48px; margin:auto; }
+#tldr { border-left:4px solid var(--accent); padding:4px 0 4px 24px; margin-bottom:26px; }
+.eyebrow { color:var(--accent); font-size:13px; font-weight:750; letter-spacing:.12em; margin:0 0 8px; }
+h1 { font-size:30px; line-height:1.2; margin:0 0 12px; letter-spacing:-.025em; }
+#tldr p:last-child { max-width:72ch; margin:0; color:var(--muted); }
+.decisions { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr)); gap:18px; }
+form { background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:22px; display:flex; flex-direction:column; }
+fieldset { border:0; padding:0; margin:0; min-width:0; }
+legend { font-size:19px; font-weight:700; padding:0; margin-bottom:18px; }
+.number { color:var(--accent); font-size:14px; margin-right:6px; }
+.option { display:flex; align-items:start; gap:10px; border:1px solid var(--line); border-radius:9px; padding:12px; margin-bottom:10px; cursor:pointer; flex-wrap:wrap; }
+.option > span:not(.recommended) { flex:1; min-width:150px; }
+.option:has(input:checked) { border-color:var(--accent); background:var(--wash); }
+input { accent-color:var(--accent); margin-top:5px; }
+.option-detail { display:block; font-size:14px; color:var(--muted); margin-top:4px; }
+.recommended { background:var(--wash); color:var(--accent); border-radius:4px; padding:2px 6px; font-size:11px; font-weight:700; }
+.words { display:block; margin:16px 0 6px; font-size:14px; font-weight:600; }
+textarea { display:block; width:100%; resize:vertical; border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; background:var(--bg); color:var(--ink); }
+.actions { margin-top:auto; padding-top:16px; display:flex; align-items:center; gap:12px; }
+button { border:1px solid var(--accent); border-radius:7px; background:var(--wash); color:var(--accent); padding:9px 14px; font:600 14px system-ui,sans-serif; cursor:pointer; }
+[role=status] { color:var(--muted); font-size:13px; }
+:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+details { margin-top:24px; border-top:1px solid var(--line); padding-top:16px; }
+summary { cursor:pointer; color:var(--muted); font-weight:600; }
+.builder-content { white-space:pre-wrap; overflow-wrap:anywhere; margin-top:16px; }
+@media (max-width:540px) { main { padding:22px 16px; } h1 { font-size:25px; } form { padding:18px; } }
+</style>
+</head>
+<body>
+<main>
+<section id="tldr" aria-labelledby="plan-title">
+<p class="eyebrow">TL;DR</p>
+<h1 id="plan-title">__FM_PLAN_TITLE__</h1>
+<p>__FM_PLAN_TLDR__</p>
+</section>
+<section class="decisions" aria-label="Decisions">
+__FM_PLAN_DECISIONS__
+</section>
+<details id="builder-detail">
+<summary>Builder detail</summary>
+<div class="builder-content">__FM_PLAN_BUILDER_DETAIL__</div>
+</details>
+</main>
+<script>
+// Use the existing Lavish question interface; a local preview never sends.
+document.querySelectorAll('form[data-lavish-question]').forEach(form => {
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    const fields = new FormData(form);
+    const selection = fields.get('answer') || '';
+    const note = (fields.get('note') || '').trim();
+    const answer = [selection, note].filter(Boolean).join(' - ');
+    const status = form.querySelector('[role=status]');
+    if (!answer) { status.textContent = 'Choose an option or add your words.'; return; }
+    if (!selection && note === 'reconcile') {
+      status.textContent = 'Please use different words for your answer.';
+      return;
+    }
+    if (new TextEncoder().encode(answer).length > 512) {
+      status.textContent = 'Answer is too long to queue (512 bytes maximum).';
+      return;
+    }
+    if (!window.lavish || !window.lavish.queuePrompt) {
+      status.textContent = 'Preview only. Share your choice in the conversation.';
+      return;
+    }
+    const question = form.dataset.lavishQuestion;
+    const title = form.querySelector('legend').textContent.trim();
+    window.lavish.queuePrompt(title + ': ' + answer,
+      { tag:'choice', text:answer, element:form,
+        data:{ schema:'fm-bearings-answer.v1', question:question, selection:selection, note:note } });
+    status.textContent = 'Queued for sending.';
+  });
+});
+</script>
+</body>
+</html>
