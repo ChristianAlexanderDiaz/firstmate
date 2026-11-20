@@ -72,8 +72,11 @@ sidebar_collect() {  # <task>
   wait_line=$(status_declared_wait_line "$STATE/$id.status")
   if status_is_captain_held "$wait_line" || [ "$(status_declared_wait_owner "$wait_line")" = captain ]; then captain=yes; fi
   landed=no
-  # This exact detail is minted only by crew-state's merged PR reader.
-  case "$line" in 'state: done · source: run-step · run passed: PR merged'*) landed=yes ;; esac
+  # These details are minted only by crew-state's merged PR reader.
+  case "$line" in
+    'state: done · source: run-step · run passed: PR merged'*|\
+    'state: done · source: run-step · checks green: PR merged (ci monitor ended)'*) landed=yes ;;
+  esac
   if fm_pr_poll_retirement_receipt_valid "$STATE" "$id" 2>/dev/null; then landed=yes; fi
   run=$(fm_nm_strip_quotes "$(fm_nm_field "$run_out" id)")
   case "$run" in *[!A-Za-z0-9_-]*) run= ;; esac
@@ -159,7 +162,7 @@ sidebar_ci_evidence() {
 
 sidebar_publish() {
   local panes aggregate workspace_word workspace_detail count=0 candidate poll ttl
-  [ "$backend" = herdr ] && [ -n "$FM_SIDEBAR_WORD" ] || return 0
+  [ "$backend" = herdr ] || return 0
   [ "$(fm_meta_get "$meta" presentation)" != closed ] || return 0
   fm_backend_source herdr || return 0
   # An old CLI rejects help; it must not receive a mutation it cannot support.
@@ -187,10 +190,20 @@ sidebar_publish() {
     fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
       bash "$SCRIPT_DIR" "$session" workspace report-metadata --source firstmate-status "$workspace" \
       --token "fm_status=$workspace_word" --token "fm_status_detail=$workspace_detail" --ttl-ms "$ttl" >/dev/null 2>&1 || true
+  else
+    fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
+      bash "$SCRIPT_DIR" "$session" workspace report-metadata --source firstmate-status "$workspace" \
+      --clear-token fm_status --clear-token fm_status_detail >/dev/null 2>&1 || true
   fi
-  fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
-    bash "$SCRIPT_DIR" "$session" pane report-metadata --source firstmate-status "$pane" \
-    --token "fm_status=$FM_SIDEBAR_WORD" --token "fm_status_detail=$FM_SIDEBAR_DETAIL" --ttl-ms "$ttl" >/dev/null 2>&1 || true
+  if [ -n "$FM_SIDEBAR_WORD" ]; then
+    fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
+      bash "$SCRIPT_DIR" "$session" pane report-metadata --source firstmate-status "$pane" \
+      --token "fm_status=$FM_SIDEBAR_WORD" --token "fm_status_detail=$FM_SIDEBAR_DETAIL" --ttl-ms "$ttl" >/dev/null 2>&1 || true
+  else
+    fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
+      bash "$SCRIPT_DIR" "$session" pane report-metadata --source firstmate-status "$pane" \
+      --clear-token fm_status --clear-token fm_status_detail >/dev/null 2>&1 || true
+  fi
 }
 
 sidebar_refresh() (

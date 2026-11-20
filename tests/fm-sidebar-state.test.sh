@@ -58,7 +58,9 @@ elif a[:2] == ['workspace', 'list']:
         for line in open(os.environ['LAB_LOG']):
             call = json.loads(line)
             if call[:2] == ['workspace', 'report-metadata']:
-                tokens.update(item.split('=', 1) for item in call if item.startswith('fm_status'))
+                tokens.update(item.split('=', 1) for item in call if item.startswith(('fm_status=', 'fm_status_detail=')))
+                for index, item in enumerate(call[:-1]):
+                    if item == '--clear-token': tokens.pop(call[index + 1], None)
     result = {'workspaces': [{'workspace_id': 'w1', 'tokens': tokens}]}
 elif a[:2] == ['pane', 'get']:
     result = {'pane': {'pane_id': 'w1:p1', 'workspace_id': 'w1', 'tab_id': 'w1:t1'}}
@@ -200,6 +202,30 @@ export LAB_LINE='state: done · source: run-step · run passed: PR state unknown
 [ -z "$(bash "$script" sample)" ] || fail 'unknown completion must not request captain action'
 export LAB_LINE='state: done · source: run-step · run passed: PR open'
 expect 'Needs you'
+export LAB_LINE='state: done · source: run-step · checks green: PR held for merge (ci monitor ended): https://example.invalid/review/7'
+expect 'Needs you'
+export LAB_LINE='state: done · source: run-step · checks green: PR merged (ci monitor ended): https://example.invalid/review/7'
+expect Done
+export LAB_LINE='state: done · source: run-step · run passed: PR state unknown (unreadable)'
+before=$(wc -l < "$LAB_LOG")
+bash "$script" sample --refresh
+python3 - "$LAB_LOG" "$before" <<'PY'
+import json, sys
+calls = [json.loads(line) for line in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]
+for kind in ('workspace', 'pane'):
+    call = next(c for c in calls if c[:2] == [kind, 'report-metadata'])
+    assert call.count('--clear-token') == 2 and 'fm_status' in call and 'fm_status_detail' in call, call
+PY
+export LAB_SHARED=1 LAB_OTHER_WORD=Checking
+before=$(wc -l < "$LAB_LOG")
+bash "$script" sample --refresh
+python3 - "$LAB_LOG" "$before" <<'PY'
+import json, sys
+calls = [json.loads(line) for line in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]
+assert 'fm_status=Checking' in calls[0], calls
+assert calls[1].count('--clear-token') == 2, calls
+PY
+unset LAB_SHARED LAB_OTHER_WORD
 export LAB_AGENT=dead LAB_LINE='state: working · source: run-step · ci running · run: run3'
 export LAB_RUN=$'run:\n  id: run3\n  status: ci' LAB_CI='CI runner queued'
 expect 'Waiting for machine'
