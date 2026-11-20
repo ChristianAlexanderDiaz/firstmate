@@ -111,7 +111,8 @@ def offset():
         return 0
 
 
-resource.time = types.SimpleNamespace(time=wall_time, monotonic=lambda: real_time.monotonic() + offset(), sleep=real_time.sleep)
+resource.time = types.SimpleNamespace(time=wall_time, monotonic=lambda: real_time.monotonic() + offset(),
+                                      sleep=real_time.sleep, strftime=real_time.strftime, gmtime=real_time.gmtime)
 
 
 def publish():
