@@ -969,7 +969,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   how=${resolved##* }
   verify_hold_durable "$id"
   if [ "${VERIFY_ANSWERED:-0}" = 1 ]; then
-    if [ "$(show_field "$TASK_SHOW_OUTPUT" state)" != done ] \
+    if [ "$(show_field "$TASK_SHOW_OUTPUT" state)" != "done" ] \
       && [ "$(show_field_value "$TASK_SHOW_OUTPUT" hold_kind)" = captain ]; then
       fail "captain-held task $id still needs an answer"
     fi
