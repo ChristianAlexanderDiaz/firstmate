@@ -597,7 +597,7 @@ cmd_attention() {
   artifact=$(awk '/^argv:$/ { getline; getline; getline; print; exit }' "$record")
   [ "$mode" = poll ] && [ -n "$artifact" ] || return 0
   board_record "$id" && board_closed "$id" && return 0
-  identity=$(fm_pr_file_identity "$record") || return 0
+  identity=$(fm_procevent_board_generation "$record") || return 0
   for result in "$(fm_procevent_inbox_dir "$state")/$id".*.result; do
     [ -f "$result" ] && [ ! -L "$result" ] || continue
     [ -f "${result%.result}.registration" ] && [ ! -L "${result%.result}.registration" ] || continue

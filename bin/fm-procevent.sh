@@ -1067,6 +1067,10 @@ cmd_start() {
       die "extension registration owner is unreadable: $id"
       ;;
   esac
+  CLAIM_BOARD_GENERATION=$(fm_procevent_board_generation "$(source_file "$id")") || {
+    fm_procevent_source_lock_release "$id"
+    die "cannot read registration generation: $id"
+  }
   exec 7<"$(source_file "$id")" || {
     fm_procevent_source_lock_release "$id"
     die "cannot retain registration identity: $id"
@@ -1155,6 +1159,7 @@ cmd_start() {
         return 1
       fi
       CLAIM_REG_IDENTITY=$current
+      CLAIM_BOARD_GENERATION=$(fm_procevent_board_generation "$registration") || { fm_procevent_source_lock_release "$id"; return 1; }
     fi
     fm_procevent_source_lock_release "$id" || return 1
     exec 7<"$registration" || return 1
@@ -1362,10 +1367,10 @@ EOF
     :
   else
     if [ -n "$task_owner" ]; then
-      durable=$(FM_PROCEVENT_CAPTURE_REGISTRATION="$CLAIM_REG_IDENTITY" fm_procevent_capture "$STATE" "$id" "$adapter" "$out" "$task_owner") \
+      durable=$(FM_PROCEVENT_CAPTURE_REGISTRATION="$CLAIM_BOARD_GENERATION" fm_procevent_capture "$STATE" "$id" "$adapter" "$out" "$task_owner") \
         || { rm -f -- "$out"; die "cannot durably capture the result"; }
     else
-      durable=$(FM_PROCEVENT_CAPTURE_REGISTRATION="$CLAIM_REG_IDENTITY" fm_procevent_capture "$STATE" "$id" "$adapter" "$out") \
+      durable=$(FM_PROCEVENT_CAPTURE_REGISTRATION="$CLAIM_BOARD_GENERATION" fm_procevent_capture "$STATE" "$id" "$adapter" "$out") \
         || { rm -f -- "$out"; die "cannot durably capture the result"; }
     fi
   fi
@@ -1696,7 +1701,7 @@ stranded_leaderless_detail() {  # <source-id>
 
 source_attention_locked() {  # <source-id>
   local id=$1 adapter script rows key message identity
-  identity=$(fm_pr_file_identity "$(source_file "$id")") || return 0
+  identity=$(fm_procevent_board_generation "$(source_file "$id")") || return 0
   [ "$(source_field "$id" owner)" != extension ] || return 0
   adapter=$(source_field "$id" adapter)
   fm_procevent_adapter_valid "$adapter" || return 0

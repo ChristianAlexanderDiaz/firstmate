@@ -369,8 +369,16 @@ fm_procevent_registered_at() {  # <source-file>
   printf '%s\n' "$stamp"
 }
 
+fm_procevent_board_generation() {  # <source-file>
+  local generation
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  generation=$(sed -n '/^argv:$/q; s/^board_generation=//p' "$1")
+  [ -n "$generation" ] || generation=$(fm_pr_file_identity "$1") || return 1
+  case "$generation" in *[!0-9:]*|:*|*:) return 1 ;; *:*) printf '%s\n' "$generation" ;; *) return 1 ;; esac
+}
+
 fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> <argv...>
-  local state=$1 adapter=$2 id=$3 reg dest tmp arg identity
+  local state=$1 adapter=$2 id=$3 reg dest tmp arg identity generation
   shift 3
   fm_procevent_adapter_valid "$adapter" || return 1
   fm_procevent_source_id_valid "$id" || return 1
@@ -383,8 +391,14 @@ fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> <a
   [ -d "$reg" ] && [ ! -L "$reg" ] || return 1
   dest="$reg/$id.source"
   tmp=$(umask 077; mktemp "$reg/.source.XXXXXX") || return 1
+  generation=$(fm_procevent_board_generation "$dest" 2>/dev/null) || {
+    generation=$(od -An -N16 -tu4 /dev/urandom | tr -d " \n") || { rm -f -- "$tmp"; return 1; }
+    [ -n "$generation" ] || { rm -f -- "$tmp"; return 1; }
+    generation="1:$generation"
+  }
   if {
     printf 'adapter=%s\n' "$adapter"
+    printf 'board_generation=%s\n' "$generation"
     printf 'registered_at=%s\n' "$(fm_procevent_registered_at "$dest")"
     printf 'argc=%s\n' "$#"
     printf 'argv:\n'
@@ -403,7 +417,7 @@ fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> <a
 # Publish one task-owned registration. The single source record persists across
 # rounds; the handled marker, not a second ownership record, holds the round open.
 fm_procevent_task_registration_publish_locked() {  # <state> <adapter> <source-id> <task-id> <argv...>
-  local state=$1 adapter=$2 id=$3 task=$4 reg dest tmp arg identity
+  local state=$1 adapter=$2 id=$3 task=$4 reg dest tmp arg identity generation
   shift 4
   fm_procevent_adapter_valid "$adapter" || return 1
   fm_procevent_source_id_valid "$id" || return 1
@@ -417,9 +431,15 @@ fm_procevent_task_registration_publish_locked() {  # <state> <adapter> <source-i
   [ -d "$reg" ] && [ ! -L "$reg" ] || return 1
   dest="$reg/$id.source"
   tmp=$(umask 077; mktemp "$reg/.source.XXXXXX") || return 1
+  generation=$(fm_procevent_board_generation "$dest" 2>/dev/null) || {
+    generation=$(od -An -N16 -tu4 /dev/urandom | tr -d " \n") || { rm -f -- "$tmp"; return 1; }
+    [ -n "$generation" ] || { rm -f -- "$tmp"; return 1; }
+    generation="1:$generation"
+  }
   if {
     printf 'adapter=%s\n' "$adapter"
     printf 'kind=task-owned\n'
+    printf 'board_generation=%s\n' "$generation"
     printf 'registered_at=%s\n' "$(fm_procevent_registered_at "$dest")"
     printf 'owner_task=%s\n' "$task"
     printf 'argc=%s\n' "$#"
@@ -553,9 +573,9 @@ fm_procevent_registration_matches_locked() {  # <state> <adapter> <source-id> <a
   tmp=$(umask 077; mktemp "$reg/.source-match.XXXXXX") || return 1
   if {
     printf 'adapter=%s\n' "$adapter"
-    # The age is registration metadata, not part of the listener argv contract.
+    # Registration metadata is not part of the listener argv contract.
     # Preserve the legacy shape when comparing a record written before it.
-    sed -n '/^argv:$/q; /^registered_at=/p' "$dest"
+    sed -n '/^argv:$/q; /^board_generation=/p; /^registered_at=/p' "$dest"
     printf 'argc=%s\n' "$#"
     printf 'argv:\n'
     printf '%s\n' "$@"

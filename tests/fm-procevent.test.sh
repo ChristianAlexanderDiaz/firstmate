@@ -310,6 +310,7 @@ att_reconcile
 # Capture a real fake-poll answer, before its worker acknowledges the round.
 printf 'session:\n  status: feedback\nprompts[1]{uid,prompt,selector,tag,text}:\n  "","approved","","message",""\n' > "$ATT/answer"
 wait_capture "$ATT" "$att_id" || fail 'board answer was not captured and released'
+PATH="$ATT_BIN:$PATH" FM_HOME="$ATT" "$ROOT/bin/fm-procevent-lavish.sh" arm "$ATT_ART" --for board-worker >/dev/null || fail 'could not re-arm answered board'
 # Remove dedup receipts to check each reminder after feedback.
 rm "$ATT/state/procevent/.$att_id.attention-owner-stopped" "$ATT/state/procevent/.$att_id.attention-unanswered"
 : > "$ATT/state/.wake-queue"
