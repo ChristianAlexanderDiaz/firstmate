@@ -518,7 +518,8 @@ class Budget:
             if not math.isfinite(age) or not math.isfinite(uptime_age) or not -1 <= age <= 10 or not -1 <= uptime_age <= 10:
                 raise Refusal("stale or future monitor sample")
             thermal = sample.get("thermalState")
-            pressure = (sample.get("memory") or {}).get("pressure")
+            memory = sample.get("memory")
+            pressure = memory.get("pressure") if isinstance(memory, dict) else None
             cancel = thermal == "critical" or pressure == "critical"
             if thermal in ("serious", "critical") or sample.get("thermalWarning", False):
                 self.thermal_hold = True
@@ -530,7 +531,8 @@ class Budget:
             if (self.battery_sample_id is not None and monitor_id == self.battery_sample_id[0] and
                     sequence < self.battery_sample_id[1]):
                 raise Refusal("monitor sequence regressed")
-            power = sample.get("power") or {}
+            power = sample.get("power")
+            power = power if isinstance(power, dict) else {}
             unavailable = sample.get("unavailable", [])
             source = power.get("source")
             battery = power.get("batteryPercent")
@@ -558,6 +560,8 @@ class Budget:
                     self.battery_history.append((mono, battery))
                     self.battery_sample_id = battery_sample_id
                     self.battery_last_wall, self.battery_last_uptime = now, host_uptime
+            if not isinstance(memory, dict) or not isinstance(sample.get("power"), dict):
+                raise Refusal("monitor memory or power reading is unavailable")
             thermal, pressure = sample["thermalState"], sample["memory"]["pressure"]
             if sample["unavailable"]:
                 raise Refusal("monitor has unavailable readings: " + ",".join(sample["unavailable"]))

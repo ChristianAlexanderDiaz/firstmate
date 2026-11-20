@@ -2158,6 +2158,31 @@ class ClosedLidPolicyTests(unittest.TestCase):
                 self.assertNotIn("cancelAt", self.worker)
                 self.sample = sample
 
+    def test_malformed_containers_hold_without_masking_safety(self):
+        for field in ("memory", "power"):
+            for malformed in ("invalid", ["invalid"], None, 1, []):
+                for hazard in ("none", "thermal", "independent"):
+                    with self.subTest(field=field, malformed=malformed, hazard=hazard):
+                        sample = copy.deepcopy(self.sample)
+                        self.budget.data["emergency"] = None
+                        self.heavy.pop("cancelAt", None)
+                        self.sample[field] = malformed
+                        if hazard == "thermal":
+                            self.sample["thermalState"] = "critical"
+                        elif hazard == "independent":
+                            if field == "memory":
+                                self.sample["power"].update(source="battery", adapterWatts=None)
+                            else:
+                                self.sample["memory"]["pressure"] = "critical"
+                        self.tick(2)
+                        self.assertNotEqual(self.budget.reason, "ready")
+                        self.assertEqual("cancelAt" in self.heavy, hazard != "none")
+                        self.assertNotIn("cancelAt", self.worker)
+                        if hazard == "thermal":
+                            self.assertIsNotNone(self.budget.data["emergency"])
+                        sample["sequence"] = self.sample["sequence"]
+                        self.sample = sample
+
     def test_unplug_with_serious_thermal_still_cancels(self):
         self.sample["power"].update(source="battery", adapterWatts=None)
         self.sample["thermalState"] = "serious"
