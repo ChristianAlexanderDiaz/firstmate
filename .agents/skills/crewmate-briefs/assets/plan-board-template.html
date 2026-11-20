@@ -74,7 +74,7 @@ document.querySelectorAll('form[data-lavish-question]').forEach(form => {
     const question = form.dataset.lavishQuestion;
     const title = form.querySelector('legend').textContent.trim();
     window.lavish.queuePrompt(title + ': ' + answer,
-      { tag:'choice', text:title + ' -> ' + answer, element:form,
+      { tag:'choice', text:answer, element:form,
         data:{ schema:'fm-bearings-answer.v1', question:question, selection:selection, note:note } });
     status.textContent = 'Queued for sending.';
   });
