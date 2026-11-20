@@ -103,7 +103,13 @@ If two metadata records derive the same per-window marker key, including two rec
 A `kind=secondmate` task's status stream doubles as its parent-directed reply channel, so its lines new since the last classification are read before busy evidence counts: a decision, blocker, terminal outcome, `note:`, correlation-marked line, or unknown verb always surfaces, while unmarked routine `working:` and `paused:` progress is absorbed only by the same provably-working proof an ordinary crewmate gets.
 Its bare turn-ended signal is absorbed only by the ordinary authoritative working proof because an active secondmate does not enter the staleness backbone that would resurface deferred pane-churn evidence.
 A crew that declares `paused:` for a known external wait, or carries a verified `captain-held` transfer, is separately absorbed while idle and re-surfaced only on the longer pause cadence, rather than being treated as a possible wedge, except that a captain-held transfer is not rechecked while the away-posture record exists.
-For an ordinary crew that has stopped, the normal-mode watcher first surfaces one stale wake, then applies that same cadence to an unchanged `paused:` or durable `captain-held` endpoint while attended; the pause classification itself is recovered only when the backend confidently reports its agent dead.
+An ordinary worker whose agent is confidently dead or missing while its run is parked at a gate or it declares a pause instead enters the independent recovery check in `bin/fm-watch.sh` (`exited_wait_check`), before pane capture, busy classification, or pause absorption.
+That check names the task and gate or pause.
+For a parked run with a usable run ID, it captures a fresh run-status snapshot when it can confirm the same gate; otherwise it supplies a command to read the findings.
+Its script header owns the detection budget and repeat cadence.
+Its recovery event also bypasses the away daemon's declared-wait absorption.
+An executing run without a declared pause retains its existing treatment because its controller may continue without the worker's agent.
+The check reuses the recovery-grade backend classifier: tmux and Herdr provide proof, while ambiguous or unsupported backends keep their existing behavior.
 Live or inconclusive liveness remains fail-open at that initial surface, so a worker genuinely waiting on a decision is never silenced.
 Its later sights are still held to that same bounded cadence rather than re-alarming on every pane-hash change, because the throttle is keyed to the declaration and not to the pane an idle parked worker keeps ticking.
 The pause path still never reads a secondmate's endpoint liveness - dead-or-missing recovery belongs to the dedicated liveness tick above - and a mate is admitted to that same cadence only to serve a status-declared wait's bounded re-surface, so a forgotten `paused:` declaration, or an attended `captain-held` declaration, cannot rot invisibly.

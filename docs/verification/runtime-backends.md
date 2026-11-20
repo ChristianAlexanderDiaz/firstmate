@@ -186,6 +186,33 @@ ok - AFK daemon, foreground start, and start-native target herdr under stale tmu
 
 [`configuration.md`](../configuration.md#runtime-backend-configbackend--fm_backend) owns the selection rule and its explicit overrides.
 
+## Exited workers waiting at gates
+
+Verified on 2026-11-13 with GNU Bash 5.2.21 on Linux 6.6.87.2:
+
+```sh
+FM_TEST_ONLY=test_exited_wait_recovery bash bin/fm-test-run.sh tests/fm-watch-triage.test.sh --jobs 1
+```
+
+Observed output:
+
+```text
+gate wake latency=3s
+pause wake latency=1s
+ok - exited gate and pause wake promptly, throttle repeats, and clear on relaunch
+```
+
+The regression runs the real watcher and run-state reader with stubbed no-mistakes, tmux, and Herdr replies, using a two-second liveness interval and one-second poll.
+It covers a gate without a pause declaration, a declared pause, the live-worker control, reminders after the stale cadence, restart persistence, relaunch clearance, and Herdr dispatch.
+These timings verify the shortened test schedule, not production latency or a new live-harness classification claim.
+The existing recovery-grade liveness classifiers remain unchanged; backends without one retain their prior behavior.
+The watcher header owns the production interval and read budget.
+
+In an isolated lab with inert endpoint and no-mistakes fixtures, the baseline produced no recovery wake within 102 seconds, while the original implementation produced one in 79 seconds with the default 60-second probe and 15-second poll.
+In a separate single send observation, the baseline took 3015 ms and recorded one durable message and no recovery item; the implementation took 8677 ms and recorded one durable message and one recovery item.
+These individual observations are not throughput measurements, and the later findings-status read adds up to three seconds to the documented bound.
+Live Herdr behavior still requires a post-merge check in an authorized isolated lab.
+
 ## tmux
 
 Foreground-process behavior was verified on 2026-07-07 with tmux 3.6a on macOS.

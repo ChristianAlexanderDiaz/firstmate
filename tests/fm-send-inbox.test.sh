@@ -69,6 +69,12 @@ case "${1:-}" in
     fi
     exit 0 ;;
   display-message)
+    if [ "${FM_FAKE_TMUX_AGENT:-}" = dead ]; then
+      case "$*" in
+        *pane_current_command*) printf 'bash\n'; exit 0 ;;
+        *pane_tty*) exit 1 ;;
+      esac
+    fi
     for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane)
@@ -505,6 +511,35 @@ test_empty_message_refused() {
   pass "fm-send: an empty or whitespace-only text steer refuses before marking, recording, or typing"
 }
 
+test_exited_agent_queues_recovery() {
+  local dir err rec
+  dir=$(setup_case exited-agent)
+  err="$dir/send.err"
+  run_send "$dir" "$err" FM_FAKE_TMUX_AGENT=dead -- t1 'resume validation' \
+    || fail "exited-agent steer must remain durably delivered"
+  rec="$dir/home/state/t1.inbox/001.msg"
+  [ -f "$rec" ] || fail "steer was lost"
+  [ ! -s "$dir/send.log" ] || fail "typed into exited agent"
+  assert_grep 'task t1 unread firstmate instruction:' "$dir/home/state/.wake-queue" "send must queue recovery immediately"
+  assert_grep "$rec" "$dir/home/state/.wake-queue" "recovery must identify the durable steer"
+  [ "$(cat "$dir/home/state/t1.inbox/.escalated")" = 001.msg ] || fail "watcher would duplicate recovery"
+  # A replacement acknowledges the message normally. No new status decision
+  # remains to block it; the inbox policy clears its marker on its next read.
+  mv "$rec" "$dir/home/state/t1.inbox/handled/"
+  FM_STATE_OVERRIDE="$dir/home/state" bash -c '
+    . "$1"
+    [ "$(fm_task_inbox_due_action "$2" t1)" = quiet ]
+  ' _ "$ROOT/bin/fm-task-inbox-lib.sh" "$dir/home/state" || fail "acknowledgement did not clear recovery"
+  [ ! -e "$dir/home/state/t1.inbox/.escalated" ] || fail "recovery marker survived acknowledgement"
+  pass "exited-agent steer records immediate recovery and acknowledgement clears it"
+}
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit 0
+fi
+
+test_exited_agent_queues_recovery
 test_text_steer_rides_inbox
 test_deep_home_doorbell_stays_short
 test_multiline_steer_is_legal

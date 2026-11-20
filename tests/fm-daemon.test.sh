@@ -3331,6 +3331,30 @@ test_inject_msg_defers_on_unrecognized_composer_state() {
   pass "inject_msg: unrecognized composer states defer by default"
 }
 
+test_exited_agent_recovery_bypasses_pause_absorption() {
+  local dir state detail reason
+  for detail in \
+    'task parked agent dead while parked at review; findings file=/lab/findings.txt' \
+    'task parked unread firstmate instruction: /lab/001.msg is unhandled and the worker agent has exited'
+  do
+    dir=$(make_supercase "agent-recovery-${RANDOM}")
+    state="$dir/state"
+    printf 'window=sess:fm-parked\nkind=ship\n' > "$state/parked.meta"
+    printf 'paused: waiting for validation\n' > "$state/parked.status"
+    reason="stale: sess:fm-parked (agent-recovery: $detail)"
+    LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" handle_wake "$reason" "$state"
+    assert_grep "$detail" "$state/.subsuper-escalations" "confirmed agent recovery must reach supervision even under a pause"
+    [ ! -e "$state/.subsuper-paused-parked" ] || fail "recovery was absorbed as a pause"
+  done
+  pass "confirmed exited-agent recovery bypasses away-mode pause absorption"
+}
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit 0
+fi
+
+test_exited_agent_recovery_bypasses_pause_absorption
 test_afk_start_refuses_when_flag_cannot_be_written
 test_afk_start_ignores_stale_pidfile_without_lock
 test_afk_start_reclaims_stale_daemon_lock_reused_pid

@@ -403,6 +403,20 @@ FM_NM_AWAITING_AGENT_RE='^[[:space:]]*awaiting_agent:'
 FM_NM_GATE_SCALAR_RE='^[[:space:]]*(status|state):[[:space:]]*"?(awaiting_approval|fix_review)"?[[:space:]]*$'
 FM_NM_GATE_ROW_RE='^[[:space:]]*[^,]+,[[:space:]]*"?(awaiting_approval|fix_review)"?[[:space:]]*,'
 
+fm_nm_gate_display() {  # <toon-output>
+  local out=$1 gate row status
+  gate=$(fm_nm_strip_quotes "$(fm_nm_field "$out" gate)")
+  if [ -z "$gate" ] && printf '%s\n' "$out" | grep -Eq "$FM_NM_GATE_LINE_RE"; then
+    gate=$(printf '%s\n' "$out" | sed -n '/^[[:space:]]*gate:[[:space:]]*$/,/^[^[:space:]][^:]*:/s/^[[:space:]]*step:[[:space:]]*\(.*\)/\1/p' | head -1)
+    gate=$(fm_nm_strip_quotes "$gate")
+  elif [ -z "$gate" ]; then
+    row=$(printf '%s\n' "$out" | grep -E "$FM_NM_GATE_ROW_RE" | head -1)
+    gate=$(fm_nm_trim "${row%%,*}")
+  fi
+  status=$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")
+  printf '%s' "${gate:-${status:-gate}}"
+}
+
 # 0 if the run in captured `axi status` TOON $1 carries any of those PARKED
 # markers. The top-level `status:` word alone does NOT decide this: the CLI
 # leaves it at `running` while a run waits at a gate, so the word and the gate

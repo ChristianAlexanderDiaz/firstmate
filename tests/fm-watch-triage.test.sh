@@ -2620,10 +2620,11 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
   out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
   window="test:fm-held"
   printf 'idle, holding for upstream' > "$capture_file"
-  printf 'window=%s\nkind=ship\n' "$window" > "$state/held.meta"
+  printf 'window=%s\nkind=secondmate\n' "$window" > "$state/held.meta"
   statusf="$state/held.status"
-  # A DECLARED pause (not captain-relevant), .seen-* primed so the signal scan does
-  # not pre-empt the stale path.
+  # A secondmate keeps the pause cadence; exited ordinary workers are tested
+  # by test_exited_wait_recovery. Prime .seen-* so the initial status signal
+  # does not pre-empt the stale path.
   printf 'paused: holding for the upstream tool release\n' > "$statusf"
   sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
   key=$(printf '%s' "$window" | tr ':/.' '___')
@@ -2807,8 +2808,8 @@ test_exited_declared_pause_is_bounded_but_live_gate_surfaces() {
   bare=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w && $5 == "stale: " w { n++ } END { print n + 0 }' "$state/.wake-queue" 2>/dev/null || echo 0)
   [ "$wakes" -le 1 ] || fail "dead-agent declared pause flooded $wakes stale wakes across six unchanged polls"
   [ "$bare" -eq 0 ] || fail "dead-agent declared pause surfaced as $bare bare stopped-crew wakes"
-  grep -F "awaiting external" "$state/.wake-queue" >/dev/null \
-    || fail "dead-agent declared pause did not use the bounded paused recheck"
+  grep -F "task held agent dead while paused:" "$state/.wake-queue" >/dev/null \
+    || fail "dead-agent declared pause did not request recovery"
 
   dir=$(make_case exited-captain-held); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/held.status"
@@ -2881,15 +2882,15 @@ test_exited_declared_pause_is_bounded_but_live_gate_surfaces() {
   pass "exited declared-pause and captain-held panes use bounded pause cadence while a live decision gate still surfaces once"
 }
 
-# A dead worker reaches handle_paused_stale rather than the live fallback above.
-# When one declared wait directly replaces another, the existing
+# Dead paused workers request recovery; a captain-held transfer keeps the
+# legacy pause cadence. When one declared wait replaces another, the existing
 # throttle belongs to the old declaration and must not suppress the new wait's
 # first inspection merely because its timestamp is still young.
 test_absorbed_replacement_wait_does_not_inherit_the_old_throttle() {
   local spec name initial replacement expected dir state fakebin out capture_file
   local statusf window key sig back pid wakes
   for spec in \
-    'paused-replacement|paused: waiting on validation run one|paused: waiting on validation run two|awaiting external' \
+    'paused-replacement|paused: waiting on validation run one|paused: waiting on validation run two|agent dead while paused:' \
     'captain-held-replacement|captain-held [key=route]: awaiting the routing call|captain-held [key=release]: awaiting the release call|awaiting the captain'
   do
     name=${spec%%|*}; spec=${spec#*|}
@@ -2912,7 +2913,7 @@ test_absorbed_replacement_wait_does_not_inherit_the_old_throttle() {
     PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
       FM_FAKE_TMUX_CURRENT_COMMAND=zsh FM_FAKE_CREW_STATE='state: stopped · source: pane · bare shell' \
       FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
-      FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_WAIT_AGENT_CHECK_SECS=1 FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
       FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1000000 FM_HEARTBEAT_MAX=1000000 "$WATCH" >> "$out" &
     pid=$!
     wait_for_exit "$pid" 100 || fail "[$name] initial declared wait did not re-surface"
@@ -2925,7 +2926,7 @@ test_absorbed_replacement_wait_does_not_inherit_the_old_throttle() {
       FM_FAKE_TMUX_CURRENT_COMMAND=zsh FM_FAKE_CREW_STATE='state: stopped · source: pane · bare shell' \
       FM_WATCH_HANDLING_SUCCESSOR=1 \
       FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
-      FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_WAIT_AGENT_CHECK_SECS=1 FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
       FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1000000 FM_HEARTBEAT_MAX=1000000 "$WATCH" >> "$out" &
     pid=$!
     wait_for_exit "$pid" 100 \
@@ -4957,28 +4958,20 @@ test_nonterminal_stale_pause_transitions_reclassify_unchanged_hash() {
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
-    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_WAIT_AGENT_CHECK_SECS=1 FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1000000 FM_HEARTBEAT_MAX=1000000 "$WATCH" > "$out" &
   pid=$!
-  i=0
-  while [ "$i" -lt 100 ] && kill -0 "$pid" 2>/dev/null; do
-    [ -e "$state/.paused-$key" ] && [ ! -e "$state/.stale-since-$key" ] && break
-    sleep 0.1
-    i=$((i + 1))
-  done
-  kill -0 "$pid" 2>/dev/null || { reap "$pid"; fail "a stale hash that entered pause was wedge-escalated: $(cat "$out")"; }
-  [ -e "$state/.paused-$key" ] || { reap "$pid"; fail "unchanged stale hash did not enter paused mode"; }
-  [ ! -e "$state/.stale-since-$key" ] || { reap "$pid"; fail "pause transition retained its wedge timer"; }
-  wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "a stale hash that entered pause was wedge-escalated: $(cat "$out")"; }
-  reap "$pid"
-  ack_stopped_cycle "$state" || fail "could not acknowledge the intentional entered-pause watcher stop"
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "dead paused worker did not request recovery"; }
+  assert_grep 'agent dead while paused:' "$out" "pause must request agent recovery"
+  [ ! -e "$state/.stale-since-$key" ] || fail "recovery retained its old wedge timer"
+  ack_stopped_cycle "$state" || fail "could not acknowledge pause recovery"
 
   printf 'working: upstream landed, resuming\n' > "$state/transition.status"
   sig=$(seen_sig "$state/transition.status"); printf '%s' "$sig" > "$state/.seen-transition_status"
   FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
   : > "$out"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
-    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_WAIT_AGENT_CHECK_SECS=1 FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1000000 FM_HEARTBEAT_MAX=1000000 "$WATCH" > "$out" &
   pid=$!
   i=0
@@ -7302,6 +7295,244 @@ test_paused_bg_job_until_timeout_rechecks_after_the_job_ends() {
   pass "until set to a background job's timeout rechecks the worker paused on it once the job must have ended"
 }
 
+# Run the real watcher and crew-state reader against a branch-bound stub run.
+# No backend lifecycle or no-mistakes daemon command reaches an installed tool.
+exited_wait_fixture() {
+  local dir head
+  dir=$(make_case "$1")
+  mkdir -p "$dir/config" "$dir/data/parked" "$dir/project"
+  git -C "$dir/project" init -q
+  git -C "$dir/project" -c user.name=Test -c user.email=test@example.invalid commit -qm init --allow-empty
+  git -C "$dir/project" checkout -qb fm/parked
+  head=$(git -C "$dir/project" rev-parse HEAD)
+  printf 'window=test:fm-parked\nkind=ship\nharness=grok\nbackend=tmux\nworktree=%s\n' "$dir/project" > "$dir/state/parked.meta"
+  printf 'paused: waiting for validation\n' > "$dir/state/parked.status"
+  prime_status_seen "$dir/state" "$dir/state/parked.status"
+  printf 'grok\n' > "$dir/agent"
+  printf 'validation is waiting\n' > "$dir/pane"
+  printf 'review finding\n' > "$dir/data/parked/nm-LABRUN-findings.txt"
+  cat > "$dir/run" <<EOF
+run:
+  id: LABRUN
+  branch: fm/parked
+  head: $head
+  status: awaiting_approval
+  awaiting_agent: parked
+  findings[1]{id,severity,file,line,action,description}:
+    r1,warning,example.sh,1,ask-user,choose behavior
+gate: review
+EOF
+  cat > "$dir/overview" <<EOF
+count: 1 of 1 total
+runs[1]{id,branch,status,head,pr}:
+  LABRUN,fm/parked,running,$head,
+EOF
+  cat > "$dir/fakebin/no-mistakes" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  axi) cat "$FM_WAIT_LAB/overview" ;;
+  'axi status'|'axi status --run LABRUN') cat "$FM_WAIT_LAB/run" ;;
+  *) exit 1 ;;
+esac
+STUB
+  cat > "$dir/fakebin/tmux" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  list-windows) printf 'fm-parked\n' ;;
+  display-message)
+    case "$*" in *pane_current_command*) cat "$FM_WAIT_LAB/agent" ;; *) exit 1 ;; esac ;;
+  capture-pane) cat "$FM_WAIT_LAB/pane" ;;
+  *) exit 1 ;;
+esac
+STUB
+  # A hard barrier against accidental access to a real Herdr session.
+  printf '#!/usr/bin/env bash\nexit 99\n' > "$dir/fakebin/herdr"
+  chmod +x "$dir/fakebin/"*
+  printf '%s\n' "$dir"
+}
+
+exited_wait_start() {  # <fixture> [probe-seconds]
+  local dir=$1
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir" \
+    FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" FM_DATA_OVERRIDE="$dir/data" FM_WAIT_LAB="$dir" \
+    FM_CREW_STATE_BIN="${3:-$(dirname "$WATCH")/fm-crew-state.sh}" \
+    FM_WATCH_HANDLING_SUCCESSOR=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1000000 FM_HEARTBEAT_MAX=1000000 \
+    FM_WAIT_AGENT_CHECK_SECS="${2:-2}" FM_STALE_ESCALATE_SECS=60 \
+    FM_PAUSE_RESURFACE_SECS=7200 "$WATCH" >> "$dir/watch.out" 2>&1 &
+  EXITED_WAIT_PID=$!
+}
+
+exited_wait_state() {  # <fixture>
+  local dir=$1
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir" \
+    FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" FM_DATA_OVERRIDE="$dir/data" FM_WAIT_LAB="$dir" \
+    "$(dirname "$WATCH")/fm-crew-state.sh" parked
+}
+
+test_exited_steer_wakes_running_successor() {
+  local dir pid rec
+  dir=$(exited_wait_fixture exited-steer-successor)
+  printf 'working: validation running\n' > "$dir/state/parked.status"
+  prime_status_seen "$dir/state" "$dir/state/parked.status"
+  sed -e 's/status: awaiting_approval/status: running/' -e '/awaiting_agent:/,$d' "$dir/run" > "$dir/run.new"
+  mv "$dir/run.new" "$dir/run"
+  printf 'bash\n' > "$dir/agent"
+  exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+  wait_poll_cycle "$dir/state" "$pid" 300 || fail "watcher did not remain running before steer"
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir" \
+    FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" FM_DATA_OVERRIDE="$dir/data" \
+    FM_WAIT_LAB="$dir" FM_SEND_SETTLE=0 "$ROOT/bin/fm-send.sh" parked 'resume validation' > "$dir/send.out" 2>&1 \
+    || { reap "$pid"; fail "send failed: $(cat "$dir/send.out")"; }
+  rec="$dir/state/parked.inbox/001.msg"
+  [ -f "$rec" ] || { reap "$pid"; fail "steer was not retained"; }
+  wait_for_exit "$pid" 150 || { reap "$pid"; fail "queued recovery did not wake successor"; }
+  assert_grep 'check: rearm-resurface' "$dir/watch.out" "successor must deliver the queued recovery"
+  assert_grep "$rec" "$dir/state/.wake-queue" "recovery must identify the steer"
+  [ "$(wc -l < "$dir/state/.wake-queue")" -eq 1 ] || fail "recovery was duplicated"
+  ack_stopped_cycle "$dir/state" || fail "could not acknowledge recovery"
+  exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+  wait_poll_cycle "$dir/state" "$pid" 300 || fail "acknowledged recovery repeated"
+  reap "$pid"
+  mkdir -p "$dir/state/parked.inbox/handled"
+  mv "$rec" "$dir/state/parked.inbox/handled/"
+  FM_STATE_OVERRIDE="$dir/state" bash -c '. "$1"; fm_task_inbox_due_action "$2" parked' _ \
+    "$ROOT/bin/fm-task-inbox-lib.sh" "$dir/state" >/dev/null
+  [ ! -e "$dir/state/parked.inbox/.escalated" ] || fail "acknowledgement did not clear escalation"
+  pass "send to exited agent wakes a running successor once"
+}
+
+test_exited_wait_snapshot_identity() {
+  local dir pid first second
+  dir=$(exited_wait_fixture exited-snapshot-identity)
+  printf 'working: validation running\n' > "$dir/state/parked.status"
+  prime_status_seen "$dir/state" "$dir/state/parked.status"
+  printf 'bash\n' > "$dir/agent"
+  exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+  wait_for_exit "$pid" 150 || { reap "$pid"; fail "first gate did not wake"; }
+  first=$(sed -n 's/.*findings file=\([^;]*\);.*/\1/p' "$dir/watch.out" | head -1)
+  [ -f "$first" ] || fail "first snapshot missing"
+  sed -e 's/gate: review/gate: push/' -e 's/choose behavior/new gate finding/' "$dir/run" > "$dir/run.new"
+  mv "$dir/run.new" "$dir/run"
+  rm -f "$dir/state/.wait-agent-probed-test_fm-parked"
+  exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+  wait_for_exit "$pid" 150 || { reap "$pid"; fail "second gate did not wake"; }
+  second=$(sed -n 's/.*findings file=\([^;]*\);.*/\1/p' "$dir/watch.out" | tail -1)
+  [ "$first" != "$second" ] && [ -f "$second" ] || fail "gate snapshots must be distinct"
+  assert_grep 'choose behavior' "$first" "earlier wake must retain its findings"
+  assert_grep 'new gate finding' "$second" "later wake must name its findings"
+
+  dir=$(exited_wait_fixture exited-snapshot-race)
+  printf 'working: validation running\n' > "$dir/state/parked.status"
+  prime_status_seen "$dir/state" "$dir/state/parked.status"
+  printf 'bash\n' > "$dir/agent"
+  cat > "$dir/fakebin/racing-state" <<'STUB'
+#!/usr/bin/env bash
+printf 'state: parked · source: run-step · parked at review: 1 finding(s) · run: LABRUN\n'
+sed 's/gate: review/gate: push/' "$FM_WAIT_LAB/run" > "$FM_WAIT_LAB/run.new"
+mv "$FM_WAIT_LAB/run.new" "$FM_WAIT_LAB/run"
+STUB
+  chmod +x "$dir/fakebin/racing-state"
+  exited_wait_start "$dir" 2 "$dir/fakebin/racing-state"; pid=$EXITED_WAIT_PID
+  wait_for_exit "$pid" 150 || { reap "$pid"; fail "racing gate did not wake"; }
+  assert_grep 'read findings with no-mistakes axi status --run LABRUN' "$dir/watch.out" "changed gate must not publish mismatched findings"
+  if grep -q 'findings file=' "$dir/watch.out"; then fail "racing gate published a mismatched snapshot"; fi
+  pass "recovery snapshots preserve gate identity"
+}
+
+test_exited_wait_recovery() {
+  local dir pid before n detail snapshot
+  for detail in gate pause; do
+    dir=$(exited_wait_fixture "exited-$detail")
+    if [ "$detail" = gate ]; then
+      printf "working: validation running\n" > "$dir/state/parked.status"
+      prime_status_seen "$dir/state" "$dir/state/parked.status"
+      assert_contains "$(exited_wait_state "$dir")" 'state: parked · source: run-step · parked at review' "fixture must bind the current parked run"
+      printf 'finding from an earlier gate\n' > "$dir/data/parked/nm-LABRUN-findings.txt"
+    fi
+    if [ "$detail" = pause ]; then
+      sed -e 's/status: awaiting_approval/status: running/' -e '/awaiting_agent:/,$d' "$dir/run" > "$dir/run.new"
+      mv "$dir/run.new" "$dir/run"
+      assert_contains "$(exited_wait_state "$dir")" 'state: working · source: run-step' "fixture must bind the running validation"
+    fi
+    # Start alive and let the current pause be seen. Then only change liveness.
+    exited_wait_start "$dir"
+    pid=$EXITED_WAIT_PID
+    if [ "$detail" = gate ]; then
+      wait_for_exit "$pid" 150 || { reap "$pid"; fail "live wait lost its first-sight alert: $(cat "$dir/watch.out")"; }
+      ack_stopped_cycle "$dir/state" || fail "could not acknowledge first sight"
+      exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+    fi
+    wait_poll_cycle "$dir/state" "$pid" 300 || fail "live pause repeated an alarm"
+    wait_poll_cycle "$dir/state" "$pid" 300 || fail "live pause repeated an alarm"
+    if grep -q 'agent dead while' "$dir/watch.out"; then
+      reap "$pid"; fail "live pause reported a dead agent"
+    fi
+    before=$(date +%s)
+    printf 'bash\n' > "$dir/agent"
+    wait_for_exit "$pid" 150 || { reap "$pid"; fail "exited $detail did not wake within 15s"; }
+    printf '%s wake latency=%ss\n' "$detail" "$(( $(date +%s) - before ))"
+    assert_grep 'task parked agent dead while' "$dir/watch.out" "exited wait must request recovery"
+    if [ "$detail" = gate ]; then
+      assert_grep 'parked at review' "$dir/watch.out" "must name gate"
+      snapshot=$(sed -n 's/.*findings file=\([^;]*\);.*/\1/p' "$dir/watch.out" | head -1)
+      [ -f "$snapshot" ] || fail "must name findings"
+      assert_grep 'r1,warning,example.sh,1,ask-user,choose behavior' "$snapshot" "snapshot must contain the gate finding"
+      assert_grep 'finding from an earlier gate' "$dir/data/parked/nm-LABRUN-findings.txt" "prior decision snapshot must remain unchanged"
+    else
+      assert_grep 'paused: waiting for validation' "$dir/watch.out" "must name pause"
+    fi
+    ack_stopped_cycle "$dir/state" || fail "could not acknowledge recovery"
+    n=$(grep -c 'task parked agent dead while' "$dir/watch.out")
+    exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+    wait_poll_cycle "$dir/state" "$pid" 300 || fail "repeat escaped throttle"
+    wait_poll_cycle "$dir/state" "$pid" 300 || fail "repeat escaped throttle"
+    reap "$pid"
+    [ "$(grep -c 'task parked agent dead while' "$dir/watch.out")" = "$n" ] || fail "duplicate recovery"
+    # A forgotten recovery repeats on the stale cadence, even after restart.
+    set_mtime "$(( $(date +%s) - 61 ))" "$dir/state/.wait-agent-reported-test_fm-parked"
+    exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+    wait_for_exit "$pid" 150 || { reap "$pid"; fail "expired recovery did not repeat"; }
+    [ "$(grep -c 'task parked agent dead while' "$dir/watch.out")" -eq "$((n + 1))" ] || fail "expired recovery did not queue exactly once"
+    ack_stopped_cycle "$dir/state" || fail "could not acknowledge recovery reminder"
+    # Replacing the agent clears recovery on the next probe, without waiting
+    # for the stale escalation cadence or adding an open status decision.
+    printf 'grok\n' > "$dir/agent"
+    exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+    for ((n=0; n<150; n++)); do
+      [ ! -e "$dir/state/.wait-agent-reported-test_fm-parked" ] && break
+      sleep 0.1
+    done
+    [ ! -e "$dir/state/.wait-agent-reported-test_fm-parked" ] || { reap "$pid"; fail "relaunch retained recovery"; }
+    reap "$pid"
+  done
+  test_exited_wait_herdr
+  pass "exited gate and pause wake promptly, throttle repeats, and clear on relaunch"
+}
+
+# Exercise the actual Herdr dispatch using read-only protocol stubs. Every
+# unrecognized command is rejected; no real client or session is contacted.
+test_exited_wait_herdr() {
+  local dir pid
+  command -v jq >/dev/null || { echo "skip: Herdr stub needs jq"; return; }
+  dir=$(exited_wait_fixture exited-herdr)
+  printf 'window=lab:w1:p2\nkind=ship\nharness=grok\nbackend=herdr\nworktree=%s\n' "$dir/project" > "$dir/state/parked.meta"
+  cat > "$dir/fakebin/herdr" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  'pane get w1:p2 --session lab') printf '%s\n' '{"result":{"pane":{"pane_id":"w1:p2"}}}' ;;
+  'agent get w1:p2 --session lab') printf '%s\n' '{"error":{"code":"agent_not_found"}}' ;;
+  *) exit 99 ;;
+esac
+STUB
+  chmod +x "$dir/fakebin/herdr"
+  exited_wait_start "$dir"
+  pid=$EXITED_WAIT_PID
+  wait_for_exit "$pid" 150 || { reap "$pid"; fail "Herdr exited gate did not wake"; }
+  assert_grep 'task parked agent dead while parked at review' "$dir/watch.out" "Herdr must request gate recovery"
+  assert_grep "findings file=$dir/data/parked/nm-LABRUN-recovery-status." "$dir/watch.out" "Herdr must name findings"
+}
+
 # CI's stock macOS Bash lane sets FM_TEST_ONLY to run just the bash-3.2
 # churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
 if [ -n "${FM_TEST_ONLY:-}" ]; then
@@ -7311,6 +7542,9 @@ fi
 
 test_done_pr_url_classifier
 test_done_missing_pr_bounce
+test_exited_steer_wakes_running_successor
+test_exited_wait_snapshot_identity
+test_exited_wait_recovery
 test_status_span_actionable_classifier
 test_status_span_survives_a_later_routine_append
 test_status_span_respects_decision_closure
