@@ -2364,7 +2364,8 @@ class LevelPolicyTests(unittest.TestCase):
                 self.sample["power"]["batteryPercent"] = 80
                 self.sample["lidClosed"] = False
                 recovered = self.observe(2)
-                self.assertEqual(recovered["nextStepUp"], self.now + (240 if hazard == "heat" else 60 if hazard == "memory" else 30))
+                # The first healthy observation occurs two seconds before self.now.
+                self.assertEqual(recovered["nextStepUp"], self.now - 2 + (240 if hazard == "heat" else 60 if hazard == "memory" else 30))
                 self.assertEqual(self.observe(240 if hazard == "heat" else 60 if hazard == "memory" else 30)["level"], "Reduced" if hazard == "heat" else "Stop")
 
     def test_memory_dwell_60_and_missing_dwell_30(self):

@@ -538,6 +538,7 @@ class Budget:
         self.swap_bad = 0
         self.reason = "starting: reconciliation and recovery hysteresis required"
         self.telemetry = None
+        self.portable = True
         self.metrics = collections.deque(maxlen=900)
         metrics_file = self.root / "metrics.json"
         if metrics_file.exists():
@@ -937,7 +938,7 @@ class Budget:
                 record["previousLoggingError"] = self.data["policyLogError"]
             line = (json.dumps(record) + "\n").encode()
             if len(line) > POLICY_LOG_LIMIT:
-                raise OSError("policy observation exceeds log limit")
+                raise OSError("policy log capacity exhausted: observation exceeds log limit")
             if path.exists() and path.stat().st_size + len(line) > POLICY_LOG_LIMIT:
                 if archive.exists() and time.time() - archive.stat().st_mtime < POLICY_LOG_RETENTION:
                     raise OSError("policy log capacity exhausted before 48-hour retention")
