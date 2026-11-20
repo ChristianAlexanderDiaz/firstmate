@@ -46,7 +46,8 @@ fm_sidebar_classify() {
   elif [ "$state" = done ] && [ "$kind" != secondmate ]; then
     case "$line" in
       'state: done · source: run-step · run passed: PR open'*|\
-      'state: done · source: run-step · checks green: PR held for merge (ci monitor ended)'*) FM_SIDEBAR_WORD='Needs you'; FM_SIDEBAR_DETAIL=$detail ;;
+      'state: done · source: run-step · checks green: PR held for merge (ci monitor ended)'*|\
+      'state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close)'*) FM_SIDEBAR_WORD='Needs you'; FM_SIDEBAR_DETAIL=$detail ;;
     esac
   elif [ "$state" = working ] && [ "$source" = run-step ] && { [ "$agent" = dead ] || [ "$agent" = missing ]; }; then
     FM_SIDEBAR_WORD=Checking; FM_SIDEBAR_DETAIL="$detail - no agent"

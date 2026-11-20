@@ -171,15 +171,16 @@ sidebar_publish() {
   # Read other panes' published display tokens, substituting this fresh result.
   # The shared vocabulary owns urgency; no extra task/run reads are needed.
   panes=$(fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
-    bash "$SCRIPT_DIR" "$session" pane list 2>/dev/null) || panes='{}'
+    bash "$SCRIPT_DIR" "$session" pane list 2>/dev/null) || panes=''
   aggregate=$(printf '%s' "$panes" | jq -cer --arg workspace "$workspace" --arg pane "$pane" \
     --arg word "$FM_SIDEBAR_WORD" --arg detail "$FM_SIDEBAR_DETAIL" --argjson order "$FM_SIDEBAR_PRIORITY" '
-    [.result.panes[] | select(.workspace_id == $workspace)]
+    select(.result.panes | type == "array")
+    | [.result.panes[] | select(.workspace_id == $workspace)]
     | select(any(.pane_id == $pane))
     | map(if .pane_id == $pane then {word:$word, detail:$detail}
           else {word:.tokens.fm_status, detail:(.tokens.fm_status_detail // "")} end)
     | map(. as $p | select($order | index($p.word)))
-    | sort_by(.word as $w | $order | index($w)) | first') || aggregate=''
+    | sort_by(.word as $w | $order | index($w)) | first // {word:"", detail:""}') || aggregate=''
   for candidate in "$STATE"/*.meta; do [ ! -f "$candidate" ] || count=$((count + 1)); done
   poll=${FM_POLL:-15}
   case "$poll" in ''|*[!0-9]*) poll=15 ;; esac
@@ -187,13 +188,15 @@ sidebar_publish() {
   if [ -n "$aggregate" ]; then
     workspace_word=$(printf '%s' "$aggregate" | jq -r '.word')
     workspace_detail=$(printf '%s' "$aggregate" | jq -j '.detail' | tr '\n\r\t' '   ' | cut -c1-300)
-    fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
-      bash "$SCRIPT_DIR" "$session" workspace report-metadata --source firstmate-status "$workspace" \
-      --token "fm_status=$workspace_word" --token "fm_status_detail=$workspace_detail" --ttl-ms "$ttl" >/dev/null 2>&1 || true
-  else
-    fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
-      bash "$SCRIPT_DIR" "$session" workspace report-metadata --source firstmate-status "$workspace" \
-      --clear-token fm_status --clear-token fm_status_detail >/dev/null 2>&1 || true
+    if [ -n "$workspace_word" ]; then
+      fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
+        bash "$SCRIPT_DIR" "$session" workspace report-metadata --source firstmate-status "$workspace" \
+        --token "fm_status=$workspace_word" --token "fm_status_detail=$workspace_detail" --ttl-ms "$ttl" >/dev/null 2>&1 || true
+    else
+      fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
+        bash "$SCRIPT_DIR" "$session" workspace report-metadata --source firstmate-status "$workspace" \
+        --clear-token fm_status --clear-token fm_status_detail >/dev/null 2>&1 || true
+    fi
   fi
   if [ -n "$FM_SIDEBAR_WORD" ]; then
     fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \

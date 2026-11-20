@@ -65,7 +65,11 @@ elif a[:2] == ['workspace', 'list']:
 elif a[:2] == ['pane', 'get']:
     result = {'pane': {'pane_id': 'w1:p1', 'workspace_id': 'w1', 'tab_id': 'w1:t1'}}
 elif a[:2] == ['pane', 'list']:
+    if os.environ.get('LAB_INVENTORY') == 'fail': sys.exit(1)
+    if os.environ.get('LAB_INVENTORY') == 'malformed':
+        print('{}'); sys.exit(0)
     result = {'panes': [{'pane_id': 'w1:p1', 'workspace_id': 'w1'}]}
+    if os.environ.get('LAB_INVENTORY') == 'missing': result['panes'] = []
     if os.environ.get('LAB_SHARED') == '1':
         result['panes'].append({'pane_id': 'w1:p2', 'workspace_id': 'w1', 'tokens': {
             'fm_status': os.environ.get('LAB_OTHER_WORD', 'Needs me'),
@@ -204,6 +208,9 @@ export LAB_LINE='state: done · source: run-step · run passed: PR open'
 expect 'Needs you'
 export LAB_LINE='state: done · source: run-step · checks green: PR held for merge (ci monitor ended): https://example.invalid/review/7'
 expect 'Needs you'
+export LAB_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close): https://example.invalid/review/7'
+expect 'Needs you'
+[[ $(bash "$script" sample) == *'https://example.invalid/review/7'* ]] || fail 'monitoring review link absent'
 export LAB_LINE='state: done · source: run-step · checks green: PR merged (ci monitor ended): https://example.invalid/review/7'
 expect Done
 export LAB_LINE='state: done · source: run-step · run passed: PR state unknown (unreadable)'
@@ -226,6 +233,20 @@ assert 'fm_status=Checking' in calls[0], calls
 assert calls[1].count('--clear-token') == 2, calls
 PY
 unset LAB_SHARED LAB_OTHER_WORD
+for LAB_INVENTORY in fail malformed missing; do
+  export LAB_INVENTORY
+  for LAB_LINE in 'state: working · source: pane · busy' 'state: done · source: run-step · run passed: PR state unknown (unreadable)'; do
+    export LAB_LINE
+    before=$(wc -l < "$LAB_LOG")
+    bash "$script" sample --refresh
+    python3 - "$LAB_LOG" "$before" <<'PY'
+import json, sys
+calls = [json.loads(line) for line in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]
+assert len(calls) == 1 and calls[0][:2] == ['pane', 'report-metadata'], calls
+PY
+  done
+done
+unset LAB_INVENTORY
 export LAB_AGENT=dead LAB_LINE='state: working · source: run-step · ci running · run: run3'
 export LAB_RUN=$'run:\n  id: run3\n  status: ci' LAB_CI='CI runner queued'
 expect 'Waiting for machine'
