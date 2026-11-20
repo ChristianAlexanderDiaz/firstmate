@@ -135,7 +135,8 @@ Missing, stale, unavailable, wrong-boot or malformed monitor samples hold new co
 Resident workers may start under warning memory pressure, subject to the resident count, actual memory reservations and other telemetry checks; critical or unknown pressure holds new workers.
 Resident workers are also admitted during recovery hysteresis; serious or critical thermal holds them.
 Heavy and exclusive jobs remain held under warning pressure.
-A known closed lid permits work on AC power while the battery is not draining; a missing or non-boolean lid reading still holds admission.
+A closed lid holds new compute and resident workers on battery, UPS or draining AC; steady AC permits admission subject to the other telemetry checks.
+A missing or non-boolean lid reading still holds admission.
 A closed lid on battery, UPS or draining AC cancels running heavy leases through the ordinary SIGTERM then SIGKILL path after `graceSeconds`, leaving resident worker leases running.
 The queue admits requests that fit the available capacity without reserving memory for waiting requests, so a queued exclusive job cannot block workers or smaller compute jobs behind it.
 Reconciliation drops queued requests whose controller identity is dead or whose controller was reparented to process 1 after it started waiting; such a controller cannot queue again.
