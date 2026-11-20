@@ -23,8 +23,9 @@
 #            5 seconds), so a proven stopped owner is reported on the next cycle,
 #            within the five-minute response window while supervision is running.
 #            Emit owner-stopped for a dead/missing worker and unanswered after
-#            172800 seconds from initial registration. Captured feedback or a
-#            terminal result suppresses both, even before acknowledgement.
+#            172800 seconds from initial registration. Current-registration
+#            feedback suppresses the unanswered reminder; a terminal result
+#            suppresses both, even before acknowledgement.
 #            Reconcile deduplicates each reminder per canonical board. Unknown
 #            liveness never proves death; backends without recovery-grade agent
 #            classification retain that limitation. No Lavish server is queried.
@@ -585,7 +586,7 @@ cmd_settle() {
 }
 
 cmd_attention() {
-  local id=${1-} state reg record result task backend target verdict stamp now artifact mode
+  local id=${1-} state reg record result task backend target verdict stamp now artifact mode identity answered=0
   fm_procevent_source_id_valid "$id" || return 1
   state=${FM_STATE_OVERRIDE:-$FM_HOME/state}
   reg=$(fm_procevent_registry_dir "$state")
@@ -596,10 +597,13 @@ cmd_attention() {
   artifact=$(awk '/^argv:$/ { getline; getline; getline; print; exit }' "$record")
   [ "$mode" = poll ] && [ -n "$artifact" ] || return 0
   board_record "$id" && board_closed "$id" && return 0
+  identity=$(fm_pr_file_identity "$record") || return 0
   for result in "$(fm_procevent_inbox_dir "$state")/$id".*.result; do
     [ -f "$result" ] && [ ! -L "$result" ] || continue
+    [ -f "${result%.result}.registration" ] && [ ! -L "${result%.result}.registration" ] || continue
+    [ "$(cat "${result%.result}.registration")" = "$identity" ] || continue
     cmd_terminal "$result" && return 0
-    [ "$(cmd_classify "$result")" != feedback ] || return 0
+    [ "$(cmd_classify "$result")" != feedback ] || answered=1
   done
   task=$(sed -n '/^argv:$/q; s/^owner_task=//p' "$record")
   if [ -n "$task" ] && fm_pr_task_id_valid "$task"; then
@@ -624,7 +628,7 @@ cmd_attention() {
   fi
   stamp=$(fm_procevent_registered_at "$record")
   now=$(date +%s)
-  if [ "$((now - stamp))" -ge 172800 ]; then
+  if [ "$answered" -eq 0 ] && [ "$((now - stamp))" -ge 172800 ]; then
     printf 'unanswered\tLavish board %s (%s), owner %s: unanswered for 2 days; provide a two-line recap or close.\n' "$artifact" "$id" "${task:-firstmate}"
   fi
 }

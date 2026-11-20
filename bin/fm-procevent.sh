@@ -1362,10 +1362,10 @@ EOF
     :
   else
     if [ -n "$task_owner" ]; then
-      durable=$(fm_procevent_capture "$STATE" "$id" "$adapter" "$out" "$task_owner") \
+      durable=$(FM_PROCEVENT_CAPTURE_REGISTRATION="$CLAIM_REG_IDENTITY" fm_procevent_capture "$STATE" "$id" "$adapter" "$out" "$task_owner") \
         || { rm -f -- "$out"; die "cannot durably capture the result"; }
     else
-      durable=$(fm_procevent_capture "$STATE" "$id" "$adapter" "$out") \
+      durable=$(FM_PROCEVENT_CAPTURE_REGISTRATION="$CLAIM_REG_IDENTITY" fm_procevent_capture "$STATE" "$id" "$adapter" "$out") \
         || { rm -f -- "$out"; die "cannot durably capture the result"; }
     fi
   fi

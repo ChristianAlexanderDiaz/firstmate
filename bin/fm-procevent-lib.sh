@@ -1111,6 +1111,7 @@ fm_procevent_capture() {
   local state=$1 id=$2 adapter=$3 src=$4 extension_id=${5-} extension_version=${6-}
   local capability_version=${7-} package_digest=${8-} binding_digest=${9-} task_owner=${5-}
   local inbox seq dest tmp adapter_dest adapter_tmp owner_dest='' owner_tmp='' extension_dest='' extension_tmp=''
+  local registration_dest='' registration_tmp='' registration=${FM_PROCEVENT_CAPTURE_REGISTRATION:-}
   [ "$#" -eq 4 ] || [ "$#" -eq 5 ] || [ "$#" -eq 9 ] || return 1
   fm_procevent_source_id_valid "$id" || return 1
   fm_procevent_adapter_valid "$adapter" || return 1
@@ -1204,9 +1205,20 @@ fm_procevent_capture() {
     rm -f -- "$tmp" "$adapter_dest" "$owner_dest" "$extension_tmp"
     return 1
   fi
+  if [ -n "$registration" ] && [ "$adapter" = lavish ]; then
+    case "$registration" in *[!0-9:]*|:*) rm -f -- "$tmp" "$adapter_dest" "$owner_dest"; return 1 ;; esac
+    registration_dest="$inbox/$id.$seq.registration"
+    registration_tmp=$(umask 077; mktemp "$inbox/.registration.XXXXXX") || {
+      rm -f -- "$tmp" "$adapter_dest" "$owner_dest"; return 1
+    }
+    if ! printf '%s\n' "$registration" > "$registration_tmp" || ! mv -f -- "$registration_tmp" "$registration_dest"; then
+      rm -f -- "$tmp" "$adapter_dest" "$owner_dest" "$registration_tmp"; return 1
+    fi
+  fi
   if ! mv -f -- "$tmp" "$dest"; then
     rm -f -- "$tmp" "$adapter_dest" "$owner_dest"
     [ -z "$extension_dest" ] || rm -f -- "$extension_dest"
+    [ -z "$registration_dest" ] || rm -f -- "$registration_dest"
     return 1
   fi
   if [ "$#" -eq 9 ]; then

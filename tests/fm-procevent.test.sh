@@ -269,7 +269,11 @@ att_reconcile
 rm "$ATT/unknown"
 att_stopped_at=$(date +%s)
 touch "$ATT/stopped"
+mkdir -p "$ATT/state/procevent-inbox"
+printf 'session:\n  status: feedback\n' > "$ATT/state/procevent-inbox/$att_id.99.result"
+printf '0:0\n' > "$ATT/state/procevent-inbox/$att_id.99.registration"
 att_reconcile
+rm "$ATT/state/procevent-inbox/$att_id.99.result" "$ATT/state/procevent-inbox/$att_id.99.registration"
 [ "$(att_count owner-stopped)" = 1 ] || fail 'stopped board worker did not raise one reminder'
 att_queued_at=$(awk -F '\t' -v key="procevent:$att_id:attention:owner-stopped" '$4 == key {print $1}' "$ATT/state/.wake-queue")
 [ "$((att_queued_at - att_stopped_at))" -le 300 ] || fail 'stopped-owner reminder missed its five-minute window'
@@ -306,17 +310,18 @@ att_reconcile
 # Capture a real fake-poll answer, before its worker acknowledges the round.
 printf 'session:\n  status: feedback\nprompts[1]{uid,prompt,selector,tag,text}:\n  "","approved","","message",""\n' > "$ATT/answer"
 wait_capture "$ATT" "$att_id" || fail 'board answer was not captured and released'
-# Remove dedup receipts to prove eligibility itself stops after an answer.
+# Remove dedup receipts to check each reminder after feedback.
 rm "$ATT/state/procevent/.$att_id.attention-owner-stopped" "$ATT/state/procevent/.$att_id.attention-unanswered"
 : > "$ATT/state/.wake-queue"
 att_reconcile
-[ "$(att_count owner-stopped)" = 0 ] && [ "$(att_count unanswered)" = 0 ] || fail 'answered board raised a reminder'
+[ "$(att_count owner-stopped)" = 1 ] && [ "$(att_count unanswered)" = 0 ] || fail 'feedback incorrectly suppressed stopped-owner reminder or raised recap'
 # Terminal capture remains registered until handled, but is also ineligible.
+: > "$ATT/state/.wake-queue"
 printf 'session:\n  status: ended\n  session_ended: true\n' > "$ATT/state/procevent-inbox/$att_id.1.result"
 att_reconcile
 [ "$(att_count owner-stopped)" = 0 ] && [ "$(att_count unanswered)" = 0 ] || fail 'closed board raised a reminder'
 PATH="$ATT_BIN:$PATH" pe "$ATT" handled "$att_id" 1 >/dev/null
-pass 'board attention detects a stopped owner within five minutes, deduplicates both reminders, and stops on answer or close'
+pass 'board attention scopes feedback and closure to the current registration'
 
 # --- inert with nothing configured ------------------------------------------
 IDLE="$TMP_ROOT/idle"; mkdir -p "$IDLE"
