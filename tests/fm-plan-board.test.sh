@@ -143,3 +143,8 @@ assert len([tag for tag, _ in parsed.tags if tag == 'script']) == 1
 assert not any(tag == 'img' for tag, _ in parsed.tags)
 print('ok - builder detail stays escaped and outside the visible word budget')
 PY
+if command -v node >/dev/null 2>&1; then
+  node "$ROOT/tests/fm-plan-board-submit.test.js" "$TMP_ROOT/board.html"
+else
+  printf '%s\n' 'skip - generated board submission requires node'
+fi

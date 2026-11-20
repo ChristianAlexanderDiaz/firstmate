@@ -63,6 +63,10 @@ document.querySelectorAll('form[data-lavish-question]').forEach(form => {
     const answer = [selection, note].filter(Boolean).join(' - ');
     const status = form.querySelector('[role=status]');
     if (!answer) { status.textContent = 'Choose an option or add your words.'; return; }
+    if (new TextEncoder().encode(answer).length > 512) {
+      status.textContent = 'Answer is too long to queue (512 bytes maximum).';
+      return;
+    }
     if (!window.lavish || !window.lavish.queuePrompt) {
       status.textContent = 'Preview only. Share your choice in the conversation.';
       return;
@@ -71,7 +75,7 @@ document.querySelectorAll('form[data-lavish-question]').forEach(form => {
     const title = form.querySelector('legend').textContent.trim();
     window.lavish.queuePrompt(title + ': ' + answer,
       { tag:'choice', text:title + ' -> ' + answer, element:form,
-        data:{ question:question, answer:answer } });
+        data:{ schema:'fm-bearings-answer.v1', question:question, selection:selection, note:note } });
     status.textContent = 'Queued for sending.';
   });
 });
