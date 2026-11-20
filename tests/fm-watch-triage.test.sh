@@ -291,6 +291,51 @@ SH
     [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 9 ]
   ' _ "$WATCH" "$dir/fakebin" || fail "restart repeated the same reminder"
   pass "publishing ships get one PR-link reminder per done line; linked, local-only and scout reports are exempt"
+  test_away_heartbeat_retries_done_reminder
+}
+
+test_away_heartbeat_retries_done_reminder() {
+  local mode dir state fakebin pid round status_before
+  for mode in away quiet; do
+    dir=$(make_case "heartbeat-reminder-$mode"); state="$dir/state"; fakebin="$dir/fakebin"
+    cp -R "$ROOT/bin" "$dir/bin"
+    cat > "$dir/bin/fm-send.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$FM_STATE_OVERRIDE/attempts"
+[ ! -e "$FM_STATE_OVERRIDE/send-fails" ] || exit 1
+printf '%s\n' "$1" >> "$FM_STATE_OVERRIDE/delivered"
+SH
+    chmod +x "$dir/bin/fm-send.sh"
+    printf 'kind=ship\nmode=direct-PR\n' > "$state/task.meta"
+    printf 'done: implementation complete\n' > "$state/task.status"
+    printf '%s\n' "$mode" > "$state/.afk"
+    touch "$state/send-fails"
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1000000 FM_HEARTBEAT_MAX=1000000 \
+      bash "$dir/bin/fm-watch.sh" > "$dir/signal.out" &
+    pid=$!
+    wait_for_exit "$pid" 100 || fail "$mode signal did not surface"
+    grep -F 'signal:' "$dir/signal.out" >/dev/null || fail "$mode signal was not queued"
+    [ "$(wc -l < "$state/attempts" | tr -d ' ')" = 1 ] || fail "$mode signal did not attempt the reminder"
+    [ ! -e "$state/delivered" ] || fail "$mode failed reminder was delivered"
+    status_before=$(cat "$state/task.status")
+    ack_stopped_cycle "$state" || fail "$mode signal acknowledgement failed"
+    rm "$state/send-fails"
+    for round in 1 2; do
+      rm -f "$state/.last-heartbeat"
+      PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+        FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1 FM_HEARTBEAT_MAX=1 \
+        bash "$dir/bin/fm-watch.sh" > "$dir/heartbeat-$round.out" &
+      pid=$!
+      wait_for_exit "$pid" 100 || fail "$mode heartbeat did not surface"
+      grep -Fx heartbeat "$dir/heartbeat-$round.out" >/dev/null || fail "$mode heartbeat notification changed: $(cat "$dir/heartbeat-$round.out")"
+      [ "$(cat "$state/task.status")" = "$status_before" ] || fail "$mode status changed during retry"
+      [ "$(wc -l < "$state/delivered" | tr -d ' ')" = 1 ] || fail "$mode reminder was lost or duplicated"
+      ack_stopped_cycle "$state" || fail "$mode heartbeat acknowledgement failed"
+    done
+    [ "$(wc -l < "$state/attempts" | tr -d ' ')" = 2 ] || fail "$mode reminder was retried after delivery"
+  done
+  pass "away and quiet heartbeats retry failed reminders without duplicates"
 }
 
 test_done_pr_url_classifier() {
