@@ -7378,17 +7378,21 @@ test_exited_wait_recovery() {
       printf "working: validation running\n" > "$dir/state/parked.status"
       prime_status_seen "$dir/state" "$dir/state/parked.status"
       assert_contains "$(exited_wait_state "$dir")" 'state: parked · source: run-step · parked at review' "fixture must bind the current parked run"
+      rm "$dir/data/parked/nm-LABRUN-findings.txt"
     fi
     if [ "$detail" = pause ]; then
-      printf 'window=test:fm-parked\nkind=scout\nharness=grok\nbackend=tmux\nworktree=%s\n' "$dir/project" > "$dir/state/parked.meta"
+      sed -e 's/status: awaiting_approval/status: running/' -e '/awaiting_agent:/,$d' "$dir/run" > "$dir/run.new"
+      mv "$dir/run.new" "$dir/run"
+      assert_contains "$(exited_wait_state "$dir")" 'state: working · source: run-step' "fixture must bind the running validation"
     fi
     # Start alive and let the current pause be seen. Then only change liveness.
     exited_wait_start "$dir"
     pid=$EXITED_WAIT_PID
-    # Keep the existing first-sight alert, then prove the live wait stays quiet.
-    wait_for_exit "$pid" 150 || { reap "$pid"; fail "live wait lost its first-sight alert: $(cat "$dir/watch.out")"; }
-    ack_stopped_cycle "$dir/state" || fail "could not acknowledge first sight"
-    exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+    if [ "$detail" = gate ]; then
+      wait_for_exit "$pid" 150 || { reap "$pid"; fail "live wait lost its first-sight alert: $(cat "$dir/watch.out")"; }
+      ack_stopped_cycle "$dir/state" || fail "could not acknowledge first sight"
+      exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+    fi
     wait_poll_cycle "$dir/state" "$pid" 300 || fail "live pause repeated an alarm"
     wait_poll_cycle "$dir/state" "$pid" 300 || fail "live pause repeated an alarm"
     if grep -q 'agent dead while' "$dir/watch.out"; then
@@ -7401,7 +7405,8 @@ test_exited_wait_recovery() {
     assert_grep 'task parked agent dead while' "$dir/watch.out" "exited wait must request recovery"
     if [ "$detail" = gate ]; then
       assert_grep 'parked at review' "$dir/watch.out" "must name gate"
-      assert_grep "findings file=$dir/data/parked/nm-LABRUN-findings.txt" "$dir/watch.out" "must name findings"
+      assert_grep "findings file=$dir/data/parked/nm-LABRUN-recovery-status.txt" "$dir/watch.out" "must name findings"
+      assert_grep 'r1,warning,example.sh,1,ask-user,choose behavior' "$dir/data/parked/nm-LABRUN-recovery-status.txt" "snapshot must contain the gate finding"
     else
       assert_grep 'paused: waiting for validation' "$dir/watch.out" "must name pause"
     fi

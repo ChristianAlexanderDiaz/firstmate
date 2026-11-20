@@ -21,7 +21,7 @@
 # A confirmed exited ordinary worker waiting at a gate or under a declared pause
 # bypasses that long cadence, before capture or busy classification. Probe every
 # FM_WAIT_AGENT_CHECK_SECS (default 60), with a 20s bound on the current-state
-# read: detection takes at most 60s + one poll + that read (95s at the default
+# read and a 3s findings read: detection takes at most 60s + one poll + those reads (98s at the default
 # 15s poll), plus other work in the serial poll. Repeat recovery wakes use
 # FM_STALE_ESCALATE_SECS, not every poll. Only tmux and herdr currently provide
 # recovery-grade agent liveness; unknown/unverified backends keep existing behavior.
@@ -562,7 +562,7 @@ window_key() {  # <window>
 # No status decision is manufactured: the stale wake requests recovery, not an
 # answer to gate findings. The usual supervisor recovery playbook owns action.
 exited_wait_check() {  # <window> <task> <kind>
-  local win=$1 task=$2 kind=$3 key probe marker gen identity agent line last detail run findings reason
+  local win=$1 task=$2 kind=$3 key probe marker gen identity agent line last detail run findings reason wt output
   [ -n "$task" ] && [ "$kind" != secondmate ] || return 1
   key=$(window_key "$win")
   probe="$STATE/.wait-agent-probed-$key"
@@ -584,22 +584,33 @@ exited_wait_check() {  # <window> <task> <kind>
   detail=
   case "$line" in
     'state: parked · source: run-step · '*) detail=${line#*source: run-step · } ;;
-    'state: working · source: run-step · '*) rm -f "$marker"; return 1 ;;
     *)
       if status_is_paused "$last"; then detail=$last; fi
       ;;
   esac
   [ -n "$detail" ] || { rm -f "$marker"; return 1; }
-  # The gate snapshot is owned by the task's ask-user escalation contract.
-  # Select only this run's exact file, never an older run's findings by glob.
   case "$line" in
-    *' · run: '*)
+    'state: parked · source: run-step · '*' · run: '*)
       run=${line##* · run: }; run=${run%% · *}
       case "$run" in
         ''|*[!A-Za-z0-9_-]*) ;;
         *)
           findings="${FM_DATA_OVERRIDE:-$FM_HOME/data}/$task/nm-$run-findings.txt"
-          [ ! -f "$findings" ] || detail="$detail; findings file=$findings"
+          if [ ! -f "$findings" ]; then
+            wt=$(fm_meta_get "$STATE/$task.meta" worktree)
+            output=$(fm_nm_run_checked "$wt" 3 axi status --run "$run") || output=
+            if [ -n "$output" ]; then
+              findings="${FM_DATA_OVERRIDE:-$FM_HOME/data}/$task/nm-$run-recovery-status.txt"
+              mkdir -p "${findings%/*}" && printf '%s\n' "$output" > "$findings" || findings=
+            else
+              findings=
+            fi
+          fi
+          if [ -n "$findings" ]; then
+            detail="$detail; findings file=$findings"
+          else
+            detail="$detail; read findings with no-mistakes axi status --run $run in the task worktree"
+          fi
           ;;
       esac
       ;;

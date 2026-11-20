@@ -208,6 +208,11 @@ These timings verify the shortened test schedule, not production latency or a ne
 The existing recovery-grade liveness classifiers remain unchanged; backends without one retain their prior behavior.
 The watcher header owns the production interval and read budget.
 
+In an isolated lab with inert endpoint and no-mistakes fixtures, the baseline produced no recovery wake within 102 seconds, while the original implementation produced one in 79 seconds with the default 60-second probe and 15-second poll.
+In a separate single send observation, the baseline took 3015 ms and recorded one durable message and no recovery item; the implementation took 8677 ms and recorded one durable message and one recovery item.
+These individual observations are not throughput measurements, and the later findings-status read adds up to three seconds to the documented bound.
+Live Herdr behavior still requires a post-merge check in an authorized isolated lab.
+
 ## tmux
 
 Foreground-process behavior was verified on 2026-07-07 with tmux 3.6a on macOS.
