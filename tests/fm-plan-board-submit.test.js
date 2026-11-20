@@ -43,6 +43,12 @@ assert.deepStrictEqual(JSON.parse(JSON.stringify(queued[0].context.data)), {
   schema: 'fm-bearings-answer.v1', question: 'decision.one', selection: 'pick', note: 'review again',
 });
 checkReader(queued[0], 'pick', 'pick - review again');
+submit('', '  reconcile  ');
+assert.strictEqual(queued.length, 1);
+assert.match(status.textContent, /different words/);
+submit('pick', 'reconcile');
+assert.strictEqual(queued.length, 2);
+checkReader(queued.pop(), 'pick', 'pick - reconcile');
 submit('', 'é'.repeat(256));
 assert.strictEqual(queued.length, 2);
 checkReader(queued[1], 'é'.repeat(256), 'é'.repeat(256));

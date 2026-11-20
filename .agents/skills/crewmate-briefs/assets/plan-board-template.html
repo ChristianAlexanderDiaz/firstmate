@@ -63,6 +63,10 @@ document.querySelectorAll('form[data-lavish-question]').forEach(form => {
     const answer = [selection, note].filter(Boolean).join(' - ');
     const status = form.querySelector('[role=status]');
     if (!answer) { status.textContent = 'Choose an option or add your words.'; return; }
+    if (!selection && note === 'reconcile') {
+      status.textContent = 'Please use different words for your answer.';
+      return;
+    }
     if (new TextEncoder().encode(answer).length > 512) {
       status.textContent = 'Answer is too long to queue (512 bytes maximum).';
       return;
