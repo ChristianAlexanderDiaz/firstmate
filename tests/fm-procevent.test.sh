@@ -279,7 +279,7 @@ att_queued_at=$(awk -F '\t' -v key="procevent:$att_id:attention:owner-stopped" '
 [ "$((att_queued_at - att_stopped_at))" -le 300 ] || fail 'stopped-owner reminder missed its five-minute window'
 assert_contains "$(wake_payloads "$ATT")" "$ATT_ART" 'owner reminder omitted the board'
 assert_contains "$(wake_payloads "$ATT")" 'task board-worker' 'owner reminder omitted its task'
-# Draining the queue does not erase the canonical board's once-only receipt.
+# Draining the queue does not erase the board generation's once-only receipt.
 cp "$ATT/state/.wake-queue" "$ATT/owner-wake"
 : > "$ATT/state/.wake-queue"
 att_reconcile

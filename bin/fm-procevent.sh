@@ -73,7 +73,7 @@
 #            polling the source, because the child blocks on the source itself.
 #            Built-in adapters may implement `attention <source-id>` to report
 #            local-record-only reminders as <key><tab><message>. Each key is
-#            queued once per canonical source, under the source lock; no reply
+#            queued once per board generation, under the source lock; no reply
 #            or ownership transfer is performed. Lavish owns its board policy.
 #            A start is REPORTED only once it is confirmed: starting a runner is
 #            detached and its errors reach no caller, so a source that cannot

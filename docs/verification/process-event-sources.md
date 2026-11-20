@@ -82,7 +82,7 @@ Exercised by `tests/fm-procevent.test.sh` against a fake blocking source whose c
 
 | Guarantee | How it is proven |
 | --- | --- |
-| board attention | `tests/fm-procevent.test.sh` checks live and unreadable owners stay quiet, a stopped owner queues one reminder within five minutes, the two-day boundary queues one recap reminder, and answered or closed boards stay quiet; `tests/fm-watch-triage.test.sh` checks their distinct actionable headline |
+| board attention | `tests/fm-procevent.test.sh` checks live and unreadable owners stay quiet, a stopped owner queues one reminder on reconciliation, the two-day boundary queues one recap reminder, feedback suppresses the recap, and closed boards stay quiet; `tests/fm-watch-triage.test.sh` checks their distinct actionable headline |
 | capture before publication | the captured result exists at `0600` and its event names its committed sequence only afterward |
 | proactive delivery of a captured result | a real capture into an isolated home queues its `check` record, and a healthy watcher with a fresh beacon then exits reporting that queued result as an actionable check, before any manual drain |
 | single delivery per source and sequence | after that first proactive wake, a still-unhandled result keeps being re-announced onto the durable queue but never wakes the watcher again; once existing records receive the drain's post-handling acknowledgement and the source result is acknowledged, it is neither re-announced nor reported |

@@ -19,13 +19,13 @@
 #            waiting, disconnected, missing, or unknown.
 # attention  Read local registration, captures, and worker liveness only. Called
 #            under the source lock by reconcile on each watcher cycle (normally
-#            5 seconds), so a proven stopped owner is reported on the next cycle,
-#            within the five-minute response window while supervision is running.
+#            5 seconds), so an eligible stopped owner can be reported on the next
+#            cycle while supervision is running.
 #            Emit owner-stopped for a dead/missing worker and unanswered after
 #            172800 seconds from registration. Captured feedback suppresses
 #            the unanswered reminder; a terminal result
 #            suppresses both, even before acknowledgement.
-#            Reconcile deduplicates each reminder per canonical board. Unknown
+#            Reconcile deduplicates each reminder per board generation. Unknown
 #            liveness never proves death; backends without recovery-grade agent
 #            classification retain that limitation. No Lavish server is queried.
 # read       Print a structured presentation of one already-captured result so a
