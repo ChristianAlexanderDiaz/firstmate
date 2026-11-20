@@ -34,7 +34,7 @@ function checkReader(item, expectedAnswer, expectedLabel) {
   assert.strictEqual(result.status, 0, result.stderr);
   const [key, answer, label] = result.stdout.trimEnd().split('\t');
   assert.strictEqual(key, 'decision.one');
-  if (expectedAnswer !== null) assert.strictEqual(answer, expectedAnswer);
+  assert.strictEqual(answer, expectedAnswer);
   assert.strictEqual(label, expectedLabel);
 }
 title = 'Long question '.repeat(100);
@@ -45,7 +45,7 @@ assert.deepStrictEqual(JSON.parse(JSON.stringify(queued[0].context.data)), {
 checkReader(queued[0], 'pick', 'pick - review again');
 submit('', 'é'.repeat(256));
 assert.strictEqual(queued.length, 2);
-checkReader(queued[1], null, 'é'.repeat(256));
+checkReader(queued[1], 'é'.repeat(256), 'é'.repeat(256));
 submit('', 'é'.repeat(257));
 assert.strictEqual(queued.length, 2);
 assert.match(status.textContent, /512 bytes maximum/);
