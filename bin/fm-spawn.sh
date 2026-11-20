@@ -2289,13 +2289,14 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # owns that vocabulary). The proof itself lives in one place for the whole
   # control plane - fm_control_endpoint_absence_verdict - so `exit` and
   # `relaunch` cannot reach two different answers about one endpoint.
-  RELAUNCH_STATE=$(fm_backend_agent_state "$BACKEND" "$RELAUNCH_TARGET")
+  RELAUNCH_STATE=$(fm_control_task_agent_state "$BACKEND" "$RELAUNCH_TARGET" "$RELAUNCH_META" "$ID")
   if [ "$RELAUNCH_STATE" = missing ]; then
-    RELAUNCH_ABSENCE=$(fm_control_endpoint_absence_verdict "$BACKEND" "$RELAUNCH_TARGET")
+    RELAUNCH_ABSENCE=$(fm_control_endpoint_absence_verdict "$BACKEND" "$RELAUNCH_TARGET" "$RELAUNCH_META" "$ID")
     case "${RELAUNCH_ABSENCE%%$'\t'*}" in
       gone) RELAUNCH_STATE=missing ;;
       dead) RELAUNCH_STATE=dead ;;
       alive) RELAUNCH_STATE=alive ;;
+      reused) RELAUNCH_STATE=reused ;;
       *)
         echo "error: task $ID's recorded endpoint $RELAUNCH_TARGET reads 'missing', but ${RELAUNCH_ABSENCE#*$'\t'}. An endpoint that cannot be proven absent may still hold a live agent on this task's worktree; refusing rather than launching a second agent into it" >&2
         exit 1
@@ -2304,7 +2305,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fi
   case "$RELAUNCH_STATE" in
     dead) ;;
-    missing) RELAUNCH_REBIND=1 ;;
+    missing|reused) RELAUNCH_REBIND=1 ;;
     *)
       echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh $ID exit)" >&2
       exit 1
@@ -4511,6 +4512,14 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # its shared branch survives while another task's slot is left untouched.
   [ "$KIND" = secondmate ] || WT=$RELAUNCH_WT
   relaunch_ensure_durable_worktree || exit 1
+  if [ "$RELAUNCH_REBIND" -eq 0 ] && [ "$BACKEND" = herdr ] && [ "$KIND" != secondmate ]; then
+    # Recheck after setup, immediately before adopting the address for input.
+    case "$(fm_control_task_agent_state "$BACKEND" "$RELAUNCH_TARGET" "$RELAUNCH_META" "$ID")" in
+      dead) ;;
+      reused) RELAUNCH_REBIND=1 ;;
+      *) echo "error: task $ID's endpoint ownership or stopped agent changed during relaunch; preserving it" >&2; exit 1 ;;
+    esac
+  fi
   if [ "$RELAUNCH_REBIND" -eq 0 ]; then
     # Adopt the recorded endpoint instead of creating one. This is what keeps a
     # relaunch a REPLACEMENT rather than a second copy of the task: no new
@@ -4520,16 +4529,14 @@ if [ "$RELAUNCH" -eq 1 ]; then
     WT_TARGET=$T
     SES=${T%%:*}
   else
-    # The recorded endpoint is authoritatively gone, so there is nothing to
-    # adopt: create ONE fresh endpoint for the same task, opened directly in the
-    # recorded worktree. The record published below writes window= (and herdr's
+    # The recorded endpoint is gone or belongs to a different task, so there is
+    # nothing to adopt: create ONE fresh endpoint for the same task, opened in
+    # the recorded worktree. The record published below writes window= (and herdr's
     # ids) from these values, which is the whole rebind - the task id, brief,
     # worktree, armed poll and status log are untouched.
     #
-    # Herdr is the ONLY backend that reaches here: the gate above rebinds only
-    # on a PROVEN-gone endpoint, and absence is provable only on herdr, whose
-    # every read is scoped to the session the record names
-    # (fm_control_endpoint_absence_verdict owns that argument). tmux and every
+    # Only Herdr can prove absence or a recycled address through session-scoped
+    # reads (bin/fm-control-lib.sh owns those verdicts). tmux and every
     # secondmate were already refused, so there is no dispatch left to make.
     #
     # This deliberately uses the FLAT container shape rather than Herdr's
@@ -6251,6 +6258,7 @@ fi
 SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
+    $1 == "presentation" || $1 == "presentation_closed_at" { next }
     BEGIN {
       split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort account account_provider claude_account claude_account_reason busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
       for (i in keys) owned[keys[i]] = 1

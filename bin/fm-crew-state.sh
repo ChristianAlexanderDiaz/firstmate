@@ -222,6 +222,9 @@ SEP=' · '
 emit() {  # <state> <source> [detail]
   local line="state: $1${SEP}source: $2"
   [ -n "${3:-}" ] && line="$line${SEP}$3"
+  if [ "$(fm_meta_get "$META" presentation)" = closed ]; then
+    line="$line${SEP}presentation: closed"
+  fi
   # Presentation is explicitly requested by the watcher, never by normal
   # snapshots. Its failure must not change the authoritative state verdict.
   if [ "$SYNC_REVIEW_PANE" = --sync-review-pane ] && [ "${TASK_BACKEND:-}" = herdr ]; then
@@ -1313,6 +1316,20 @@ if [ "$HAVE_RUN" = 1 ]; then
 fi
 
 # --- fallback: no run attributed to this crew ------------------------------
+# An intentionally retired presentation keeps its waiting declaration. It is
+# not a lost endpoint. Active attributed runs above still outrank this fallback.
+if [ "$TASK_BACKEND" = herdr ] && [ "$KIND" != secondmate ] \
+  && [ "$(meta_value presentation)" = closed ]; then
+  if status_is_captain_held "$LOG_LINE"; then
+    emit paused status-log "$(status_line_note "$LOG_LINE")"
+  fi
+  LOG_STATE=$(map_log_state "$LOG_LINE")
+  case "$LOG_STATE" in
+    parked|paused|blocked|failed) emit "$LOG_STATE" status-log "$(status_line_note "$LOG_LINE")" ;;
+    done) emit_ship_status_done ;;
+    *) emit unknown status-log 'presentation closed; waiting declaration changed' ;;
+  esac
+fi
 # The run-step path above already handled any crew with a run, regardless of pane
 # liveness, so a finished-but-pane-closed crew never reaches here. Down here there
 # is no run to consult, so only positive evidence that the target is gone may

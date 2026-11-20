@@ -864,6 +864,9 @@ recorded_windows() {
   local meta w seen=
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || continue
+    # Closed presentations remain in status/PR scans, but have no pane to
+    # inspect, recover, or include in the native endpoint event subscription.
+    [ "$(fm_meta_get "$meta" presentation)" != closed ] || continue
     w=$(fm_backend_target_of_meta "$meta")
     [ -n "$w" ] || continue
     case "$seen" in
@@ -3570,6 +3573,10 @@ EOF
   hb=$(( HEARTBEAT * (1 << streak) ))
   [ "$hb" -gt "$HEARTBEAT_MAX" ] && hb=$HEARTBEAT_MAX
   if [ "$(age_of "$STATE/.last-heartbeat")" -ge "$hb" ]; then
+    fm_run_timed 45 env FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+      FM_DATA_OVERRIDE="${FM_DATA_OVERRIDE:-$FM_HOME/data}" bash "$SCRIPT_DIR/fm-presentation-close.sh" --heartbeat \
+      >> "$STATE/.presentation-close.log" 2>&1 \
+      || printf '%s presentation sweep failed or exceeded 45s; task records retained\n' "$(date +%s)" >> "$STATE/.presentation-close.log"
     [ ! -f "$CONFIG/linear" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG \
       bash "$SCRIPT_DIR/fm-linear-lib.sh" tick || true
     # Triage: in always-on mode a heartbeat is benign unless the cheap fleet-scan

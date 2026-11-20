@@ -13,8 +13,9 @@
 # here rather than improvised per harness in agent prose.
 #
 # This file owns three capability tables plus their pure artifact-path tables,
-# and two read-only exceptions: fm_control_endpoint_absence_verdict owns the
+# and read-only exceptions: fm_control_endpoint_absence_verdict owns the
 # per-backend endpoint-absence proof and runs backend reads;
+# fm_control_task_agent_state binds Herdr process reads to the live task tab;
 # fm_control_harness_wiring_paths reads Polytoken worktree layers to establish
 # ownership before naming them for cleanup. The remaining tables perform no
 # backend commands or state reads, and sourcing this file has no side effects:
@@ -346,6 +347,26 @@ fm_control_backend_state_verified() {  # <backend>
   return 1
 }
 
+# Classify a task's agent only after binding an existing Herdr pane to its task.
+# A reused address is distinct from a stopped agent: relaunch creates a fresh
+# endpoint, and exit/interrupt never deliver input to its current occupant.
+fm_control_task_agent_state() {  # <backend> <target> <meta> <task-id>
+  local backend=$1 target=$2 meta=$3 id=$4 state binding
+  state=$(fm_backend_agent_state "$backend" "$target")
+  case "$backend:$(fm_meta_get "$meta" kind):$state" in
+    herdr:ship:alive|herdr:ship:dead|herdr:scout:alive|herdr:scout:dead)
+      fm_backend_source herdr || { printf unreadable; return; }
+      binding=$(fm_backend_herdr_task_binding_state "$meta" "$id")
+      case "$binding" in
+        owned) ;;
+        reused) printf reused; return ;;
+        *) printf unreadable; return ;;
+      esac
+      ;;
+  esac
+  printf '%s' "$state"
+}
+
 # fm_control_endpoint_absence_verdict: the ONE owner of the per-backend proof
 # that an endpoint reading `missing` is actually GONE rather than merely
 # unreachable from this seat. Call it only for a `missing` raw state.
@@ -361,6 +382,7 @@ fm_control_backend_state_verified() {  # <backend>
 #   gone     - absence is PROVEN. There is no endpoint and therefore no agent.
 #   dead     - the endpoint is there after all and holds no agent.
 #   alive    - the endpoint is there and an agent is running in it.
+#   reused   - the address now belongs to another task (with metadata supplied).
 #   unproven - neither could be established; the caller must refuse.
 #
 # fm_backend_agent_state's `missing` conflates "the endpoint was DESTROYED"
@@ -386,8 +408,8 @@ fm_control_backend_state_verified() {  # <backend>
 #
 # Both control-plane callers share this one implementation so the proof cannot
 # drift into two answers for the same endpoint.
-fm_control_endpoint_absence_verdict() {  # <backend> <target>
-  local backend=${1-} target=${2-}
+fm_control_endpoint_absence_verdict() {  # <backend> <target> [<meta> <task-id>]
+  local backend=${1-} target=${2-} state
   fm_backend_source "$backend" \
     || { printf 'unproven\tbackend %s could not be loaded to prove anything about that endpoint' "'$backend'"; return 0; }
   case "$backend" in
@@ -398,9 +420,14 @@ fm_control_endpoint_absence_verdict() {  # <backend> <target>
       # Start the RECORDED session's server (only the server - nothing is
       # created) and re-read the recorded pane. A pane that comes back with the
       # server was never destroyed.
-      case "$(fm_backend_herdr_endpoint_absence_recheck "$target")" in
+      state=$(fm_backend_herdr_endpoint_absence_recheck "$target")
+      if [ -n "${3:-}" ] && { [ "$state" = alive ] || [ "$state" = dead ]; }; then
+        state=$(fm_control_task_agent_state "$backend" "$target" "$3" "$4")
+      fi
+      case "$state" in
         dead) printf 'dead\t' ;;
         alive) printf 'alive\t' ;;
+        reused) printf 'reused\t' ;;
         missing) printf 'gone\t' ;;
         *) printf 'unproven\tthe recorded herdr session'"'"'s server could not be started, or its pane could not be classified once it was running' ;;
       esac

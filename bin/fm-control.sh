@@ -57,13 +57,15 @@
 #              endpoint, so this verb cannot tell a destroyed window from one on
 #              a tmux server it cannot address, and it will not claim a stop it
 #              cannot see.
+#              A Herdr address now bound to another task reports
+#              `endpoint-reassigned` without sending input to its occupant.
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              recorded worktree, upgrading a legacy pool copy to a durable
 #              allocation when needed - and the same endpoint whenever it
-#              still exists - on the same or a newly chosen
+#              still belongs to this task - on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
-#              of this verb. When the recorded endpoint is instead proven gone -
-#              a Herdr pane or workspace destroyed in churn - the launch owner
+#              of this verb. When the recorded endpoint is instead proven gone
+#              or recycled for a different task, the launch owner
 #              re-creates one in that worktree, in the herdr session the record
 #              names, and the task's record rebinds to it; that is how a task
 #              whose terminal was destroyed is reclaimed by the home that owns
@@ -109,9 +111,9 @@
 #              running.
 #
 # Teardown and discard are NOT verbs here and never will be. `exit` stops an
-# agent and preserves everything else; removing a worktree, killing an
-# endpoint, or discarding work stays with bin/fm-teardown.sh, which owns the
-# landed-work test.
+# agent and preserves everything else; removing a worktree or discarding work
+# stays with bin/fm-teardown.sh, which owns the landed-work test. Independent
+# waiting-worker presentation cleanup is owned by bin/fm-presentation-close.sh.
 #
 # `resume` is not a verb: it is not deterministic across the verified adapters
 # (bin/fm-control-lib.sh's header owns that reasoning). `relaunch` covers the
@@ -424,7 +426,7 @@ fm_backend_validate "$BACKEND" || exit 1
 # --- shared helpers ---------------------------------------------------------
 
 agent_state() {
-  fm_backend_agent_state "$BACKEND" "$T"
+  fm_control_task_agent_state "$BACKEND" "$T" "$META" "$ID"
 }
 
 busy_verdict() {
@@ -746,6 +748,10 @@ do_exit() {
   require_state_verified_backend exit
   state=$(agent_state)
   case "$state" in
+    reused)
+      printf 'endpoint-reassigned'
+      return 0
+      ;;
     dead)
       printf 'already-stopped'
       return 0
@@ -756,8 +762,12 @@ do_exit() {
       # "destroyed" with "unreachable from this seat". Route it through the
       # control plane's one absence proof - the same one the relaunch gate uses
       # - and report what that proof actually established, never more.
-      absence=$(fm_control_endpoint_absence_verdict "$BACKEND" "$T")
+      absence=$(fm_control_endpoint_absence_verdict "$BACKEND" "$T" "$META" "$ID")
       case "${absence%%$'\t'*}" in
+        reused)
+          printf 'endpoint-reassigned'
+          return 0
+          ;;
         gone)
           # Proven gone, so the agent that lived in it went with it: exit's
           # postcondition already holds and there is nothing to send. Its own

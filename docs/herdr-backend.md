@@ -659,6 +659,18 @@ A prior label heuristic could adopt a captain-owned workspace named `firstmate` 
 The current structural gate removes label inference from cleanup authority.
 `tests/fm-backend-herdr-prune-safety-e2e.test.sh` reproduces the collision in an isolated named session and proves the adopted pane remains untouched.
 
+## Waiting-worker presentation
+
+Each home's watcher heartbeat closes its own exited, waiting workers' single-pane workspaces while preserving their PRs, branches, local copies, task records, inboxes, and backlog rows.
+Live agents, secondmates, additional panes, and uncertain ownership or process reads prevent closure.
+The task's decision or PR remains visible in fleet reporting, while its intentionally absent pane no longer produces recovery alarms.
+Use the normal `fm-control.sh relaunch` with a progress note to reopen it and continue from the same local copy.
+If Herdr has recycled its old address for another task, relaunch creates a fresh workspace and leaves the new owner untouched; an ambiguous live binding refuses control input.
+Other runtime backends keep their existing behavior.
+
+[`bin/fm-presentation-close.sh`](../bin/fm-presentation-close.sh) owns eligibility, lifecycle locking, bounded heartbeat traversal, interruption recovery, diagnostics, and the metadata contract for recovery callers.
+The portable regression is [`tests/fm-presentation-close.test.sh`](../tests/fm-presentation-close.test.sh); the recording CLI heartbeat/relaunch proof is [`tests/fm-presentation-close-stub.test.sh`](../tests/fm-presentation-close-stub.test.sh), and the real isolated named-session proof is [`tests/fm-presentation-close-e2e.test.sh`](../tests/fm-presentation-close-e2e.test.sh).
+
 ## Endpoint metadata
 
 ```text
