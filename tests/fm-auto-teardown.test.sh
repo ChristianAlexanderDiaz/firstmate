@@ -139,6 +139,7 @@ printf 'w1\thttps://github.com/example/sample/pull/8\tOPEN\tfalse\t%s\n' "$head"
 SH
 cat > "$CASE/batch-test.sh" <<'SH'
 set -eu
+. "$1/bin/fm-backend.sh"
 . "$1/bin/fm-pr-lib.sh"
 . "$1/bin/fm-classify-lib.sh"
 . "$1/bin/fm-dod-lib.sh"
