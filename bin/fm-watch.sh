@@ -3190,7 +3190,7 @@ while :; do
             triage_log "PR poll for $id changed before its validated check; skipping the stale snapshot"
             continue
           fi
-          if fm_merge_wait_lookup "$STATE" "$id"; then
+          if fm_merge_wait_lookup "$STATE" "$id" "$SCRIPT_DIR"; then
             out=
             [ "$FM_MERGE_WAIT_VERDICT" != merged ] || out=merged
           else
@@ -3429,7 +3429,7 @@ EOF
     # Ready ships on the waiting-on-you list need only the batched forge read.
     # Signals and steering are still processed, and any changed identity or
     # status immediately restores ordinary pane supervision.
-    if fm_merge_wait_lookup "$STATE" "$task" \
+    if fm_merge_wait_lookup "$STATE" "$task" "$SCRIPT_DIR" \
       && [ "$FM_MERGE_WAIT_VERDICT" = waiting ]; then
       continue
     fi

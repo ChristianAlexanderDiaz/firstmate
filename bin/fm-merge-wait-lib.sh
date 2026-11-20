@@ -5,7 +5,7 @@
 # their existing authenticated polls. No merge authority is granted here.
 # The list is process-local: restarting the watcher rebuilds it. Each row binds
 # the task metadata, status, activity, local head and authenticated
-# poll registration. A change invalidates the row before it can suppress a poll
+# poll registration. Current state is rechecked before a row suppresses a poll
 # or pane capture. Failed/partial reads never suppress ordinary handling.
 
 fm_merge_wait_signature() {  # <state> <id>
@@ -29,8 +29,18 @@ fm_merge_wait_signature() {  # <state> <id>
   FM_MERGE_WAIT_SIGNATURE=$(printf '%s' "$FM_MERGE_WAIT_SIGNATURE" | cksum)
 }
 
+fm_merge_wait_current() {  # <scripts> <id>
+  local current
+  current=$(FM_CREW_STATE_NO_FORGE=1 "$1/fm-crew-state.sh" "$2") || return 1
+  case "$current" in
+    'state: done '*|'state: unknown · source: none · no current-state source available'|\
+    'state: unknown · source: status-log · presentation closed; waiting declaration changed · presentation: closed') return 0 ;;
+  esac
+  return 1
+}
+
 fm_merge_wait_collect() {  # <state> <bin-dir>; sets requests and GraphQL query
-  local state=$1 scripts=$2 meta id kind last current signature head recorded_head index=0
+  local state=$1 scripts=$2 meta id kind last signature head recorded_head index=0
   FM_MERGE_WAIT_REQUESTS=
   FM_MERGE_WAIT_QUERY=
   FM_MERGE_WAIT_RESULTS=
@@ -51,13 +61,7 @@ fm_merge_wait_collect() {  # <state> <bin-dir>; sets requests and GraphQL query
     last=$(status_last_work_line "$state/$id.status") || continue
     fm_dod_done_reports_ready_pr "$last" || continue
     [ -z "$(status_open_decisions "$state/$id.status" "$kind")" ] || continue
-    current=$(FM_CREW_STATE_NO_FORGE=1 "$scripts/fm-crew-state.sh" "$id") || continue
-    case "$current" in
-      'state: done '*) ;;
-      'state: unknown · source: none · no current-state source available') ;;
-      'state: unknown · source: status-log · presentation closed; waiting declaration changed · presentation: closed') ;;
-      *) continue ;;
-    esac
+    fm_merge_wait_current "$scripts" "$id" || continue
     fm_pr_poll_snapshot_capture "$state" "$id" "$scripts/fm-pr-poll.sh" || continue
     [ "$FM_PR_POLL_SNAPSHOT_PROVIDER" = github ] || continue
     [ "$(fm_dod_pr_url_from_done_note "$(status_line_note "$last")")" = "$FM_PR_POLL_SNAPSHOT_URL" ] || continue
@@ -83,12 +87,13 @@ fm_merge_wait_read() {  # <query>; executable via the watcher's bounded runner
     end' 2>/dev/null
 }
 
-fm_merge_wait_lookup() {  # <state> <id>; sets verdict: waiting, merged, changed
-  local state=$1 id=$2 alias task signature registration url head identity
+fm_merge_wait_lookup() {  # <state> <id> <bin-dir>; sets verdict: waiting, merged, changed
+  local state=$1 id=$2 scripts=$3 alias task signature registration url head identity
   local answer_key answer_url answer_state draft answer_head count=0 verdict=''
   FM_MERGE_WAIT_VERDICT=
   while IFS=$'\t' read -r alias task signature registration url head identity; do
     [ "$task" = "$id" ] || continue
+    fm_merge_wait_current "$scripts" "$id" || return 1
     fm_merge_wait_signature "$state" "$id" || return 1
     [ "$signature" = "$FM_MERGE_WAIT_SIGNATURE" ] || return 1
     [ "$registration" = "$(fm_pr_sha256 "$state/$id.pr-poll-registration")" ] || return 1

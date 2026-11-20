@@ -142,6 +142,20 @@ head=$(git -C "$FM_HOME/wt" rev-parse HEAD)
 printf 'w0\thttps://github.com/example/sample/pull/7\t%s\tfalse\t%s\n' "${FM_TEST_PR_STATE:-OPEN}" "${FM_TEST_PR_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
 printf 'w1\thttps://github.com/example/sample/pull/8\tOPEN\tfalse\t%s\n' "$head"
 SH
+cat > "$FAKEBIN/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+[ -f "$FM_HOME/run-status" ] || exit 0
+case "${1:-} ${2:-}" in
+  'axi logs') printf 'all CI checks passed - still monitoring until merged or closed\n' ;;
+  'axi '|'axi status')
+    status=$(cat "$FM_HOME/run-status")
+    head=$(git -C "$FM_HOME/wt" rev-parse HEAD)
+    printf 'run:\n  id: "01RUN"\n  branch: fm/task-a\n  status: %s\n  head: "%s"\n  pr: "https://github.com/example/sample/pull/7"\n  findings: none\n  steps[1]{step,status,findings,duration_ms}:\n    ci,running,0,0\n' "$status" "$head"
+    ;;
+esac
+SH
+chmod +x "$FAKEBIN/no-mistakes"
+printf 'running\n' > "$CASE/run-status"
 cat > "$CASE/batch-test.sh" <<'SH'
 set -eu
 . "$1/bin/fm-backend.sh"
@@ -154,29 +168,35 @@ fm_merge_wait_collect "$FM_STATE_OVERRIDE" "$1/bin"
 [ -n "$FM_MERGE_WAIT_QUERY" ]
 FM_MERGE_WAIT_RESULTS=$(fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
 for id in task-a task-b; do
-  fm_merge_wait_lookup "$FM_STATE_OVERRIDE" "$id"
+  fm_merge_wait_lookup "$FM_STATE_OVERRIDE" "$id" "$1/bin"
   [ "$FM_MERGE_WAIT_VERDICT" = waiting ]
 done
 [ "$(wc -l < "$FM_HOME/batch-calls")" -eq 1 ]
+printf 'fixing\n' > "$FM_HOME/run-status"
+if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a "$1/bin"; then exit 1; fi
+printf 'running\n' > "$FM_HOME/run-status"
+fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a "$1/bin"
+[ "$FM_MERGE_WAIT_VERDICT" = waiting ]
+rm "$FM_HOME/run-status"
 FM_MERGE_WAIT_RESULTS=$(FM_TEST_PR_STATE=MERGED fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
-fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a
+fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a "$1/bin"
 [ "$FM_MERGE_WAIT_VERDICT" = merged ]
 FM_MERGE_WAIT_RESULTS=$(FM_TEST_PR_STATE=CLOSED fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
-fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a
+fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a "$1/bin"
 [ "$FM_MERGE_WAIT_VERDICT" = changed ]
 FM_MERGE_WAIT_RESULTS=$(FM_TEST_PR_HEAD=changed fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
-fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a
+fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a "$1/bin"
 [ "$FM_MERGE_WAIT_VERDICT" = changed ]
 FM_MERGE_WAIT_RESULTS=''
-if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a; then exit 1; fi
+if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a "$1/bin"; then exit 1; fi
 FM_MERGE_WAIT_RESULTS=$(fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
 original_head=$(git -C "$FM_HOME/wt" rev-parse HEAD)
 git -C "$FM_HOME/wt" update-ref HEAD "$(git -C "$FM_HOME/wt" rev-parse HEAD^)"
-if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a; then exit 1; fi
+if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a "$1/bin"; then exit 1; fi
 git -C "$FM_HOME/wt" update-ref HEAD "$original_head"
 printf 'working: resumed\n' >> "$FM_STATE_OVERRIDE/task-a.status"
-if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a; then exit 1; fi
-fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b
+if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a "$1/bin"; then exit 1; fi
+fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b "$1/bin"
 [ "$FM_MERGE_WAIT_VERDICT" = waiting ]
 sed 's/harness=claude/harness=grok/' "$FM_STATE_OVERRIDE/task-b.meta" > "$FM_HOME/meta"
 mv "$FM_HOME/meta" "$FM_STATE_OVERRIDE/task-b.meta"
@@ -184,13 +204,13 @@ rm "$FM_STATE_OVERRIDE/task-b.busy-state" "$FM_STATE_OVERRIDE/task-b.busy-gen"
 printf 'done: PR https://github.com/example/sample/pull/7\nresolved: recorded\n' > "$FM_STATE_OVERRIDE/task-a.status"
 fm_merge_wait_collect "$FM_STATE_OVERRIDE" "$1/bin"
 FM_MERGE_WAIT_RESULTS=$(fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
-fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b
+fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b "$1/bin"
 [ "$FM_MERGE_WAIT_VERDICT" = waiting ]
 printf 'Ctrl+c:cancel\n' > "$FM_HOME/pane-output"
-if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b; then exit 1; fi
+if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b "$1/bin"; then exit 1; fi
 rm "$FM_HOME/pane-output"
 printf 'spawn_gen=replaced\n' >> "$FM_STATE_OVERRIDE/task-b.meta"
-if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b; then exit 1; fi
+if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b "$1/bin"; then exit 1; fi
 SH
 in_home bash "$CASE/batch-test.sh" "$ROOT" || fail 'batched merge waiting or release failed'
 # Exercise the actual watcher sweep as well: one batch supplies both tasks,
