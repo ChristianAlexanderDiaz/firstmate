@@ -301,6 +301,7 @@ att_opened=$(sed -n 's/^registered_at=//p' "$ATT/state/procevent/$att_id.source"
 printf '%s\n' "$((att_opened + 172799))" > "$ATT/clock"
 att_reconcile
 [ "$(att_count unanswered)" = 0 ] || fail 'recap reminder fired before two days'
+perl -e 'utime $ARGV[0], $ARGV[0], $ARGV[1] or die $!' "$((att_opened + 169200))" "$ATT_ART"
 printf '%s\n' "$((att_opened + 172800))" > "$ATT/clock"
 att_reconcile
 [ "$(att_count unanswered)" = 1 ] || fail 'two-day unanswered board did not raise one recap reminder'
@@ -310,6 +311,7 @@ att_reconcile
 # Capture a real fake-poll answer, before its worker acknowledges the round.
 printf 'session:\n  status: feedback\nprompts[1]{uid,prompt,selector,tag,text}:\n  "","approved","","message",""\n' > "$ATT/answer"
 wait_capture "$ATT" "$att_id" || fail 'board answer was not captured and released'
+mv "$ATT/state/procevent-inbox/$att_id.1.registration" "$ATT/registration"
 PATH="$ATT_BIN:$PATH" FM_HOME="$ATT" "$ROOT/bin/fm-procevent-lavish.sh" arm "$ATT_ART" --for board-worker >/dev/null || fail 'could not re-arm answered board'
 # Remove dedup receipts to check each reminder after feedback.
 rm "$ATT/state/procevent/.$att_id.attention-owner-stopped" "$ATT/state/procevent/.$att_id.attention-unanswered"
@@ -321,6 +323,7 @@ att_reconcile
 printf 'session:\n  status: ended\n  session_ended: true\n' > "$ATT/state/procevent-inbox/$att_id.1.result"
 att_reconcile
 [ "$(att_count owner-stopped)" = 0 ] && [ "$(att_count unanswered)" = 0 ] || fail 'closed board raised a reminder'
+mv "$ATT/registration" "$ATT/state/procevent-inbox/$att_id.1.registration"
 printf '<h1>rebuilt review</h1>\n' > "$ATT/rebuilt.html"
 mv "$ATT/rebuilt.html" "$ATT_ART"
 printf '%s\n' "$(($(date +%s) + 172800))" > "$ATT/clock"

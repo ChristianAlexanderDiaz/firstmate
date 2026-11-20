@@ -22,9 +22,8 @@
 #            5 seconds), so a proven stopped owner is reported on the next cycle,
 #            within the five-minute response window while supervision is running.
 #            Emit owner-stopped for a dead/missing worker and unanswered after
-#            172800 seconds from registration or the latest board rebuild.
-#            Current-registration
-#            feedback suppresses the unanswered reminder; a terminal result
+#            172800 seconds from registration. Captured feedback suppresses
+#            the unanswered reminder; a terminal result
 #            suppresses both, even before acknowledgement.
 #            Reconcile deduplicates each reminder per canonical board. Unknown
 #            liveness never proves death; backends without recovery-grade agent
@@ -508,7 +507,7 @@ session_field() {  # <result-file> <field>
 }
 
 cmd_attention() {
-  local id=${1-} state reg record result task backend target verdict stamp now artifact mode identity artifact_stamp answered=0
+  local id=${1-} state reg record result task backend target verdict stamp now artifact mode identity answered=0
   fm_procevent_source_id_valid "$id" || return 1
   state=${FM_STATE_OVERRIDE:-$FM_HOME/state}
   reg=$(fm_procevent_registry_dir "$state")
@@ -521,8 +520,10 @@ cmd_attention() {
   identity=$(fm_procevent_board_generation "$record") || return 0
   for result in "$(fm_procevent_inbox_dir "$state")/$id".*.result; do
     [ -f "$result" ] && [ ! -L "$result" ] || continue
-    [ -f "${result%.result}.registration" ] && [ ! -L "${result%.result}.registration" ] || continue
-    [ "$(cat "${result%.result}.registration")" = "$identity" ] || continue
+    if [ -e "${result%.result}.registration" ] || [ -L "${result%.result}.registration" ]; then
+      [ -f "${result%.result}.registration" ] && [ ! -L "${result%.result}.registration" ] || continue
+      [ "$(cat "${result%.result}.registration")" = "$identity" ] || continue
+    fi
     cmd_terminal "$result" && return 0
     [ "$(cmd_classify "$result")" != feedback ] || answered=1
   done
@@ -548,11 +549,6 @@ cmd_attention() {
     esac
   fi
   stamp=$(fm_procevent_registered_at "$record")
-  if [ -f "$artifact" ]; then
-    artifact_stamp=$(fm_path_mtime "$artifact" 2>/dev/null || printf 0)
-    case "$artifact_stamp" in *[!0-9]*|'') artifact_stamp=0 ;; esac
-    [ "$artifact_stamp" -le "$stamp" ] || stamp=$artifact_stamp
-  fi
   now=$(date +%s)
   if [ "$answered" -eq 0 ] && [ "$((now - stamp))" -ge 172800 ]; then
     printf 'unanswered\tLavish board %s (%s), owner %s: unanswered for 2 days; provide a two-line recap or close.\n' "$artifact" "$id" "${task:-firstmate}"
