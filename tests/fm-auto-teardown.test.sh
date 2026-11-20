@@ -122,9 +122,11 @@ make_case merge-wait-batch
 git -C "$CASE/wt" update-ref refs/remotes/origin/fm/task-a HEAD
 sed 's/mode=local-only/mode=no-mistakes/' "$CASE/state/task-a.meta" > "$CASE/meta"
 mv "$CASE/meta" "$CASE/state/task-a.meta"
-printf 'backend=herdr\npresentation=closed\n' >> "$CASE/state/task-a.meta"
-printf 'pr=https://github.com/example/sample/pull/7\n' >> "$CASE/state/task-a.meta"
-printf 'pr_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' >> "$CASE/state/task-a.meta"
+{
+  printf 'backend=herdr\npresentation=closed\n'
+  printf 'pr=https://github.com/example/sample/pull/7\n'
+  printf 'pr_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+} >> "$CASE/state/task-a.meta"
 printf 'done: PR https://github.com/example/sample/pull/7\nresolved: recorded\n' > "$CASE/state/task-a.status"
 sed 's/task-a/task-b/g; s@pull/7@pull/8@; s/mode=no-mistakes/mode=direct-PR/; /^pr_head=/d; /^backend=/d; /^presentation=/d' "$CASE/state/task-a.meta" > "$CASE/state/task-b.meta"
 printf 'done: PR https://github.com/example/sample/pull/8\n' > "$CASE/state/task-b.status"
