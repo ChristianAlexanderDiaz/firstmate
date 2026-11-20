@@ -288,6 +288,20 @@ status_is_terminal_verb() {
   esac
 }
 
+# 0 when a publishing ship's done declaration needs a PR link reminder.
+# Unknown/missing delivery modes and non-ship kinds retain their existing rules.
+# This checks link shape only; delivery validation belongs to the delivery path.
+status_done_needs_pr_url() {  # <line> <kind> <mode>
+  [ "$2" = ship ] || return 1
+  case "$3" in no-mistakes|direct-PR) ;; *) return 1 ;; esac
+  [ "$(status_line_verb "$1")" = 'done' ] || return 1
+  local pr_re='(^|[^[:alnum:]_])https://[^[:space:]/]+/[^[:space:]]+/(pull|pulls|merge_requests)/[1-9][0-9]*([^[:alnum:]_/-]|$)'
+  local gerrit_re='(^|[^[:alnum:]_])https://[^[:space:]/]+/c/[^[:space:]]+/\+/[1-9][0-9]*([^[:alnum:]_/-]|$)'
+  local review_re='review[[:space:]]+https://[^[:space:]]+[[:space:]]+uploaded[[:space:]]+for[[:space:]]+review'
+  [[ "$1" =~ $pr_re || "$1" =~ $gerrit_re || "$1" =~ $review_re ]] && return 1
+  return 0
+}
+
 # 0 if the given (last) status line matches a captain-relevant verb.
 # Verb-aware by default: terminal verbs always match; nonterminal progress verbs
 # (working, resolved, captain-held) and paused never match from free-text prose;
@@ -2316,6 +2330,8 @@ EOF
 # optional <needs-decision-var>, it also assigns 1 when the span newly surfaces a
 # needs-decision, captain-held declaration, or pending-reply escalation, otherwise
 # 0. This side-band classification never changes the event text.
+# Optional <done-lines-var> receives byte-offset and done-declaration pairs from
+# the same captured span, for the watcher's PR-link reminders.
 # It returns 1 after a successful classification with no actionable event; an
 # existing log still produces its committable endpoint and identity, while an absent
 # log is the ordinary empty case and produces no record.
@@ -2378,8 +2394,11 @@ _fm_status_open_decision_origins() {  # <status-file> [<kind>]
   printf '%s' "$origins"
 }
 
-status_span_first_actionable_record() {  # <status-file> <start-offset> [record-var] [needs-decision-var]
+status_span_first_actionable_record() {  # <status-file> <start-offset> [record-var] [needs-decision-var] [done-lines-var]
   local f=$1 start=${2:-0} output_var=${3-} needs_var=${4-} size ident cur_ident scratch chunk_file result
+  local done_var=${5-} _fm_span_done_lines='' line_offset
+  local LC_ALL=C
+  [ -z "$done_var" ] || printf -v "$done_var" '%s' ''
   local line verb key origins='' folded=0 rc=1 failed=0 line_number=0 live_line='' events='' _line _key _fm_span_needs_decision=0
   [ -e "$f" ] || { [ -L "$f" ] && return 2; return 1; }
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 2
@@ -2407,10 +2426,19 @@ status_span_first_actionable_record() {  # <status-file> <start-offset> [record-
     rm -f "$chunk_file"; return 2;
   }
   [ "$cur_ident" = "$ident" ] || { rm -f "$chunk_file"; return 2; }
+  line_offset=$start
   # shellcheck disable=SC2094 # The loop and the origin fold below only read the span scratch.
   while IFS= read -r line || [ -n "$line" ]; do
     line_number=$((line_number + 1))
+    local current_offset=$line_offset
+    line_offset=$((line_offset + ${#line} + 1))
     case "$line" in *[![:space:]]*) ;; *) continue ;; esac
+    if [ -n "$done_var" ]; then
+      status_line_verb "$line" verb
+      if [ "$verb" = 'done' ]; then
+        _fm_span_done_lines="${_fm_span_done_lines}${current_offset}"$'\t'"${line}"$'\n'
+      fi
+    fi
     if status_is_captain_held "$line"; then
       # A transfer closes the status-log decision and remains non-actionable to
       # stale classification. The side-band marker lets signal routing surface
@@ -2464,6 +2492,7 @@ EOF
   done < "$chunk_file"
   rm -f "$chunk_file"
   [ "$failed" -eq 0 ] || return 2
+  [ -z "$done_var" ] || printf -v "$done_var" '%s' "$_fm_span_done_lines"
   if [ "$rc" -eq 0 ]; then result="${size}"$'\t'"${ident}"$'\t'"${events}"; else result="${size}"$'\t'"${ident}"; fi
   if [ -n "$output_var" ]; then
     printf -v "$output_var" '%s' "$result"

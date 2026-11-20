@@ -194,6 +194,170 @@ reap() {
 
 size_of() { LC_ALL=C wc -c < "$1" | tr -d '[:space:]'; }
 
+test_done_missing_pr_bounce() {
+  local dir state
+  dir=$(make_case done-missing-pr); state="$dir/state"
+  cat > "$dir/fakebin/fm-send.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\t%s\n' "$1" "$2" >> "$FM_STATE_OVERRIDE/sent"
+[ ! -e "$FM_STATE_OVERRIDE/send-fails" ]
+SH
+  chmod +x "$dir/fakebin/fm-send.sh"
+  FM_STATE_OVERRIDE="$state" bash -c '
+    # shellcheck disable=SC1090,SC1091
+    . "$1"
+    SCRIPT_DIR=$2
+    fm_nm_run_checked() {
+      [ ! -e "$STATE/publication-fails" ] || return 1
+      case "$*" in *"status --run gerrit-run"*) printf "steps[3]{step,status,findings,duration_ms}:\n  review,completed,0,1\n  push,skipped,0,0\n  pr,skipped,0,0\n" ;; *) printf "overview\n" ;; esac
+    }
+    fm_nm_select_run() { case "$1" in gerrit-branch) printf "selected|gerrit-run|completed|gerrit-run\n" ;; *) printf "absent\n" ;; esac; }
+    git init -q "$STATE/repo"
+    git -C "$STATE/repo" -c user.name=test -c user.email=test@example.com commit --allow-empty -qm init
+    git -C "$STATE/repo" update-ref refs/remotes/origin/task HEAD
+    for spec in nm:no-mistakes direct:direct-PR local:local-only unknown:unknown; do
+      task=${spec%%:*}
+      printf "kind=ship\nmode=%s\nbranch=task\nworktree=%s/repo\nproject=%s/repo\n" "${spec#*:}" "$STATE" "$STATE" > "$STATE/$task.meta"
+      printf "done [at=123]: implementation complete\nworking: cleanup\n" > "$STATE/$task.status"
+    done
+    printf "kind=ship\nmode=no-mistakes\nbranch=unpublished\nworktree=%s/repo\nproject=%s/repo\n" "$STATE" "$STATE" > "$STATE/handoff.meta"
+    printf "done: ready for validation\n" > "$STATE/handoff.status"
+    printf "kind=ship\nmode=no-mistakes\nforge=gerrit\nbranch=gerrit-branch\nworktree=%s/repo\nproject=%s/repo\n" "$STATE" "$STATE" > "$STATE/gerrit-unlinked.meta"
+    printf "done: change published for review\n" > "$STATE/gerrit-unlinked.status"
+    printf "kind=ship\nmode=direct-PR\n" > "$STATE/gerrit.meta"
+    printf "done: PR https://review.example/c/project/+/42 published for review\n" > "$STATE/gerrit.status"
+    printf "kind=ship\nmode=direct-PR\n" > "$STATE/external.meta"
+    printf "done: review https://reviews.example/42 uploaded for review\n" > "$STATE/external.status"
+    printf "kind=scout\nmode=no-mistakes\n" > "$STATE/scout.meta"
+    printf "done: report saved\n" > "$STATE/scout.status"
+    printf "kind=ship\nmode=no-mistakes\n" > "$STATE/linked.meta"
+    printf "done: PR https://github.com/example/repo/pull/123 checks green\n" > "$STATE/linked.status"
+    signal_files_actionable "$STATE"/*.status || exit 1
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 2 ] || exit 2
+    grep -Fx "nm"$'"'"'\t'"'"'"Please re-post done with the full https review URL." "$STATE/sent" || exit 3
+    grep -Fx "direct"$'"'"'\t'"'"'"Please re-post done with the full https review URL." "$STATE/sent" || exit 4
+    # No seen-position commit: replay exactly the same span as a restart or
+    # the independent heartbeat backstop would do.
+    signal_files_actionable "$STATE"/*.status || exit 5
+    heartbeat_scan_finds_actionable || exit 6
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 2 ] || exit 7
+    printf "done [at=124]: still no link\n" >> "$STATE/nm.status"
+    signal_files_actionable "$STATE/nm.status" || exit 8
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 3 ] || exit 9
+    touch "$STATE/send-fails"
+    printf "done [at=125]: link still missing\n" >> "$STATE/nm.status"
+    signal_files_actionable "$STATE/nm.status" || exit 10
+    while IFS=$'"'"'\t'"'"' read -r f end ident; do
+      [ -n "$f" ] || continue
+      fm_wake_status_seen_commit "$STATE" "$f" "$end" "$ident" || exit 11
+      mark_surfaced "$f" "$end" "$ident" || exit 11
+    done <<< "$FM_SIGNAL_SURFACE_ENDPOINTS"
+    stale_record=$(status_span_first_actionable_record "$STATE/nm.status" 0)
+    stale_end=${stale_record%%$'"'"'\t'"'"'*}
+    stale_rest=${stale_record#*$'"'"'\t'"'"'}
+    stale_ident=${stale_rest%%$'"'"'\t'"'"'*}
+    mark_surfaced "$STATE/nm.status" "$stale_end" "$stale_ident" || exit 12
+    heartbeat_scan_finds_actionable || exit 12
+    mark_all_captain_relevant_surfaced || exit 12
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 6 ] || exit 12
+    rm "$STATE/send-fails"
+    heartbeat_scan_finds_actionable || exit 14
+    mark_all_captain_relevant_surfaced || exit 14
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 7 ] || exit 15
+    printf "done [at=125]: link still missing\n" >> "$STATE/nm.status"
+    signal_files_actionable "$STATE/nm.status" || exit 16
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 8 ] || exit 17
+    printf "kind=ship\nmode=no-mistakes\nbranch=later\nworktree=%s/repo\nproject=%s/repo\n" "$STATE" "$STATE" > "$STATE/later.meta"
+    printf "done: review ready\n" > "$STATE/later.status"
+    touch "$STATE/publication-fails"
+    signal_files_actionable "$STATE/later.status" || exit 18
+    [ -z "$FM_SIGNAL_SURFACE_ENDPOINTS" ] || exit 19
+    stale_record=$(status_span_first_actionable_record "$STATE/later.status" 0)
+    stale_end=${stale_record%%$'"'"'\t'"'"'*}; stale_rest=${stale_record#*$'"'"'\t'"'"'}; stale_ident=${stale_rest%%$'"'"'\t'"'"'*}
+    mark_surfaced "$STATE/later.status" "$stale_end" "$stale_ident" || exit 20
+    rm "$STATE/publication-fails"
+    git -C "$STATE/repo" update-ref refs/remotes/origin/later HEAD
+    heartbeat_scan_finds_actionable || exit 21
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 9 ] || exit 22
+    grep -F "reminder delivery failed for nm" "$STATE/.watch-triage.log" || exit 13
+  ' _ "$WATCH" "$dir/fakebin" > "$dir/result" 2>&1 \
+    || fail "missing PR bounce failed: $(cat "$dir/result")"
+  # A fresh watcher process also respects the durable successful-delivery record.
+  FM_STATE_OVERRIDE="$state" bash -c '
+    # shellcheck disable=SC1090,SC1091
+    . "$1"
+    SCRIPT_DIR=$2
+    signal_files_actionable "$STATE/nm.status" || exit 1
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 9 ]
+  ' _ "$WATCH" "$dir/fakebin" || fail "restart repeated the same reminder"
+  pass "publishing ships get one PR-link reminder per done line; linked, local-only and scout reports are exempt"
+  test_away_heartbeat_retries_done_reminder
+}
+
+test_away_heartbeat_retries_done_reminder() {
+  local mode dir state fakebin pid round status_before
+  for mode in away quiet; do
+    dir=$(make_case "heartbeat-reminder-$mode"); state="$dir/state"; fakebin="$dir/fakebin"
+    cp -R "$ROOT/bin" "$dir/bin"
+    cat > "$dir/bin/fm-send.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$FM_STATE_OVERRIDE/attempts"
+[ ! -e "$FM_STATE_OVERRIDE/send-fails" ] || exit 1
+printf '%s\n' "$1" >> "$FM_STATE_OVERRIDE/delivered"
+SH
+    chmod +x "$dir/bin/fm-send.sh"
+    printf 'kind=ship\nmode=direct-PR\n' > "$state/task.meta"
+    printf 'done: implementation complete\n' > "$state/task.status"
+    printf '%s\n' "$mode" > "$state/.afk"
+    touch "$state/send-fails"
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1000000 FM_HEARTBEAT_MAX=1000000 \
+      bash "$dir/bin/fm-watch.sh" > "$dir/signal.out" &
+    pid=$!
+    wait_for_exit "$pid" 100 || fail "$mode signal did not surface"
+    grep -F 'signal:' "$dir/signal.out" >/dev/null || fail "$mode signal was not queued"
+    [ "$(wc -l < "$state/attempts" | tr -d ' ')" = 1 ] || fail "$mode signal did not attempt the reminder"
+    [ ! -e "$state/delivered" ] || fail "$mode failed reminder was delivered"
+    status_before=$(cat "$state/task.status")
+    ack_stopped_cycle "$state" || fail "$mode signal acknowledgement failed"
+    rm "$state/send-fails"
+    for round in 1 2; do
+      rm -f "$state/.last-heartbeat"
+      PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+        FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1 FM_HEARTBEAT_MAX=1 \
+        bash "$dir/bin/fm-watch.sh" > "$dir/heartbeat-$round.out" &
+      pid=$!
+      wait_for_exit "$pid" 100 || fail "$mode heartbeat did not surface"
+      grep -Fx heartbeat "$dir/heartbeat-$round.out" >/dev/null || fail "$mode heartbeat notification changed: $(cat "$dir/heartbeat-$round.out")"
+      [ "$(cat "$state/task.status")" = "$status_before" ] || fail "$mode status changed during retry"
+      [ "$(wc -l < "$state/delivered" | tr -d ' ')" = 1 ] || fail "$mode reminder was lost or duplicated"
+      ack_stopped_cycle "$state" || fail "$mode heartbeat acknowledgement failed"
+    done
+    [ "$(wc -l < "$state/attempts" | tr -d ' ')" = 2 ] || fail "$mode reminder was retried after delivery"
+  done
+  pass "away and quiet heartbeats retry failed reminders without duplicates"
+}
+
+test_done_pr_url_classifier() {
+  local url
+  for url in 'https://github.com/o/r/pull/1' 'https://gitlab.example/group/repo/-/merge_requests/2' \
+    'https://gitea.example/o/r/pulls/3' '(https://github.com/o/r/pull/1)' \
+    "\`https://github.com/o/r/pull/1\`" 'url=https://github.com/o/r/pull/1'; do
+    status_done_needs_pr_url "done [at=123]: PR $url" ship no-mistakes \
+      && fail "valid PR link rejected: $url"
+  done
+  for url in 'http://github.com/o/r/pull/1' 'https://github.com/o/r/issues/1' \
+    'https://github.com/o/r/pull/nope' 'https://github.com/o/r/pull/1oops'; do
+    status_done_needs_pr_url "done: $url" ship no-mistakes \
+      || fail "missing https PR link accepted: $url"
+  done
+  status_done_needs_pr_url 'working: done with implementation' ship no-mistakes \
+    && fail "progress was bounced"
+  status_done_needs_pr_url 'done: report' secondmate no-mistakes \
+    && fail "secondmate was bounced"
+  pass "missing PR predicate recognizes done declarations and https forge PR links"
+}
+
 test_status_span_actionable_classifier() {
   local dir state offset
   dir=$(make_case classify-signal); state="$dir/state"
@@ -7145,6 +7309,8 @@ if [ -n "${FM_TEST_ONLY:-}" ]; then
   exit 0
 fi
 
+test_done_pr_url_classifier
+test_done_missing_pr_bounce
 test_status_span_actionable_classifier
 test_status_span_survives_a_later_routine_append
 test_status_span_respects_decision_closure
