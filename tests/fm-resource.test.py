@@ -2092,6 +2092,55 @@ class ClosedLidPolicyTests(unittest.TestCase):
         self.assertTrue(self.budget.portable)
         self.assertEqual(self.budget.reason, "portable lid is closed or unknown")
 
+    def test_source_reading_failure_preserves_discharge_history(self):
+        for source in (None, "unknown", "missing", "flagged"):
+            with self.subTest(source=source):
+                self.sample["power"]["batteryPercent"] = 80
+                self.sample["power"]["source"] = "ac"
+                self.sample["unavailable"] = []
+                self.tick(2)
+                self.sample["power"]["batteryPercent"] = 79
+                if source == "missing":
+                    del self.sample["power"]["source"]
+                elif source == "flagged":
+                    self.sample["unavailable"] = ["power.source"]
+                else:
+                    self.sample["power"]["source"] = source
+                self.tick(2)
+                self.sample["power"]["source"] = "ac"
+                self.sample["unavailable"] = []
+                self.heavy.pop("cancelAt", None)
+                self.tick(2)
+                self.assertIn("cancelAt", self.heavy)
+                self.assertTrue(self.budget.portable)
+                self.assertEqual(self.budget.reason, "portable lid is closed or unknown")
+
+    def test_regressed_sequence_preserves_critical_stops(self):
+        for field in ("thermalState", "memory"):
+            for tracker in ("monitor", "battery"):
+                with self.subTest(field=field, tracker=tracker):
+                    self.budget.data["emergency"] = None
+                    self.heavy.pop("cancelAt", None)
+                    self.sample["thermalState"] = "nominal"
+                    self.sample["memory"]["pressure"] = "normal"
+                    if field == "thermalState":
+                        self.sample[field] = "critical"
+                    else:
+                        self.sample[field]["pressure"] = "critical"
+                    next_sequence = self.sample["sequence"] + 1
+                    if tracker == "monitor":
+                        self.budget.last_sequence = next_sequence + 1
+                    else:
+                        self.budget.last_sequence = next_sequence
+                        self.budget.battery_sample_id = (self.sample["instanceUUID"], next_sequence + 1)
+                    self.tick(2)
+                    self.assertIn("cancelAt", self.heavy)
+                    self.assertNotIn("cancelAt", self.worker)
+                    if field == "thermalState":
+                        self.assertIsNotNone(self.budget.data["emergency"])
+                    else:
+                        self.assertEqual(self.budget.reason, "monitor sequence regressed")
+
     def test_unplug_cancels_despite_unrelated_missing_readings(self):
         for field in ("thermalState", "memory", "batteryPercent", "isCharging", "unavailable"):
             with self.subTest(field=field):
