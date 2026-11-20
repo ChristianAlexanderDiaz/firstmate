@@ -1695,7 +1695,8 @@ stranded_leaderless_detail() {  # <source-id>
 }
 
 source_attention_locked() {  # <source-id>
-  local id=$1 adapter script rows key message
+  local id=$1 adapter script rows key message identity
+  identity=$(fm_pr_file_identity "$(source_file "$id")") || return 0
   [ "$(source_field "$id" owner)" != extension ] || return 0
   adapter=$(source_field "$id" adapter)
   fm_procevent_adapter_valid "$adapter" || return 0
@@ -1705,7 +1706,7 @@ source_attention_locked() {  # <source-id>
   while IFS=$'\t' read -r key message; do
     case "$key" in ''|*[!a-z0-9-]*) continue ;; esac
     [ -n "$message" ] || continue
-    announce_source_once "$REG/.$id.attention-$key" "$id" \
+    announce_source_once "$REG/.$id.attention-$key" "$identity" \
       "procevent:$id:attention:$key" "check: $message" || true
   done <<EOF
 $rows
