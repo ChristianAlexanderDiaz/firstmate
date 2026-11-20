@@ -467,13 +467,18 @@ test_changed_uses_bounded_automatic_concurrency() {
   repo="$tmp/repo"
   init_changed_fixture_repo "$repo"
   cp "$ROOT/bin/fm-timeout-lib.sh" "$repo/bin/fm-timeout-lib.sh"
-  for script in fm-backend-herdr-smoke.test.sh fm-daemon.test.sh fm-pi-watch-extension.test.sh; do
+  for script in fm-backend-herdr-smoke.test.sh fm-daemon.test.sh fm-pi-watch-extension.test.sh \
+    fm-calm-pi-extension.test.sh fm-vendor-auth-probe.test.sh; do
     cat >"$repo/tests/$script" <<'SH'
 #!/usr/bin/env bash
 sleep 1
 echo "ok - concurrency consent fixture"
 SH
     chmod +x "$repo/tests/$script"
+  done
+  # Keep the concurrency fixture coupled to a family that remains admitted.
+  for script in fm-calm-pi-extension fm-vendor-auth-probe; do
+    printf '# shared-probe-lib.sh\n' >> "$repo/tests/$script.test.sh"
   done
   git -C "$repo" add .
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm fixtures
@@ -656,6 +661,141 @@ PYJSON
 
   rm -rf "$tmp"
   pass "a plain script list defaults to bounded automatic concurrency without an automatic timeout"
+}
+
+# The complete regression uses the same isolation phases as a named selection,
+# including the serial tail for scripts that carry no concurrency proof.
+test_all_uses_bounded_automatic_concurrency() {
+  local tmp repo script mode rc
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-all-scheduler.XXXXXX")
+  repo="$tmp/repo"
+  mkdir -p "$repo/bin" "$repo/tests" "$tmp/fakebin"
+  cp "$RUNNER" "$repo/bin/fm-test-run.sh"
+  cp "$ROOT/tests/git-config-helpers.sh" "$repo/tests/"
+  # No timeout helper: --all must preserve its existing unbounded default.
+  # Fix CPU discovery so the concurrency assertions also run on single-CPU CI.
+  cat > "$tmp/fakebin/getconf" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${FM_TEST_CPU_COUNT:-8}"
+SH
+  chmod +x "$tmp/fakebin/getconf"
+  for script in fm-cd-pretool-check fm-pr-merge fm-daemon fm-pi-watch-extension \
+    fm-calm-pi-extension fm-vendor-auth-probe fm-backend-orca fm-unmapped-example \
+    fm-captain-hold-lifecycle fm-remote-backlog-handoff fm-secondmate-restart fm-watch-arm \
+    fm-backlog-handoff fm-remote-secondmate-parent-binding fm-pr-check-security fm-teardown; do
+    cat > "$repo/tests/$script.test.sh" <<'SH'
+#!/usr/bin/env bash
+sleep 1
+case "$0" in
+  *fm-unmapped-example*) exit "${FM_TEST_TAIL_EXIT:-0}" ;;
+esac
+printf 'ok - all scheduler fixture\n'
+SH
+  done
+  for mode in automatic serial single-cpu failure; do
+    rc=0
+    case "$mode" in
+      automatic)
+        (cd "$repo" && PATH="$tmp/fakebin:$PATH" bin/fm-test-run.sh --all \
+          --json "$tmp/$mode.json") > "$tmp/$mode.out" 2> "$tmp/$mode.err" || rc=$?
+        ;;
+      serial)
+        (cd "$repo" && PATH="$tmp/fakebin:$PATH" bin/fm-test-run.sh --all --jobs 1 \
+          --json "$tmp/$mode.json") > "$tmp/$mode.out" 2> "$tmp/$mode.err" || rc=$?
+        ;;
+      single-cpu)
+        (cd "$repo" && PATH="$tmp/fakebin:$PATH" FM_TEST_CPU_COUNT=1 bin/fm-test-run.sh --all \
+          --json "$tmp/$mode.json") > "$tmp/$mode.out" 2> "$tmp/$mode.err" || rc=$?
+        ;;
+      failure)
+        (cd "$repo" && PATH="$tmp/fakebin:$PATH" FM_TEST_TAIL_EXIT=7 bin/fm-test-run.sh --all \
+          --json "$tmp/$mode.json") > "$tmp/$mode.out" 2> "$tmp/$mode.err" || rc=$?
+        ;;
+    esac
+    if [ "$mode" = failure ]; then
+      [ "$rc" -eq 1 ] || fail "--all did not propagate a serial-tail failure: $rc"
+    else
+      [ "$rc" -eq 0 ] || fail "--all $mode failed: $(cat "$tmp/$mode.err")"
+    fi
+  done
+  python3 - "$tmp" <<'PY' || fail "--all lost coverage, its worker bound, or an isolation boundary"
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+groups = {
+    "fm-cd-pretool-check": "isolated", "fm-pr-merge": "isolated",
+    "fm-daemon": "serial", "fm-pi-watch-extension": "serial",
+    "fm-pr-check-security": "forge", "fm-teardown": "forge",
+    "fm-calm-pi-extension": "pure", "fm-vendor-auth-probe": "pure",
+    "fm-backend-orca": "serial", "fm-unmapped-example": "serial",
+    "fm-captain-hold-lifecycle": "serial", "fm-remote-backlog-handoff": "serial",
+    "fm-secondmate-restart": "serial", "fm-watch-arm": "serial",
+    "fm-backlog-handoff": "serial", "fm-remote-secondmate-parent-binding": "serial",
+}
+for mode in ("automatic", "serial", "single-cpu", "failure"):
+    active, seen, overlapped = {}, set(), set()
+    concurrent = mode in ("automatic", "failure")
+    for line in (root / f"{mode}.out").read_text().splitlines():
+        fields = line.split()
+        if not fields or fields[0] not in ("FM_TEST_BEGIN", "FM_TEST_END"):
+            continue
+        name = pathlib.Path(fields[2]).name.removesuffix(".test.sh")
+        group = groups[name]
+        if fields[0] == "FM_TEST_BEGIN":
+            assert name not in seen, (mode, name)
+            seen.add(name)
+            if active:
+                assert concurrent and group != "serial", (mode, active, line)
+                assert set(active.values()) == {group}, (mode, active, line)
+                overlapped.add(group)
+            active[name] = group
+            assert len(active) <= (4 if concurrent else 1), (mode, active)
+        else:
+            assert name in active, (mode, active, line)
+            del active[name]
+    assert not active and seen == set(groups), (mode, seen, active)
+    assert overlapped == ({"isolated", "forge", "pure"} if concurrent else set()), (mode, overlapped)
+    doc = json.loads((root / f"{mode}.json").read_text())
+    assert doc["selection"].split(";")[-1] == f"jobs={4 if concurrent else 1}"
+    assert len(doc["scripts"]) == len(groups)
+    failures = [s for s in doc["scripts"] if s["exit"] != 0]
+    assert len(failures) == (1 if mode == "failure" else 0), (mode, failures)
+    if failures:
+        assert failures[0]["path"] == "tests/fm-unmapped-example.test.sh"
+        assert failures[0]["exit"] == 7
+PY
+  "$repo/bin/fm-test-run.sh" --list-serial-required > "$tmp/serial-required"
+  [ "$(wc -l < "$tmp/serial-required")" -eq 8 ] || fail "serial requirement inspection omitted or added a script"
+  # An archived individual or family proof cannot bypass a serial requirement.
+  for script in fm-captain-hold-lifecycle fm-remote-backlog-handoff fm-secondmate-restart fm-watch-arm \
+    fm-backlog-handoff fm-remote-secondmate-parent-binding fm-daemon fm-pi-watch-extension; do
+    grep -Fxq "tests/$script.test.sh" "$tmp/serial-required" \
+      || fail "serial requirement inspection omitted $script"
+    rc=0
+    (cd "$repo" && bin/fm-test-run.sh --jobs 2 "tests/$script.test.sh") \
+      > "$tmp/refused.out" 2> "$tmp/refused.err" || rc=$?
+    [ "$rc" -eq 2 ] || fail "explicit concurrency bypassed $script's serial requirement: $rc"
+    assert_grep 'requires serial execution' "$tmp/refused.err" "serial requirement refusal was not explained"
+    assert_no_grep '^FM_TEST_BEGIN ' "$tmp/refused.out" "serial requirement was checked after execution"
+  done
+  rm -rf "$tmp"
+  pass "all uses bounded isolation phases, retains serial requirements and propagates failures"
+}
+
+test_serial_family_overrides_archived_proof() {
+  local tmp script rc=0
+  tmp=$(fm_test_tmproot fm-test-run-serial-family)
+  "$RUNNER" --list --family watcher-wake-lock > "$tmp/family"
+  "$RUNNER" --list-serial-required > "$tmp/required"
+  [ -s "$tmp/family" ] || fail "watcher family inspection returned no scripts"
+  while IFS= read -r script; do
+    grep -Fxq "$script" "$tmp/required" \
+      || fail "serial requirements omitted watcher family member $script"
+  done < "$tmp/family"
+  "$RUNNER" --family watcher-wake-lock --jobs 2 > "$tmp/out" 2> "$tmp/err" || rc=$?
+  [ "$rc" -eq 2 ] || fail "an archived family proof bypassed the serial requirement: $rc"
+  assert_grep 'requires serial execution' "$tmp/err" "family restriction refusal was not explained"
+  assert_no_grep '^FM_TEST_BEGIN ' "$tmp/out" "family restriction was checked after execution"
+  pass "all watcher family members require serial execution despite archived proofs"
 }
 
 test_family_proofs_run_in_separate_concurrent_phases() {
@@ -1299,11 +1439,11 @@ test_jobs_admits_a_concurrent_safe_family() {
   local tmp rc external
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-jobs-admit.XXXXXX")
   # --list exits before the admission guard, so this has to be a real run for
-  # the assertion to mean anything. Two cheap watcher-wake-lock scripts exercise
+  # the assertion to mean anything. Two pure-contract-unit scripts exercise
   # admission and the concurrent scheduler for real.
   set +e
   "$RUNNER" --jobs 2 \
-    tests/fm-supervision-events.test.sh tests/fm-session-lock-ancestry.test.sh \
+    tests/fm-vendor-auth-probe.test.sh tests/fm-timeout-lib.test.sh \
     >"$tmp/out" 2>"$tmp/err"
   rc=$?
   set -e
@@ -1312,13 +1452,13 @@ test_jobs_admits_a_concurrent_safe_family() {
     || fail "the admitted concurrent run did not report both scripts green: $(cat "$tmp/out")"
 
   set +e
-  "$RUNNER" --jobs 5 tests/fm-session-lock-ancestry.test.sh \
+  "$RUNNER" --jobs 5 tests/fm-timeout-lib.test.sh \
     >"$tmp/over-cap.out" 2>"$tmp/over-cap.err"
   rc=$?
   set -e
   [ "$rc" -eq 2 ] || fail "a family run above its proven four-worker cap must be refused, got $rc"
 
-  external="$tmp/fm-session-lock-ancestry.test.sh"
+  external="$tmp/fm-timeout-lib.test.sh"
   printf '#!/usr/bin/env bash\necho "ok - colliding external fixture"\n' >"$external"
   chmod +x "$external"
   set +e
@@ -1432,17 +1572,17 @@ test_concurrent_runs_are_ordered_longest_first() {
   local tmp listed first
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-order.XXXXXX")
   set +e
-  "$RUNNER" --jobs 2 --family watcher-wake-lock --list >"$tmp/serial" 2>&1
+  "$RUNNER" --jobs 2 --family pure-contract-unit --list >"$tmp/serial" 2>&1
   set -e
   # The scheduler reorders the real run, so assert on the begin-marker order of
   # a real concurrent run over scripts whose hints differ by a wide margin.
   set +e
   "$RUNNER" --jobs 2 \
-    tests/fm-session-lock-ancestry.test.sh tests/fm-task-inbox.test.sh \
+    tests/fm-timeout-lib.test.sh tests/fm-vendor-auth-probe.test.sh \
     >"$tmp/out" 2>"$tmp/err"
   set -e
   first=$(grep -m1 '^FM_TEST_BEGIN' "$tmp/out" | awk '{print $3}')
-  [ "$first" = tests/fm-task-inbox.test.sh ] \
+  [ "$first" = tests/fm-vendor-auth-probe.test.sh ] \
     || fail "concurrent run did not start the longest script first, started: $first"
   rm -rf "$tmp"
   pass "a concurrent run starts the longest-hint script first"
@@ -1845,6 +1985,8 @@ test_changed_bin_reference_selects_per_script_not_per_family
 test_changed_uses_bounded_automatic_concurrency
 test_windows_posix_mode_emulation_does_not_fail_parallel_runs
 test_script_list_uses_bounded_automatic_concurrency
+test_all_uses_bounded_automatic_concurrency
+test_serial_family_overrides_archived_proof
 test_family_proofs_run_in_separate_concurrent_phases
 test_empty_selection_emits_summary
 test_timing_markers_and_json

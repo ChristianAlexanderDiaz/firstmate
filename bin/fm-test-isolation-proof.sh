@@ -26,7 +26,8 @@
 #   --jobs N     max concurrent workers (default: 4; min 1)
 #   --json path  write a pool-scoped machine-readable proof artifact after the
 #                run; fm_test_run_jobs_enabled is true only for a successful
-#                concurrent run within that pool's recorded admission cap
+#                concurrent run within that pool's recorded admission cap,
+#                with no candidate subject to the runner's serial requirement
 #   --list       print the proven candidate paths (one per line) and exit 0
 #   --list-exclusions
 #                print basename + reason for scripts deliberately kept serial
@@ -580,6 +581,16 @@ if [ -n "$JSON_PATH" ]; then
   fi
   if [ "$AGG_RC" -eq 0 ] && [ "$JOBS" -gt 1 ] && [ "$JOBS" -le "$jobs_max" ]; then
     jobs_enabled=1
+    # The runner owns serial requirements, including restrictions added after
+    # an archived family proof. A fresh proof does not silently remove them.
+    serial_required=$("$ROOT/bin/fm-test-run.sh" --list-serial-required) \
+      || die "cannot inspect runner serial requirements"
+    for script in "${CANDIDATES[@]}"; do
+      if printf '%s\n' "$serial_required" | grep -Fxq "$script"; then
+        jobs_enabled=0
+        break
+      fi
+    done
   fi
   write_json_artifact "$JSON_PATH" \
     "$RUN_STARTED_ISO" "$RUN_FINISHED_ISO" "$RUN_ID" \

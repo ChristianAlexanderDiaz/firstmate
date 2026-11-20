@@ -80,9 +80,9 @@ This record owns concurrent isolation evidence for the portable parallel candida
 
 `bin/fm-test-isolation-proof.sh --pool <family>` runs the same concurrent proof over a whole `bin/fm-test-run.sh` family, for a stateful family that stays serial on CI but can earn bounded local concurrency.
 A family is admitted to `list_concurrent_safe_families` in `bin/fm-test-run.sh` only by a passing proof recorded here.
-Admission is by family rather than by script, so a script that joins an admitted family afterwards runs concurrently on that family's recorded result without appearing in it.
+Family admission can extend to later members, subject to the runner's serial requirements described below.
 
-### watcher-wake-lock: admitted
+### watcher-wake-lock: archived proof
 
 - Date: 2026-08-28
 - Command: `bin/fm-test-isolation-proof.sh --pool watcher-wake-lock --jobs 4`
@@ -94,17 +94,16 @@ Admission is by family rather than by script, so a script that joins an admitted
 | 2 | `FM_ISOLATION_SUMMARY total=18 failed=0 concurrency=4 duration_ms=374869` |
 
 Those archived harness runs used alphabetical launch order and oldest-worker reclamation.
-They establish the worker isolation result, but they did not reproduce the production scheduler's load profile and are not the sole basis for admission.
-The current harness consumes the runner's longest-hint-first schedule and reclaims any completed worker, matching the admitted execution condition.
+They establish the worker isolation result, but they did not reproduce the production scheduler's load profile.
+The current harness consumes the runner's longest-hint-first schedule and reclaims any completed worker.
 
-Admission is also supported by three independent runs of the production scheduler using `bin/fm-test-run.sh --changed --base HEAD`.
+The former admission was also supported by three independent runs of the production scheduler using `bin/fm-test-run.sh --changed --base HEAD`.
 Plain `--changed` automatically selected bounded concurrency at four workers; each run used longest-first scheduling, selected 19 scripts, completed with 0 failures, and finished in 208s, 216s, and 226s.
-Those runs exercised the production path that the family admission enables.
+Those runs exercised the production path that the family admission then enabled.
 
 These scripts assert how quickly a real watcher reaches its next poll, so they are sensitive to CPU oversubscription rather than to shared state.
 An earlier attempt on the same host measured three failures (`fm-watch-checkpoint`, `fm-watch-recovery-loop`, `fm-watch-arm`) while six unrelated busy processes were running, at roughly ten runnable processes against fourteen cores.
-That is the margin this family has: four workers is proven, and the failures reappear well before the machine is merely busy.
-Keep `--jobs` for this family at or below the proven bound rather than raising it to fill a larger machine.
+Those results showed limited timing margin under load; the runner now requires this family to run serially, as described below.
 
 The archived harness runs showed why ordering matters: the candidate sum was 818s and the balanced four-worker target 205s, but alphabetical order finished in 395s because the 193s `fm-watch-triage` started last and ran alone at the tail.
 Both `bin/fm-test-run.sh` and the current proof harness therefore order concurrent runs longest-hint-first.
@@ -147,7 +146,7 @@ The family's clock is two long scripts that do not contend: `fm-pr-check-securit
 Admitting them inside their own family is a different question and this proof answers it: the six members present on that date are safe with each other at four workers.
 
 `tests/fm-pr-state.test.sh` and `tests/fm-pr-reviewers.test.sh` joined this family after the date above, so that result does not cover them.
-`script_allows_concurrency` in `bin/fm-test-run.sh` grants concurrency by family membership alone, so the family was re-proved at its full eight-member membership.
+Family admission can extend to later members, so the family was re-proved at its full eight-member membership.
 
 - Date: 2026-09-12
 - Command: `bin/fm-test-isolation-proof.sh --pool pr-forge --jobs 4`
@@ -233,8 +232,8 @@ On the stale package the case fails serially as well as concurrently, so it is a
 ## Production runner effect of the 2026-09-03 admissions
 
 Each family measured with `bin/fm-test-run.sh --family <name> --jobs <n>` on the same host, back to back, every run reporting 0 failures.
-Together the pairs quantify the effect when a plain `--changed` or script-list selection contains all three families: the automatic scheduler gives each admitted family its own concurrent phase and leaves unproven work in the serial tail.
-Curated `--family`, `--lane`, and `--all` selections remain serial unless the caller explicitly requests an admissible `--jobs` value, as documented by `bin/fm-test-run.sh --help`.
+The pairs quantify the effect of the admissions at the time; current serial requirements can move individual members into the serial tail.
+Plain `--all` uses the same bounded isolation phases; `--family` and `--lane` retain their serial defaults, as documented by `bin/fm-test-run.sh --help`.
 
 | family | scripts | `--jobs 1` | `--jobs 4` | speedup | recovered |
 |---|---:|---:|---:|---:|---:|
@@ -245,6 +244,19 @@ Curated `--family`, `--lane`, and `--all` selections remain serial unless the ca
 
 No test was removed, weakened, or skipped to get there.
 The three families retain the same coverage guarantees; what changed is one crash injection that no longer races, one equivalent condition-based assertion that no longer reads the host's speed, and a family map that no longer files a real-Herdr regression and an opt-in live script where they cannot run.
+
+## Serial requirements after isolation proof
+
+An isolation proof establishes separation of state; it does not guarantee that a bounded process-startup or handshake wait retains its timing margin under concurrent load.
+The runner's `script_requires_serial` restriction takes precedence over archived individual and family proofs for both automatic scheduling and explicit `--jobs`.
+The entire `watcher-wake-lock` family requires serial execution, including its session-lock and supervision-event members; archived family proofs do not override this rule.
+Individual restrictions also cover lifecycle and handoff scripts whose bounded waits failed beside peers.
+This restriction changes execution admission, not the complete test inventory, CI lane membership, assertions, or deadlines.
+The proof harness remains available to investigate these candidates; a successful isolated run alone does not remove a runner restriction.
+The runner exposes these paths through `--list-serial-required`, which the proof harness consults before reporting `fm_test_run_jobs_enabled`.
+
+`tests/fm-test-run.test.sh` verifies through executable fixtures that the complete regression runs the restricted scripts alone and that explicit concurrency cannot override the restriction.
+Run `bin/fm-test-run.sh --jobs 1 tests/fm-test-run.test.sh` to refresh that behavioral check.
 
 ## Scope
 

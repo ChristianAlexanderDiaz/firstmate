@@ -21,6 +21,7 @@
 #   fm-test-run.sh --list-scheduled --lane portable-parallel-1
 #   fm-test-run.sh --list-families
 #   fm-test-run.sh --list-concurrent-safe-families
+#   fm-test-run.sh --list-serial-required
 #   fm-test-run.sh --concurrent-safe-family-jobs-max <name>
 #   fm-test-run.sh --list-lanes
 #   fm-test-run.sh --check-coverage
@@ -52,23 +53,27 @@
 #                   The required Herdr CI lane uses this so a missing pin cannot
 #                   silently pass as a gate skip.
 #   --jobs N        run the selected scripts with up to N concurrent workers.
-#                   Plain --changed and a plain list of script paths use
+#                   Plain --all, --changed, and a plain list of script paths use
 #                   min(4, cpus) workers when multiple selected scripts are
-#                   admissible; --lane, --family, and --all stay serial unless
+#                   admissible; --lane and --family stay serial unless
 #                   asked for concurrency explicitly.
 #                   N>1 is allowed only when every selected script is proven
 #                   safe to run concurrently: individually in the proven-isolated
 #                   set (bin/fm-test-isolation-proof.sh --list), or in a family
 #                   carrying a recorded concurrent proof
-#                   (list_concurrent_safe_families below). Overall cap is 8;
+#                   (list_concurrent_safe_families below), and not requiring
+#                   serial execution under script_requires_serial. A recorded
+#                   isolation proof does not override that restriction for tests
+#                   whose bounded waits failed under concurrent load. Overall cap is 8;
 #                   family proofs and a configured host-budget worker limit
 #                   may impose a lower cap. Individually proven
 #                   scripts share one phase; scripts admitted only by a family
 #                   proof run in a separate phase for each family. Concurrent
 #                   phases use serial weights, longest-hint-first. Unproven stateful
 #                   scripts run serially after all concurrent phases. Default is
-#                   1 (serial) except for plain --changed and a plain list of
+#                   1 (serial) except for plain --all, --changed, and a plain list of
 #                   script paths, which use the bounded automatic scheduler.
+#                   --jobs 1 explicitly restores a serial complete regression.
 #   --per-script-timeout-secs N
 #                   terminate a script that runs longer than N seconds and
 #                   record it as exit 124 (0 disables, the default). The
@@ -620,6 +625,7 @@ EOF
 # Membership is empirical, never assumed:
 # `bin/fm-test-isolation-proof.sh --pool <family> --jobs 4` is the owner of the
 # proof, and docs/fm-test-isolation-proof.md records the dated result.
+# These archived proofs remain subject to the serial requirements below.
 list_concurrent_safe_families() {
   cat <<'EOF'
 watcher-wake-lock
@@ -647,10 +653,53 @@ concurrent_safe_family_jobs_max() {
   esac
 }
 
-# A script may run under --jobs when it is individually proven isolated or is
-# an exact repository member of a family carrying a recorded concurrent proof.
+# Isolation proofs do not establish that bounded process-startup and handshake
+# waits retain their timing margin under load. Serial controls exposed this for
+# multiple watcher-family members and individual scripts. Keep their assertions
+# and deadlines intact by running them alone; the family restriction also covers
+# future members. See docs/fm-test-isolation-proof.md for the admission policy.
+family_requires_serial() {
+  case "$1" in
+    watcher-wake-lock) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+list_individual_serial_required() {
+  cat <<'EOF'
+tests/fm-backlog-handoff.test.sh
+tests/fm-captain-hold-lifecycle.test.sh
+tests/fm-remote-backlog-handoff.test.sh
+tests/fm-remote-secondmate-parent-binding.test.sh
+tests/fm-secondmate-restart.test.sh
+EOF
+}
+
+list_serial_required() {
+  local script
+  {
+    list_individual_serial_required
+    while IFS= read -r script; do
+      if family_requires_serial "$(family_for_basename "${script##*/}")"; then
+        printf '%s\n' "$script"
+      fi
+    done < <(all_repo_tests)
+  } | LC_ALL=C sort -u
+}
+
+script_requires_serial() {
+  local script
+  family_requires_serial "$(family_for_basename "${1##*/}")" && return 0
+  while IFS= read -r script; do
+    [ "${1##*/}" = "${script##*/}" ] && return 0
+  done < <(list_individual_serial_required)
+  return 1
+}
+
+# Serial requirements take precedence over archived individual/family proofs.
 script_allows_concurrency() {
   local s=$1 family repo_script
+  script_requires_serial "$s" && return 1
   is_proven_isolated_script "$s" && return 0
   family=$(family_for_basename "$(basename "$s")")
   family_is_concurrent_safe "$family" || return 1
@@ -2063,6 +2112,10 @@ while [ "$#" -gt 0 ]; do
       LIST_FAMILIES=1
       shift
       ;;
+    --list-serial-required)
+      list_serial_required
+      exit 0
+      ;;
     --list-concurrent-safe-families)
       LIST_CONCURRENT_SAFE_FAMILIES=1
       shift
@@ -2307,16 +2360,14 @@ for s in "${SCRIPTS[@]}"; do
   [ -x "$s" ] || [ -r "$s" ] || die "test script not readable: $s"
 done
 
-# Plain --changed and a plain list of script paths both use the bounded
-# representative-suite scheduler; numeric --jobs retains the strict all-script
-# admission rule below. Naming scripts is how a local verification round asks
-# for exactly those subjects, so it gets bounded concurrency rather than a
-# serial chain of separate runs.
-# The curated selections stay untouched: --lane composes CI shards whose serial
-# lane must stay strictly serial, --family is what the required Herdr lane runs,
-# and --all is a deliberate complete regression.
+# Plain --all, --changed, and script lists share the bounded scheduler.
+# This changes execution order, never selection or concurrency admission:
+# unproven scripts still run serially after the proven isolation phases.
+# Numeric --jobs retains the strict all-script admission rule below.
+# --lane composes CI shards whose serial lane must stay strictly serial, and
+# --family is what the required Herdr lane runs; both retain their defaults.
 AUTO_CONCURRENCY=0
-if { [ "$MODE" = changed ] || [ "$MODE" = scripts ]; } && [ "$JOBS_EXPLICIT" -eq 0 ]; then
+if { [ "$MODE" = all ] || [ "$MODE" = changed ] || [ "$MODE" = scripts ]; } && [ "$JOBS_EXPLICIT" -eq 0 ]; then
   if [ "$MODE" = changed ] && [ "${#SCRIPTS[@]}" -gt 0 ] && [ "$PER_SCRIPT_TIMEOUT_SECS" -eq 0 ]; then
     PER_SCRIPT_TIMEOUT_SECS=$CHANGED_DEFAULT_TIMEOUT_SECS
   fi
@@ -2334,7 +2385,7 @@ fi
 case "${FM_RESOURCE_CPU_WORKERS:-}" in
   1|2) [ "$JOBS" -le "$FM_RESOURCE_CPU_WORKERS" ] || JOBS=$FM_RESOURCE_CPU_WORKERS ;;
 esac
-if [ "$JOBS" -gt 1 ] || [ "$MODE" = changed ] || [ "$MODE" = scripts ]; then
+if [ "$JOBS" -gt 1 ] || [ "$MODE" = all ] || [ "$MODE" = changed ] || [ "$MODE" = scripts ]; then
   SELECTION_DESC="${SELECTION_DESC};jobs=$JOBS"
 fi
 
@@ -2349,6 +2400,9 @@ if [ "$JOBS" -gt 1 ] && [ "$AUTO_CONCURRENCY" -eq 0 ]; then
     esac
   fi
   for s in "${SCRIPTS[@]}"; do
+    if script_requires_serial "$s"; then
+      die "--jobs $JOBS refused: $s requires serial execution to preserve its bounded waits under load; use --jobs 1"
+    fi
     if ! script_allows_concurrency "$s"; then
       die "--jobs $JOBS refused: $s is not in the proven-isolated set (see bin/fm-test-isolation-proof.sh --list) and its family has no recorded concurrent proof. Unproven stateful scripts stay serial."
     fi
