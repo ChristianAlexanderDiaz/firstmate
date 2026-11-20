@@ -7355,7 +7355,7 @@ exited_wait_start() {  # <fixture> [probe-seconds]
   local dir=$1
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir" \
     FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" FM_DATA_OVERRIDE="$dir/data" FM_WAIT_LAB="$dir" \
-    FM_CREW_STATE_BIN="$(dirname "$WATCH")/fm-crew-state.sh" \
+    FM_CREW_STATE_BIN="${3:-$(dirname "$WATCH")/fm-crew-state.sh}" \
     FM_WATCH_HANDLING_SUCCESSOR=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1000000 FM_HEARTBEAT_MAX=1000000 \
     FM_WAIT_AGENT_CHECK_SECS="${2:-2}" FM_STALE_ESCALATE_SECS=60 \
@@ -7402,8 +7402,46 @@ test_exited_steer_wakes_running_successor() {
   pass "send to exited agent wakes a running successor once"
 }
 
+test_exited_wait_snapshot_identity() {
+  local dir pid first second
+  dir=$(exited_wait_fixture exited-snapshot-identity)
+  printf 'working: validation running\n' > "$dir/state/parked.status"
+  prime_status_seen "$dir/state" "$dir/state/parked.status"
+  printf 'bash\n' > "$dir/agent"
+  exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+  wait_for_exit "$pid" 150 || { reap "$pid"; fail "first gate did not wake"; }
+  first=$(sed -n 's/.*findings file=\([^;]*\);.*/\1/p' "$dir/watch.out" | head -1)
+  [ -f "$first" ] || fail "first snapshot missing"
+  sed -e 's/gate: review/gate: push/' -e 's/choose behavior/new gate finding/' "$dir/run" > "$dir/run.new"
+  mv "$dir/run.new" "$dir/run"
+  rm -f "$dir/state/.wait-agent-probed-test_fm-parked"
+  exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+  wait_for_exit "$pid" 150 || { reap "$pid"; fail "second gate did not wake"; }
+  second=$(sed -n 's/.*findings file=\([^;]*\);.*/\1/p' "$dir/watch.out" | tail -1)
+  [ "$first" != "$second" ] && [ -f "$second" ] || fail "gate snapshots must be distinct"
+  assert_grep 'choose behavior' "$first" "earlier wake must retain its findings"
+  assert_grep 'new gate finding' "$second" "later wake must name its findings"
+
+  dir=$(exited_wait_fixture exited-snapshot-race)
+  printf 'working: validation running\n' > "$dir/state/parked.status"
+  prime_status_seen "$dir/state" "$dir/state/parked.status"
+  printf 'bash\n' > "$dir/agent"
+  cat > "$dir/fakebin/racing-state" <<'STUB'
+#!/usr/bin/env bash
+printf 'state: parked · source: run-step · parked at review: 1 finding(s) · run: LABRUN\n'
+sed 's/gate: review/gate: push/' "$FM_WAIT_LAB/run" > "$FM_WAIT_LAB/run.new"
+mv "$FM_WAIT_LAB/run.new" "$FM_WAIT_LAB/run"
+STUB
+  chmod +x "$dir/fakebin/racing-state"
+  exited_wait_start "$dir" 2 "$dir/fakebin/racing-state"; pid=$EXITED_WAIT_PID
+  wait_for_exit "$pid" 150 || { reap "$pid"; fail "racing gate did not wake"; }
+  assert_grep 'read findings with no-mistakes axi status --run LABRUN' "$dir/watch.out" "changed gate must not publish mismatched findings"
+  if grep -q 'findings file=' "$dir/watch.out"; then fail "racing gate published a mismatched snapshot"; fi
+  pass "recovery snapshots preserve gate identity"
+}
+
 test_exited_wait_recovery() {
-  local dir pid before n detail
+  local dir pid before n detail snapshot
   for detail in gate pause; do
     dir=$(exited_wait_fixture "exited-$detail")
     if [ "$detail" = gate ]; then
@@ -7437,8 +7475,9 @@ test_exited_wait_recovery() {
     assert_grep 'task parked agent dead while' "$dir/watch.out" "exited wait must request recovery"
     if [ "$detail" = gate ]; then
       assert_grep 'parked at review' "$dir/watch.out" "must name gate"
-      assert_grep "findings file=$dir/data/parked/nm-LABRUN-recovery-status.txt" "$dir/watch.out" "must name findings"
-      assert_grep 'r1,warning,example.sh,1,ask-user,choose behavior' "$dir/data/parked/nm-LABRUN-recovery-status.txt" "snapshot must contain the gate finding"
+      snapshot=$(sed -n 's/.*findings file=\([^;]*\);.*/\1/p' "$dir/watch.out" | head -1)
+      [ -f "$snapshot" ] || fail "must name findings"
+      assert_grep 'r1,warning,example.sh,1,ask-user,choose behavior' "$snapshot" "snapshot must contain the gate finding"
       assert_grep 'finding from an earlier gate' "$dir/data/parked/nm-LABRUN-findings.txt" "prior decision snapshot must remain unchanged"
     else
       assert_grep 'paused: waiting for validation' "$dir/watch.out" "must name pause"
@@ -7491,7 +7530,7 @@ STUB
   pid=$EXITED_WAIT_PID
   wait_for_exit "$pid" 150 || { reap "$pid"; fail "Herdr exited gate did not wake"; }
   assert_grep 'task parked agent dead while parked at review' "$dir/watch.out" "Herdr must request gate recovery"
-  assert_grep "findings file=$dir/data/parked/nm-LABRUN-recovery-status.txt" "$dir/watch.out" "Herdr must name findings"
+  assert_grep "findings file=$dir/data/parked/nm-LABRUN-recovery-status." "$dir/watch.out" "Herdr must name findings"
 }
 
 # CI's stock macOS Bash lane sets FM_TEST_ONLY to run just the bash-3.2
@@ -7504,6 +7543,7 @@ fi
 test_done_pr_url_classifier
 test_done_missing_pr_bounce
 test_exited_steer_wakes_running_successor
+test_exited_wait_snapshot_identity
 test_exited_wait_recovery
 test_status_span_actionable_classifier
 test_status_span_survives_a_later_routine_append

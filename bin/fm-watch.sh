@@ -562,7 +562,7 @@ window_key() {  # <window>
 # No status decision is manufactured: the stale wake requests recovery, not an
 # answer to gate findings. The usual supervisor recovery playbook owns action.
 exited_wait_check() {  # <window> <task> <kind>
-  local win=$1 task=$2 kind=$3 key probe marker gen identity agent line last detail run findings reason wt output
+  local win=$1 task=$2 kind=$3 key probe marker gen identity agent line last detail run findings reason wt output gate
   [ -n "$task" ] && [ "$kind" != secondmate ] || return 1
   key=$(window_key "$win")
   probe="$STATE/.wait-agent-probed-$key"
@@ -589,6 +589,11 @@ exited_wait_check() {  # <window> <task> <kind>
       ;;
   esac
   [ -n "$detail" ] || { rm -f "$marker"; return 1; }
+  identity="$gen $agent $detail"
+  if [ "$(cat "$marker" 2>/dev/null || true)" = "$identity" ] \
+    && [ "$(age_of "$marker")" -lt "$STALE_ESCALATE_SECS" ]; then
+    return 0
+  fi
   case "$line" in
     'state: parked · source: run-step · '*' · run: '*)
       run=${line##* · run: }; run=${run%% · *}
@@ -597,11 +602,17 @@ exited_wait_check() {  # <window> <task> <kind>
         *)
           wt=$(fm_meta_get "$STATE/$task.meta" worktree)
           output=$(fm_nm_run_checked "$wt" 3 axi status --run "$run") || output=
-          if [ -n "$output" ]; then
-            findings="${FM_DATA_OVERRIDE:-$FM_HOME/data}/$task/nm-$run-recovery-status.txt"
-            mkdir -p "${findings%/*}" && printf '%s\n' "$output" > "$findings" || findings=
-          else
-            findings=
+          findings=
+          if [ -n "$output" ] && [ "$(fm_nm_strip_quotes "$(fm_nm_field "$output" id)")" = "$run" ] \
+            && fm_nm_run_is_parked "$output"; then
+            gate=$(fm_nm_gate_display "$output")
+            case "$detail" in
+              "parked at $gate"|"parked at $gate:"*|"parked at $gate · "*)
+                findings="${FM_DATA_OVERRIDE:-$FM_HOME/data}/$task"
+                mkdir -p "$findings" && findings=$(mktemp "$findings/nm-$run-recovery-status.XXXXXX") \
+                  && printf '%s\n' "$output" > "$findings" || findings=
+                ;;
+            esac
           fi
           if [ -n "$findings" ]; then
             detail="$detail; findings file=$findings"
@@ -612,11 +623,6 @@ exited_wait_check() {  # <window> <task> <kind>
       esac
       ;;
   esac
-  identity="$gen $agent $detail"
-  if [ "$(cat "$marker" 2>/dev/null || true)" = "$identity" ] \
-    && [ "$(age_of "$marker")" -lt "$STALE_ESCALATE_SECS" ]; then
-    return 0
-  fi
   reason="stale: $win (agent-recovery: task $task agent $agent while $detail; recover the exited worker and reconcile the wait)"
   fm_wake_append stale "$win" "$reason" || exit 1
   printf '%s' "$identity" > "$marker"
