@@ -86,6 +86,105 @@ neighbor() {
 }
 neighbor_retained() { [ -f "$CASE/state/task-b.meta" ] && [ -d "$CASE/neighbor-wt" ] || fail 'unacknowledged neighbor was removed'; }
 
+# Eligibility-only regressions never invoke teardown or a runtime lifecycle.
+make_case resolved-completion
+land
+printf 'resolved [key=review]: recorded\nresolved: acknowledged\n' >> "$CASE/state/task-a.status"
+in_home "$ROOT/bin/fm-auto-teardown.sh" --eligible task-a auto-teardown-test || fail 'done followed only by resolutions was not eligible'
+printf 'working: resumed\nresolved: acknowledged\n' >> "$CASE/state/task-a.status"
+if in_home "$ROOT/bin/fm-auto-teardown.sh" --eligible task-a auto-teardown-test; then fail 'resolved hid resumed work'; fi
+printf 'done: ready\nneeds-decision [key=still-open]: choose\nresolved [key=other]: unrelated\n' > "$CASE/state/task-a.status"
+if in_home "$ROOT/bin/fm-auto-teardown.sh" --eligible task-a auto-teardown-test; then fail 'unrelated resolution hid open decision'; fi
+
+make_case answered-scout
+sed 's/kind=ship/kind=scout/' "$CASE/state/task-a.meta" > "$CASE/meta"
+mv "$CASE/meta" "$CASE/state/task-a.meta"
+printf 'Findings.\n' > "$CASE/data/task-a/report.md"
+fm_test_tasks_toml "$CASE/.tasks.toml"
+printf '## In flight\n\n## Queued\n\n## Done\n' > "$CASE/data/backlog.md"
+printf 'needs-decision [key=choice]: choose\n' > "$CASE/state/task-a.status"
+for call in first second; do
+  in_home "$ROOT/bin/fm-captain-hold.sh" hold "$call" --title "$call choice" --reason choose --origin task-a >/dev/null
+done
+in_home "$ROOT/bin/fm-captain-hold.sh" complete task-a first second >/dev/null
+printf 'Use the proposed option.\n' > "$CASE/answer"
+in_home "$ROOT/bin/fm-captain-hold.sh" answer first --decision-file "$CASE/answer" >/dev/null
+if in_home "$ROOT/bin/fm-auto-teardown.sh" --eligible task-a auto-teardown-test; then fail 'scout with one unanswered call was eligible'; fi
+in_home "$ROOT/bin/fm-captain-hold.sh" answer second --decision-file "$CASE/answer" >/dev/null
+in_home "$ROOT/bin/fm-auto-teardown.sh" --eligible task-a auto-teardown-test || fail 'fully answered scout was not eligible'
+printf 'working: another investigation\n' >> "$CASE/state/task-a.status"
+if in_home "$ROOT/bin/fm-auto-teardown.sh" --eligible task-a auto-teardown-test; then fail 'answered inventory hid resumed scout work'; fi
+
+make_case merge-wait-batch
+git -C "$CASE/wt" update-ref refs/remotes/origin/fm/task-a HEAD
+sed 's/mode=local-only/mode=direct-PR/' "$CASE/state/task-a.meta" > "$CASE/meta"
+mv "$CASE/meta" "$CASE/state/task-a.meta"
+printf 'pr=https://github.com/example/sample/pull/7\n' >> "$CASE/state/task-a.meta"
+printf 'done: PR https://github.com/example/sample/pull/7\nresolved: recorded\n' > "$CASE/state/task-a.status"
+sed 's/task-a/task-b/g; s@pull/7@pull/8@' "$CASE/state/task-a.meta" > "$CASE/state/task-b.meta"
+printf 'done: PR https://github.com/example/sample/pull/8\n' > "$CASE/state/task-b.status"
+in_home "$ROOT/bin/fm-busy-event.sh" arm "$CASE/state" task-b --state idle --source claude-hook --event Stop >/dev/null
+for id in task-a task-b; do
+  number=7; [ "$id" != task-b ] || number=8
+  fm_pr_poll_prepare "$CASE/state" "$id" github "https://github.com/example/sample/pull/$number" github.com example/sample "$number" "$ROOT/bin/fm-pr-poll.sh"
+  fm_pr_poll_publish_prepared
+done
+cat > "$FAKEBIN/gh" <<'SH'
+#!/usr/bin/env bash
+[ "$1 $2" = 'api graphql' ] || exit 1
+printf 'batch\n' >> "$FM_HOME/batch-calls"
+head=$(git -C "$FM_HOME/wt" rev-parse HEAD)
+printf 'w0\thttps://github.com/example/sample/pull/7\t%s\tfalse\t%s\n' "${FM_TEST_PR_STATE:-OPEN}" "${FM_TEST_PR_HEAD:-$head}"
+printf 'w1\thttps://github.com/example/sample/pull/8\tOPEN\tfalse\t%s\n' "$head"
+SH
+cat > "$CASE/batch-test.sh" <<'SH'
+set -eu
+. "$1/bin/fm-pr-lib.sh"
+. "$1/bin/fm-classify-lib.sh"
+. "$1/bin/fm-dod-lib.sh"
+. "$1/bin/fm-busy-lib.sh"
+. "$1/bin/fm-merge-wait-lib.sh"
+fm_merge_wait_collect "$FM_STATE_OVERRIDE" "$1/bin"
+[ -n "$FM_MERGE_WAIT_QUERY" ]
+FM_MERGE_WAIT_RESULTS=$(fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
+for id in task-a task-b; do
+  fm_merge_wait_lookup "$FM_STATE_OVERRIDE" "$id"
+  [ "$FM_MERGE_WAIT_VERDICT" = waiting ]
+done
+[ "$(wc -l < "$FM_HOME/batch-calls")" -eq 1 ]
+FM_MERGE_WAIT_RESULTS=$(FM_TEST_PR_STATE=MERGED fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
+fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a
+[ "$FM_MERGE_WAIT_VERDICT" = merged ]
+FM_MERGE_WAIT_RESULTS=$(FM_TEST_PR_STATE=CLOSED fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
+fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a
+[ "$FM_MERGE_WAIT_VERDICT" = changed ]
+FM_MERGE_WAIT_RESULTS=$(FM_TEST_PR_HEAD=changed fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
+fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a
+[ "$FM_MERGE_WAIT_VERDICT" = changed ]
+FM_MERGE_WAIT_RESULTS=''
+if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a; then exit 1; fi
+FM_MERGE_WAIT_RESULTS=$(fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
+printf 'working: resumed\n' >> "$FM_STATE_OVERRIDE/task-a.status"
+if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a; then exit 1; fi
+fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b
+[ "$FM_MERGE_WAIT_VERDICT" = waiting ]
+printf 'spawn_gen=replaced\n' >> "$FM_STATE_OVERRIDE/task-b.meta"
+if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b; then exit 1; fi
+SH
+in_home bash "$CASE/batch-test.sh" "$ROOT" || fail 'batched merge waiting or release failed'
+# Exercise the actual watcher sweep as well: one batch supplies both tasks,
+# and its merged row enters the ordinary authenticated merge-outcome path.
+printf 'done: PR https://github.com/example/sample/pull/7\nresolved: recorded\n' > "$CASE/state/task-a.status"
+sed '/^spawn_gen=replaced$/d' "$CASE/state/task-b.meta" > "$CASE/meta"
+mv "$CASE/meta" "$CASE/state/task-b.meta"
+: > "$CASE/batch-calls"
+OUT=$(in_home env FM_TEST_PR_STATE=MERGED FM_CHECK_INTERVAL=0 FM_SIGNAL_GRACE=0 \
+  FM_HEARTBEAT=999999 timeout 60 bash "$ROOT/bin/fm-watch.sh") || fail "batch watcher failed: $OUT"
+case "$OUT" in *'check: '*'task-a.check.sh: merged'*) ;; *) fail "batch merge was not surfaced: $OUT" ;; esac
+[ "$(wc -l < "$CASE/batch-calls")" -eq 1 ] || fail 'watcher performed more than one batch read in its sweep'
+[ ! -e "$CASE/state/task-a.check.sh" ] || fail 'merged task did not leave the polling list'
+retained
+
 # Exercise both acknowledgement entrypoints with the real marked-lab guard.
 # Tool shims isolate runtime/forge dependencies; teardown and its guard are real.
 LAB_MODE=1
