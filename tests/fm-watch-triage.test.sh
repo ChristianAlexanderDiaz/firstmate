@@ -3935,7 +3935,7 @@ gone_endpoint_env() {  # <dead|missing> -> assignments for the round below
 }
 
 test_gone_endpoint_reports_once_instead_of_escalating_forever() {
-  local dir state fakebin out capture window key verdict round
+  local dir state fakebin out capture window key verdict round started elapsed
   local failed='state: failed · source: run-step · run failed'
   window="test:fm-wedge"; key=$(printf '%s' "$window" | tr ':/.' '___')
   for verdict in dead missing; do
@@ -3944,8 +3944,15 @@ test_gone_endpoint_reports_once_instead_of_escalating_forever() {
     gone_endpoint_env "$verdict"
     export FM_TEST_PANE_COMMAND FM_TEST_TMUX_WINDOWS
 
+    started=$(date +%s)
     wedge_threshold_round "$state" "$fakebin" "$out" "$capture" "$window" "$failed" exit \
       || fail "a $verdict endpoint was never reported at the wedge threshold: $(cat "$out")"
+    elapsed=$(( $(date +%s) - started ))
+    printf 'exited-worker wake: %s in %ss (test wedge threshold: 1s)\n' "$verdict" "$elapsed"
+    if [ -n "${FM_SIDEBAR_PROOF_DIR:-}" ]; then
+      mkdir -p "$FM_SIDEBAR_PROOF_DIR"
+      cp "$out" "$FM_SIDEBAR_PROOF_DIR/wake-$verdict.txt"
+    fi
     grep -F "agent $verdict" "$out" >/dev/null \
       || fail "the $verdict report did not name the endpoint verdict: $(cat "$out")"
     grep -F 'possible wedge' "$out" >/dev/null \

@@ -1,12 +1,8 @@
 #!/usr/bin/env bash
 # fm-crew-state.sh - deterministic read of a crew's CURRENT state.
-<<<<<<< HEAD
-# Usage: fm-crew-state.sh <id> [--sync-review-pane|--sync-presentation|--work-emoji]
-=======
-# Usage: fm-crew-state.sh <id> [--sync-review-pane|--sidebar|--sidebar-evidence]
+# Usage: fm-crew-state.sh <id> [--sync-review-pane|--sync-presentation|--work-emoji|--sidebar|--sidebar-evidence]
 # --sidebar renders the shared plain display status; --sidebar-evidence emits
 # the canonical line followed by its attributed raw run for the periodic reporter.
->>>>>>> e6544dd0 (WIP: scaffold shared sidebar status classification)
 #
 # Why this exists: state/<id>.status is an append-only, best-effort EVENT LOG.
 # Crews append only wake-worthy transitions (done/needs-decision/blocked/paused/failed)
@@ -195,11 +191,7 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 ID=${1:-}
 SYNC_REVIEW_PANE=${2:-}
-<<<<<<< HEAD
-case "$SYNC_REVIEW_PANE" in ''|--sync-review-pane|--sync-presentation|--work-emoji) ;; *) echo "usage: fm-crew-state.sh <id> [--sync-review-pane|--sync-presentation|--work-emoji]" >&2; exit 2 ;; esac
-=======
-case "$SYNC_REVIEW_PANE" in ''|--sync-review-pane|--sidebar|--sidebar-evidence) ;; *) echo "usage: fm-crew-state.sh <id> [--sync-review-pane|--sidebar|--sidebar-evidence]" >&2; exit 2 ;; esac
->>>>>>> e6544dd0 (WIP: scaffold shared sidebar status classification)
+case "$SYNC_REVIEW_PANE" in ''|--sync-review-pane|--sync-presentation|--work-emoji|--sidebar|--sidebar-evidence) ;; *) echo "usage: fm-crew-state.sh <id> [--sync-review-pane|--sync-presentation|--work-emoji|--sidebar|--sidebar-evidence]" >&2; exit 2 ;; esac
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
 
 # Fleet snapshot composition supplies its captured metadata path here so every

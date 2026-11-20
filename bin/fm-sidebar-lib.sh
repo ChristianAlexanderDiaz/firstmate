@@ -12,7 +12,7 @@
 fm_sidebar_classify() {
   local line=$1 agent=$2 kind=$3 captain=$4 landed=$5 machine=$6 service=$7 stall=$8
   local state source detail part human=0
-  FM_SIDEBAR_WORD= FM_SIDEBAR_DETAIL=
+  FM_SIDEBAR_WORD='' FM_SIDEBAR_DETAIL=''
   state=${line#state: }; state=${state%% *}
   source=${line#*source: }; source=${source%% *}
   detail=${line#* · source: }; detail=${detail#* · }
@@ -34,9 +34,9 @@ fm_sidebar_classify() {
     FM_SIDEBAR_DETAIL="$detail - no agent"
   elif [ -n "$machine" ]; then
     FM_SIDEBAR_WORD='Waiting for machine'; FM_SIDEBAR_DETAIL=$machine
-  elif [ -n "$service" ]; then
+  elif [ -n "$service" ] && { [ "$state" != working ] || [ "$agent" != alive ]; }; then
     FM_SIDEBAR_WORD=Serving; FM_SIDEBAR_DETAIL=$service
-  elif [ "$state" = done ] && [ "$kind" != secondmate ]; then
+  elif [ "$state" = 'done' ] && [ "$kind" != secondmate ]; then
     FM_SIDEBAR_WORD='Needs you'; FM_SIDEBAR_DETAIL=$detail
   elif [ "$state" = working ] && [ "$source" = run-step ] && { [ "$agent" = dead ] || [ "$agent" = missing ]; }; then
     FM_SIDEBAR_WORD=Checking; FM_SIDEBAR_DETAIL="$detail - no agent"
@@ -44,9 +44,19 @@ fm_sidebar_classify() {
     FM_SIDEBAR_WORD=Stuck; FM_SIDEBAR_DETAIL='agent exited with work pending'
   elif [ "$state" = working ] && [ "$agent" = alive ]; then
     FM_SIDEBAR_WORD=Working; FM_SIDEBAR_DETAIL=$detail
-  elif [ "$kind" = secondmate ] && [ "$agent" = alive ]; then
-    FM_SIDEBAR_WORD=Idle; FM_SIDEBAR_DETAIL='ready for work'
   elif [ "$state" = failed ] || [ "$state" = parked ]; then
     FM_SIDEBAR_WORD='Needs me'; FM_SIDEBAR_DETAIL=$detail
+  elif [ "$kind" = secondmate ] && [ "$agent" = alive ]; then
+    FM_SIDEBAR_WORD=Idle; FM_SIDEBAR_DETAIL='ready for work'
+  elif [ "$agent" = alive ]; then
+    FM_SIDEBAR_WORD='Needs me'; FM_SIDEBAR_DETAIL='agent idle with work pending'
   fi
+}
+
+# Recovery notification ownership. Existing watcher paths own exited agents,
+# unavailable inbox delivery, and no-progress escalation. Display never creates
+# a competing recovery detector or alarm for those conditions.
+fm_sidebar_wake_owner() {  # <agent-state> <stall-detail>
+  case "$1" in dead|missing) printf 'watcher'; return ;; esac
+  if [ -n "$2" ]; then printf 'watcher'; else printf 'sidebar'; fi
 }

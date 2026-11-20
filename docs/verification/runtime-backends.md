@@ -1493,6 +1493,35 @@ No reasoning-effort axis was found; `gemini --help` on 0.58.0 exposes no effort,
 
 ## Herdr
 
+### Sidebar status: offline verification
+
+On 2026-11-20, a Linux fixture with a stub Herdr CLI exercised all nine [plain sidebar statuses](../herdr-backend.md#plain-sidebar-status), including a real local TCP listener and a queue-duration read from the budget owner's clock.
+The stub rejects every unscoped Herdr call and records the display-only metadata requests.
+
+Verification entry points:
+
+```sh
+bash bin/fm-test-run.sh --jobs 1 tests/fm-sidebar-state.test.sh
+FM_TEST_ONLY=test_gone_endpoint_reports_once_instead_of_escalating_forever bash bin/fm-test-run.sh --jobs 1 tests/fm-watch-triage.test.sh
+PYTHONDONTWRITEBYTECODE=1 python3 tests/fm-resource.test.py ResourceTests.test_unfittable_exclusive_does_not_block_workers_or_other_classes
+```
+
+Observed output:
+
+```text
+distinct labels: 9
+ok - Checking transition recovers exactly once and names gate findings
+exited-worker wake: dead in 6s (test wedge threshold: 1s)
+exited-worker wake: missing in 6s (test wedge threshold: 1s)
+ok - a record whose endpoint is dead or missing reports itself once and is never re-escalated
+```
+
+These are offline classifier, metadata protocol, and existing watcher-alert results, not evidence of real Herdr rendering.
+The first live check is a guarded named-session lab on macOS: configure the new tokens, capture all nine labels, verify the review links and CI progress, exercise gate relaunch once, and check presentation closure and recreation.
+The [Herdr lab safety contract](../herdr-backend.md#destructive-lab-safety) owns that run's isolation and cleanup.
+
+### Herdr runtime compatibility
+
 The compatibility floor is protocol 14.
 The whole real-Herdr lane's latest active verification uses both Herdr 0.7.4 protocol 16 and Herdr 0.8.0 protocol 19 on macOS aarch64, while focused Herdr 0.7.5 protocol 17, earlier protocol-16, protocol-14, and 0.7.3 evidence is retained where it defines current behavior or fallbacks.
 Protocol 17 keeps every protocol-16 feature gate satisfied; the event and workspace-move floors remain 16.
