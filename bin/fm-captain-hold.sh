@@ -29,7 +29,7 @@
 #   fm-captain-hold.sh unbind <source-id>
 #   fm-captain-hold.sh binding <source-id>
 #   fm-captain-hold.sh complete <origin-id> (--none | <task-id>...)
-#   fm-captain-hold.sh verify <origin-id>
+#   fm-captain-hold.sh verify <origin-id> [--answered]
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
 #   fm-captain-hold.sh diverged
 #   fm-captain-hold.sh reconcile list
@@ -162,6 +162,10 @@
 # read from the configured Done archive only when it carries a recorded
 # resolution; an active row always wins, and hold/answer/reconcile mutations
 # never fall back.
+# `verify --answered` additionally requires a recorded captain answer for
+# every entry and refuses a still-open or re-opened captain hold, including
+# one retaining an older answer. It is the automatic cleanup predicate for a
+# scout that finished by recording its calls instead of appending done.
 # Metadata compatibility: the attestation keeps the historical
 # `decisions_reviewed=1` and `decision_keys=` keys, and an inventory entry that
 # names no existing task resolves through the legacy `<origin>-decision-<entry>`
@@ -964,6 +968,17 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   id=${resolved%% *}
   how=${resolved##* }
   verify_hold_durable "$id"
+  if [ "${VERIFY_ANSWERED:-0}" = 1 ]; then
+    if [ "$(show_field "$TASK_SHOW_OUTPUT" state)" != "done" ] \
+      && [ "$(show_field_value "$TASK_SHOW_OUTPUT" hold_kind)" = captain ]; then
+      fail "captain-held task $id still needs an answer"
+    fi
+    body_has_resolution_record "$(show_field "$TASK_SHOW_OUTPUT" body)" \
+      || fail "captain-held task $id has no recorded answer"
+    case "$(recorded_resolution_mode "$(show_field "$TASK_SHOW_OUTPUT" body)" || true)" in
+      reconciled) fail "captain-held task $id was reconciled, not answered" ;;
+    esac
+  fi
   id=$(show_field_value "$TASK_SHOW_OUTPUT" id)
   validate_slug backend-task-id "$id"
   stored=$(body_hold_origin "$(decode_shown_value "$(show_field "$TASK_SHOW_OUTPUT" body)")")
@@ -1929,6 +1944,8 @@ EOF
 command_verify() {
   VERIFY_ARCHIVE=1
   local origin=${1:-} meta reviewed keys entry key open resolved
+  VERIFY_ANSWERED=0
+  if [ "$#" -eq 2 ] && [ "$2" = --answered ]; then VERIFY_ANSWERED=1; set -- "$1"; fi
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   validate_slug origin-id "$origin"
   meta="$STATE/$origin.meta"

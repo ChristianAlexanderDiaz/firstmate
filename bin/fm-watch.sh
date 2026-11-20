@@ -250,6 +250,8 @@ WATCH_HOME_EXISTED=0
 # (inbox_steer_check below).
 # shellcheck source=bin/fm-task-inbox-lib.sh
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+# shellcheck source=bin/fm-merge-wait-lib.sh
+. "$SCRIPT_DIR/fm-merge-wait-lib.sh"
 # The away-posture record (state/.afk-contract) is the posture in both the
 # attended and the afk session; bin/fm-afk-contract.sh owns its schema and its
 # away-or-quiet reading, which is all this watcher reads (away_record_present
@@ -3153,6 +3155,11 @@ while :; do
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
     rejected_checks=
     contribution_check_output=
+    fm_merge_wait_collect "$STATE" "$SCRIPT_DIR"
+    if [ -n "$FM_MERGE_WAIT_QUERY" ]; then
+      run_check_capture "$SCRIPT_DIR/fm-merge-wait-lib.sh" --read "$FM_MERGE_WAIT_QUERY" || exit 1
+      FM_MERGE_WAIT_RESULTS=$FM_CHECK_RESULT
+    fi
     for c in "$STATE"/*.check.sh; do
       [ -e "$c" ] || continue
       is_pr_poll=0
@@ -3183,9 +3190,14 @@ while :; do
             triage_log "PR poll for $id changed before its validated check; skipping the stale snapshot"
             continue
           fi
-          run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
-            "$provider" "$url" "$host" "$path" "$number" || exit 1
-          out=$FM_CHECK_RESULT
+          if fm_merge_wait_lookup "$STATE" "$id" "$SCRIPT_DIR"; then
+            out=
+            [ "$FM_MERGE_WAIT_VERDICT" != merged ] || out=merged
+          else
+            run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
+              "$provider" "$url" "$host" "$path" "$number" || exit 1
+            out=$FM_CHECK_RESULT
+          fi
         elif fm_custom_check_snapshot_prepare "$STATE" "$id"; then
           custom_snapshot=$FM_CUSTOM_CHECK_SNAPSHOT
           run_check_capture "$custom_snapshot" || exit 1
@@ -3414,6 +3426,13 @@ EOF
     # Steering-inbox loss detection runs before the secondmate stale
     # exemption below, because a mate's steers land in an inbox too.
     [ -z "$task" ] || inbox_steer_check "$w" "$task"
+    # Ready ships on the waiting-on-you list need only the batched forge read.
+    # Signals and steering are still processed, and any changed identity or
+    # status immediately restores ordinary pane supervision.
+    if fm_merge_wait_lookup "$STATE" "$task" "$SCRIPT_DIR" \
+      && [ "$FM_MERGE_WAIT_VERDICT" = waiting ]; then
+      continue
+    fi
     key=$(window_key "$w")
     last=$(status_declared_wait_line "$STATE/$task.status")
     if ! status_is_paused_or_captain_held "$last" && [ -e "$STATE/.paused-$key" ]; then
