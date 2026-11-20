@@ -2916,6 +2916,7 @@ if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" != 1 ] \
     exit 1
   fi
 fi
+WATCHER_START_QUEUE_SEQ=$(cat "$STATE/.wake-queue.seq" 2>/dev/null || true)
 if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER" "$STATE"; then
   watcher_world_exists || exit 1
   echo "watcher: recovery state could not be consumed safely; retaining stale lock evidence" >&2
@@ -3111,9 +3112,12 @@ rerecord_device_shifted_pr_poll() {  # <id>
 
 resurface_after_downtime() {
   # Handling successors already have a predecessor-delivered wake on the way.
-  # Re-announcing from this cycle is what turned a lost handshake into an
-  # unbounded recovery loop; stay in the poll loop and supervise instead.
+  # Only a later append needs a separate delivery from this cycle.
   if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ]; then
+    if [ "$(cat "$STATE/.wake-queue.seq" 2>/dev/null || true)" != "$WATCHER_START_QUEUE_SEQ" ] \
+      && [ -s "$FM_WAKE_QUEUE" ]; then
+      wake "check: rearm-resurface"
+    fi
     return 0
   fi
   if [ "$WATCHER_RECOVERY_PENDING" -ne 1 ]; then

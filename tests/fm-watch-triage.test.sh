@@ -7370,6 +7370,38 @@ exited_wait_state() {  # <fixture>
     "$(dirname "$WATCH")/fm-crew-state.sh" parked
 }
 
+test_exited_steer_wakes_running_successor() {
+  local dir pid rec
+  dir=$(exited_wait_fixture exited-steer-successor)
+  printf 'working: validation running\n' > "$dir/state/parked.status"
+  prime_status_seen "$dir/state" "$dir/state/parked.status"
+  sed -e 's/status: awaiting_approval/status: running/' -e '/awaiting_agent:/,$d' "$dir/run" > "$dir/run.new"
+  mv "$dir/run.new" "$dir/run"
+  printf 'bash\n' > "$dir/agent"
+  exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+  wait_poll_cycle "$dir/state" "$pid" 300 || fail "watcher did not remain running before steer"
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir" \
+    FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" FM_DATA_OVERRIDE="$dir/data" \
+    FM_WAIT_LAB="$dir" FM_SEND_SETTLE=0 "$ROOT/bin/fm-send.sh" parked 'resume validation' > "$dir/send.out" 2>&1 \
+    || { reap "$pid"; fail "send failed: $(cat "$dir/send.out")"; }
+  rec="$dir/state/parked.inbox/001.msg"
+  [ -f "$rec" ] || { reap "$pid"; fail "steer was not retained"; }
+  wait_for_exit "$pid" 150 || { reap "$pid"; fail "queued recovery did not wake successor"; }
+  assert_grep 'check: rearm-resurface' "$dir/watch.out" "successor must deliver the queued recovery"
+  assert_grep "$rec" "$dir/state/.wake-queue" "recovery must identify the steer"
+  [ "$(wc -l < "$dir/state/.wake-queue")" -eq 1 ] || fail "recovery was duplicated"
+  ack_stopped_cycle "$dir/state" || fail "could not acknowledge recovery"
+  exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+  wait_poll_cycle "$dir/state" "$pid" 300 || fail "acknowledged recovery repeated"
+  reap "$pid"
+  mkdir -p "$dir/state/parked.inbox/handled"
+  mv "$rec" "$dir/state/parked.inbox/handled/"
+  FM_STATE_OVERRIDE="$dir/state" bash -c '. "$1"; fm_task_inbox_due_action "$2" parked' _ \
+    "$ROOT/bin/fm-task-inbox-lib.sh" "$dir/state" >/dev/null
+  [ ! -e "$dir/state/parked.inbox/.escalated" ] || fail "acknowledgement did not clear escalation"
+  pass "send to exited agent wakes a running successor once"
+}
+
 test_exited_wait_recovery() {
   local dir pid before n detail
   for detail in gate pause; do
@@ -7470,6 +7502,7 @@ fi
 
 test_done_pr_url_classifier
 test_done_missing_pr_bounce
+test_exited_steer_wakes_running_successor
 test_exited_wait_recovery
 test_status_span_actionable_classifier
 test_status_span_survives_a_later_routine_append
