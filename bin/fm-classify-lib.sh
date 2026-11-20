@@ -2330,7 +2330,7 @@ EOF
 # optional <needs-decision-var>, it also assigns 1 when the span newly surfaces a
 # needs-decision, captain-held declaration, or pending-reply escalation, otherwise
 # 0. This side-band classification never changes the event text.
-# Optional <done-lines-var> receives newline-separated done declarations from
+# Optional <done-lines-var> receives byte-offset and done-declaration pairs from
 # the same captured span, for the watcher's PR-link reminders.
 # It returns 1 after a successful classification with no actionable event; an
 # existing log still produces its committable endpoint and identity, while an absent
@@ -2396,7 +2396,8 @@ _fm_status_open_decision_origins() {  # <status-file> [<kind>]
 
 status_span_first_actionable_record() {  # <status-file> <start-offset> [record-var] [needs-decision-var] [done-lines-var]
   local f=$1 start=${2:-0} output_var=${3-} needs_var=${4-} size ident cur_ident scratch chunk_file result
-  local done_var=${5-} _fm_span_done_lines=''
+  local done_var=${5-} _fm_span_done_lines='' line_offset
+  local LC_ALL=C
   [ -z "$done_var" ] || printf -v "$done_var" '%s' ''
   local line verb key origins='' folded=0 rc=1 failed=0 line_number=0 live_line='' events='' _line _key _fm_span_needs_decision=0
   [ -e "$f" ] || { [ -L "$f" ] && return 2; return 1; }
@@ -2425,14 +2426,17 @@ status_span_first_actionable_record() {  # <status-file> <start-offset> [record-
     rm -f "$chunk_file"; return 2;
   }
   [ "$cur_ident" = "$ident" ] || { rm -f "$chunk_file"; return 2; }
+  line_offset=$start
   # shellcheck disable=SC2094 # The loop and the origin fold below only read the span scratch.
   while IFS= read -r line || [ -n "$line" ]; do
     line_number=$((line_number + 1))
+    local current_offset=$line_offset
+    line_offset=$((line_offset + ${#line} + 1))
     case "$line" in *[![:space:]]*) ;; *) continue ;; esac
     if [ -n "$done_var" ]; then
       status_line_verb "$line" verb
       if [ "$verb" = 'done' ]; then
-        _fm_span_done_lines="${_fm_span_done_lines}${line}"$'\n'
+        _fm_span_done_lines="${_fm_span_done_lines}${current_offset}"$'\t'"${line}"$'\n'
       fi
     fi
     if status_is_captain_held "$line"; then

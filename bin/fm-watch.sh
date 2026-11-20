@@ -2483,12 +2483,12 @@ watcher_capture() {  # <backend> <target> <lines> [expected-label]
   return "$rc"
 }
 
-# Request a corrected report once per exact done line, across polls/restarts.
+# Request a corrected report once per done occurrence, across polls/restarts.
 # Record only successful deliveries so failed attempts can be retried.
 # Delivery failures remain visible in the triage log and the ordinary done wake;
 # the reminder never suppresses or rewrites status events.
-bounce_done_without_pr() {  # <task> <done-lines>
-  local task=$1 lines=$2 kind mode line ledger branch wt project overview choice run_id run_out
+bounce_done_without_pr() {  # <task> <done-lines> <identity>
+  local task=$1 lines=$2 ident=$3 kind mode line offset key ledger branch wt project overview choice run_id run_out result=0
   [ -n "$lines" ] || return 0
   kind=$(fm_meta_get "$STATE/$task.meta" kind)
   mode=$(fm_meta_get "$STATE/$task.meta" mode)
@@ -2507,21 +2507,26 @@ bounce_done_without_pr() {  # <task> <done-lines>
     fi
   fi
   ledger="$STATE/.done-pr-bounced-$task"
-  while IFS= read -r line; do
+  while IFS=$'\t' read -r offset line; do
+    [ -n "$offset" ] || continue
     status_done_needs_pr_url "$line" "$kind" "$mode" || continue
-    grep -Fxq -- "$line" "$ledger" 2>/dev/null && continue
+    key="${ident}"$'\t'"${offset}"$'\t'"${line}"
+    grep -Fxq -- "$key" "$ledger" 2>/dev/null && continue
     if FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
       "$SCRIPT_DIR/fm-send.sh" "$task" \
       'Please re-post done with the full https review URL.' >/dev/null 2>&1; then
-      if ! printf '%s\n' "$line" >> "$ledger"; then
+      if ! printf '%s\n' "$key" >> "$ledger"; then
         triage_log "could not record missing PR link reminder for $task"
+        result=1
       fi
     else
       triage_log "missing PR link reminder delivery failed for $task; done event remains actionable"
+      result=1
     fi
   done <<EOF
 $lines
 EOF
+  return "$result"
 }
 
 # 0 when any signaled status file carries a captain-relevant event in the bytes
@@ -2543,7 +2548,7 @@ EOF
 # (docs/pi-supervision-branch.md). Stale and heartbeat rows retain their existing
 # eligibility rules.
 signal_files_actionable() {  # <status-file> ...
-  local f task record rest endpoint ident needs_decision rc found=1 done_lines
+  local f task record rest endpoint ident needs_decision rc found=1 done_lines reminder_ok
   FM_SIGNAL_SURFACE_ENDPOINTS=''
   FM_SIGNAL_NEEDS_DECISION_FILES=''
   for f in "$@"; do
@@ -2554,7 +2559,6 @@ signal_files_actionable() {  # <status-file> ...
     status_span_first_actionable_record "$f" \
       "$(fm_wake_signal_seen_size "$STATE" "$f")" record needs_decision done_lines
     rc=$?
-    [ "$rc" -eq 2 ] || bounce_done_without_pr "$task" "$done_lines"
     [ "$rc" -eq 1 ] && [ -z "$record" ] && continue
     if [ "$rc" -eq 2 ]; then
       # Could not classify this log. Surface it rather than absorbing it, and
@@ -2565,7 +2569,11 @@ signal_files_actionable() {  # <status-file> ...
       continue
     fi
     endpoint=${record%%$'\t'*}; rest=${record#*$'\t'}; ident=${rest%%$'\t'*}
-    FM_SIGNAL_SURFACE_ENDPOINTS="${FM_SIGNAL_SURFACE_ENDPOINTS}${f}"$'\t'"${endpoint}"$'\t'"${ident}"$'\n'
+    reminder_ok=1
+    bounce_done_without_pr "$task" "$done_lines" "$ident" || reminder_ok=0
+    if [ "$reminder_ok" -eq 1 ]; then
+      FM_SIGNAL_SURFACE_ENDPOINTS="${FM_SIGNAL_SURFACE_ENDPOINTS}${f}"$'\t'"${endpoint}"$'\t'"${ident}"$'\n'
+    fi
     if [ "$needs_decision" -eq 1 ]; then
       FM_SIGNAL_NEEDS_DECISION_FILES="${FM_SIGNAL_NEEDS_DECISION_FILES} ${f}"
     fi
@@ -2608,7 +2616,7 @@ EOF
 # the fail-safe backstop. Missing PR links also get the same deduplicated
 # reminder as the signal path, without marking the event surfaced here.
 heartbeat_scan_finds_actionable() {
-  local f task record rest endpoint ident rc found=1 sig marker exclude done_lines
+  local f task record rest endpoint ident rc found=1 sig marker exclude done_lines reminder_ok
   # Same self-home exclusion as scan_signals: a remote mate's parent channel
   # must not come back through the heartbeat fail-safe backstop.
   exclude=$(status_scan_parent_channel_exclude "$STATE")
@@ -2620,7 +2628,6 @@ heartbeat_scan_finds_actionable() {
     record=''
     status_span_first_actionable_record "$f" "$(hb_surfaced_offset "$task")" record '' done_lines
     rc=$?
-    [ "$rc" -eq 2 ] || bounce_done_without_pr "$task" "$done_lines"
     [ "$rc" -eq 1 ] && [ -z "$record" ] && continue
     if [ "$rc" -eq 2 ]; then
       sig=$(status_observed_signature "$f")
@@ -2631,7 +2638,11 @@ heartbeat_scan_finds_actionable() {
       continue
     fi
     endpoint=${record%%$'\t'*}; rest=${record#*$'\t'}; ident=${rest%%$'\t'*}
-    FM_HEARTBEAT_SURFACE_ENDPOINTS="${FM_HEARTBEAT_SURFACE_ENDPOINTS}${f}"$'\t'"${endpoint}"$'\t'"${ident}"$'\n'
+    reminder_ok=1
+    bounce_done_without_pr "$task" "$done_lines" "$ident" || reminder_ok=0
+    if [ "$reminder_ok" -eq 1 ]; then
+      FM_HEARTBEAT_SURFACE_ENDPOINTS="${FM_HEARTBEAT_SURFACE_ENDPOINTS}${f}"$'\t'"${endpoint}"$'\t'"${ident}"$'\n'
+    fi
     [ "$rc" -eq 0 ] && found=0
   done
   return "$found"
