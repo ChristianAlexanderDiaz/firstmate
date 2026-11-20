@@ -12,7 +12,7 @@
 #   fm-procevent.sh reconcile
 #   fm-procevent.sh classify <result-file>
 #   fm-procevent.sh handled <source-id> <sequence>
-#   fm-procevent.sh retire <source-id> [--if-absent|--if-matches <adapter> -- <argv>...|--if-registration <file-identity>|--if-owner <registration-token>]
+#   fm-procevent.sh retire <source-id> [--if-absent|--if-matches <adapter> -- <argv>...|--if-owner <registration-token>]
 #   fm-procevent.sh sweep-home [--preflight]
 #   fm-procevent.sh binding-retirement-preflight <binding-digest>
 #   fm-procevent.sh extension-retirement <binding|transfer> <retirement-arguments...>
@@ -110,9 +110,6 @@
 #            is that board's conclude step, so it also drops the registration
 #            that kept the board with its owner, and reports `retired:` too.
 # retire     Drop a registration, stop a runner this home owns, release the claim.
-#            --if-registration requires the exact built-in registration file
-#            identity observed under the source lock; extensions still require
-#            their owner token. Pending task captures keep their ordinary guard.
 #            Idempotent, and still the supported explicit path after a source has
 #            already retired itself on its adapter's terminal verdict. Existing
 #            unconditional built-in retirement remains compatible. An external
@@ -2178,10 +2175,6 @@ cmd_retire() {
   case "$condition" in
     '') [ "$#" -eq 1 ] || usage ;;
     --if-absent) [ "$#" -eq 2 ] || usage ;;
-    --if-registration)
-      [ "$#" -eq 3 ] && [ -n "${3-}" ] || usage
-      expected_owner=$3
-      ;;
     --if-owner)
       [ "$#" -eq 3 ] || usage
       expected_owner=${3-}
@@ -2205,7 +2198,7 @@ cmd_retire() {
     die "cannot retire task-owned source $id while a captured round for task $round_owner is unacknowledged; acknowledge it with bin/fm-procevent.sh handled $id <sequence>"
   fi
   if [ -e "$(source_file "$id")" ] || [ -L "$(source_file "$id")" ]; then
-    if [ -z "$condition" ] || [ "$condition" = --if-registration ]; then
+    if [ -z "$condition" ]; then
       fm_procevent_extension_registration_load_locked "$STATE" "$id"
       owner_state=$?
       case "$owner_state" in
@@ -2220,12 +2213,6 @@ cmd_retire() {
       esac
     fi
     case "$condition" in
-      --if-registration)
-        if [ "$(fm_pr_file_identity "$(source_file "$id")")" != "$expected_owner" ]; then
-          fm_procevent_source_lock_release "$id"
-          die "source registration does not match the expected identity: $id"
-        fi
-        ;;
       --if-absent)
         fm_procevent_source_lock_release "$id"
         die "source registration does not match the expected owner: $id"
@@ -2247,9 +2234,6 @@ cmd_retire() {
         extension_binding_digest=$FM_PROCEVENT_EXTENSION_BINDING_DIGEST
         ;;
     esac
-  elif [ "$condition" = --if-registration ]; then
-    fm_procevent_source_lock_release "$id"
-    die "source registration no longer has the expected identity: $id"
   elif [ "$condition" = --if-owner ] \
     && { [ -e "$(fm_procevent_claim_path "$id")" ] || [ -L "$(fm_procevent_claim_path "$id")" ]; }; then
     fm_procevent_source_lock_release "$id"
