@@ -2341,6 +2341,32 @@ class LevelPolicyTests(unittest.TestCase):
         self.assertEqual(self.observe(2)["level"], "Normal")
         self.assertEqual(self.observe(240)["level"], "Full")
 
+    def test_continuity_during_safety_stops(self):
+        for hazard in ("heat", "memory", "battery", "lid"):
+            with self.subTest(hazard=hazard):
+                self.setUp()
+                self.ready()
+                self.sample["memory"]["swapUsedBytes"] = 500 * 1024 * 1024
+                if hazard == "heat":
+                    self.sample["thermalState"] = "serious"
+                elif hazard == "memory":
+                    self.sample["memory"]["pressure"] = "critical"
+                elif hazard == "battery":
+                    self.sample["power"]["batteryPercent"] = 14
+                else:
+                    self.sample["power"].update(source="battery", adapterWatts=None)
+                    self.sample["lidClosed"] = True
+                self.observe(120)
+                self.sample["instanceUUID"] = "new-monitor"
+                self.observe(2)
+                self.sample["thermalState"] = "nominal"
+                self.sample["memory"].update(pressure="normal", swapUsedBytes=0)
+                self.sample["power"]["batteryPercent"] = 80
+                self.sample["lidClosed"] = False
+                recovered = self.observe(2)
+                self.assertEqual(recovered["nextStepUp"], self.now + (240 if hazard == "heat" else 60 if hazard == "memory" else 30))
+                self.assertEqual(self.observe(240 if hazard == "heat" else 60 if hazard == "memory" else 30)["level"], "Reduced" if hazard == "heat" else "Stop")
+
     def test_memory_dwell_60_and_missing_dwell_30(self):
         self.ready()
         self.sample["memory"]["pressure"] = "warning"

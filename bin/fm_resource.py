@@ -299,6 +299,37 @@ class AdmissionPolicy:
         self.portable = True
         self.workers_allowed = False
         self.emergency = emergency or self.emergency
+        changed = False
+        continuity_error = None
+        try:
+            if sample["schemaVersion"] != 1 or sample["lifecycle"] != "running" or sample["bootSessionUUID"] != boot:
+                raise Refusal("monitor continuity is unavailable")
+            age = now - float(sample["timestamp"])
+            uptime_age = host_uptime - float(sample["uptimeSeconds"])
+            if not math.isfinite(age) or not math.isfinite(uptime_age) or not -1 <= age <= 10 or not -1 <= uptime_age <= 10:
+                raise Refusal("stale or future monitor sample")
+            if not isinstance(sample["unavailable"], list) or not all(isinstance(item, str) for item in sample["unavailable"]):
+                raise Refusal("monitor unavailable readings list is invalid")
+            if sample["unavailable"]:
+                raise Refusal("monitor has unavailable readings")
+            monitor, sequence, source = sample["instanceUUID"], sample["sequence"], sample["power"]["source"]
+            if not isinstance(monitor, str) or not monitor or type(sequence) is not int or source not in ("ac", "battery", "ups"):
+                raise Refusal("monitor identity, sequence or source is unavailable")
+            if self.previous:
+                old_monitor, old_sequence, old_source, old_wall, old_uptime = self.previous
+                if monitor == old_monitor and sequence < old_sequence:
+                    raise Refusal("monitor sequence regressed")
+                changed = (monitor != old_monitor or source != old_source or now - old_wall > 10 or
+                           abs((now - old_wall) - (host_uptime - old_uptime)) > 1)
+            self.previous = (monitor, sequence, source, now, host_uptime)
+        except (ValueError, KeyError, TypeError, Refusal) as error:
+            continuity_error = error
+            changed = True
+            self.previous = None
+        if changed:
+            self.samples.clear()
+            self.swap_bad = 0
+            self.sample_id = None
         # Known critical readings and the durable latch cannot be hidden by an
         # unrelated missing field. Stale data alone never clears that latch.
         if isinstance(sample, dict):
@@ -326,6 +357,8 @@ class AdmissionPolicy:
         elif self.emergency:
             return 0, "persistent emergency latch requires inspected evidence and explicit clear", "heat", 240
         try:
+            if continuity_error:
+                raise continuity_error
             if not isinstance(sample, dict):
                 raise Refusal("monitor reading missing or malformed")
             if sample["schemaVersion"] != 1 or sample["lifecycle"] != "running":
@@ -336,10 +369,6 @@ class AdmissionPolicy:
             uptime_age = host_uptime - float(sample["uptimeSeconds"])
             if not math.isfinite(age) or not math.isfinite(uptime_age) or not -1 <= age <= 10 or not -1 <= uptime_age <= 10:
                 raise Refusal("stale or future monitor sample")
-            if not isinstance(sample["unavailable"], list) or not all(isinstance(item, str) for item in sample["unavailable"]):
-                raise Refusal("monitor unavailable readings list is invalid")
-            if sample["unavailable"]:
-                raise Refusal("monitor has unavailable readings")
             if thermal not in ("nominal", "fair") or pressure not in ("normal", "warning"):
                 raise Refusal(f"thermal={thermal} memory={pressure}")
             battery, swap = power["batteryPercent"], memory["swapUsedBytes"]
@@ -358,18 +387,6 @@ class AdmissionPolicy:
             monitor, sequence = sample["instanceUUID"], sample["sequence"]
             if not isinstance(monitor, str) or not monitor or type(sequence) is not int:
                 raise Refusal("monitor identity or sequence is unavailable")
-            changed = False
-            if self.previous:
-                old_monitor, old_sequence, old_source, old_wall, old_uptime = self.previous
-                if monitor == old_monitor and sequence < old_sequence:
-                    raise Refusal("monitor sequence regressed")
-                changed = (monitor != old_monitor or source != old_source or now - old_wall > 10 or
-                           abs((now - old_wall) - (host_uptime - old_uptime)) > 1)
-            self.previous = (monitor, sequence, source, now, host_uptime)
-            if changed:
-                self.samples.clear()
-                self.swap_bad = 0
-                self.sample_id = None
             while len(self.samples) > 1 and mono - self.samples[1][0] >= 60:
                 self.samples.popleft()
             if (monitor, sequence) != self.sample_id:
