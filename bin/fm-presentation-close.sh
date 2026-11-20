@@ -14,8 +14,8 @@
 # Metadata contract: presentation=closed and presentation_closed_at=<epoch>
 # retain window= and all Herdr IDs as the last endpoint identity. Consumers must
 # not treat this marker as permission to launch: fm-control relaunch still
-# proves absence and fm-spawn --relaunch creates the replacement in the same
-# worktree, clearing both presentation fields on publication. Recovery callers
+# proves absence or a recycled address and fm-spawn --relaunch creates the
+# replacement in the same worktree, clearing both fields on publication. Recovery callers
 # use that control path with its required progress note, never clear the marker
 # themselves. A changed wait remains visible through ordinary status/run reads.
 # A staged metadata copy plus original checksum survives interruption between

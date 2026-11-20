@@ -36,7 +36,7 @@ cleanup() {
     env PATH="$HERDR_ORIGINAL_PATH" "$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION" || rc=1
   fi
   "$LAB_HOME_HELPER" teardown "$HOME_DIR" || rc=1
-  rm -rf "$TMP_ROOT"
+  fm_test_remove_tree "$TMP_ROOT"
   exit "$rc"
 }
 trap cleanup EXIT
@@ -64,7 +64,7 @@ else
   env PATH="$HERDR_ORIGINAL_PATH" "$HERDR_LAB_HELPER" run "$HERDR_LAB_SESSION" \
     pane report-agent "$HERDR_PANE_ID" --source fixture --agent codex --state working >/dev/null
 fi
-exec -a codex /bin/sleep 300
+exec -a codex /bin/sleep 900
 SH
 cat > "$AGENTBIN/no-mistakes" <<'SH'
 #!/usr/bin/env bash
@@ -166,7 +166,7 @@ done
 # Both protected spaces carry waiting declarations, so process/topology proof
 # (not a status shortcut) must keep them open during the same heartbeat.
 field() { sed -n "s/^$2=//p" "$HOME_DIR/state/$1.meta"; }
-lab pane run "$(field live herdr_pane_id)" 'exec -a codex /bin/sleep 300' >/dev/null
+lab pane run "$(field live herdr_pane_id)" 'exec -a codex /bin/sleep 900' >/dev/null
 lab pane report-agent "$(field live herdr_pane_id)" --source fixture --agent codex --state idle >/dev/null
 lab tab create --workspace "$(field foreign herdr_workspace_id)" --cwd "$TMP_ROOT" --label foreign --no-focus >/dev/null
 anchor=$(lab workspace create --cwd "$TMP_ROOT" --label anchor --focus)
@@ -187,14 +187,29 @@ for id in sample extra live foreign; do
   fm_wake_status_reported_commit "$HOME_DIR/state" "$f" "$(fm_wake_signal_sig "$f")"
 done
 heartbeat() {
-  local root=$1 rc=0
-  rm -f "$HOME_DIR/state/.last-heartbeat"
+  local root=$1 rc=0 attempt sequence generation
+  touch -t 200001010000 "$HOME_DIR/state/.last-heartbeat"
   touch "$HOME_DIR/state/.last-nm-review-pane" "$HOME_DIR/state/home-summary.json"
-  FM_HEARTBEAT=999999 FM_HEARTBEAT_MAX=999999 FM_POLL=1 FM_SIGNAL_GRACE=0 \
-    FM_CHECK_INTERVAL=999999 FM_HOME_SUMMARY_INTERVAL=999999 \
-    "$root/bin/fm-watch-checkpoint.sh" --seconds 25 > "$PROOF/heartbeat.log" 2>&1 || rc=$?
-  [ "$rc" = 0 ] || [ "$rc" = 124 ] || { cat "$PROOF/heartbeat.log"; fail "watcher exit $rc"; }
-  [ -e "$HOME_DIR/state/.last-heartbeat" ] || { cat "$PROOF/heartbeat.log"; fail 'heartbeat did not complete'; }
+  touch -r "$HOME_DIR/state/.last-heartbeat" "$PROOF/heartbeat.before"
+  : > "$PROOF/heartbeat.log"
+  for attempt in $(seq 1 12); do
+    rc=0
+    FM_HEARTBEAT=999999 FM_HEARTBEAT_MAX=999999 FM_POLL=1 FM_SIGNAL_GRACE=0 \
+      FM_CHECK_INTERVAL=999999 FM_HOME_SUMMARY_INTERVAL=999999 \
+      "$root/bin/fm-watch-checkpoint.sh" --seconds 90 >> "$PROOF/heartbeat.log" 2>&1 || rc=$?
+    [ "$rc" = 0 ] || [ "$rc" = 124 ] || { cat "$PROOF/heartbeat.log"; fail "watcher exit $rc"; }
+    # Acknowledge unrelated initial notifications through the public interface.
+    # The long interval permits exactly one heartbeat after the old timestamp.
+    "$root/bin/fm-wake-drain.sh" > "$PROOF/drain.log" 2> "$PROOF/drain.err"
+    sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation .*/\1/p' "$PROOF/drain.err")
+    generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$PROOF/drain.err")
+    if [ -n "$sequence" ] && [ -n "$generation" ]; then
+      "$root/bin/fm-wake-drain.sh" --ack-through "$sequence" --recovery-generation "$generation" >> "$PROOF/heartbeat.log" 2>&1
+    fi
+    [ ! "$HOME_DIR/state/.last-heartbeat" -nt "$PROOF/heartbeat.before" ] || return 0
+  done
+  cat "$PROOF/heartbeat.log"
+  fail 'heartbeat did not complete'
 }
 if [ -n "${FM_PRESENTATION_BASELINE_ROOT:-}" ]; then
   printf 'baseline_before=%s\n' "$(count_open)"
@@ -286,5 +301,32 @@ cmp "$PROOF/backlog.before" "$HOME_DIR/data/backlog.md" || fail 'manual-close re
 cmp "$PROOF/inbox.before" "$HOME_DIR/state/extra.inbox/handled/1.msg" || fail 'manual-close relaunch changed inbox'
 printf 'unmarked_missing_workspace_relaunched=1\n'
 pass 'an unmarked manually closed workspace is recreated with its task and work intact'
+
+# A closed address can be recycled for a different task. Reproduce the durable
+# collision by recording the live task's address as the retired task's old IDs.
+lab pane send-keys "$(field extra herdr_pane_id)" ctrl+c >/dev/null
+lab pane close "$(field extra herdr_pane_id)" >/dev/null
+awk -F= -v window="$(field live window)" -v ws="$(field live herdr_workspace_id)" \
+  -v tab="$(field live herdr_tab_id)" -v pane="$(field live herdr_pane_id)" '
+  $1 == "window" { print "window=" window; next }
+  $1 == "herdr_workspace_id" { print "herdr_workspace_id=" ws; next }
+  $1 == "herdr_tab_id" { print "herdr_tab_id=" tab; next }
+  $1 == "herdr_pane_id" { print "herdr_pane_id=" pane; next }
+  { print }
+' "$PROOF/extra.meta.before" > "$HOME_DIR/state/extra.meta"
+cp "$HOME_DIR/state/live.meta" "$PROOF/reused-owner.meta.before"
+lab pane process-info --pane "$(field live herdr_pane_id)" > "$PROOF/reused-owner.process.before"
+rm -f "$HOME_DIR/state/extra.inbox/proceeded"
+FM_CONTROL_LAUNCH_WAIT=15 "$ROOT/bin/fm-control.sh" extra relaunch --note 'Continue after the retired address was reused.' \
+  > "$PROOF/reused-relaunch.log" 2>&1 || { cat "$PROOF/reused-relaunch.log"; fail 'reused endpoint relaunch failed'; }
+[ "$(field extra window)" != "$(field live window)" ] || fail 'relaunch adopted another task endpoint'
+[ -e "$HOME_DIR/state/extra.inbox/proceeded" ] || fail 'replacement at fresh endpoint did not proceed'
+lab pane process-info --pane "$(field live herdr_pane_id)" > "$PROOF/reused-owner.process.after"
+cmp "$PROOF/reused-owner.process.before" "$PROOF/reused-owner.process.after" || fail 'relaunch changed the other task process'
+cmp "$PROOF/reused-owner.meta.before" "$HOME_DIR/state/live.meta" || fail 'relaunch changed the other task metadata'
+lab workspace get "$(field live herdr_workspace_id)" >/dev/null || fail 'relaunch closed the other task workspace'
+lab workspace get "$(field extra herdr_workspace_id)" >/dev/null || fail 'relaunch did not create a fresh workspace'
+printf 'reused_endpoint_relaunched=1\nreused_endpoint_owner_unchanged=1\n'
+pass 'a recycled endpoint creates a fresh workspace and preserves its current live owner'
 lab tab focus "$anchor_tab" >/dev/null
 lab status --json > "$PROOF/herdr-version.json"

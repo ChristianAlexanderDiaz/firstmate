@@ -69,3 +69,23 @@ for kind in secondmate unknown; do
   cmp "$TMP_ROOT/meta.before" "$FM_HOME/state/protected.meta" || fail 'non-worker metadata changed'
 done
 pass 'secondmates and unknown task kinds are never candidates'
+
+# Bind live Herdr identities, rather than accepting the presence of reused IDs.
+cat > "$FM_HOME/state/binding.meta" <<META
+herdr_session=lab
+herdr_workspace_id=w1
+herdr_tab_id=w1:t1
+herdr_pane_id=w1:p1
+META
+fm_backend_herdr_cli() { cat "$TMP_ROOT/snapshot.json"; }
+for label in fm-sample fm-another renamed; do
+  cat > "$TMP_ROOT/snapshot.json" <<JSON
+{"result":{"snapshot":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1","workspace_id":"w1"}],"tabs":[{"tab_id":"w1:t1","workspace_id":"w1","label":"$label"}]}}}
+JSON
+  case "$label" in fm-sample) expected=owned ;; fm-another) expected=reused ;; *) expected=unknown ;; esac
+  actual=$(fm_backend_herdr_task_binding_state "$FM_HOME/state/binding.meta" sample)
+  [ "$actual" = "$expected" ] || fail "binding $label: expected $expected, got $actual"
+done
+printf '{"result":{"snapshot":{}}}\n' > "$TMP_ROOT/snapshot.json"
+[ "$(fm_backend_herdr_task_binding_state "$FM_HOME/state/binding.meta" sample)" = unknown ] || fail 'malformed snapshot accepted'
+pass 'task binding distinguishes owned, recycled and ambiguous live addresses'

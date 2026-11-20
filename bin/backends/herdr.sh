@@ -1403,6 +1403,32 @@ fm_backend_herdr_pid_is_bare_shell() {  # <ps-bin> <pid>
   return 1
 }
 
+# Herdr can reuse workspace/tab/pane IDs after removal. A durable address alone
+# therefore cannot authorize lifecycle input. Match the live task tab binding;
+# a different task label positively identifies a reused address, while a missing
+# or arbitrary renamed label stays unknown. Callers never mutate a reused pane.
+fm_backend_herdr_task_binding_state() {  # <meta> <task-id>
+  local meta=$1 id=$2 snapshot
+  snapshot=$(fm_backend_herdr_cli "$(fm_meta_get "$meta" herdr_session)" api snapshot) \
+    || { printf unknown; return; }
+  printf '%s' "$snapshot" | jq -er \
+    --arg pane "$(fm_meta_get "$meta" herdr_pane_id)" \
+    --arg tab "$(fm_meta_get "$meta" herdr_tab_id)" \
+    --arg ws "$(fm_meta_get "$meta" herdr_workspace_id)" --arg label "fm-$id" '
+    .result.snapshot as $s
+    | if ($s.panes | type) != "array" or ($s.tabs | type) != "array" then "unknown"
+      else [$s.panes[] | select(.pane_id == $pane)] as $p
+      | if ($p | length) != 1 then "unknown"
+        else [$s.tabs[] | select(.tab_id == $p[0].tab_id and .workspace_id == $p[0].workspace_id)] as $t
+        | if ($t | length) != 1 or ($t[0].label | type) != "string" then "unknown"
+          elif $t[0].label != $label and ($t[0].label | test("^fm-[A-Za-z0-9._-]+$")) then "reused"
+          elif $t[0].label == $label and $p[0].tab_id == $tab and $p[0].workspace_id == $ws then "owned"
+          else "unknown" end
+        end
+      end
+  ' 2>/dev/null || printf unknown
+}
+
 # fm_backend_herdr_pane_shell_tree: accept nested interactive shells left by a
 # worker launch. Unlike the agent classifier, this proof rejects EVERY non-shell
 # descendant, including background commands with no agent registration.

@@ -665,6 +665,7 @@ Each home's watcher heartbeat closes its own exited, waiting workers' single-pan
 Live agents, secondmates, additional panes, and uncertain ownership or process reads prevent closure.
 The task's decision or PR remains visible in fleet reporting, while its intentionally absent pane no longer produces recovery alarms.
 Use the normal `fm-control.sh relaunch` with a progress note to reopen it and continue from the same local copy.
+If Herdr has recycled its old address for another task, relaunch creates a fresh workspace and leaves the new owner untouched; an ambiguous live binding refuses control input.
 Other runtime backends keep their existing behavior.
 
 [`bin/fm-presentation-close.sh`](../bin/fm-presentation-close.sh) owns eligibility, lifecycle locking, bounded heartbeat traversal, interruption recovery, diagnostics, and the metadata contract for recovery callers.

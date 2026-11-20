@@ -1766,6 +1766,26 @@ That status output and refusal wording were read in the Treehouse v3.1.0 and v3.
 A separate throwaway-repository probe against Treehouse v2.3.0, below the supported 3.1.0 floor, showed that exhaustion returns status 1 immediately, while raising only pool capacity permits a stacked spawn whose base branch is checked out in another slot.
 The tests establish Firstmate's placement calls and failure handling; live Herdr focus and rendering still require the guarded lab suites above.
 
+### Waiting-worker presentation retirement
+
+On 2026-11-20, the Linux portable regression passed with real shell processes and a recording CLI modeling Herdr 0.9.0, protocol 22; no real Herdr server or model agent was exercised.
+The current regression command is:
+
+```sh
+bash bin/fm-test-run.sh --jobs 1 tests/fm-presentation-close.test.sh tests/fm-presentation-close-stub.test.sh
+```
+
+The recorded result was:
+
+```text
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=179968
+ok - a recycled endpoint creates a fresh workspace and preserves its current live owner
+```
+
+These tests cover exited-worker closure, live-process and foreign-pane refusal, preserved waiting decisions, interrupted publication, and relaunch with missing or recycled endpoint IDs.
+[`bin/fm-presentation-close.sh`](../../bin/fm-presentation-close.sh) owns the recovery metadata contract.
+Real-server sidebar removal, restoration, and focus behavior remain unverified for this change until `tests/fm-presentation-close-e2e.test.sh` passes in the guarded named Herdr lab with the default-session tripwire intact.
+
 ### Per-home and presentation topology
 
 Per-home behavior is owned by:
