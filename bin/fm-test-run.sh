@@ -287,7 +287,7 @@ cpu_count() {
 family_for_basename() {
   case "$1" in
     fm-arm-pretool-check.test.sh|fm-ask-user-authority.test.sh|\
-    fm-bearings-board.test.sh|\
+    fm-bearings-board.test.sh|fm-plan-board.test.sh|\
     fm-brief.test.sh|fm-dod-lib.test.sh|fm-vendor-auth-probe.test.sh|\
     fm-calm-pi-extension.test.sh|fm-cd-pretool-check.test.sh|\
     fm-classify-decision-key.test.sh|\
@@ -1541,6 +1541,9 @@ families_for_changed_path() {
     bin/fm-sessionstart-nudge.sh|bin/fm-startup-network.sh|bin/fm-tangle*|bin/fm-update.sh|\
     bin/fm-gate-refuse*|bin/fm-lock*)
       printf '%s\n' session-bootstrap
+      ;;
+    bin/fm-plan-board.sh|.agents/skills/crewmate-briefs/assets/plan-board-template.html|tests/assets/plan-board-sample.json)
+      printf '%s\n' "__script__:fm-plan-board.test.sh"
       ;;
     bin/fm-bootstrap.sh)
       printf '%s\n' session-bootstrap

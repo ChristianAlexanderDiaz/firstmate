@@ -1,0 +1,26 @@
+{
+  "schema": "fm-plan-board.v1",
+  "title": "Make the next choice easier",
+  "tldr": "Start each review with a short overview and a clear recommendation. Keep the full explanation close by, so you can choose quickly or read further before deciding.",
+  "decisions": [
+    {
+      "key": "review-length",
+      "question": "How much should we show first?",
+      "options": [
+        {"value": "short", "label": "A short overview", "detail": "Show the outcome, the choices, and why we recommend one."},
+        {"value": "full", "label": "The full explanation", "detail": "Put the supporting detail beside every choice."}
+      ],
+      "recommended": "short"
+    },
+    {
+      "key": "rollout",
+      "question": "Where should we try this?",
+      "options": [
+        {"value": "next", "label": "The next review", "detail": "Try one example and adjust after your feedback."},
+        {"value": "all", "label": "Every review", "detail": "Use the new format everywhere at once."}
+      ],
+      "recommended": "next"
+    }
+  ],
+  "builder_detail": "Implementation notes\nThe JSON payload uses schema fm-plan-board.v1. The filler escapes text before rendering HTML.\n\nVerification\nThe pre-show lint checks the first content block, the expanded word budget, and technical vocabulary. The builder writes only after all checks pass."
+}
