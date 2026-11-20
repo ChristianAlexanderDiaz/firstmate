@@ -360,6 +360,15 @@ fm_procevent_source_lock_release() {
   fm_lock_release "$(fm_procevent_source_lock_path "$1")"
 }
 
+# Preserve the initial registration time across re-arms of an open source.
+# Legacy records use their existing mtime; retiring a source starts a new age.
+fm_procevent_registered_at() {  # <source-file>
+  local stamp
+  stamp=$(sed -n '/^argv:$/q; s/^registered_at=//p' "$1" 2>/dev/null)
+  case "$stamp" in ''|*[!0-9]*) stamp=$(fm_path_mtime "$1" 2>/dev/null || date +%s) ;; esac
+  printf '%s\n' "$stamp"
+}
+
 fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> <argv...>
   local state=$1 adapter=$2 id=$3 reg dest tmp arg identity
   shift 3
@@ -376,6 +385,7 @@ fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> <a
   tmp=$(umask 077; mktemp "$reg/.source.XXXXXX") || return 1
   if {
     printf 'adapter=%s\n' "$adapter"
+    printf 'registered_at=%s\n' "$(fm_procevent_registered_at "$dest")"
     printf 'argc=%s\n' "$#"
     printf 'argv:\n'
     printf '%s\n' "$@"
@@ -410,6 +420,7 @@ fm_procevent_task_registration_publish_locked() {  # <state> <adapter> <source-i
   if {
     printf 'adapter=%s\n' "$adapter"
     printf 'kind=task-owned\n'
+    printf 'registered_at=%s\n' "$(fm_procevent_registered_at "$dest")"
     printf 'owner_task=%s\n' "$task"
     printf 'argc=%s\n' "$#"
     printf 'argv:\n'
@@ -542,6 +553,9 @@ fm_procevent_registration_matches_locked() {  # <state> <adapter> <source-id> <a
   tmp=$(umask 077; mktemp "$reg/.source-match.XXXXXX") || return 1
   if {
     printf 'adapter=%s\n' "$adapter"
+    # The age is registration metadata, not part of the listener argv contract.
+    # Preserve the legacy shape when comparing a record written before it.
+    sed -n '/^argv:$/q; /^registered_at=/p' "$dest"
     printf 'argc=%s\n' "$#"
     printf 'argv:\n'
     printf '%s\n' "$@"

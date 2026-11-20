@@ -4859,6 +4859,81 @@ SH
   pass "marked hold reasons round-trip through public reads, fleet, startup, and return without changing other fields"
 }
 
+test_board_last_recorded_answer_closes_once() {
+  local home artifact sid key out
+  home=$(make_home board-last-answer)
+  artifact="$home/board.html"
+  cat > "$artifact" <<'HTML'
+<script id="bearings-data" type="application/json">
+{"schema":"fm-bearings-board.v1","captains_call":[{"key":"board-first"},{"key":"board-last"}]}
+</script>
+HTML
+  for key in board-first board-last; do
+    run_captain "$home" hold "$key" --title 'Board pick' --reason 'Choose a direction' --repo sample >/dev/null || fail 'could not hold board pick'
+  done
+  printf 'Proceed with the recommended option.\n' > "$home/answer.txt"
+  mkdir -p "$home/lavish-state"
+  jq -n --arg file "$artifact" '{sessions:{board:{file:$file,url:"http://127.0.0.1:14387/session/0123456789abcdef"}}}' > "$home/lavish-state/state.json"
+  cat > "$home/fakebin/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  end) printf 'end\n' >> "$FM_HOME/ends"; touch "$FM_HOME/ended" ;;
+  poll)
+    while [ ! -e "$FM_HOME/ended" ]; do
+      [ "$SECONDS" -lt 30 ] || exit 75
+      sleep 0.1
+    done
+    printf 'session:\n  status: ended\n'
+    ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$home/fakebin/lavish-axi"
+  sid=$(run_lavish "$home" source-id "$artifact") || fail 'could not identify board'
+  run_captain "$home" bind "$sid" >/dev/null || fail 'could not bind board'
+  fm_test_track_procevent_home "$home"
+  LAVISH_AXI_STATE_DIR="$home/lavish-state" run_lavish "$home" arm "$artifact" >/dev/null || fail 'could not arm board'
+  if run_procevent "$home" retire "$sid" --if-registration stale-identity >/dev/null 2>&1; then
+    fail 'stale registration identity retired the current board'
+  fi
+  run_captain "$home" answer board-first --decision-file "$home/answer.txt" >/dev/null || fail 'could not answer first pick'
+  run_captain "$home" answered board-first || fail 'recorded answer not recognized'
+  if run_captain "$home" answered board-last; then fail 'unanswered pick considered answered'; fi
+  LAVISH_AXI_STATE_DIR="$home/lavish-state" run_procevent "$home" reconcile >/dev/null
+  [ ! -e "$home/ends" ] && [ -f "$home/state/procevent/$sid.source" ] || fail 'partial picks closed board'
+  run_captain "$home" answer board-last --decision-file "$home/answer.txt" --release >/dev/null || fail 'could not answer last pick'
+  cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *' show '*)
+    if [ ! -e "$FM_HOME/rebuilt" ]; then
+      printf '\n' >> "$FM_HOME/board.html"
+      touch "$FM_HOME/rebuilt"
+    fi
+    ;;
+esac
+exec "$REAL_TASKS_AXI" "$@"
+SH
+  chmod +x "$home/fakebin/tasks-axi"
+  LAVISH_AXI_STATE_DIR="$home/lavish-state" run_procevent "$home" reconcile >/dev/null
+  [ -e "$home/rebuilt" ] && [ ! -e "$home/ends" ] || fail 'board changed during answer checks but was closed'
+  LAVISH_AXI_STATE_DIR="$home/lavish-state" run_procevent "$home" reconcile >/dev/null
+  [ "$(wc -l < "$home/ends" | tr -d ' ')" = 1 ] || fail 'last pick did not close board exactly once'
+  [ ! -e "$home/state/procevent/$sid.source" ] || fail 'closed board listener registration survived'
+  LAVISH_AXI_STATE_DIR="$home/lavish-state" run_procevent "$home" reconcile >/dev/null
+  [ "$(wc -l < "$home/ends" | tr -d ' ')" = 1 ] || fail 'reconcile closed board twice'
+  out=$(run_lavish "$home" attention "$sid")
+  [ -z "$out" ] || fail 'closed board raised attention'
+  run_captain "$home" hold board-last --reason 'A new question' >/dev/null || fail 'could not re-hold released pick'
+  if run_captain "$home" answered board-last; then fail 'old answer completed a new hold'; fi
+  run_captain "$home" hold board-moot --title 'Moot pick' --reason 'Choose a direction' --repo sample >/dev/null || fail 'could not hold moot pick'
+  request_reconciles "$home" "$sid" board-moot >/dev/null || fail 'could not request moot-pick reconciliation'
+  run_captain "$home" reconcile close board-moot --evidence-file "$home/answer.txt" >/dev/null || fail 'could not reconcile moot pick'
+  if run_captain "$home" answered board-moot; then fail 'reconciliation counted as a captain answer'; fi
+  pass 'last recorded board pick closes once, partial picks stay open, and re-held calls need a new answer'
+}
+
+test_board_last_recorded_answer_closes_once
 test_inventory_accepts_archived_resolutions
 test_hold_reason_round_trips_awkward_characters
 test_hold_origin_is_atomic_with_backend_hold

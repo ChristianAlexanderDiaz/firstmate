@@ -5,7 +5,8 @@ description: >-
   Use before arming a long-polling source firstmate owns, before registering a
   deterministic condition->action watch, on any
   `procevent <adapter> <source-id> <sequence>` check wake, and on any
-  `process-event source stranded` or `process-event source failed to start`
+  `process-event source stranded`, `process-event source failed to start`, or
+  `process-event board needs attention`
   check wake.
   Owns the arming commands, the condition->action eligibility boundary, the
   durable result read, which wakes must be routed to their adapter instead of
@@ -18,7 +19,7 @@ metadata:
 
 # process-event-sources
 
-Load this before arming a long-polling source, before registering a deterministic condition->action watch, whenever a `check:` wake carries `procevent <adapter> <source-id> <sequence>`, and whenever the watcher headlines a `process-event source stranded` or `process-event source failed to start` wake.
+Load this before arming a long-polling source, before registering a deterministic condition->action watch, whenever a `check:` wake carries `procevent <adapter> <source-id> <sequence>`, and whenever the watcher headlines a `process-event source stranded`, `process-event source failed to start`, or `process-event board needs attention` wake.
 
 The runner exists so a blocking external process never holds firstmate's conversational turn.
 Firstmate registers a source, keeps working, and is woken when that process completes.
@@ -96,6 +97,12 @@ Two rules the commands cannot enforce for you:
 - **A source is a wait on an external process, not a task.** It gets no task metadata and no backlog entry. If the wait itself needs tracking, file it as its own work item.
 
 ## Handling a wake
+
+`process-event board needs attention` (queue keys `procevent:<source-id>:attention:<reason>`)
+: Read the queued payload for the board and task: an owner-stopped notice calls for a holding reply within five minutes and moving the work; an unanswered notice calls for a two-line recap or close.
+: Recheck the board's registration, captured results, and owner liveness before acting, since an answer, close, or recovery may have arrived after the notification was queued.
+: These are reminders, not captured results; acknowledge the ordinary drain row, with no synthetic `handled` call, reply, or ownership transfer performed by the monitor.
+: The adapter's `attention` command owns eligibility and timing; existing board ownership and recovery rules still apply.
 
 `procevent <adapter> <source-id> <sequence>`
 : The named durable result is waiting at `state/procevent-inbox/<source-id>.<sequence>.result`. Read that exact result; separate wakes identify later results independently.

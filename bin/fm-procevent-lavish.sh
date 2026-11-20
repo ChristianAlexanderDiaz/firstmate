@@ -9,6 +9,8 @@
 #   fm-procevent-lavish.sh answers <result-file>
 #   fm-procevent-lavish.sh reconciles <result-file>
 #   fm-procevent-lavish.sh read <result-file>
+#   fm-procevent-lavish.sh attention <source-id>
+#   fm-procevent-lavish.sh settle <source-id>
 #   fm-procevent-lavish.sh source-id <artifact.html>
 #   fm-procevent-lavish.sh retire <artifact.html>
 #   fm-procevent-lavish.sh poll <artifact.html> [--agent-reply-file <path>]
@@ -16,6 +18,23 @@
 #
 # classify   Print the lifecycle state a handler should act on: feedback, ended,
 #            waiting, disconnected, missing, or unknown.
+# attention  Read local registration, captures, and worker liveness only. Called
+#            under the source lock by reconcile on each watcher cycle (normally
+#            5 seconds), so a proven stopped owner is reported on the next cycle,
+#            within the five-minute response window while supervision is running.
+#            Emit owner-stopped for a dead/missing worker and unanswered after
+#            172800 seconds from initial registration. Captured feedback or a
+#            terminal result suppresses both, even before acknowledgement.
+#            Reconcile deduplicates each reminder per canonical board. Unknown
+#            liveness never proves death; backends without recovery-grade agent
+#            classification retain that limitation. No Lavish server is queried.
+# settle     Under the runner's source lock, close a bound board when every
+#            declared question has a durable captain answer. Bearings payloads
+#            and static data-lavish-question attributes provide the inventory;
+#            an absent, empty, or unreadable inventory never authorizes closing.
+#            Successful end is remembered per registration and artifact content,
+#            so subsequent cycles only retire the listener. Captured task rounds
+#            remain available and keep their acknowledgement requirement.
 # read       Print a structured presentation of one already-captured result so a
 #            handler consumes every queued item without grepping the raw file.
 #            It is read-only over the capture: it does not arm, poll, or change
@@ -161,6 +180,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-procevent-lib.sh
 . "$SCRIPT_DIR/fm-procevent-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,/^set -u$/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 2; }
@@ -490,6 +511,122 @@ session_field() {  # <result-file> <field>
     in_s && $0 ~ "^[[:space:]]+" field ":[[:space:]]*[A-Za-z_]+[[:space:]]*$" {
       sub("^[[:space:]]+" field ":[[:space:]]*", ""); sub(/[[:space:]]*$/, ""); print; exit }
   ' "$1"
+}
+
+# Derive reminder eligibility without querying Lavish or changing ownership.
+board_record() {  # <source-id>; sets BOARD_RECORD and BOARD_ARTIFACT
+  local id=$1 state reg mode
+  fm_procevent_source_id_valid "$id" || return 1
+  state=${FM_STATE_OVERRIDE:-$FM_HOME/state}
+  reg=$(fm_procevent_registry_dir "$state")
+  BOARD_RECORD="$reg/$id.source"
+  [ -f "$BOARD_RECORD" ] && [ ! -L "$BOARD_RECORD" ] || return 1
+  [ "$(sed -n '/^argv:$/q; s/^adapter=//p' "$BOARD_RECORD")" = lavish ] || return 1
+  mode=$(awk '/^argv:$/ { getline; getline; print; exit }' "$BOARD_RECORD")
+  BOARD_ARTIFACT=$(awk '/^argv:$/ { getline; getline; getline; print; exit }' "$BOARD_RECORD")
+  [ "$mode" = poll ] && [ -f "$BOARD_ARTIFACT" ]
+}
+
+board_close_identity() {
+  local registration_identity
+  registration_identity=$(fm_pr_file_identity "$BOARD_RECORD") || return 1
+  perl -MDigest::SHA=sha256_hex -e '
+    my $bytes = shift @ARGV;
+    for my $path (@ARGV) {
+      open my $f, "<", $path or exit 1;
+      local $/; $bytes .= <$f> . "\0";
+    }
+    print sha256_hex($bytes), "\n";
+  ' "$registration_identity" "$BOARD_RECORD" "$BOARD_ARTIFACT"
+}
+
+board_closed() {  # <source-id>; board_record must already have succeeded
+  local marker="${BOARD_RECORD%/*}/.$1.closed" identity
+  [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  identity=$(board_close_identity) || return 1
+  [ "$(cat "$marker")" = "$identity" ]
+}
+
+cmd_settle() {
+  local id=${1-} questions question identity marker
+  board_record "$id" || return 1
+  board_closed "$id" && return 0
+  "$SCRIPT_DIR/fm-captain-hold.sh" binding "$id" >/dev/null 2>&1 || return 1
+  identity=$(board_close_identity) || return 1
+  questions=$(perl -MJSON::PP -e '
+    local $/; open my $f, "<", $ARGV[0] or exit 1; my $html = <$f>;
+    my @keys;
+    if ($html =~ m{<script\b[^>]*\bid="bearings-data"[^>]*>(.*?)</script>}s) {
+      my $data = eval { decode_json($1) };
+      ref($data) eq "HASH" && $data->{schema} eq "fm-bearings-board.v1"
+        && ref($data->{captains_call}) eq "ARRAY" or exit 1;
+      for my $item (@{$data->{captains_call}}) {
+        ref($item) eq "HASH" or exit 1;
+        push @keys, $item->{key};
+      }
+    } else {
+      @keys = $html =~ /\bdata-lavish-question="([^"]*)"/g;
+    }
+    @keys or exit 1;
+    my %seen;
+    for my $key (@keys) {
+      defined($key) && !ref($key) && $key =~ /\A[A-Za-z0-9._-]{1,128}\z/ or exit 1;
+      print "$key\n" unless $seen{$key}++;
+    }
+  ' "$BOARD_ARTIFACT") || return 1
+  while IFS= read -r question; do
+    "$SCRIPT_DIR/fm-captain-hold.sh" answered "$question" >/dev/null 2>&1 || return 1
+  done <<< "$questions"
+  [ "$(board_close_identity)" = "$identity" ] || return 1
+  apply_session_port "$BOARD_ARTIFACT"
+  fm_run_timed 10 lavish-axi end "$BOARD_ARTIFACT" >/dev/null || return 1
+  marker="${BOARD_RECORD%/*}/.$id.closed"
+  (umask 077; printf '%s\n' "$identity" > "$marker") || return 1
+}
+
+cmd_attention() {
+  local id=${1-} state reg record result task backend target verdict stamp now artifact mode
+  fm_procevent_source_id_valid "$id" || return 1
+  state=${FM_STATE_OVERRIDE:-$FM_HOME/state}
+  reg=$(fm_procevent_registry_dir "$state")
+  record="$reg/$id.source"
+  [ -f "$record" ] && [ ! -L "$record" ] || return 0
+  [ "$(sed -n '/^argv:$/q; s/^adapter=//p' "$record")" = lavish ] || return 0
+  mode=$(awk '/^argv:$/ { getline; getline; print; exit }' "$record")
+  artifact=$(awk '/^argv:$/ { getline; getline; getline; print; exit }' "$record")
+  [ "$mode" = poll ] && [ -n "$artifact" ] || return 0
+  board_record "$id" && board_closed "$id" && return 0
+  for result in "$(fm_procevent_inbox_dir "$state")/$id".*.result; do
+    [ -f "$result" ] && [ ! -L "$result" ] || continue
+    cmd_terminal "$result" && return 0
+    [ "$(cmd_classify "$result")" != feedback ] || return 0
+  done
+  task=$(sed -n '/^argv:$/q; s/^owner_task=//p' "$record")
+  if [ -n "$task" ] && fm_pr_task_id_valid "$task"; then
+    # Reuse the same structural classifier as recovery; never infer death from
+    # a quiet pane, a failed transport read, or an old status-log event.
+    # shellcheck source=bin/fm-backend.sh
+    . "$SCRIPT_DIR/fm-backend.sh"
+    verdict=unknown
+    if [ ! -e "$state/$task.meta" ]; then
+      verdict=missing
+    elif fm_backend_validate_task_endpoint "$state/$task.meta" "$task" >/dev/null 2>&1 \
+      && ! grep -q '^remote_host=.' "$state/$task.meta"; then
+      backend=$(fm_backend_of_meta "$state/$task.meta")
+      target=$(fm_backend_target_of_meta "$state/$task.meta")
+      verdict=$(fm_backend_agent_state "$backend" "$target")
+    fi
+    case "$verdict" in
+      dead|missing)
+        printf 'owner-stopped\tLavish board %s (%s), task %s: its worker stopped; post a holding reply within 5 minutes and move the work.\n' "$artifact" "$id" "$task"
+        ;;
+    esac
+  fi
+  stamp=$(fm_procevent_registered_at "$record")
+  now=$(date +%s)
+  if [ "$((now - stamp))" -ge 172800 ]; then
+    printf 'unanswered\tLavish board %s (%s), owner %s: unanswered for 2 days; provide a two-line recap or close.\n' "$artifact" "$id" "${task:-firstmate}"
+  fi
 }
 
 # Classify a completed result into a lifecycle state for the handler.
@@ -966,6 +1103,8 @@ cmd_read() {
 
 case "${1-}" in
   arm)       shift; cmd_arm "$@" ;;
+  attention) shift; cmd_attention "$@" ;;
+  settle)    shift; cmd_settle "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
   poll)      shift; cmd_poll "$@" ;;
   deliver-reply) shift; cmd_deliver_reply "$@" ;;

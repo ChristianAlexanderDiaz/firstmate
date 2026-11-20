@@ -6390,6 +6390,20 @@ test_procevent_headlines_classify_queue_keys() {
     || fail "a stranded source was headlined as a captured result: $(cat "$out")"
   FM_STATE_OVERRIDE="$state" "$DRAIN" >/dev/null 2>&1 || fail "stranded headline fixture drain failed"
 
+  dir=$(make_case procevent-headline-attention); state="$dir/state"; out="$dir/watch.out"
+  append_wake "$state" check "procevent:board-src:attention:owner-stopped" "check: Lavish board needs a holding reply"
+  append_wake "$state" check "procevent:board-src:attention:unanswered" "check: Lavish board needs a two-line recap or close"
+  surface_once "$dir" "$out" || fail "board attention was not surfaced: $(cat "$out")"
+  grep -F 'check: process-event board needs attention:' "$out" >/dev/null \
+    || fail "board attention did not surface under its own headline: $(cat "$out")"
+  grep -F 'procevent:board-src:attention:owner-stopped' "$out" >/dev/null \
+    || fail 'stopped-owner attention was omitted'
+  grep -F 'procevent:board-src:attention:unanswered' "$out" >/dev/null \
+    || fail 'unanswered-board attention was omitted'
+  ! grep -F 'result captured' "$out" >/dev/null \
+    || fail 'board attention was misreported as a captured answer'
+  FM_STATE_OVERRIDE="$state" "$DRAIN" >/dev/null 2>&1 || fail 'board attention fixture drain failed'
+
   dir=$(make_case procevent-headline-joined); state="$dir/state"; out="$dir/watch.out"
   append_wake "$state" check "procevent:cap2-src:1" "check: procevent lavish cap2-src 1"
   append_wake "$state" check "procevent:str2-src:stranded:tok-2" "check: process-event source str2-src is registered but nothing can arm it"
