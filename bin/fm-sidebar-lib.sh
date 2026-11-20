@@ -43,14 +43,25 @@ fm_sidebar_classify() {
     FM_SIDEBAR_WORD='Waiting for machine'; FM_SIDEBAR_DETAIL=$machine
   elif [ -n "$service" ] && { [ "$state" != working ] || [ "$agent" != alive ]; }; then
     FM_SIDEBAR_WORD=Serving; FM_SIDEBAR_DETAIL=$service
-  elif [ "$state" = 'done' ] && [ "$kind" != secondmate ]; then
-    FM_SIDEBAR_WORD='Needs you'; FM_SIDEBAR_DETAIL=$detail
+  elif [ "$state" = done ] && [ "$kind" != secondmate ]; then
+    case "$line" in
+      'state: done · source: run-step · run passed: PR open'*) FM_SIDEBAR_WORD='Needs you'; FM_SIDEBAR_DETAIL=$detail ;;
+    esac
   elif [ "$state" = working ] && [ "$source" = run-step ] && { [ "$agent" = dead ] || [ "$agent" = missing ]; }; then
     FM_SIDEBAR_WORD=Checking; FM_SIDEBAR_DETAIL="$detail - no agent"
   elif [ "$agent" = dead ] || [ "$agent" = missing ]; then
     FM_SIDEBAR_WORD=Stuck; FM_SIDEBAR_DETAIL='agent exited with work pending'
   elif [ "$state" = working ] && [ "$agent" = alive ]; then
-    FM_SIDEBAR_WORD=Working; FM_SIDEBAR_DETAIL=$detail
+    case "${10:-unknown}" in
+      busy) FM_SIDEBAR_WORD=Working; FM_SIDEBAR_DETAIL=$detail ;;
+      idle)
+        if [ "$source" = run-step ]; then
+          FM_SIDEBAR_WORD=Checking; FM_SIDEBAR_DETAIL="$detail - agent idle"
+        else
+          FM_SIDEBAR_WORD='Needs me'; FM_SIDEBAR_DETAIL='agent idle with work pending'
+        fi
+        ;;
+    esac
   elif [ "$state" = failed ] || [ "$state" = parked ]; then
     FM_SIDEBAR_WORD='Needs me'; FM_SIDEBAR_DETAIL=$detail
   elif [ "$agent" = alive ]; then

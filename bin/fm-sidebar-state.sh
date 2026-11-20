@@ -78,7 +78,7 @@ sidebar_collect() {  # <task>
   run=$(fm_nm_strip_quotes "$(fm_nm_field "$run_out" id)")
   case "$run" in *[!A-Za-z0-9_-]*) run= ;; esac
   busy=unknown
-  if [ "$kind" = secondmate ] && [ "$backend" = herdr ] && [ "$agent" = alive ]; then
+  if [ "$backend" = herdr ] && [ "$agent" = alive ]; then
     busy=$(fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; fm_backend_herdr_classify_agent_status "$(fm_backend_herdr_agent_status_raw "$2" "$3")"' \
       bash "$SCRIPT_DIR" "$session" "$pane" 2>/dev/null) || busy=unknown
   fi
@@ -93,7 +93,11 @@ sidebar_collect() {  # <task>
   sidebar_ci_evidence
   fm_sidebar_classify "$line" "$agent" "$kind" "$captain" "$landed" "$machine" "$service" "$stall" '' "$busy"
   if [ "$FM_SIDEBAR_WORD" = Checking ] && [ -n "$ci_progress" ]; then
-    FM_SIDEBAR_DETAIL="CI $ci_progress - no agent"
+    if [ "$agent" = alive ]; then
+      FM_SIDEBAR_DETAIL="CI $ci_progress - agent idle"
+    else
+      FM_SIDEBAR_DETAIL="CI $ci_progress - no agent"
+    fi
   fi
   if [ "$FM_SIDEBAR_WORD" = 'Needs you' ]; then
     local link

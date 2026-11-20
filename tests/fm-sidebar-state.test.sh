@@ -120,6 +120,12 @@ print('metadata:', sys.argv[2], next(a for a in args if a.startswith('fm_status_
 PY
 }
 expect Working
+export LAB_LINE='state: working · source: run-step · ci running' LAB_BUSY=idle
+expect Checking
+[[ $(bash "$script" sample) == *'agent idle'* ]] || fail 'idle agent detail absent'
+export LAB_BUSY=unknown
+[ -z "$(bash "$script" sample)" ] || fail 'unknown agent activity must not claim Working'
+unset LAB_BUSY
 export LAB_AGENT=dead LAB_LINE='state: working · source: run-step · ci running · run: run1'
 export LAB_RUN=$'run:\n  id: run1\n  status: ci\n  pr: https://example.invalid/review/7' LAB_CI='CI checks 18/22'
 expect Checking
@@ -190,6 +196,10 @@ bash "$script" sample --refresh
 [ ! -s "$FM_HOME/state/.wake-queue" ] || fail 'display duplicated the watcher alert owner'
 export LAB_LINE='state: done · source: run-step · run passed: PR merged'
 expect Done
+export LAB_LINE='state: done · source: run-step · run passed: PR state unknown (unreadable)'
+[ -z "$(bash "$script" sample)" ] || fail 'unknown completion must not request captain action'
+export LAB_LINE='state: done · source: run-step · run passed: PR open'
+expect 'Needs you'
 export LAB_AGENT=dead LAB_LINE='state: working · source: run-step · ci running · run: run3'
 export LAB_RUN=$'run:\n  id: run3\n  status: ci' LAB_CI='CI runner queued'
 expect 'Waiting for machine'
