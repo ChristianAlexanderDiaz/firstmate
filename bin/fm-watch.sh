@@ -2483,6 +2483,33 @@ watcher_capture() {  # <backend> <target> <lines> [expected-label]
   return "$rc"
 }
 
+# Request a corrected report once per exact done line, across polls/restarts.
+# Claim the attempt before fm-send so an interrupted delivery cannot loop.
+# Delivery failures remain visible in the triage log and the ordinary done wake;
+# the reminder never suppresses or rewrites status events.
+bounce_done_without_pr() {  # <task> <done-lines>
+  local task=$1 lines=$2 kind mode line ledger
+  [ -n "$lines" ] || return 0
+  kind=$(fm_meta_get "$STATE/$task.meta" kind)
+  mode=$(fm_meta_get "$STATE/$task.meta" mode)
+  ledger="$STATE/.done-pr-bounced-$task"
+  while IFS= read -r line; do
+    status_done_needs_pr_url "$line" "$kind" "$mode" || continue
+    grep -Fxq -- "$line" "$ledger" 2>/dev/null && continue
+    if ! printf '%s\n' "$line" >> "$ledger"; then
+      triage_log "could not record missing PR link reminder for $task"
+      continue
+    fi
+    if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+      "$SCRIPT_DIR/fm-send.sh" "$task" \
+      'Please re-post done with the full https PR URL.' >/dev/null 2>&1; then
+      triage_log "missing PR link reminder delivery failed for $task; done event remains actionable"
+    fi
+  done <<EOF
+$lines
+EOF
+}
+
 # 0 when any signaled status file carries a captain-relevant event in the bytes
 # appended since this watcher last classified it. The start offset is the
 # classified-position field in that file's .seen-* marker, and fm-classify-lib.sh's
@@ -2502,7 +2529,7 @@ watcher_capture() {  # <backend> <target> <lines> [expected-label]
 # (docs/pi-supervision-branch.md). Stale and heartbeat rows retain their existing
 # eligibility rules.
 signal_files_actionable() {  # <status-file> ...
-  local f task record rest endpoint ident needs_decision rc found=1
+  local f task record rest endpoint ident needs_decision rc found=1 done_lines
   FM_SIGNAL_SURFACE_ENDPOINTS=''
   FM_SIGNAL_NEEDS_DECISION_FILES=''
   for f in "$@"; do
@@ -2511,8 +2538,9 @@ signal_files_actionable() {  # <status-file> ...
     task=$(basename "$f"); task="${task%.status}"
     record=''; needs_decision=0
     status_span_first_actionable_record "$f" \
-      "$(fm_wake_signal_seen_size "$STATE" "$f")" record needs_decision
+      "$(fm_wake_signal_seen_size "$STATE" "$f")" record needs_decision done_lines
     rc=$?
+    [ "$rc" -eq 2 ] || bounce_done_without_pr "$task" "$done_lines"
     [ "$rc" -eq 1 ] && [ -z "$record" ] && continue
     if [ "$rc" -eq 2 ]; then
       # Could not classify this log. Surface it rather than absorbing it, and
@@ -2559,13 +2587,14 @@ EOF
 # surfaced to firstmate (.hb-surfaced-<task>). It walks every log rather than only
 # those whose LAST line looks captain-relevant, because the event this backstop
 # most needs to catch is precisely one a later routine append has already moved
-# past. Pure detect, no side effects: the caller enqueues first, then marks
+# past. The caller enqueues first, then marks
 # surfaced. Because every captain-relevant signal/stale already marks itself
 # surfaced when it wakes firstmate, this normally finds nothing and the heartbeat
 # is absorbed; it surfaces only an event the per-wake path absorbed by mistake -
-# the fail-safe backstop.
+# the fail-safe backstop. Missing PR links also get the same deduplicated
+# reminder as the signal path, without marking the event surfaced here.
 heartbeat_scan_finds_actionable() {
-  local f task record rest endpoint ident rc found=1 sig marker exclude
+  local f task record rest endpoint ident rc found=1 sig marker exclude done_lines
   # Same self-home exclusion as scan_signals: a remote mate's parent channel
   # must not come back through the heartbeat fail-safe backstop.
   exclude=$(status_scan_parent_channel_exclude "$STATE")
@@ -2574,8 +2603,10 @@ heartbeat_scan_finds_actionable() {
     [ -e "$f" ] || [ -L "$f" ] || continue
     [ "$f" = "$exclude" ] && continue
     task=$(basename "$f"); task="${task%.status}"
-    record=$(status_span_first_actionable_record "$f" "$(hb_surfaced_offset "$task")")
+    record=''
+    status_span_first_actionable_record "$f" "$(hb_surfaced_offset "$task")" record '' done_lines
     rc=$?
+    [ "$rc" -eq 2 ] || bounce_done_without_pr "$task" "$done_lines"
     [ "$rc" -eq 1 ] && [ -z "$record" ] && continue
     if [ "$rc" -eq 2 ]; then
       sig=$(status_observed_signature "$f")

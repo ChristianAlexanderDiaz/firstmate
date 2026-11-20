@@ -194,6 +194,79 @@ reap() {
 
 size_of() { LC_ALL=C wc -c < "$1" | tr -d '[:space:]'; }
 
+test_done_missing_pr_bounce() {
+  local dir state
+  dir=$(make_case done-missing-pr); state="$dir/state"
+  cat > "$dir/fakebin/fm-send.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\t%s\n' "$1" "$2" >> "$FM_STATE_OVERRIDE/sent"
+[ ! -e "$FM_STATE_OVERRIDE/send-fails" ]
+SH
+  chmod +x "$dir/fakebin/fm-send.sh"
+  FM_STATE_OVERRIDE="$state" bash -c '
+    # shellcheck disable=SC1090,SC1091
+    . "$1"
+    SCRIPT_DIR=$2
+    for spec in nm:no-mistakes direct:direct-PR local:local-only unknown:unknown; do
+      task=${spec%%:*}
+      printf "kind=ship\nmode=%s\n" "${spec#*:}" > "$STATE/$task.meta"
+      printf "done [at=123]: implementation complete\nworking: cleanup\n" > "$STATE/$task.status"
+    done
+    printf "kind=scout\nmode=no-mistakes\n" > "$STATE/scout.meta"
+    printf "done: report saved\n" > "$STATE/scout.status"
+    printf "kind=ship\nmode=no-mistakes\n" > "$STATE/linked.meta"
+    printf "done: PR https://github.com/example/repo/pull/123 checks green\n" > "$STATE/linked.status"
+    signal_files_actionable "$STATE"/*.status || exit 1
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 2 ] || exit 2
+    grep -Fx "nm"$'"'"'\t'"'"'"Please re-post done with the full https PR URL." "$STATE/sent" || exit 3
+    grep -Fx "direct"$'"'"'\t'"'"'"Please re-post done with the full https PR URL." "$STATE/sent" || exit 4
+    # No seen-position commit: replay exactly the same span as a restart or
+    # the independent heartbeat backstop would do.
+    signal_files_actionable "$STATE"/*.status || exit 5
+    heartbeat_scan_finds_actionable || exit 6
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 2 ] || exit 7
+    printf "done [at=124]: still no link\n" >> "$STATE/nm.status"
+    signal_files_actionable "$STATE/nm.status" || exit 8
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 3 ] || exit 9
+    touch "$STATE/send-fails"
+    printf "done [at=125]: link still missing\n" >> "$STATE/nm.status"
+    signal_files_actionable "$STATE/nm.status" || exit 10
+    signal_files_actionable "$STATE/nm.status" || exit 11
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 4 ] || exit 12
+    grep -F "reminder delivery failed for nm" "$STATE/.watch-triage.log" || exit 13
+  ' _ "$WATCH" "$dir/fakebin" > "$dir/result" 2>&1 \
+    || fail "missing PR bounce failed: $(cat "$dir/result")"
+  # A fresh watcher process also respects the durable attempt record.
+  FM_STATE_OVERRIDE="$state" bash -c '
+    # shellcheck disable=SC1090,SC1091
+    . "$1"
+    SCRIPT_DIR=$2
+    signal_files_actionable "$STATE/nm.status" || exit 1
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 4 ]
+  ' _ "$WATCH" "$dir/fakebin" || fail "restart repeated the same reminder"
+  pass "publishing ships get one PR-link reminder per done line; linked, local-only and scout reports are exempt"
+}
+
+test_done_pr_url_classifier() {
+  local url
+  for url in 'https://github.com/o/r/pull/1' 'https://gitlab.example/group/repo/-/merge_requests/2' \
+    'https://gitea.example/o/r/pulls/3' '(https://github.com/o/r/pull/1)' \
+    "\`https://github.com/o/r/pull/1\`" 'url=https://github.com/o/r/pull/1'; do
+    status_done_needs_pr_url "done [at=123]: PR $url" ship no-mistakes \
+      && fail "valid PR link rejected: $url"
+  done
+  for url in 'http://github.com/o/r/pull/1' 'https://github.com/o/r/issues/1' \
+    'https://github.com/o/r/pull/nope' 'https://github.com/o/r/pull/1oops'; do
+    status_done_needs_pr_url "done: $url" ship no-mistakes \
+      || fail "missing https PR link accepted: $url"
+  done
+  status_done_needs_pr_url 'working: done with implementation' ship no-mistakes \
+    && fail "progress was bounced"
+  status_done_needs_pr_url 'done: report' secondmate no-mistakes \
+    && fail "secondmate was bounced"
+  pass "missing PR predicate recognizes done declarations and https forge PR links"
+}
+
 test_status_span_actionable_classifier() {
   local dir state offset
   dir=$(make_case classify-signal); state="$dir/state"
@@ -7145,6 +7218,8 @@ if [ -n "${FM_TEST_ONLY:-}" ]; then
   exit 0
 fi
 
+test_done_pr_url_classifier
+test_done_missing_pr_bounce
 test_status_span_actionable_classifier
 test_status_span_survives_a_later_routine_append
 test_status_span_respects_decision_closure
