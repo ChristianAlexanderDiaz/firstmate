@@ -832,8 +832,6 @@ cmd_choice_rows() {
       }
       my $label = defined $f{text} ? $f{text} : "";
       s/[\x00-\x1f\x7f]/ /g for ($answer, $note, $label);
-      utf8::encode($answer) if utf8::is_utf8($answer);
-      utf8::encode($note) if utf8::is_utf8($note);
       $label = substr($label, 0, 512);
       if (defined $seen{$key}) { $choices[$seen{$key}] = undef }
       $seen{$key} = scalar @choices;

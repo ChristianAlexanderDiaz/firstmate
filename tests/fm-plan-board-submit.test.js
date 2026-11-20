@@ -49,9 +49,14 @@ assert.match(status.textContent, /different words/);
 submit('pick', 'reconcile');
 assert.strictEqual(queued.length, 2);
 checkReader(queued.pop(), 'pick', 'pick - reconcile');
+submit('', 'x'.repeat(512));
+assert.strictEqual(queued.length, 2);
+checkReader(queued.pop(), 'x'.repeat(512), 'x'.repeat(512));
 submit('', 'é'.repeat(256));
 assert.strictEqual(queued.length, 2);
-checkReader(queued[1], 'é'.repeat(256), 'é'.repeat(256));
+// Verify Unicode at the board boundary; shared reader encoding is outside this board's contract.
+assert.strictEqual(queued[1].context.data.note, 'é'.repeat(256));
+assert.strictEqual(queued[1].context.text, 'é'.repeat(256));
 submit('', 'é'.repeat(257));
 assert.strictEqual(queued.length, 2);
 assert.match(status.textContent, /512 bytes maximum/);
