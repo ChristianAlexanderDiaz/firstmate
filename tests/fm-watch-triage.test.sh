@@ -207,19 +207,28 @@ SH
     # shellcheck disable=SC1090,SC1091
     . "$1"
     SCRIPT_DIR=$2
+    git init -q "$STATE/repo"
+    git -C "$STATE/repo" -c user.name=test -c user.email=test@example.com commit --allow-empty -qm init
+    git -C "$STATE/repo" update-ref refs/remotes/origin/task HEAD
     for spec in nm:no-mistakes direct:direct-PR local:local-only unknown:unknown; do
       task=${spec%%:*}
-      printf "kind=ship\nmode=%s\n" "${spec#*:}" > "$STATE/$task.meta"
+      printf "kind=ship\nmode=%s\nbranch=task\nworktree=%s/repo\nproject=%s/repo\n" "${spec#*:}" "$STATE" "$STATE" > "$STATE/$task.meta"
       printf "done [at=123]: implementation complete\nworking: cleanup\n" > "$STATE/$task.status"
     done
+    printf "kind=ship\nmode=no-mistakes\nbranch=unpublished\nworktree=%s/repo\nproject=%s/repo\n" "$STATE" "$STATE" > "$STATE/handoff.meta"
+    printf "done: ready for validation\n" > "$STATE/handoff.status"
+    printf "kind=ship\nmode=direct-PR\n" > "$STATE/gerrit.meta"
+    printf "done: PR https://review.example/c/project/+/42 published for review\n" > "$STATE/gerrit.status"
+    printf "kind=ship\nmode=direct-PR\n" > "$STATE/external.meta"
+    printf "done: review https://reviews.example/42 uploaded for review\n" > "$STATE/external.status"
     printf "kind=scout\nmode=no-mistakes\n" > "$STATE/scout.meta"
     printf "done: report saved\n" > "$STATE/scout.status"
     printf "kind=ship\nmode=no-mistakes\n" > "$STATE/linked.meta"
     printf "done: PR https://github.com/example/repo/pull/123 checks green\n" > "$STATE/linked.status"
     signal_files_actionable "$STATE"/*.status || exit 1
     [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 2 ] || exit 2
-    grep -Fx "nm"$'"'"'\t'"'"'"Please re-post done with the full https PR URL." "$STATE/sent" || exit 3
-    grep -Fx "direct"$'"'"'\t'"'"'"Please re-post done with the full https PR URL." "$STATE/sent" || exit 4
+    grep -Fx "nm"$'"'"'\t'"'"'"Please re-post done with the full https review URL." "$STATE/sent" || exit 3
+    grep -Fx "direct"$'"'"'\t'"'"'"Please re-post done with the full https review URL." "$STATE/sent" || exit 4
     # No seen-position commit: replay exactly the same span as a restart or
     # the independent heartbeat backstop would do.
     signal_files_actionable "$STATE"/*.status || exit 5
@@ -232,17 +241,20 @@ SH
     printf "done [at=125]: link still missing\n" >> "$STATE/nm.status"
     signal_files_actionable "$STATE/nm.status" || exit 10
     signal_files_actionable "$STATE/nm.status" || exit 11
-    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 4 ] || exit 12
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 5 ] || exit 12
+    rm "$STATE/send-fails"
+    signal_files_actionable "$STATE/nm.status" || exit 14
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 6 ] || exit 15
     grep -F "reminder delivery failed for nm" "$STATE/.watch-triage.log" || exit 13
   ' _ "$WATCH" "$dir/fakebin" > "$dir/result" 2>&1 \
     || fail "missing PR bounce failed: $(cat "$dir/result")"
-  # A fresh watcher process also respects the durable attempt record.
+  # A fresh watcher process also respects the durable successful-delivery record.
   FM_STATE_OVERRIDE="$state" bash -c '
     # shellcheck disable=SC1090,SC1091
     . "$1"
     SCRIPT_DIR=$2
     signal_files_actionable "$STATE/nm.status" || exit 1
-    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 4 ]
+    [ "$(wc -l < "$STATE/sent" | tr -d " ")" = 6 ]
   ' _ "$WATCH" "$dir/fakebin" || fail "restart repeated the same reminder"
   pass "publishing ships get one PR-link reminder per done line; linked, local-only and scout reports are exempt"
 }

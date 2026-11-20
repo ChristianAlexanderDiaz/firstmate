@@ -290,14 +290,15 @@ status_is_terminal_verb() {
 
 # 0 when a publishing ship's done declaration needs a PR link reminder.
 # Unknown/missing delivery modes and non-ship kinds retain their existing rules.
-# This checks the link's shape only; PR discovery and forge validation belong
-# to the delivery path. Accept GitHub/GitLab/Gitea PR URL shapes on https hosts.
+# This checks link shape only; delivery validation belongs to the delivery path.
 status_done_needs_pr_url() {  # <line> <kind> <mode>
   [ "$2" = ship ] || return 1
   case "$3" in no-mistakes|direct-PR) ;; *) return 1 ;; esac
   [ "$(status_line_verb "$1")" = 'done' ] || return 1
   local pr_re='(^|[^[:alnum:]_])https://[^[:space:]/]+/[^[:space:]]+/(pull|pulls|merge_requests)/[1-9][0-9]*([^[:alnum:]_/-]|$)'
-  [[ "$1" =~ $pr_re ]] && return 1
+  local gerrit_re='(^|[^[:alnum:]_])https://[^[:space:]/]+/c/[^[:space:]]+/\+/[1-9][0-9]*([^[:alnum:]_/-]|$)'
+  local review_re='review[[:space:]]+https://[^[:space:]]+[[:space:]]+uploaded[[:space:]]+for[[:space:]]+review'
+  [[ "$1" =~ $pr_re || "$1" =~ $gerrit_re || "$1" =~ $review_re ]] && return 1
   return 0
 }
 

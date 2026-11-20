@@ -2484,25 +2484,39 @@ watcher_capture() {  # <backend> <target> <lines> [expected-label]
 }
 
 # Request a corrected report once per exact done line, across polls/restarts.
-# Claim the attempt before fm-send so an interrupted delivery cannot loop.
+# Record only successful deliveries so failed attempts can be retried.
 # Delivery failures remain visible in the triage log and the ordinary done wake;
 # the reminder never suppresses or rewrites status events.
 bounce_done_without_pr() {  # <task> <done-lines>
-  local task=$1 lines=$2 kind mode line ledger
+  local task=$1 lines=$2 kind mode line ledger branch wt project overview choice run_id run_out
   [ -n "$lines" ] || return 0
   kind=$(fm_meta_get "$STATE/$task.meta" kind)
   mode=$(fm_meta_get "$STATE/$task.meta" mode)
+  if [ "$mode" = no-mistakes ]; then
+    branch=$(fm_meta_get "$STATE/$task.meta" branch)
+    wt=$(fm_meta_get "$STATE/$task.meta" worktree)
+    project=$(fm_meta_get "$STATE/$task.meta" project)
+    if [ -z "$branch" ] || ! { git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$branch" 2>/dev/null || git -C "$project" show-ref --verify --quiet "refs/remotes/origin/$branch" 2>/dev/null; }; then
+      [ -n "$branch" ] && [ -n "$wt" ] || return 0
+      overview=$(fm_nm_run_checked "$wt" 3 axi) || return 0
+      choice=$(fm_nm_select_run "$branch" "$overview" "$wt" 3)
+      case "$choice" in selected\|*) ;; *) return 0 ;; esac
+      IFS='|' read -r _ run_id _ <<< "$choice"
+      run_out=$(fm_nm_run_checked "$wt" 3 axi status --run "$run_id") || return 0
+      printf '%s\n' "$run_out" | grep -Eq '^[[:space:]]*(push|pr),[[:space:]]*(running|fixing|completed|passed|failed)' || return 0
+    fi
+  fi
   ledger="$STATE/.done-pr-bounced-$task"
   while IFS= read -r line; do
     status_done_needs_pr_url "$line" "$kind" "$mode" || continue
     grep -Fxq -- "$line" "$ledger" 2>/dev/null && continue
-    if ! printf '%s\n' "$line" >> "$ledger"; then
-      triage_log "could not record missing PR link reminder for $task"
-      continue
-    fi
-    if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+    if FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
       "$SCRIPT_DIR/fm-send.sh" "$task" \
-      'Please re-post done with the full https PR URL.' >/dev/null 2>&1; then
+      'Please re-post done with the full https review URL.' >/dev/null 2>&1; then
+      if ! printf '%s\n' "$line" >> "$ledger"; then
+        triage_log "could not record missing PR link reminder for $task"
+      fi
+    else
       triage_log "missing PR link reminder delivery failed for $task; done event remains actionable"
     fi
   done <<EOF
