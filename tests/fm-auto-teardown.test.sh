@@ -117,11 +117,12 @@ if in_home "$ROOT/bin/fm-auto-teardown.sh" --eligible task-a auto-teardown-test;
 
 make_case merge-wait-batch
 git -C "$CASE/wt" update-ref refs/remotes/origin/fm/task-a HEAD
-sed 's/mode=local-only/mode=direct-PR/' "$CASE/state/task-a.meta" > "$CASE/meta"
+sed 's/mode=local-only/mode=no-mistakes/' "$CASE/state/task-a.meta" > "$CASE/meta"
 mv "$CASE/meta" "$CASE/state/task-a.meta"
 printf 'pr=https://github.com/example/sample/pull/7\n' >> "$CASE/state/task-a.meta"
+printf 'pr_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' >> "$CASE/state/task-a.meta"
 printf 'done: PR https://github.com/example/sample/pull/7\nresolved: recorded\n' > "$CASE/state/task-a.status"
-sed 's/task-a/task-b/g; s@pull/7@pull/8@' "$CASE/state/task-a.meta" > "$CASE/state/task-b.meta"
+sed 's/task-a/task-b/g; s@pull/7@pull/8@; s/mode=no-mistakes/mode=direct-PR/; /^pr_head=/d' "$CASE/state/task-a.meta" > "$CASE/state/task-b.meta"
 printf 'done: PR https://github.com/example/sample/pull/8\n' > "$CASE/state/task-b.status"
 in_home "$ROOT/bin/fm-busy-event.sh" arm "$CASE/state" task-b --state idle --source claude-hook --event Stop >/dev/null
 for id in task-a task-b; do
@@ -134,7 +135,7 @@ cat > "$FAKEBIN/gh" <<'SH'
 [ "$1 $2" = 'api graphql' ] || exit 1
 printf 'batch\n' >> "$FM_HOME/batch-calls"
 head=$(git -C "$FM_HOME/wt" rev-parse HEAD)
-printf 'w0\thttps://github.com/example/sample/pull/7\t%s\tfalse\t%s\n' "${FM_TEST_PR_STATE:-OPEN}" "${FM_TEST_PR_HEAD:-$head}"
+printf 'w0\thttps://github.com/example/sample/pull/7\t%s\tfalse\t%s\n' "${FM_TEST_PR_STATE:-OPEN}" "${FM_TEST_PR_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
 printf 'w1\thttps://github.com/example/sample/pull/8\tOPEN\tfalse\t%s\n' "$head"
 SH
 cat > "$CASE/batch-test.sh" <<'SH'
@@ -165,6 +166,10 @@ fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a
 FM_MERGE_WAIT_RESULTS=''
 if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a; then exit 1; fi
 FM_MERGE_WAIT_RESULTS=$(fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
+original_head=$(git -C "$FM_HOME/wt" rev-parse HEAD)
+git -C "$FM_HOME/wt" update-ref HEAD "$(git -C "$FM_HOME/wt" rev-parse HEAD^)"
+if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a; then exit 1; fi
+git -C "$FM_HOME/wt" update-ref HEAD "$original_head"
 printf 'working: resumed\n' >> "$FM_STATE_OVERRIDE/task-a.status"
 if fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a; then exit 1; fi
 fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-b

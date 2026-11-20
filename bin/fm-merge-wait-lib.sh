@@ -22,7 +22,7 @@ fm_merge_wait_signature() {  # <state> <id>
 }
 
 fm_merge_wait_collect() {  # <state> <bin-dir>; sets requests and GraphQL query
-  local state=$1 scripts=$2 meta id kind last activity current signature head index=0
+  local state=$1 scripts=$2 meta id kind last activity current signature head recorded_head index=0
   FM_MERGE_WAIT_REQUESTS=
   FM_MERGE_WAIT_QUERY=
   FM_MERGE_WAIT_RESULTS=
@@ -36,6 +36,10 @@ fm_merge_wait_collect() {  # <state> <bin-dir>; sets requests and GraphQL query
     case "$(fm_meta_get "$meta" yolo)" in on|1) continue ;; esac
     fm_merge_wait_signature "$state" "$id" || continue
     signature=$FM_MERGE_WAIT_SIGNATURE; head=$FM_MERGE_WAIT_HEAD
+    recorded_head=$(fm_dod_meta_value "$meta" pr_head)
+    if fm_dod_forge_head_is_named_head "$(fm_meta_get "$meta" mode)" && fm_pr_head_valid "$recorded_head"; then
+      head=$recorded_head
+    fi
     last=$(status_last_work_line "$state/$id.status") || continue
     fm_dod_done_reports_ready_pr "$last" || continue
     [ -z "$(status_open_decisions "$state/$id.status" "$kind")" ] || continue
