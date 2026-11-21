@@ -127,7 +127,7 @@ sidebar_collect() {  # <task>
       fi
     fi
   fi
-  # Metadata is one line. Never allow control bytes into the UI.
+  # Keep metadata on one line by replacing newlines, carriage returns and tabs.
   FM_SIDEBAR_DETAIL=$(printf '%s' "$FM_SIDEBAR_DETAIL" | tr '\n\r\t' '   ')
   if [ -z "$link" ]; then FM_SIDEBAR_DETAIL=$(printf '%s' "$FM_SIDEBAR_DETAIL" | cut -c1-300); fi
 }

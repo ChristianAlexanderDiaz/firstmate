@@ -675,8 +675,8 @@ Urgency is Needs me, Stuck, Needs you, Waiting for machine, Checking, Working, S
 | Status | Meaning |
 | --- | --- |
 | Working | An agent is busy. |
-| Checking | Validation or CI is progressing without an agent; detail includes `no agent` and available CI counts. |
-| Needs you | A captain-owned decision or review; available PR links appear in the detail. |
+| Checking | Validation or CI is progressing without an active agent; detail says `no agent` or `agent idle` and includes available CI counts. |
+| Needs you | A captain-owned decision or review; available PR links or open board-review links appear in the detail. |
 | Needs me | Firstmate must handle a blocker or gate. |
 | Waiting for machine | A pane-owned budget request or an explicitly queued CI runner; detail includes elapsed wait. |
 | Stuck | An exited worker has unfinished work or the watcher already reported stalled progress. |
@@ -685,7 +685,8 @@ Urgency is Needs me, Stuck, Needs you, Waiting for machine, Checking, Working, S
 | Idle | A healthy secondmate is ready for work. |
 
 Captain ownership takes priority over recovery, and existing stalled-progress evidence takes priority over Checking.
-A current non-captain validation gate without an agent is Needs me and eligible for one relaunch per run, gate, and findings; unknown ownership prevents relaunch.
+A current validation gate without an agent is Needs me; a gate with positively established non-captain ownership is eligible for one relaunch per run, gate, and findings.
+Unknown or absent hold ownership prevents relaunch.
 Recovery does not require a previous Checking observation, so gates reached between sweeps or before watcher startup remain eligible.
 Secondmate Working and Idle use Herdr's native busy signal after the existing liveness reader proves the agent alive, rather than a possibly stale status declaration.
 The replacement receives the gate and findings location, with no permission to answer ask-user findings itself.
