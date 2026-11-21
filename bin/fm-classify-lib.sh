@@ -170,6 +170,21 @@ last_status_line() {  # <status-file> [<previous-event-var>]
   printf '%s\n' "${scan##*$'\n'}"
 }
 
+# Latest work declaration, ignoring only trailing decision-resolution events.
+# This does not fold open decisions or establish that the worker is idle.
+# Cleanup and merge-wait consumers must check those independently.
+status_last_work_line() {  # <status-file>
+  local f=$1 line last='' verb legacy_re
+  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
+  legacy_re="^[[:space:]]*(${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT})"
+  while IFS= read -r line || [ -n "$line" ]; do
+    _fm_status_line_is_event "$line" "$legacy_re" || continue
+    status_line_verb "$line" verb
+    [ "$verb" = "${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}" ] || last=$line
+  done < "$f"
+  printf '%s\n' "$last"
+}
+
 # 0 when <verb> is exactly one recognized status verb, with no leftover token.
 _fm_status_verb_recognized() {  # <verb>
   case "$1" in
