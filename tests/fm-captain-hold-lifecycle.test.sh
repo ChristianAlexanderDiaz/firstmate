@@ -4875,7 +4875,7 @@ test_parked_hold_answer_modes() {
     identity=$(run_captain "$home" open "sample-$mode" --identity) || fail 'missing identity'
     if run_captain "$home" answer-for "sample-$mode" "$identity" >/dev/null; then fail 'active hold returned answer'; fi
     printf 'Answer for %s\n' "$mode" > "$home/answer.txt"
-    if [ "$mode" = repaired ]; then tasks_in "$home" done "sample-$mode" >/dev/null || fail 'close failed'; fi
+    if [ "$mode" = repaired ]; then tasks_in "$home" 'done' "sample-$mode" >/dev/null || fail 'close failed'; fi
     if [ "$mode" = released ]; then
       run_captain "$home" answer "sample-$mode" --decision-file "$home/answer.txt" --release >/dev/null || fail 'release failed'
     else

@@ -2105,7 +2105,7 @@ command_answer_for() {  # <task-id> <open-identity>
   case "$id" in ''|*[!A-Za-z0-9._-]*) return 2 ;; esac
   task_show "$id" || return 2
   show=$TASK_SHOW_OUTPUT
-  if [ "$(show_field_value "$show" state)" != done ]; then
+  if [ "$(show_field_value "$show" state)" != 'done' ]; then
     [ "$(show_field_value "$show" hold_kind)" != captain ] || return 1
   fi
   body=$(show_field_value "$show" body) || return 2
