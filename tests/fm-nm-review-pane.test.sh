@@ -49,7 +49,10 @@ elif a==['pane','close']:
  if s.get('refuse_close'): error('busy')
  s['panes'].pop(args[2],None)
 elif a==['workspace','list']:
- result={'workspaces':[{'workspace_id':'w1','focused':True,'active_tab_id':'w1:t2'}]}
+ result={'workspaces':[{'workspace_id':'w1','label':s.get('label','firstmate'),'focused':True,'active_tab_id':'w1:t2'}]}
+elif a==['workspace','rename']:
+ assert args[2]=='w1'
+ s['label']=args[3]
 elif a==['tab','list']:
  result={'tabs':[{'tab_id':'w1:t2','workspace_id':'w1','focused':True}]}
 elif a==['pane','rename']: pass
@@ -257,3 +260,17 @@ wait "$holder"
 call
 [ "$(count split)" = 1 ] || fail 'released session lock must allow next sweep'
 pass 'session lock serializes pane creation with teardown and concurrent sweeps'
+
+reset_panes
+change '{"label":"fm-panes"}'
+run_status presentation running
+"$ROOT/bin/fm-crew-state.sh" panes --sync-presentation >/dev/null
+"$ROOT/bin/fm-crew-state.sh" panes --sync-presentation >/dev/null
+python3 - "$FM_FAKE_HERDR_LOG" "$FM_FAKE_HERDR_STATE" <<'PY'
+import json,sys
+calls=[json.loads(l) for l in open(sys.argv[1])]
+assert [c for c in calls if c[:2]==['workspace','rename']]==[['workspace','rename','w1','🔍 fm-panes']]
+assert json.load(open(sys.argv[2]))['label']=='🔍 fm-panes'
+assert sum(c[:2]==['pane','split'] for c in calls)==1
+PY
+pass 'one attributed state read reconciles both the workspace emoji and review viewer without repeated renames'
