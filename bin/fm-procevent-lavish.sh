@@ -9,6 +9,7 @@
 #   fm-procevent-lavish.sh answers <result-file>
 #   fm-procevent-lavish.sh reconciles <result-file>
 #   fm-procevent-lavish.sh read <result-file>
+#   fm-procevent-lavish.sh attention <source-id>
 #   fm-procevent-lavish.sh source-id <artifact.html>
 #   fm-procevent-lavish.sh retire <artifact.html>
 #   fm-procevent-lavish.sh poll <artifact.html> [--agent-reply-file <path>]
@@ -16,6 +17,17 @@
 #
 # classify   Print the lifecycle state a handler should act on: feedback, ended,
 #            waiting, disconnected, missing, or unknown.
+# attention  Read local registration, captures, and worker liveness only. Called
+#            under the source lock by reconcile on each watcher cycle (normally
+#            5 seconds), so an eligible stopped owner can be reported on the next
+#            cycle while supervision is running.
+#            Emit owner-stopped for a dead/missing worker and unanswered after
+#            172800 seconds from registration. Captured feedback suppresses
+#            the unanswered reminder; a terminal result
+#            suppresses both, even before acknowledgement.
+#            Reconcile deduplicates each reminder per board generation. Unknown
+#            liveness never proves death; backends without recovery-grade agent
+#            classification retain that limitation. No Lavish server is queried.
 # read       Print a structured presentation of one already-captured result so a
 #            handler consumes every queued item without grepping the raw file.
 #            It is read-only over the capture: it does not arm, poll, or change
@@ -161,6 +173,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-procevent-lib.sh
 . "$SCRIPT_DIR/fm-procevent-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,/^set -u$/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 2; }
@@ -490,6 +504,55 @@ session_field() {  # <result-file> <field>
     in_s && $0 ~ "^[[:space:]]+" field ":[[:space:]]*[A-Za-z_]+[[:space:]]*$" {
       sub("^[[:space:]]+" field ":[[:space:]]*", ""); sub(/[[:space:]]*$/, ""); print; exit }
   ' "$1"
+}
+
+cmd_attention() {
+  local id=${1-} state reg record result task backend target verdict stamp now artifact mode identity answered=0
+  fm_procevent_source_id_valid "$id" || return 1
+  state=${FM_STATE_OVERRIDE:-$FM_HOME/state}
+  reg=$(fm_procevent_registry_dir "$state")
+  record="$reg/$id.source"
+  [ -f "$record" ] && [ ! -L "$record" ] || return 0
+  [ "$(sed -n '/^argv:$/q; s/^adapter=//p' "$record")" = lavish ] || return 0
+  mode=$(awk '/^argv:$/ { getline; getline; print; exit }' "$record")
+  artifact=$(awk '/^argv:$/ { getline; getline; getline; print; exit }' "$record")
+  [ "$mode" = poll ] && [ -n "$artifact" ] || return 0
+  identity=$(fm_procevent_board_generation "$record") || return 0
+  for result in "$(fm_procevent_inbox_dir "$state")/$id".*.result; do
+    [ -f "$result" ] && [ ! -L "$result" ] || continue
+    if [ -e "${result%.result}.registration" ] || [ -L "${result%.result}.registration" ]; then
+      [ -f "${result%.result}.registration" ] && [ ! -L "${result%.result}.registration" ] || continue
+      [ "$(cat "${result%.result}.registration")" = "$identity" ] || continue
+    fi
+    cmd_terminal "$result" && return 0
+    [ "$(cmd_classify "$result")" != feedback ] || answered=1
+  done
+  task=$(sed -n '/^argv:$/q; s/^owner_task=//p' "$record")
+  if [ -n "$task" ] && fm_pr_task_id_valid "$task"; then
+    # Reuse the same structural classifier as recovery; never infer death from
+    # a quiet pane, a failed transport read, or an old status-log event.
+    # shellcheck source=bin/fm-backend.sh
+    . "$SCRIPT_DIR/fm-backend.sh"
+    verdict=unknown
+    if [ ! -e "$state/$task.meta" ]; then
+      verdict=missing
+    elif fm_backend_validate_task_endpoint "$state/$task.meta" "$task" >/dev/null 2>&1 \
+      && ! grep -q '^remote_host=.' "$state/$task.meta"; then
+      backend=$(fm_backend_of_meta "$state/$task.meta")
+      target=$(fm_backend_target_of_meta "$state/$task.meta")
+      verdict=$(fm_backend_agent_state "$backend" "$target")
+    fi
+    case "$verdict" in
+      dead|missing)
+        printf 'owner-stopped\tLavish board %s (%s), task %s: its worker stopped; post a holding reply within 5 minutes and move the work.\n' "$artifact" "$id" "$task"
+        ;;
+    esac
+  fi
+  stamp=$(fm_procevent_registered_at "$record")
+  now=$(date +%s)
+  if [ "$answered" -eq 0 ] && [ "$((now - stamp))" -ge 172800 ]; then
+    printf 'unanswered\tLavish board %s (%s), owner %s: unanswered for 2 days; provide a two-line recap or close.\n' "$artifact" "$id" "${task:-firstmate}"
+  fi
 }
 
 # Classify a completed result into a lifecycle state for the handler.
@@ -966,6 +1029,7 @@ cmd_read() {
 
 case "${1-}" in
   arm)       shift; cmd_arm "$@" ;;
+  attention) shift; cmd_attention "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
   poll)      shift; cmd_poll "$@" ;;
   deliver-reply) shift; cmd_deliver_reply "$@" ;;

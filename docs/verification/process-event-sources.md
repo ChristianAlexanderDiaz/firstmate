@@ -78,10 +78,15 @@ Never at-least-once, no-loss, or lossless.
 
 ## What the runner does prove
 
+Three adapter and reconciler scenarios passed with isolated synthetic records.
+Actual worker-stop delivery within five minutes, silence for a live owner, and answered-board re-arm end to end remain unverified.
+No live Lavish session or real fleet lifecycle was exercised.
+
 Exercised by `tests/fm-procevent.test.sh` against a fake blocking source whose completion is a process event, not a timer; for the supervision-delivery and headline rows below, by `tests/fm-watch-triage.test.sh` driving a real `bin/fm-watch.sh` over a real capture and over queued strand and launch-failure keys, with `tests/fm-watch-arm.test.sh` covering the arm-time refusal; and for adapter-owned application, by `tests/fm-remote-reply.test.sh` driving the real remote-reply relay end to end in an isolated home:
 
 | Guarantee | How it is proven |
 | --- | --- |
+| board attention | `tests/fm-procevent.test.sh` checks live and unreadable owners stay quiet, a stopped owner queues one reminder on reconciliation, the two-day boundary queues one recap reminder, feedback suppresses the recap, and closed boards stay quiet; `tests/fm-watch-triage.test.sh` checks their distinct actionable headline |
 | capture before publication | the captured result exists at `0600` and its event names its committed sequence only afterward |
 | proactive delivery of a captured result | a real capture into an isolated home queues its `check` record, and a healthy watcher with a fresh beacon then exits reporting that queued result as an actionable check, before any manual drain |
 | single delivery per source and sequence | after that first proactive wake, a still-unhandled result keeps being re-announced onto the durable queue but never wakes the watcher again; once existing records receive the drain's post-handling acknowledgement and the source result is acknowledged, it is neither re-announced nor reported |

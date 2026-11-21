@@ -360,8 +360,40 @@ fm_procevent_source_lock_release() {
   fm_lock_release "$(fm_procevent_source_lock_path "$1")"
 }
 
+# Preserve the initial registration time across re-arms of an open source.
+# Legacy records use their existing mtime; retiring a source starts a new age.
+fm_procevent_registered_at() {  # <source-file>
+  local stamp
+  stamp=$(sed -n '/^argv:$/q; s/^registered_at=//p' "$1" 2>/dev/null)
+  case "$stamp" in ''|*[!0-9]*) stamp=$(fm_path_mtime "$1" 2>/dev/null || date +%s) ;; esac
+  printf '%s\n' "$stamp"
+}
+
+fm_procevent_registration_generation() {  # <source-file>
+  local generation
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  generation=$(sed -n '/^argv:$/q; s/^board_generation=//p' "$1")
+  [ -n "$generation" ] || generation=$(fm_pr_file_identity "$1") || return 1
+  case "$generation" in *[!0-9:]*|:*|*:) return 1 ;; *:*) printf '%s\n' "$generation" ;; *) return 1 ;; esac
+}
+
+fm_procevent_board_generation() {  # <source-file>
+  local record=$1 generation adapter mode artifact artifact_identity
+  generation=$(fm_procevent_registration_generation "$record") || return 1
+  adapter=$(sed -n '/^argv:$/q; s/^adapter=//p' "$record")
+  if [ "$adapter" = lavish ]; then
+    mode=$(awk '/^argv:$/ { getline; getline; print; exit }' "$record")
+    artifact=$(awk '/^argv:$/ { getline; getline; getline; print; exit }' "$record")
+    if [ "$mode" = poll ] && [ -f "$artifact" ]; then
+      artifact_identity=$(fm_pr_file_identity "$artifact") || return 1
+      generation="$generation:$artifact_identity"
+    fi
+  fi
+  printf '%s\n' "$generation"
+}
+
 fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> <argv...>
-  local state=$1 adapter=$2 id=$3 reg dest tmp arg identity
+  local state=$1 adapter=$2 id=$3 reg dest tmp arg identity generation
   shift 3
   fm_procevent_adapter_valid "$adapter" || return 1
   fm_procevent_source_id_valid "$id" || return 1
@@ -374,8 +406,15 @@ fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> <a
   [ -d "$reg" ] && [ ! -L "$reg" ] || return 1
   dest="$reg/$id.source"
   tmp=$(umask 077; mktemp "$reg/.source.XXXXXX") || return 1
+  generation=$(fm_procevent_registration_generation "$dest" 2>/dev/null) || {
+    generation=$(od -An -N16 -tu4 /dev/urandom | tr -d " \n") || { rm -f -- "$tmp"; return 1; }
+    [ -n "$generation" ] || { rm -f -- "$tmp"; return 1; }
+    generation="1:$generation"
+  }
   if {
     printf 'adapter=%s\n' "$adapter"
+    printf 'board_generation=%s\n' "$generation"
+    printf 'registered_at=%s\n' "$(fm_procevent_registered_at "$dest")"
     printf 'argc=%s\n' "$#"
     printf 'argv:\n'
     printf '%s\n' "$@"
@@ -393,7 +432,7 @@ fm_procevent_registration_publish_locked() {  # <state> <adapter> <source-id> <a
 # Publish one task-owned registration. The single source record persists across
 # rounds; the handled marker, not a second ownership record, holds the round open.
 fm_procevent_task_registration_publish_locked() {  # <state> <adapter> <source-id> <task-id> <argv...>
-  local state=$1 adapter=$2 id=$3 task=$4 reg dest tmp arg identity
+  local state=$1 adapter=$2 id=$3 task=$4 reg dest tmp arg identity generation
   shift 4
   fm_procevent_adapter_valid "$adapter" || return 1
   fm_procevent_source_id_valid "$id" || return 1
@@ -407,9 +446,16 @@ fm_procevent_task_registration_publish_locked() {  # <state> <adapter> <source-i
   [ -d "$reg" ] && [ ! -L "$reg" ] || return 1
   dest="$reg/$id.source"
   tmp=$(umask 077; mktemp "$reg/.source.XXXXXX") || return 1
+  generation=$(fm_procevent_registration_generation "$dest" 2>/dev/null) || {
+    generation=$(od -An -N16 -tu4 /dev/urandom | tr -d " \n") || { rm -f -- "$tmp"; return 1; }
+    [ -n "$generation" ] || { rm -f -- "$tmp"; return 1; }
+    generation="1:$generation"
+  }
   if {
     printf 'adapter=%s\n' "$adapter"
     printf 'kind=task-owned\n'
+    printf 'board_generation=%s\n' "$generation"
+    printf 'registered_at=%s\n' "$(fm_procevent_registered_at "$dest")"
     printf 'owner_task=%s\n' "$task"
     printf 'argc=%s\n' "$#"
     printf 'argv:\n'
@@ -542,6 +588,9 @@ fm_procevent_registration_matches_locked() {  # <state> <adapter> <source-id> <a
   tmp=$(umask 077; mktemp "$reg/.source-match.XXXXXX") || return 1
   if {
     printf 'adapter=%s\n' "$adapter"
+    # Registration metadata is not part of the listener argv contract.
+    # Preserve the legacy shape when comparing a record written before it.
+    sed -n '/^argv:$/q; /^board_generation=/p; /^registered_at=/p' "$dest"
     printf 'argc=%s\n' "$#"
     printf 'argv:\n'
     printf '%s\n' "$@"
@@ -1097,6 +1146,7 @@ fm_procevent_capture() {
   local state=$1 id=$2 adapter=$3 src=$4 extension_id=${5-} extension_version=${6-}
   local capability_version=${7-} package_digest=${8-} binding_digest=${9-} task_owner=${5-}
   local inbox seq dest tmp adapter_dest adapter_tmp owner_dest='' owner_tmp='' extension_dest='' extension_tmp=''
+  local registration_dest='' registration_tmp='' registration=${FM_PROCEVENT_CAPTURE_REGISTRATION:-}
   [ "$#" -eq 4 ] || [ "$#" -eq 5 ] || [ "$#" -eq 9 ] || return 1
   fm_procevent_source_id_valid "$id" || return 1
   fm_procevent_adapter_valid "$adapter" || return 1
@@ -1190,9 +1240,20 @@ fm_procevent_capture() {
     rm -f -- "$tmp" "$adapter_dest" "$owner_dest" "$extension_tmp"
     return 1
   fi
+  if [ -n "$registration" ] && [ "$adapter" = lavish ]; then
+    case "$registration" in *[!0-9:]*|:*) rm -f -- "$tmp" "$adapter_dest" "$owner_dest"; return 1 ;; esac
+    registration_dest="$inbox/$id.$seq.registration"
+    registration_tmp=$(umask 077; mktemp "$inbox/.registration.XXXXXX") || {
+      rm -f -- "$tmp" "$adapter_dest" "$owner_dest"; return 1
+    }
+    if ! printf '%s\n' "$registration" > "$registration_tmp" || ! mv -f -- "$registration_tmp" "$registration_dest"; then
+      rm -f -- "$tmp" "$adapter_dest" "$owner_dest" "$registration_tmp"; return 1
+    fi
+  fi
   if ! mv -f -- "$tmp" "$dest"; then
     rm -f -- "$tmp" "$adapter_dest" "$owner_dest"
     [ -z "$extension_dest" ] || rm -f -- "$extension_dest"
+    [ -z "$registration_dest" ] || rm -f -- "$registration_dest"
     return 1
   fi
   if [ "$#" -eq 9 ]; then

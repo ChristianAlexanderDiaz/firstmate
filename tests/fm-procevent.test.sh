@@ -226,6 +226,113 @@ hold_source_lock_then_handle() {  # <home> <source-id> <sequence> <ready-file> <
   HOLDER_PID=$!
 }
 
+# --- unanswered board attention uses local records, never a live server -----
+ATT="$TMP_ROOT/board-attention"; new_home "$ATT"
+ATT_BIN=$(fm_fakebin "$TMP_ROOT/attention-bin")
+export FM_ATT_ROOT="$ATT"
+cat > "$ATT_BIN/tmux" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  list-windows)
+    [ ! -e "$FM_ATT_ROOT/unknown" ] || exit 1
+    [ ! -e "$FM_ATT_ROOT/stopped" ] || exit 0
+    printf 'fm-board-worker\n'
+    ;;
+  display-message) printf 'codex\n' ;;
+  *) exit 1 ;;
+esac
+SH
+cat > "$ATT_BIN/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = poll ] || exit 2
+while [ ! -f "$FM_ATT_ROOT/answer" ]; do sleep 0.1; done
+cat "$FM_ATT_ROOT/answer"
+SH
+chmod +x "$ATT_BIN/tmux" "$ATT_BIN/lavish-axi"
+ATT_ART="$ATT/board.html"
+printf '<h1>review</h1>\n' > "$ATT_ART"
+lavish_session "$ATT_ART"
+new_task_endpoint "$ATT" board-worker
+fm_test_track_procevent_home "$ATT"
+att_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$ATT_ART")
+PATH="$ATT_BIN:$PATH" FM_HOME="$ATT" "$ROOT/bin/fm-procevent-lavish.sh" arm "$ATT_ART" --for board-worker >/dev/null
+att_reconcile() { PATH="$ATT_BIN:$PATH" pe "$ATT" reconcile >/dev/null || fail 'board reconcile failed'; }
+att_count() {
+  [ -f "$ATT/state/.wake-queue" ] || { printf '0\n'; return; }
+  awk -F '\t' -v key="procevent:$att_id:attention:$1" '$4 == key {n++} END {print n+0}' "$ATT/state/.wake-queue"
+}
+att_reconcile
+[ "$(att_count owner-stopped)" = 0 ] || fail 'live board worker raised a stopped-owner reminder'
+touch "$ATT/unknown"
+att_reconcile
+[ "$(att_count owner-stopped)" = 0 ] || fail 'unreadable worker was declared stopped'
+rm "$ATT/unknown"
+att_stopped_at=$(date +%s)
+touch "$ATT/stopped"
+mkdir -p "$ATT/state/procevent-inbox"
+printf 'session:\n  status: feedback\n' > "$ATT/state/procevent-inbox/$att_id.99.result"
+printf '0:0\n' > "$ATT/state/procevent-inbox/$att_id.99.registration"
+att_reconcile
+rm "$ATT/state/procevent-inbox/$att_id.99.result" "$ATT/state/procevent-inbox/$att_id.99.registration"
+[ "$(att_count owner-stopped)" = 1 ] || fail 'stopped board worker did not raise one reminder'
+att_queued_at=$(awk -F '\t' -v key="procevent:$att_id:attention:owner-stopped" '$4 == key {print $1}' "$ATT/state/.wake-queue")
+[ "$((att_queued_at - att_stopped_at))" -le 300 ] || fail 'stopped-owner reminder missed its five-minute window'
+assert_contains "$(wake_payloads "$ATT")" "$ATT_ART" 'owner reminder omitted the board'
+assert_contains "$(wake_payloads "$ATT")" 'task board-worker' 'owner reminder omitted its task'
+# Draining the queue does not erase the board generation's once-only receipt.
+cp "$ATT/state/.wake-queue" "$ATT/owner-wake"
+: > "$ATT/state/.wake-queue"
+att_reconcile
+[ "$(att_count owner-stopped)" = 0 ] || fail 'a drained owner reminder reappeared'
+# A fixture clock advances only the adapter's wall-clock read. No two-day sleep
+# and no real external service are needed to cross the production threshold.
+ATT_DATE=$(command -v date)
+export ATT_DATE
+cat > "$ATT_BIN/date" <<'SH'
+#!/usr/bin/env bash
+if [ "${1-}" = +%s ] && [ -f "$FM_ATT_ROOT/clock" ]; then
+  cat "$FM_ATT_ROOT/clock"
+else
+  exec "$ATT_DATE" "$@"
+fi
+SH
+chmod +x "$ATT_BIN/date"
+att_opened=$(sed -n 's/^registered_at=//p' "$ATT/state/procevent/$att_id.source")
+printf '%s\n' "$((att_opened + 172799))" > "$ATT/clock"
+att_reconcile
+[ "$(att_count unanswered)" = 0 ] || fail 'recap reminder fired before two days'
+perl -e 'utime $ARGV[0], $ARGV[0], $ARGV[1] or die $!' "$((att_opened + 169200))" "$ATT_ART"
+printf '%s\n' "$((att_opened + 172800))" > "$ATT/clock"
+att_reconcile
+[ "$(att_count unanswered)" = 1 ] || fail 'two-day unanswered board did not raise one recap reminder'
+assert_contains "$(wake_payloads "$ATT")" 'two-line recap or close' 'recap omitted the requested action'
+att_reconcile
+[ "$(att_count unanswered)" = 1 ] || fail 'two-day reminder was not deduplicated'
+# Capture a real fake-poll answer, before its worker acknowledges the round.
+printf 'session:\n  status: feedback\nprompts[1]{uid,prompt,selector,tag,text}:\n  "","approved","","message",""\n' > "$ATT/answer"
+wait_capture "$ATT" "$att_id" || fail 'board answer was not captured and released'
+mv "$ATT/state/procevent-inbox/$att_id.1.registration" "$ATT/registration"
+PATH="$ATT_BIN:$PATH" FM_HOME="$ATT" "$ROOT/bin/fm-procevent-lavish.sh" arm "$ATT_ART" --for board-worker >/dev/null || fail 'could not re-arm answered board'
+# Remove dedup receipts to check each reminder after feedback.
+rm "$ATT/state/procevent/.$att_id.attention-owner-stopped" "$ATT/state/procevent/.$att_id.attention-unanswered"
+: > "$ATT/state/.wake-queue"
+att_reconcile
+[ "$(att_count owner-stopped)" = 1 ] && [ "$(att_count unanswered)" = 0 ] || fail 'feedback incorrectly suppressed stopped-owner reminder or raised recap'
+# Terminal capture remains registered until handled, but is also ineligible.
+: > "$ATT/state/.wake-queue"
+printf 'session:\n  status: ended\n  session_ended: true\n' > "$ATT/state/procevent-inbox/$att_id.1.result"
+att_reconcile
+[ "$(att_count owner-stopped)" = 0 ] && [ "$(att_count unanswered)" = 0 ] || fail 'closed board raised a reminder'
+mv "$ATT/registration" "$ATT/state/procevent-inbox/$att_id.1.registration"
+printf '<h1>rebuilt review</h1>\n' > "$ATT/rebuilt.html"
+mv "$ATT/rebuilt.html" "$ATT_ART"
+printf '%s\n' "$(($(date +%s) + 172800))" > "$ATT/clock"
+: > "$ATT/state/.wake-queue"
+att_reconcile
+[ "$(att_count owner-stopped)" = 1 ] && [ "$(att_count unanswered)" = 1 ] || fail 'rebuilt board inherited old feedback or reminder receipts'
+PATH="$ATT_BIN:$PATH" pe "$ATT" handled "$att_id" 1 >/dev/null
+pass 'board attention scopes feedback and closure to the current registration'
+
 # --- inert with nothing configured ------------------------------------------
 IDLE="$TMP_ROOT/idle"; mkdir -p "$IDLE"
 out=$(pe "$IDLE" list)
@@ -958,8 +1065,9 @@ PATH="$MULTI_BIN:$PATH" pe "$HMULTI" handled "$multi_id" 3 >/dev/null
 PATH="$MULTI_BIN:$PATH" pe "$HMULTI" reconcile >/dev/null 2>&1 || true
 [ "$(cat "$MULTI_ROOT/count")" = 3 ] \
   || fail "the concluded board was polled again: $(cat "$MULTI_ROOT/count") polls"
-[ -z "$(wake_payloads "$HMULTI")" ] \
-  || fail "worker-owned rounds produced a firstmate wake: $(wake_payloads "$HMULTI")"
+multi_capture_wakes=$(awk -F '\t' -v id="$multi_id" '$4 ~ ("^procevent:" id ":[0-9]+$") { print $5 }' "$HMULTI/state/.wake-queue" 2>/dev/null)
+[ -z "$multi_capture_wakes" ] \
+  || fail "worker-owned rounds produced a firstmate capture wake: $multi_capture_wakes"
 pass "worker-owned Lavish rounds deliver to the worker, acknowledge on re-arm, and stop at session end"
 
 # --- end-user-aligned regression: a half-written capture does not wedge -----
