@@ -552,8 +552,7 @@ window_label() { watch_window "$1"; printf '%s' "$WATCH_LABEL"; }
 # .wedge-escalations-, .paused-*, .writing-*, .waiting-*), and live homes hold those markers on
 # disk under the current format, so the format lives here alone: a second copy is
 # how a future change to it silently orphans a window's markers instead of clearing
-# them. The helpers below take the derived key rather than re-deriving it, so one
-# poll of one window derives it once.
+# them. The helpers below take the derived key rather than duplicating its format.
 window_key() {  # <window>
   local wk_key=${1//:/_}
   wk_key=${wk_key//\//_}
