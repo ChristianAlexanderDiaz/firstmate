@@ -1015,7 +1015,7 @@ test_inventory_accepts_archived_resolutions() {
 # --release lifts the hold instead of closing, preserving the work item's own
 # body under the record; a re-held task later accepts a new answer.
 test_release_frees_held_work() {
-  local home show out snap
+  local home show out snap identity answer
   home=$(make_home release-work)
   cat > "$home/widget-body.txt" <<'EOF'
 The widget plan body. Literal escape: \n. Unicode: café.
@@ -1027,9 +1027,14 @@ EOF
   FM_CAPTAIN_HOLD_NOW=2026-06-01T12:00:00Z run_captain "$home" hold sample-widget \
     --reason "captain go needed before shipping" >/dev/null \
     || fail "could not hold the work item for the captain"
+  identity=$(run_captain "$home" open sample-widget --identity) || fail "hold identity missing"
+  if run_captain "$home" answer-for sample-widget "$identity" >/dev/null; then fail "unanswered hold supplied an answer"; fi
   printf 'Not urgent; ship it as planned.\n' > "$home/go.txt"
   run_captain "$home" answer sample-widget --decision-file "$home/go.txt" --release >/dev/null \
     || fail "answer --release failed on the held work item"
+  answer=$(run_captain "$home" answer-for sample-widget "$identity") || fail "bound answer was unavailable"
+  assert_contains "$answer" "Not urgent; ship it as planned." "bound answer lost actual words"
+  if run_captain "$home" answer-for sample-widget wrong-identity >/dev/null; then fail "wrong hold identity read answer"; fi
   show=$(tasks_in "$home" show sample-widget --full)
   assert_contains "$show" "state: queued" "a released work item did not stay queued"
   assert_contains "$show" "held: no" "a released work item kept its hold"
@@ -1070,6 +1075,7 @@ EOF
   FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-widget \
     --reason "captain pricing call needed" >/dev/null \
     || fail "could not re-hold the released work item"
+  if run_captain "$home" answer-for sample-widget "$identity" >/dev/null; then fail "re-held task reused earlier answer"; fi
   snap=$(PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_SNAPSHOT_NOW=2026-07-14T12:00:00Z \
@@ -1083,6 +1089,7 @@ EOF
   printf 'Price it at nine dollars.\n' > "$home/price.txt"
   run_captain "$home" answer sample-widget --decision-file "$home/price.txt" --release >/dev/null \
     || fail "a re-held task refused a new answer"
+  if run_captain "$home" answer-for sample-widget "$identity" >/dev/null; then fail "later answer matched old hold"; fi
   show=$(tasks_in "$home" show sample-widget --full)
   assert_contains "$show" "Price it at nine dollars." "the new answer was not recorded"
   assert_contains "$show" "Not urgent; ship it as planned." "the new answer erased the earlier record"

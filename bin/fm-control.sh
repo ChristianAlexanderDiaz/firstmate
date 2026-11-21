@@ -9,6 +9,11 @@
 #                                         [--claude-account <name>]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> relaunch --usage-limit
+#        fm-control.sh <task-id> exit|relaunch --captain-wait
+#
+# --captain-wait is the watcher-owned conditional parking operation;
+# bin/fm-captain-wait-lib.sh owns eligibility, journal and answer binding.
+# It never changes a busy worker or supplies a decision on its behalf.
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
 # DATA plane: conversational text for the agent to read, always routing-marked
@@ -211,6 +216,10 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-worker-account-lib.sh"
 # shellcheck source=bin/fm-exclude-tools-lib.sh
 . "$SCRIPT_DIR/fm-exclude-tools-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
+# shellcheck source=bin/fm-captain-wait-lib.sh
+. "$SCRIPT_DIR/fm-captain-wait-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -245,6 +254,11 @@ control_cleanup() {
      && [ "${USAGE_LIMIT:-0}" = 1 ] && [ "${NOTE_SET:-0}" = 1 ]; then
     printf 'blocked: Claude usage limit reached; replacement failed; inspect %s and the control error\n' "$JOURNAL" >> "$STATE/$ID.status"
     printf 'blocked %s replacement failed; inspect %s and the control error\n' "$ID" "$JOURNAL"
+  fi
+  if [ "$status" != 0 ] && [ "$CONTROL_LOCK_HELD" = 1 ] && [ "${CAPTAIN_WAIT:-0}" = 1 ]; then
+    case "$(jq -r .phase "$STATE/$ID.captain-wait" 2>/dev/null)" in
+      stopping|launching) fm_captain_wait_phase "$STATE/$ID.captain-wait" failed || true ;;
+    esac
   fi
   if [ "$CONTROL_LOCK_HELD" = 1 ]; then
     CONTROL_LOCK_HELD=0
@@ -287,6 +301,7 @@ NOTE_SET=0
 NEW_CLAUDE_ACCOUNT=
 CLAUDE_ACCOUNT_SET=0
 USAGE_LIMIT=0
+CAPTAIN_WAIT=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -310,6 +325,7 @@ for control_arg in "$@"; do
   fi
   case "$control_arg" in
     --usage-limit) USAGE_LIMIT=1 ;;
+    --captain-wait) CAPTAIN_WAIT=1 ;;
     --harness) control_want_value=harness ;;
     --harness=*) NEW_HARNESS=${control_arg#--harness=}; HARNESS_SET=1 ;;
     --model) control_want_value=model ;;
@@ -343,6 +359,11 @@ if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
     && [ "$CLAUDE_ACCOUNT_SET" = 0 ] && [ "$USAGE_LIMIT" = 0 ] \
     || die "--harness, --model, --effort, --claude-account, and --note/--usage-limit apply to 'relaunch' only"
+fi
+if [ "$CAPTAIN_WAIT" = 1 ]; then
+  case "$VERB" in exit|relaunch) ;; *) die "--captain-wait requires exit or relaunch" ;; esac
+  [ "$HARNESS_SET$MODEL_SET$EFFORT_SET$NOTE_SET$CLAUDE_ACCOUNT_SET$USAGE_LIMIT" = 000000 ] \
+    || die "--captain-wait cannot be combined with overrides"
 fi
 if [ "$USAGE_LIMIT" = 1 ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] \
@@ -748,6 +769,10 @@ do_exit() {
   local state cmd hazard verdict composer_state cancel absence interrupt_result=not-needed dialog
   require_state_verified_backend exit
   state=$(agent_state)
+  if [ "$CAPTAIN_WAIT" = 1 ] && [ "$VERB" = relaunch ]; then
+    fm_captain_wait_matches "$STATE/$ID.captain-wait" "$META" "$ID" \
+      && [ "$state" = dead ] || die "parked worker identity or liveness changed before relaunch"
+  fi
   case "$state" in
     reused)
       printf 'endpoint-reassigned'
@@ -798,9 +823,13 @@ do_exit() {
       ;;
     *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to send a lifecycle command into an unattributed endpoint" ;;
   esac
+  if [ "$CAPTAIN_WAIT" = 1 ] && [ "$VERB" = exit ]; then
+    fm_captain_wait_exit_guard || die "captain wait or idle evidence changed before exit"
+  fi
   # A busy agent is interrupted first before the exit command is submitted.
   case "$(busy_verdict)" in
     busy*)
+      [ "$CAPTAIN_WAIT" = 0 ] || die "worker became busy before parking"
       cancel=$(deliver_interrupt) || return $?
       state=$(agent_state)
       case "$state" in
@@ -845,6 +874,9 @@ do_exit() {
   # authoritative proof is the agent-state wait below. The retried Enter still
   # matters, because a slash command opens a completion popup on some TUIs that
   # swallows the first Enter.
+  if [ "$CAPTAIN_WAIT" = 1 ] && [ "$VERB" = exit ]; then
+    fm_captain_wait_exit_guard || die "captain wait or idle evidence changed before submission"
+  fi
   verdict=$(fm_backend_send_text_submit "$BACKEND" "$T" "$cmd" "$EXIT_RETRIES" "$POLL" 1.2 "$LABEL") \
     || die "the exit command could not be sent to task $ID on $BACKEND"
   [ "$verdict" != send-failed ] \
@@ -1358,6 +1390,11 @@ do_relaunch() {
     echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT${TARGET_CLAUDE_ACCOUNT:+ claude_account=$TARGET_CLAUDE_ACCOUNT} backend=$BACKEND endpoint=$T worktree=$WT"
   fi
 }
+
+if [ "$CAPTAIN_WAIT" = 1 ]; then
+  fm_captain_wait_control
+  exit $?
+fi
 
 # --- verbs ------------------------------------------------------------------
 

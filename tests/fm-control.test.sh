@@ -181,6 +181,7 @@ case "${1:-}" in
     done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane)
+    if [ -f "$D/on-capture" ]; then bash "$D/on-capture"; rm -f "$D/on-capture"; fi
     if [ -f "$D/after-enter" ] && [ -f "$D/keys" ] && grep -qx Enter "$D/keys"; then
       # after-enter-late holds how many captures after Enter still show the
       # ordinary pane, for a screen that renders after the submit has read it.
@@ -1315,6 +1316,146 @@ $cases
 EOF
   pass "fm-control-lib: only a runtime's own recorded session has a relaunch resume form"
 }
+
+
+# Deliberate parking uses only fixture records and the inert tmux CLI above.
+# The clock is fixed so the 1799/1800 boundary is independent of machine load.
+captain_wait_fixture() {
+  local dir=$1 gen
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1 --state idle --source fm-spawn --event seed)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  printf 'needs-decision [key=choice]: choose\npaused [key=choice] [wait=captain]: captain review\n' > "$dir/home/state/t1.status"
+  printf '10000\n' > "$dir/fake/clock"
+  cat > "$dir/fakebin/date" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = +%s ]; then cat "$FM_FAKE_DIR/clock"; else exec /bin/date "$@"; fi
+SH
+  chmod +x "$dir/fakebin/date"
+}
+
+test_captain_wait_parking_boundary_and_guards() {
+  local dir out record variant gen
+  dir=$(new_case captain-boundary)
+  captain_wait_fixture "$dir"
+  record="$dir/home/state/t1.captain-wait"
+  out=$(run_control "$dir" t1 exit --captain-wait) || fail "initial observation: $out"
+  [ ! -s "$dir/fake/literal" ] || fail 'initial observation exited worker'
+  printf '11799\n' > "$dir/fake/clock"
+  out=$(run_control "$dir" t1 exit --captain-wait) || fail "early observation: $out"
+  [ ! -s "$dir/fake/literal" ] || fail 'parked before 30 minutes'
+  printf '11800\n' > "$dir/fake/clock"
+  out=$(run_control "$dir" t1 exit --captain-wait) || fail "due park: $out"
+  [ "$(literals "$dir")" = /exit ] || fail 'did not exit exactly once at 30 minutes'
+  [ "$(jq -r .phase "$record")" = parked ] || fail 'park journal not durable'
+  [ -d "$dir/wt-t1" ] && [ -f "$dir/home/state/t1.meta" ] || fail 'parking removed task or copy'
+  out=$(run_control "$dir" t1 exit --captain-wait) || fail "replayed park: $out"
+  [ "$(literals "$dir")" = /exit ] || fail 'park retry exited twice'
+  for variant in busy unknown firstmate secondmate generation resumed resolved; do
+    dir=$(new_case "captain-$variant")
+    captain_wait_fixture "$dir"
+    out=$(run_control "$dir" t1 exit --captain-wait) || fail "$variant observe: $out"
+    printf '11800\n' > "$dir/fake/clock"
+    case "$variant" in
+      busy|unknown)
+        "$ROOT/bin/fm-busy-event.sh" apply "$dir/home/state" t1 "$variant" --current-gen --source fm-recovery --event changed >/dev/null ;;
+      firstmate) printf 'needs-decision [key=choice]: firstmate answer owed\n' > "$dir/home/state/t1.status" ;;
+      secondmate) sed -i 's/kind=ship/kind=secondmate/' "$dir/home/state/t1.meta" ;;
+      generation)
+        gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1 --state idle --source fm-spawn --event seed)
+        sed -i "s/^busy_gen=.*/busy_gen=$gen/" "$dir/home/state/t1.meta" ;;
+      resumed)
+        "$ROOT/bin/fm-busy-event.sh" apply "$dir/home/state" t1 busy --current-gen --source fm-recovery --event begin >/dev/null
+        "$ROOT/bin/fm-busy-event.sh" apply "$dir/home/state" t1 idle --current-gen --source fm-recovery --event end >/dev/null ;;
+      resolved) printf 'resolved [key=choice]: use option B\n' >> "$dir/home/state/t1.status" ;;
+    esac
+    out=$(run_control "$dir" t1 exit --captain-wait) || fail "$variant guarded observation: $out"
+    [ ! -s "$dir/fake/literal" ] || fail "parked $variant worker"
+  done
+  pass 'captain parking: 1800s boundary, preserved work, and busy/unknown/owner/generation/answer guards'
+}
+
+test_captain_wait_rechecks_before_exit_submission() {
+  local dir out variant
+  for variant in busy answer; do
+    dir=$(new_case "captain-race-$variant")
+    captain_wait_fixture "$dir"
+    out=$(run_control "$dir" t1 exit --captain-wait) || fail "$variant observe: $out"
+    printf '11800\n' > "$dir/fake/clock"
+    if [ "$variant" = busy ]; then
+      printf '%q apply %q t1 busy --current-gen --source fm-recovery --event begin\n' \
+        "$ROOT/bin/fm-busy-event.sh" "$dir/home/state" > "$dir/fake/on-capture"
+    else
+      printf 'printf %q >> %q\n' 'resolved [key=choice]: answer during capture\n' \
+        "$dir/home/state/t1.status" > "$dir/fake/on-capture"
+    fi
+    run_control "$dir" t1 exit --captain-wait >/dev/null 2>&1 || true
+    [ ! -s "$dir/fake/literal" ] || fail "$variant change during composer inspection still exited worker"
+    [ -z "$(keys_sent "$dir")" ] || fail "$variant race interrupted worker"
+  done
+  pass 'captain parking rechecks decision and busy state immediately before exit submission'
+}
+
+# Use the production policy entry point with inert lifecycle functions. The
+# executable exit above supplied the journal; no real lifecycle can run here.
+captain_wait_resume_policy() (
+  local dir=$1
+  SCRIPT_DIR="$ROOT/bin"
+  STATE="$dir/home/state"
+  export FM_HOME="$dir/home"
+  CONFIG="$dir/home/config" FM_WORKER_ACCOUNT_FAILOVER_FILE=claude-failover
+  ID=t1 META="$STATE/t1.meta" KIND=ship VERB=relaunch
+  . "$ROOT/bin/fm-classify-lib.sh"
+  . "$ROOT/bin/fm-busy-lib.sh"
+  . "$ROOT/bin/fm-captain-wait-lib.sh"
+  agent_state() { printf dead; }
+  do_relaunch() {
+    printf '%s\n' "$NOTE" >> "$dir/fake/relaunch-notes"
+    if [ -f "$dir/fake/interrupt-launch" ]; then exit 77; fi
+    printf 'replacement\n' > "$STATE/t1.busy-gen"
+  }
+  fm_captain_wait_control
+)
+
+test_captain_wait_answer_binding_and_interruption() {
+  local dir variant out record
+  for variant in answer wrong-key new-wait replacement truncation interrupt; do
+    dir=$(new_case "captain-answer-$variant")
+    captain_wait_fixture "$dir"
+    out=$(run_control "$dir" t1 exit --captain-wait) || fail "$variant observe: $out"
+    printf '11800\n' > "$dir/fake/clock"
+    out=$(run_control "$dir" t1 exit --captain-wait) || fail "$variant park: $out"
+    record="$dir/home/state/t1.captain-wait"
+    case "$variant" in
+      wrong-key) printf 'resolved [key=other]: not this answer\n' >> "$dir/home/state/t1.status" ;;
+      truncation) printf 'resolved [key=choice]: truncated record\n' > "$dir/home/state/t1.status" ;;
+      *) printf 'resolved [key=choice]: use option B exactly\n' >> "$dir/home/state/t1.status" ;;
+    esac
+    case "$variant" in
+      new-wait) printf 'paused [key=choice] [wait=captain]: new occurrence\n' >> "$dir/home/state/t1.status" ;;
+      replacement) printf 'replacement\n' > "$dir/home/state/t1.busy-gen" ;;
+      interrupt) touch "$dir/fake/interrupt-launch" ;;
+    esac
+    if ! captain_wait_resume_policy "$dir"; then
+      case "$variant" in interrupt|new-wait|truncation) ;; *) fail "$variant resume failed" ;; esac
+    fi
+    captain_wait_resume_policy "$dir" || fail "$variant replay failed"
+    case "$variant" in
+      answer|interrupt)
+        [ "$(grep -c '^Resume this task' "$dir/fake/relaunch-notes")" = 1 ] || fail "$variant launched more than once"
+        assert_grep 'use option B exactly' "$dir/fake/relaunch-notes" 'answer absent from resume note'
+        [ "$(jq -r .answer "$record")" = 'resolved [key=choice]: use option B exactly' ] || fail 'answer not saved before launch'
+        ;;
+      *) [ ! -e "$dir/fake/relaunch-notes" ] || fail "$variant launched wrong decision/incarnation" ;;
+    esac
+  done
+  pass 'captain parking: answer identity, exactly one relaunch, durable answer across interruption'
+}
+
+test_captain_wait_parking_boundary_and_guards
+test_captain_wait_rechecks_before_exit_submission
+test_captain_wait_answer_binding_and_interruption
 
 test_exit_types_each_harness_verified_command
 test_interrupt_sends_each_harness_verified_key

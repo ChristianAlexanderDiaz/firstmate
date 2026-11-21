@@ -104,6 +104,9 @@ A `kind=secondmate` task's status stream doubles as its parent-directed reply ch
 Its bare turn-ended signal is absorbed only by the ordinary authoritative working proof because an active secondmate does not enter the staleness backbone that would resurface deferred pane-churn evidence.
 A crew that declares `paused:` for a known external wait, or carries a verified `captain-held` transfer, is separately absorbed while idle and re-surfaced only on the longer pause cadence, rather than being treated as a possible wedge, except that a captain-held transfer is not rechecked while the away-posture record exists.
 An ordinary worker whose agent is confidently dead or missing while its run is parked at a gate or it declares a pause instead enters the independent recovery check in `bin/fm-watch.sh` (`exited_wait_check`), before pane capture, busy classification, or pause absorption.
+That check also schedules deliberate captain-wait parking through `bin/fm-control.sh`; `bin/fm-captain-wait-lib.sh` owns its idle threshold, identity journal, answer binding, and interruption policy.
+Intentional parking is excluded from unexpected-exit recovery until an answer arrives or lifecycle control needs reconciliation.
+The policy uses the existing semantic busy contract and task control lock, so unsupported or unknown state cannot authorize an exit, and persistent secondmates remain outside it.
 That check names the task and gate or pause.
 For a parked run with a usable run ID, it captures a fresh run-status snapshot when it can confirm the same gate; otherwise it supplies a command to read the findings.
 Its script header owns the detection budget and repeat cadence.

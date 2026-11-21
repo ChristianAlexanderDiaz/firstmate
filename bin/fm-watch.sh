@@ -25,6 +25,8 @@
 # 15s poll), plus other work in the serial poll. Repeat recovery wakes use
 # FM_STALE_ESCALATE_SECS, not every poll. Only tmux and herdr currently provide
 # recovery-grade agent liveness; unknown/unverified backends keep existing behavior.
+# The same probe schedules conditional captain-wait exit/relaunch through
+# fm-control; bin/fm-captain-wait-lib.sh owns that policy and durable journal.
 # Printed reason lines:
 #   signal: <file>...      status/turn-end signals, surfaced when a listed status
 #                          span has a captain-relevant event OR a no-verb signal lacks
@@ -252,6 +254,8 @@ WATCH_HOME_EXISTED=0
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-captain-wait-lib.sh
+. "$SCRIPT_DIR/fm-captain-wait-lib.sh"
 # Steering-inbox loss detection: bin/fm-task-inbox-lib.sh owns the record,
 # doorbell, re-ring ladder, and unavailable-endpoint contracts; this watcher
 # supplies their live endpoint and busy checks plus wake emission
@@ -564,7 +568,7 @@ window_key() {  # <window>
 # No status decision is manufactured: the stale wake requests recovery, not an
 # answer to gate findings. The usual supervisor recovery playbook owns action.
 exited_wait_check() {  # <window> <task> <kind>
-  local win=$1 task=$2 kind=$3 key probe marker gen identity agent line last detail run findings reason wt output gate
+  local win=$1 task=$2 kind=$3 key probe marker gen identity agent line last detail run findings reason wt output gate park phase verb busy
   [ -n "$task" ] && [ "$kind" != secondmate ] || return 1
   key=$(window_key "$win")
   probe="$STATE/.wait-agent-probed-$key"
@@ -573,13 +577,42 @@ exited_wait_check() {  # <window> <task> <kind>
   if [ "$(cat "$probe" 2>/dev/null || true)" = "$gen" ] \
     && [ "$(age_of "$probe")" -lt "$WAIT_AGENT_CHECK_SECS" ]; then
     [ -f "$marker" ] && return 0
+    park="$STATE/$task.captain-wait"
+    if fm_captain_wait_matches "$park" "$STATE/$task.meta" "$task"; then
+      case "$(jq -r .phase "$park")" in parked|stopping) return 0 ;; esac
+    fi
     return 1
   fi
   printf '%s' "$gen" > "$probe"
+  park="$STATE/$task.captain-wait"
+  phase=$(jq -r '.phase // empty' "$park" 2>/dev/null) || phase=
+  # Share this liveness cadence and recovery marker; deliberate parking must
+  # not be immediately undone by ordinary exited-worker recovery.
+  busy=
+  if [ "$gen" != unknown ] && [ -z "$phase" ]; then
+    busy=$(fm_busy_classify_meta "$STATE/$task.meta" "$task" "$STATE")
+  fi
+  if [ "${busy%% *}" = idle ] || [ -n "$phase" ]; then
+    verb='exit'
+    case "$phase" in stopping|parked|launching|failed) verb=relaunch ;; esac
+    if ! output=$("${FM_CONTROL_BIN:-$SCRIPT_DIR/fm-control.sh}" "$task" "$verb" --captain-wait 2>&1); then
+      triage_log "captain wait lifecycle refused for $task; retained records for recovery: $output"
+    fi
+    phase=$(jq -r '.phase // empty' "$park" 2>/dev/null) || phase=
+    if fm_captain_wait_matches "$park" "$STATE/$task.meta" "$task"; then
+      case "$phase" in
+        parked|stopping) return 0 ;;
+      esac
+    else
+      phase=
+    fi
+  fi
   agent=$(fm_backend_agent_state "$(window_backend "$win")" "$win" 2>/dev/null) || agent=unreadable
   case "$agent" in
     dead|missing) ;;
-    *) rm -f "$marker"; return 1 ;;
+    *)
+      case "$phase" in failed|launching) ;; *) rm -f "$marker"; return 1 ;; esac
+      ;;
   esac
   line=$(fm_run_timed 20 "$FM_CREW_STATE_BIN" "$task" 2>/dev/null) || line=
   last=$(status_declared_wait_line "$STATE/$task.status")
@@ -589,6 +622,9 @@ exited_wait_check() {  # <window> <task> <kind>
     *)
       if status_is_paused "$last"; then detail=$last; fi
       ;;
+  esac
+  case "$phase" in
+    failed|launching) detail="captain-wait $phase; reconcile $park before retrying lifecycle" ;;
   esac
   [ -n "$detail" ] || { rm -f "$marker"; return 1; }
   identity="$gen $agent $detail"
@@ -626,6 +662,11 @@ exited_wait_check() {  # <window> <task> <kind>
       ;;
   esac
   reason="stale: $win (agent-recovery: task $task agent $agent while $detail; recover the exited worker and reconcile the wait)"
+  case "$phase" in
+    failed|launching)
+      reason="stale: $win (agent-recovery: task $task agent $agent; $detail; inspect current state before any lifecycle action)"
+      ;;
+  esac
   fm_wake_append stale "$win" "$reason" || exit 1
   printf '%s' "$identity" > "$marker"
   clear_stale_hash_tracking "$key"
@@ -3518,8 +3559,8 @@ EOF
     task=$(window_to_task "$w" "$STATE")
     # Steering-inbox loss detection runs before the secondmate stale
     # exemption below, because a mate's steers land in an inbox too.
-    [ -z "$task" ] || inbox_steer_check "$w" "$task"
     exited_wait_check "$w" "$task" "$kind" && continue
+    [ -z "$task" ] || inbox_steer_check "$w" "$task"
     # Ready ships on the waiting-on-you list need only the batched forge read.
     # Signals and steering are still processed, and any changed identity or
     # status immediately restores ordinary pane supervision.
