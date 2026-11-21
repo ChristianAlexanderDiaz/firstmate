@@ -106,6 +106,15 @@ sidebar_collect() {  # <task>
     local link
     link=$(fm_nm_strip_quotes "$(fm_nm_field "$run_out" pr)")
     [ -n "$link" ] || link=$(fm_meta_get "$meta" pr)
+    if [ -z "$link" ]; then
+      link=$(status_open_decisions "$STATE/$id.status" "$kind" | awk -F '\t' '
+        $1 == "board-review" && $2 == "needs-decision" {
+          for (i = 3; i <= NF; i++) {
+            n = split($i, words, /[[:space:]]+/)
+            for (j = 1; j <= n; j++) if (words[j] ~ /^https?:\/\//) { print words[j]; exit }
+          }
+        }')
+    fi
     [ -z "$link" ] || FM_SIDEBAR_DETAIL="$FM_SIDEBAR_DETAIL - $link"
   fi
   # Metadata is one short line. Never allow control bytes into the UI.

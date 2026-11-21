@@ -154,6 +154,21 @@ expect Checking
 export LAB_HOLD=0
 expect 'Needs you'
 [[ $(bash "$script" sample) == *'https://example.invalid/review/7'* ]] || fail 'captain review link absent'
+printf '%s\n' 'needs-decision [key=board-review]: http://example.invalid/board/1' > "$FM_HOME/state/sample.status"
+[[ $(bash "$script" sample) != *'http://example.invalid/board/1'* ]] || fail 'board displaced PR link'
+export LAB_RUN='' LAB_LINE='state: paused · source: status-log · captain decision'
+expect 'Needs you'
+[[ $(bash "$script" sample) == *'http://example.invalid/board/1'* ]] || fail 'captain board link absent'
+python3 - "$LAB_LOG" <<'PY'
+import json, sys
+calls = [json.loads(line) for line in open(sys.argv[1]).readlines()[-2:]]
+for call in calls:
+    assert any('http://example.invalid/board/1' in item for item in call), calls
+PY
+printf '%s\n' 'resolved [key=board-review]: answered' >> "$FM_HOME/state/sample.status"
+[[ $(bash "$script" sample) != *'http://example.invalid/board/1'* ]] || fail 'closed board link retained'
+rm "$FM_HOME/state/sample.status"
+export LAB_RUN=$'run:\n  id: run1\n  status: ci\n  pr: https://example.invalid/review/7' LAB_LINE='state: working · source: run-step · ci running · run: run1'
 export LAB_HOLD=1 LAB_LINE='state: parked · source: run-step · parked at review · ask-user: authority decision · run: run1'
 export LAB_RUN=$'run:\n  id: run1\n  status: awaiting_approval\nfindings[1]{id,action}:\n  F1,ask-user'
 expect 'Needs me'
