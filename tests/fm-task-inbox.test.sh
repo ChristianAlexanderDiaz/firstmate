@@ -880,6 +880,7 @@ test_watcher_successor_escalation_stays_quiet() {
   busy_steer_check "$dir" "$(idle_capture "$dir")"
   grep -q 'Firstmate instruction waiting' "$dir/send.log" || fail "predecessor did not ring"
   rec=$(inbox_lib "$dir/state" fm_task_inbox_write "$dir/state" t1 "queued successor")
+  age_path "$rec"
   mv "$dir/state/t1.inbox/001.msg" "$dir/state/t1.inbox/handled/"
   case "$mode" in
     busy)
@@ -903,6 +904,7 @@ test_watcher_successor_escalation_stays_quiet() {
   [ -f "$rec" ] || fail "$mode successor lost its unhandled instruction"
   mv "$rec" "$dir/state/t1.inbox/handled/"
   rec=$(inbox_lib "$dir/state" fm_task_inbox_write "$dir/state" t1 "next instruction")
+  age_path "$rec"
   [ "$(FM_TASK_INBOX_GRACE_SECS=0 inbox_lib "$dir/state" fm_task_inbox_due_action "$dir/state" t1)" = "ring $rec" ] \
     || fail "$mode successor escalation suppressed the next instruction"
   pass "watcher: $mode successor escalates once despite stale predecessor ring history"
