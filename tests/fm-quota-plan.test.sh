@@ -26,8 +26,9 @@ mkdir -p "$FM_HOME"/{state,config,data,projects} "$TMP_ROOT/fakebin"
 export FM_TEST_QUOTA_FILE="$TMP_ROOT/quota.json" FM_TEST_QUOTA_CALLS="$TMP_ROOT/calls"
 cat > "$TMP_ROOT/fakebin/quota-axi" <<'SH'
 #!/usr/bin/env bash
-[ "$*" = '--all-accounts --json' ] || exit 2
+[ "$*" = "--all-accounts --json --max-age ${QUOTA_AXI_MAX_AGE:?}" ] || exit 2
 printf 'read\n' >> "$FM_TEST_QUOTA_CALLS"
+printf '%s\n' "$QUOTA_AXI_MAX_AGE" >> "$FM_TEST_QUOTA_CALLS.ages"
 [ ! -e "$FM_TEST_QUOTA_FILE.fail" ] || exit 2
 cat "$FM_TEST_QUOTA_FILE"
 SH
@@ -120,6 +121,12 @@ touch "$FM_TEST_QUOTA_FILE.fail"
 expect_defer claude 0 ship
 rm "$FM_TEST_QUOTA_FILE.fail"
 fixture "$now" "$((now+500000))" 100
+rm -f "$FM_HOME/state/quota-plan-snapshot.json"
+fm_quota_plan_snapshot "$FM_HOME/state" "$now" || fail 'default shared-cache read'
+[ "$(tail -1 "$FM_TEST_QUOTA_CALLS.ages")" = 60 ] || fail 'quota plan lost default reuse bound'
+rm -f "$FM_HOME/state/quota-plan-snapshot.json"
+QUOTA_AXI_MAX_AGE=2m fm_quota_plan_snapshot "$FM_HOME/state" "$now" || fail 'override shared-cache read'
+[ "$(tail -1 "$FM_TEST_QUOTA_CALLS.ages")" = 2m ] || fail 'quota plan lost operator override'
 fm_quota_plan_admit "$FM_HOME" "$FM_HOME/config" claude 0 ship || fail 'fresh admission'
 [ ! -f "$FM_QUOTA_PLAN_CACHE" ] || fail 'admission reused quota sample for next start'
 # A separate process cannot acquire admission while the first launch owns it.
