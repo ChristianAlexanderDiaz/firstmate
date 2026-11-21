@@ -7,6 +7,21 @@ set -eu
 . "$ROOT/bin/fm-sidebar-lib.sh"
 fm_sidebar_classify 'state: failed · source: status-log · failure' alive secondmate no no '' '' '' no
 [ "$FM_SIDEBAR_WORD" = 'Needs me' ] || fail 'failed secondmate must not read as healthy Idle'
+for agent in alive dead; do
+  for detail in 'run passed: PR open' 'run passed: PR open (publication/CI verification skipped)' \
+    'checks green: PR held for merge (ci monitor ended): https://example.invalid/pr/1' \
+    'checks green: PR ready for review (still monitoring for merge/close): https://example.invalid/pr/1' \
+    'checks green: PR ready for review' 'checks green: PR ready for review · run: run1'; do
+    fm_sidebar_classify "state: done · source: run-step · $detail" "$agent" ship no no '' '' '' '' busy
+    [ "$FM_SIDEBAR_WORD" = 'Needs you' ] || fail "review disposition missing: $detail"
+  done
+  for detail in 'run passed: PR closed' 'run passed: PR state unknown (unreadable)' \
+    'run passed: PR state unknown (no PR identity)' 'run completed' \
+    'checks green: PR ready for review unverified'; do
+    fm_sidebar_classify "state: done · source: run-step · $detail" "$agent" ship no no '' '' '' '' busy
+    [ -z "$FM_SIDEBAR_WORD" ] || fail "unverified disposition classified: $detail"
+  done
+done
 TMP_ROOT=$(fm_test_tmproot fm-sidebar)
 mkdir -p "$TMP_ROOT/home/state" "$TMP_ROOT/home/data" "$TMP_ROOT/bin" "$TMP_ROOT/fakebin"
 export FM_HOME="$TMP_ROOT/home" FM_STATE_OVERRIDE="$TMP_ROOT/home/state"
@@ -202,6 +217,8 @@ bash "$script" sample --refresh
 [ ! -s "$FM_HOME/state/.wake-queue" ] || fail 'display duplicated the watcher alert owner'
 export LAB_LINE='state: done · source: run-step · run passed: PR merged'
 expect Done
+export LAB_LINE='state: done · source: run-step · run passed: PR merged (publication/CI verification skipped) · run: run1'
+expect Done
 export LAB_LINE='state: done · source: run-step · run passed: PR state unknown (unreadable)'
 [ -z "$(bash "$script" sample)" ] || fail 'unknown completion must not request captain action'
 export LAB_LINE='state: done · source: run-step · run passed: PR open'
@@ -211,6 +228,10 @@ expect 'Needs you'
 export LAB_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close): https://example.invalid/review/7'
 expect 'Needs you'
 [[ $(bash "$script" sample) == *'https://example.invalid/review/7'* ]] || fail 'monitoring review link absent'
+export LAB_LINE='state: done · source: run-step · checks green: PR ready for review · run: run1'
+export LAB_RUN=$'run:\n  id: run1\n  pr: https://example.invalid/review/7'
+expect 'Needs you'
+[[ $(bash "$script" sample) == *'https://example.invalid/review/7'* ]] || fail 'checks-passed review link absent'
 export LAB_LINE='state: done · source: run-step · checks green: PR merged (ci monitor ended): https://example.invalid/review/7'
 expect Done
 export LAB_LINE='state: done · source: run-step · run passed: PR state unknown (unreadable)'
