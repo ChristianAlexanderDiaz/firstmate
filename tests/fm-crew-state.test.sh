@@ -5942,12 +5942,17 @@ EOF
   FM_FAKE_AXI_STATUS="$(run_parked_crewmate_gate_with_ask_user_prose fm/work-emoji)"
   out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
   [ "$out" = 🔍 ] || fail "the worker's own review gate stays in review: $out"
+  cp "$d/state/emoji.meta" "$d/state/emoji.meta.open"
+  printf 'presentation=closed\n' >> "$d/state/emoji.meta"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
+  [ -z "$out" ] || fail "a closed workspace must not have a state emoji: $out"
+  mv "$d/state/emoji.meta.open" "$d/state/emoji.meta"
   printf 'kind=secondmate\n' >> "$d/state/emoji.meta"
   out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" emoji --work-emoji)
   [ -z "$out" ] || fail "secondmate must not have a state emoji: $out"
   out=$(FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" absent --work-emoji)
   [ -z "$out" ] || fail "missing task must not guess a state: $out"
-  pass "work-state emoji: building, review, CI, merge approval, external and captain waits, unknown and secondmate"
+  pass "work-state emoji: building, review, CI, merge approval, external and captain waits, unknown, closed and secondmate"
 }
 test_work_state_emoji
 
