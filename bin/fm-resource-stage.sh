@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Local no-mistakes/test/build/hook adapter; no daemon lifecycle management.
 # Usage: fm-resource-stage.sh [--class <class>] -- <executable> [argv...]
-# Unconfigured hosts execute normally; configured hosts require the one owner.
+# Unconfigured hosts honor the gaming flag; configured hosts require the owner.
 # fm-resource-run --help owns configuration and leases.
 set -eu
 resource_class=exclusive

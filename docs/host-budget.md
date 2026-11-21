@@ -49,6 +49,14 @@ Retire the check with `bin/fm-check-unregister.sh host-budget` in that home befo
 
 ## Local launch boundaries
 
+For a manual gaming session, create the home's `state/.gaming` flag and remove it when finished.
+While present, new heavy stages take turns using `state/.heavy-job.lock`; queued stages recheck the flag and resume normal admission when it is removed.
+Already running work is not interrupted, and the configured host budget remains authoritative after the gaming gate admits a stage.
+This also works without a host policy through `fm-resource-stage.sh`, including the test and lint entry points; resident worker launches are unaffected.
+When invoking tools from another installation or isolated copy, set `FM_HOME` to the home whose flag they should honor.
+Never remove the lock file itself.
+`bin/fm-resource-run gaming-run --help` owns state-directory selection and the standalone gate interface.
+
 ```sh
 bin/fm-resource-run run --class test -- vitest run
 bin/fm-resource-run run --class build -- npm run build
