@@ -83,6 +83,8 @@ def handle(budget, request):
     if legacy and request.get("op") == "inherit-browser":
         raise resource.Refusal("invalid request nonce")
     result = real_handle(budget, request)
+    if legacy:
+        result.pop("cpuWorkers", None)
     if legacy and request.get("op") == "status":
         result.pop("portable", None)
     return result
@@ -109,7 +111,8 @@ def offset():
         return 0
 
 
-resource.time = types.SimpleNamespace(time=wall_time, monotonic=lambda: real_time.monotonic() + offset(), sleep=real_time.sleep)
+resource.time = types.SimpleNamespace(time=wall_time, monotonic=lambda: real_time.monotonic() + offset(),
+                                      sleep=real_time.sleep, strftime=real_time.strftime, gmtime=real_time.gmtime)
 
 
 def publish():
