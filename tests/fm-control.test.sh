@@ -1376,6 +1376,33 @@ test_captain_wait_parking_boundary_and_guards() {
   pass 'captain parking: 1800s boundary, preserved work, and busy/unknown/owner/generation/answer guards'
 }
 
+test_captain_wait_direct_hold_with_other_question() {
+  local dir out
+  dir=$(new_case captain-direct-question)
+  mkdir -p "$dir/hold-bin" "$dir/state"
+  cat > "$dir/hold-bin/fm-captain-hold.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 't1#hold-occurrence'
+SH
+  chmod +x "$dir/hold-bin/fm-captain-hold.sh"
+  printf 'needs-decision [key=other]: firstmate answer owed\n' > "$dir/state/t1.status"
+  if out=$(STATE="$dir/state" SCRIPT_DIR="$dir/hold-bin" bash -c '
+    . "$1/bin/fm-classify-lib.sh"
+    . "$1/bin/fm-captain-wait-lib.sh"
+    fm_captain_wait_decision t1
+  ' _ "$ROOT"); then
+    fail "direct hold accepted an unrelated open question: $out"
+  fi
+  printf 'resolved [key=other]: answered\n' >> "$dir/state/t1.status"
+  out=$(STATE="$dir/state" SCRIPT_DIR="$dir/hold-bin" bash -c '
+    . "$1/bin/fm-classify-lib.sh"
+    . "$1/bin/fm-captain-wait-lib.sh"
+    fm_captain_wait_decision t1
+  ' _ "$ROOT") || fail 'direct hold rejected after the other question was answered'
+  [ "$(printf '%s' "$out" | jq -r .identity)" = 't1#hold-occurrence' ] || fail 'direct hold lost occurrence identity'
+  pass 'direct captain hold excludes another unanswered question'
+}
+
 test_captain_wait_rechecks_before_exit_submission() {
   local dir out variant
   for variant in busy answer; do
@@ -1454,6 +1481,7 @@ test_captain_wait_answer_binding_and_interruption() {
 }
 
 test_captain_wait_parking_boundary_and_guards
+test_captain_wait_direct_hold_with_other_question
 test_captain_wait_rechecks_before_exit_submission
 test_captain_wait_answer_binding_and_interruption
 

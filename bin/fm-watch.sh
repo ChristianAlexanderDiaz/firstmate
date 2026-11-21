@@ -3559,8 +3559,8 @@ EOF
     task=$(window_to_task "$w" "$STATE")
     # Steering-inbox loss detection runs before the secondmate stale
     # exemption below, because a mate's steers land in an inbox too.
-    exited_wait_check "$w" "$task" "$kind" && continue
     [ -z "$task" ] || inbox_steer_check "$w" "$task"
+    exited_wait_check "$w" "$task" "$kind" && continue
     # Ready ships on the waiting-on-you list need only the batched forge read.
     # Signals and steering are still processed, and any changed identity or
     # status immediately restores ordinary pane supervision.

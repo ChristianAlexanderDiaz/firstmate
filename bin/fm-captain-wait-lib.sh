@@ -32,6 +32,7 @@ fm_captain_wait_decision() {  # <task> -> JSON
   local task=$1 call line key open position rc=0
   if call=$("$SCRIPT_DIR/fm-captain-hold.sh" open "$task" --identity 2>/dev/null); then
     [ -n "${call%#*}" ] || return 1
+    [ -z "$(status_own_open_decisions "$STATE/$task.status")" ] || return 1
     jq -cn --arg call "$call" '{type:"hold",identity:$call}'
     return
   else
