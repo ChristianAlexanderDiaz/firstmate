@@ -2099,19 +2099,15 @@ EOF
   done
 }
 
-# Still an open captain call? Exit 0 yes, 1 no, 2 cannot tell (see the header).
-# A row this home does not carry is 3 when the caller requests the distinction,
-# and so is a home with no backlog file at all, because a backlog that does not
-# exist holds nothing. Every read failure over a record that DOES exist is a 2,
-# printed to stderr, because a mechanical closer must never read "cannot tell"
-# as permission to close.
 command_answer_for() {  # <task-id> <open-identity>
   local id=${1:-} identity=${2:-} show body
   [ "$#" = 2 ] && [ -n "$identity" ] || return 2
   case "$id" in ''|*[!A-Za-z0-9._-]*) return 2 ;; esac
   task_show "$id" || return 2
   show=$TASK_SHOW_OUTPUT
-  [ "$(show_field_value "$show" hold_kind)" != captain ] || return 1
+  if [ "$(show_field_value "$show" state)" != done ]; then
+    [ "$(show_field_value "$show" hold_kind)" != captain ] || return 1
+  fi
   body=$(show_field_value "$show" body) || return 2
   [ "$(printf '%s\n' "$body" | sed -n '4p')" = "Captain hold identity: $identity" ] || return 1
   case "$(recorded_resolution_mode "$body")" in answered|released|repaired) ;; *) return 1 ;; esac
@@ -2119,6 +2115,12 @@ command_answer_for() {  # <task-id> <open-identity>
   printf '%s\n' "$body"
 }
 
+# Still an open captain call? Exit 0 yes, 1 no, 2 cannot tell (see the header).
+# A row this home does not carry is 3 when the caller requests the distinction,
+# and so is a home with no backlog file at all, because a backlog that does not
+# exist holds nothing. Every read failure over a record that DOES exist is a 2,
+# printed to stderr, because a mechanical closer must never read "cannot tell"
+# as permission to close.
 command_open() {  # <task-id> [--identity] [--distinguish-absent]
   local id='' identity=0 distinguish_absent=0 data state root file backend show shown_body
   while [ "$#" -gt 0 ]; do

@@ -817,6 +817,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-captain-wait-lib.sh
+. "$SCRIPT_DIR/fm-captain-wait-lib.sh"
 # shellcheck source=bin/fm-polytoken-lib.sh
 . "$SCRIPT_DIR/fm-polytoken-lib.sh"
 # shellcheck source=bin/fm-cursor-lib.sh
@@ -4399,7 +4401,10 @@ if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
       echo "error: spawn refused - the supervision branch under the away-posture record may dispatch only queued unblocked work (already queued, or filed by the branch from the captain's away words); task $ID has no dispatchable backlog item in this home" >&2
       exit 1
     fi
-  elif ! fm_backlog_row_dispatchable "$BACKLOG_ROW_STATE" "$BACKLOG_DISPATCH_MODE"; then
+  elif ! fm_backlog_row_dispatchable "$BACKLOG_ROW_STATE" "$BACKLOG_DISPATCH_MODE" \
+    && ! { [ "$RELAUNCH" = 1 ] && [ "$SPAWN_CONTROL_PARENT" = 1 ] \
+      && fm_captain_wait_matches "$STATE/$ID.captain-wait" "$STATE/$ID.meta" "$ID" \
+      && fm_captain_wait_closed_relaunch "$ID" "$BACKLOG_ROW_STATE"; }; then
     echo "error: this home's backlog item $ID is not dispatchable in state $BACKLOG_ROW_STATE; refusing before creating its endpoint or local copy" >&2
     exit 1
   fi
@@ -6365,6 +6370,13 @@ fi
 # point below so every earlier launch-delivery failure remains unwindable.
 spawn_commit_backlog_transition() {
   [ "$BACKLOG_TRANSITION" = 1 ] || return 0
+  if [ "$RELAUNCH" = 1 ] && [ "$SPAWN_CONTROL_PARENT" = 1 ] \
+    && [ -n "${FM_CONTROL_RELAUNCH_TX:-}" ] \
+    && [ "$(fm_meta_get "$STATE/$ID.meta" control_relaunch_tx)" = "$FM_CONTROL_RELAUNCH_TX" ] \
+    && fm_backlog_row_probe "$DATA" "$ID" \
+    && fm_captain_wait_closed_relaunch "$ID" "$FM_BACKLOG_ROW_STATE"; then
+    return 0
+  fi
   fm_backlog_atomic_transition dispatch "$STATE/$ID.meta" "$DATA" "$ID" "$STATE" "$BACKLOG_DISPATCH_MODE"
 }
 
@@ -6399,6 +6411,11 @@ spawn_report_preserved_state() {
       return 0
       ;;
   esac
+  if [ "$RELAUNCH" = 1 ] && [ "$SPAWN_CONTROL_PARENT" = 1 ] \
+    && fm_captain_wait_closed_relaunch "$ID" "$FM_BACKLOG_ROW_STATE"; then
+    SPAWN_PRESERVED_CLAIM="verified preserved: its paired task record is present and its answered backlog item remains Done"
+    return 0
+  fi
   # The commit reported success, but the row does not read back In flight:
   # move it now under the same lock and verify the result before naming it.
   fm_backlog_start "$DATA" "$ID" || repair_error=$FM_BACKLOG_TRANSITION_ERROR

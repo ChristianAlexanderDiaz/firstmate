@@ -1296,6 +1296,8 @@ require_relaunch_backlog_eligible() {
     die "task $ID's backlog item could not be read before relaunch ($FM_BACKLOG_ROW_ERROR)"
   }
   fm_backlog_row_dispatchable "$FM_BACKLOG_ROW_STATE" --relaunch \
+    || { fm_captain_wait_matches "$STATE/$ID.captain-wait" "$META" "$ID" \
+      && fm_captain_wait_closed_relaunch "$ID" "$FM_BACKLOG_ROW_STATE"; } \
     || die "this home's backlog item $ID is not dispatchable in state $FM_BACKLOG_ROW_STATE; refusing before stopping its agent"
 }
 
@@ -1351,7 +1353,7 @@ do_relaunch() {
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
   [ "$CLAUDE_ACCOUNT_SET" = 0 ] || spawn_args+=(--claude-account "$NEW_CLAUDE_ACCOUNT")
-  if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
+  if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" FM_CAPTAIN_WAIT_RELAUNCH="${FM_CAPTAIN_WAIT_RELAUNCH:-}" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
     # $T was resolved from the record before the launch. When the recorded

@@ -92,6 +92,16 @@ fm_captain_wait_answer() {  # <record> <task> -> answer, only for the same occur
   printf '%s\n' "$identity"
 }
 
+fm_captain_wait_closed_relaunch() {  # <task> <row>
+  local task=$1 row=$2 record="$STATE/$1.captain-wait" answer
+  case "$row" in done\ *) ;; *) return 1 ;; esac
+  [ "${FM_CAPTAIN_WAIT_RELAUNCH:-}" = "$task" ] || return 1
+  [ "$(jq -r '.phase' "$record" 2>/dev/null)" = launching ] || return 1
+  [ "$(jq -r '.decision.type' "$record")" = hold ] || return 1
+  answer=$(fm_captain_wait_answer "$record" "$task") || return 1
+  [ "$answer" = "$(jq -r '.answer' "$record")" ]
+}
+
 # Called immediately before exit submission too: never interrupt a newly busy
 # worker or exit after its decision was answered during composer inspection.
 fm_captain_wait_exit_guard() {
@@ -156,7 +166,7 @@ $answer"
       fi
       fm_captain_wait_matches "$record" "$META" "$ID" || return 1
       [ "$(agent_state)" = dead ] || return 1
-      do_relaunch
+      FM_CAPTAIN_WAIT_RELAUNCH="$ID" do_relaunch
       fm_captain_wait_phase "$record" complete
       return
       ;;
