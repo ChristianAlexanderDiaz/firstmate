@@ -31,6 +31,9 @@
 #   fm-captain-hold.sh complete <origin-id> (--none | <task-id>...)
 #   fm-captain-hold.sh verify <origin-id> [--answered]
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
+#   fm-captain-hold.sh answer-for <task-id> <hold-identity>
+#     Read a completed answer for exactly that open --identity occurrence.
+#     Prints the retained resolution body; a re-hold or unreadable row refuses.
 #   fm-captain-hold.sh diverged
 #   fm-captain-hold.sh reconcile list
 #   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
@@ -1135,8 +1138,10 @@ command_hold() {
 # preserving the previous body below it and archiving the pristine original.
 # Successful closure removes the stamp to restore resolution-first ordering.
 write_resolution_record() {  # <task-id> <mode> <shown-body>
-  local id=$1 mode=$2 body=$3 new_body tmp hold_set
+  local id=$1 mode=$2 body=$3 new_body tmp hold_set identity
+  identity="$(body_hold_set_timestamp "$(decode_shown_value "$body")")#$(resolution_record_count "$body")"
   new_body=$(resolution_block "$mode")
+  new_body=${new_body/"Resolution mode: $mode"/"Resolution mode: $mode"$'\n'"Captain hold identity: $identity"}
   body=$(decode_shown_value "$body") \
     || fail "could not decode the existing body for $id"
   hold_set=$(body_hold_set_timestamp "$body")
@@ -2094,6 +2099,22 @@ EOF
   done
 }
 
+command_answer_for() {  # <task-id> <open-identity>
+  local id=${1:-} identity=${2:-} show body
+  [ "$#" = 2 ] && [ -n "$identity" ] || return 2
+  case "$id" in ''|*[!A-Za-z0-9._-]*) return 2 ;; esac
+  task_show "$id" || return 2
+  show=$TASK_SHOW_OUTPUT
+  if [ "$(show_field_value "$show" state)" != 'done' ]; then
+    [ "$(show_field_value "$show" hold_kind)" != captain ] || return 1
+  fi
+  body=$(show_field_value "$show" body) || return 2
+  [ "$(printf '%s\n' "$body" | sed -n '4p')" = "Captain hold identity: $identity" ] || return 1
+  case "$(recorded_resolution_mode "$body")" in answered|released|repaired) ;; *) return 1 ;; esac
+  body_has_resolution_record "$body" || return 1
+  printf '%s\n' "$body"
+}
+
 # Still an open captain call? Exit 0 yes, 1 no, 2 cannot tell (see the header).
 # A row this home does not carry is 3 when the caller requests the distinction,
 # and so is a home with no backlog file at all, because a backlog that does not
@@ -2177,6 +2198,7 @@ case "${1:-}" in
   complete) shift; command_complete "$@" ;;
   verify) shift; command_verify "$@" ;;
   open) shift; command_open "$@" ;;
+  answer-for) shift; command_answer_for "$@" ;;
   diverged) shift; command_diverged "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;

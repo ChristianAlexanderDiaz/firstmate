@@ -7369,6 +7369,7 @@ exited_wait_start() {  # <fixture> [probe-seconds]
   local dir=$1
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir" \
     FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" FM_DATA_OVERRIDE="$dir/data" FM_WAIT_LAB="$dir" \
+    FM_CONTROL_BIN="${FM_TEST_WAIT_CONTROL:-$(dirname "$WATCH")/fm-control.sh}" \
     FM_CREW_STATE_BIN="${3:-$(dirname "$WATCH")/fm-crew-state.sh}" \
     FM_WATCH_HANDLING_SUCCESSOR=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1000000 FM_HEARTBEAT_MAX=1000000 \
@@ -7382,6 +7383,58 @@ exited_wait_state() {  # <fixture>
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir" \
     FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" FM_DATA_OVERRIDE="$dir/data" FM_WAIT_LAB="$dir" \
     "$(dirname "$WATCH")/fm-crew-state.sh" parked
+}
+
+test_deliberate_captain_park_does_not_request_recovery() {
+  local dir pid meta
+  dir=$(exited_wait_fixture deliberate-captain-park)
+  meta=$(cat "$dir/state/parked.meta")
+  printf 'bash\n' > "$dir/agent"
+  printf 'paused [key=choice] [wait=captain]: choose option\n' > "$dir/state/parked.status"
+  prime_status_seen "$dir/state" "$dir/state/parked.status"
+  jq -n --arg meta "$meta" '{phase:"parked",meta:$meta,gen:"old-incarnation"}' > "$dir/state/parked.captain-wait"
+  cat > "$dir/fakebin/control" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_WAIT_LAB/control-calls"
+STUB
+  chmod +x "$dir/fakebin/control"
+  FM_TEST_WAIT_CONTROL="$dir/fakebin/control" exited_wait_start "$dir" 2
+  pid=$EXITED_WAIT_PID
+  wait_poll_cycle "$dir/state" "$pid" 300 || { reap "$pid"; fail 'deliberate park requested recovery'; }
+  sleep 4
+  kill -0 "$pid" 2>/dev/null || fail "deliberate park woke supervisor: $(cat "$dir/watch.out")"
+  [ ! -s "$dir/state/.wake-queue" ] || { reap "$pid"; fail 'deliberate park queued a recovery'; }
+  assert_grep 'parked relaunch --captain-wait' "$dir/control-calls" 'park did not check for answer through control plane'
+  jq '.phase="failed"' "$dir/state/parked.captain-wait" > "$dir/failed.json"
+  mv "$dir/failed.json" "$dir/state/parked.captain-wait"
+  wait_for_exit "$pid" 200 || { reap "$pid"; fail 'failed deliberate park did not request recovery'; }
+  assert_grep 'agent-recovery:' "$dir/watch.out" 'parking failure did not use existing recovery'
+  assert_grep 'captain-wait failed' "$dir/watch.out" 'parking failure lost its retained journal context'
+  [ "$(wc -l < "$dir/state/.wake-queue")" -eq 1 ] || fail 'parking failure duplicated recovery'
+  pass 'deliberate captain parking suppresses exited-wait recovery; failures use its existing marker'
+}
+
+test_deliberate_captain_park_escalates_unread_steer() {
+  local dir pid rec meta
+  dir=$(exited_wait_fixture deliberate-park-steer)
+  meta=$(cat "$dir/state/parked.meta")
+  printf 'bash\n' > "$dir/agent"
+  printf 'paused [key=choice] [wait=captain]: choose option\n' > "$dir/state/parked.status"
+  prime_status_seen "$dir/state" "$dir/state/parked.status"
+  jq -n --arg meta "$meta" '{phase:"parked",meta:$meta,gen:"old-incarnation"}' > "$dir/state/parked.captain-wait"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/control"
+  chmod +x "$dir/fakebin/control"
+  FM_TEST_WAIT_CONTROL="$dir/fakebin/control" exited_wait_start "$dir" 2; pid=$EXITED_WAIT_PID
+  wait_poll_cycle "$dir/state" "$pid" 300 || { reap "$pid"; fail 'park did not stay silent'; }
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir" \
+    FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" FM_DATA_OVERRIDE="$dir/data" \
+    FM_WAIT_LAB="$dir" FM_SEND_SETTLE=0 "$ROOT/bin/fm-send.sh" parked 'unrelated instruction' > "$dir/send.out" 2>&1 \
+    || { reap "$pid"; fail "send failed: $(cat "$dir/send.out")"; }
+  rec="$dir/state/parked.inbox/001.msg"
+  wait_for_exit "$pid" 150 || { reap "$pid"; fail 'parked worker instruction was not escalated'; }
+  assert_grep "$rec" "$dir/state/.wake-queue" 'recovery must identify unread instruction'
+  [ "$(wc -l < "$dir/state/.wake-queue")" -eq 1 ] || fail 'instruction recovery duplicated'
+  pass 'deliberate captain park escalates an unread instruction'
 }
 
 test_exited_steer_wakes_running_successor() {
@@ -7557,6 +7610,8 @@ fi
 test_done_pr_url_classifier
 test_done_missing_pr_bounce
 test_exited_steer_wakes_running_successor
+test_deliberate_captain_park_does_not_request_recovery
+test_deliberate_captain_park_escalates_unread_steer
 test_exited_wait_snapshot_identity
 test_exited_wait_recovery
 test_status_span_actionable_classifier

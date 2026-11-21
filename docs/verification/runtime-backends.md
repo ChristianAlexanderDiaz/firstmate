@@ -213,6 +213,36 @@ In a separate single send observation, the baseline took 3015 ms and recorded on
 These individual observations are not throughput measurements, and the later findings-status read adds up to three seconds to the documented bound.
 Live Herdr behavior still requires a post-merge check in an authorized isolated lab.
 
+## Workers parked for a captain answer
+
+Verified on 2026-11-21 with GNU Bash 5.2.21 and inert lifecycle fixtures:
+
+```sh
+bash bin/fm-test-run.sh tests/fm-control.test.sh
+bash bin/fm-test-run.sh tests/fm-captain-hold-lifecycle.test.sh
+FM_TEST_ONLY=test_deliberate_captain_park_does_not_request_recovery bash bin/fm-test-run.sh tests/fm-watch-triage.test.sh
+FM_TEST_ONLY=test_exited_wait_recovery bash bin/fm-test-run.sh tests/fm-watch-triage.test.sh
+```
+
+Observed output:
+
+```text
+ok - captain parking: 1800s boundary, preserved work, and busy/unknown/owner/generation/answer guards
+ok - captain parking rechecks decision and busy state immediately before exit submission
+ok - captain parking: answer identity, exactly one relaunch, durable answer across interruption
+ok - release frees held work with the captain's words recorded and the body preserved
+ok - deliberate captain parking suppresses exited-wait recovery; failures use its existing marker
+ok - exited gate and pause wake promptly, throttle repeats, and clear on relaunch
+```
+
+The control cases drive the executable against a stub backend CLI, a controlled clock, and disposable task records; answer-delivery cases replace the lifecycle functions with inert recorders.
+The hold lifecycle case checks the exact retained answer identity, including refusal after a re-hold or a later answer.
+The watcher cases use disposable records and stubbed control, tmux, Herdr, and no-mistakes commands.
+They prove parking policy and recovery integration, not live vendor classification or live lifecycle behavior.
+No vendor-emitted liveness signature changed, and the existing control capability checks still exclude unverified backends.
+Live Herdr lifecycle validation remains unverified and requires an authorized isolated lab.
+The policy owner is `bin/fm-captain-wait-lib.sh`; lifecycle implementation remains in `bin/fm-control.sh`.
+
 ## tmux
 
 Foreground-process behavior was verified on 2026-07-07 with tmux 3.6a on macOS.

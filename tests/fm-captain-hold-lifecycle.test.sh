@@ -1015,7 +1015,7 @@ test_inventory_accepts_archived_resolutions() {
 # --release lifts the hold instead of closing, preserving the work item's own
 # body under the record; a re-held task later accepts a new answer.
 test_release_frees_held_work() {
-  local home show out snap
+  local home show out snap identity answer
   home=$(make_home release-work)
   cat > "$home/widget-body.txt" <<'EOF'
 The widget plan body. Literal escape: \n. Unicode: café.
@@ -1027,9 +1027,14 @@ EOF
   FM_CAPTAIN_HOLD_NOW=2026-06-01T12:00:00Z run_captain "$home" hold sample-widget \
     --reason "captain go needed before shipping" >/dev/null \
     || fail "could not hold the work item for the captain"
+  identity=$(run_captain "$home" open sample-widget --identity) || fail "hold identity missing"
+  if run_captain "$home" answer-for sample-widget "$identity" >/dev/null; then fail "unanswered hold supplied an answer"; fi
   printf 'Not urgent; ship it as planned.\n' > "$home/go.txt"
   run_captain "$home" answer sample-widget --decision-file "$home/go.txt" --release >/dev/null \
     || fail "answer --release failed on the held work item"
+  answer=$(run_captain "$home" answer-for sample-widget "$identity") || fail "bound answer was unavailable"
+  assert_contains "$answer" "Not urgent; ship it as planned." "bound answer lost actual words"
+  if run_captain "$home" answer-for sample-widget wrong-identity >/dev/null; then fail "wrong hold identity read answer"; fi
   show=$(tasks_in "$home" show sample-widget --full)
   assert_contains "$show" "state: queued" "a released work item did not stay queued"
   assert_contains "$show" "held: no" "a released work item kept its hold"
@@ -1070,6 +1075,7 @@ EOF
   FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-widget \
     --reason "captain pricing call needed" >/dev/null \
     || fail "could not re-hold the released work item"
+  if run_captain "$home" answer-for sample-widget "$identity" >/dev/null; then fail "re-held task reused earlier answer"; fi
   snap=$(PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_SNAPSHOT_NOW=2026-07-14T12:00:00Z \
@@ -1083,6 +1089,7 @@ EOF
   printf 'Price it at nine dollars.\n' > "$home/price.txt"
   run_captain "$home" answer sample-widget --decision-file "$home/price.txt" --release >/dev/null \
     || fail "a re-held task refused a new answer"
+  if run_captain "$home" answer-for sample-widget "$identity" >/dev/null; then fail "later answer matched old hold"; fi
   show=$(tasks_in "$home" show sample-widget --full)
   assert_contains "$show" "Price it at nine dollars." "the new answer was not recorded"
   assert_contains "$show" "Not urgent; ship it as planned." "the new answer erased the earlier record"
@@ -4859,6 +4866,53 @@ SH
   pass "marked hold reasons round-trip through public reads, fleet, startup, and return without changing other fields"
 }
 
+test_parked_hold_answer_modes() {
+  local home mode identity answer saved_identity
+  home=$(make_home parked-answer-modes)
+  for mode in answered repaired released; do
+    tasks_in "$home" add "sample-$mode" "Sample work" --kind ship --repo sample >/dev/null || fail 'add failed'
+    run_captain "$home" hold "sample-$mode" --reason 'captain decision' >/dev/null || fail 'hold failed'
+    identity=$(run_captain "$home" open "sample-$mode" --identity) || fail 'missing identity'
+    if run_captain "$home" answer-for "sample-$mode" "$identity" >/dev/null; then fail 'active hold returned answer'; fi
+    printf 'Answer for %s\n' "$mode" > "$home/answer.txt"
+    if [ "$mode" = repaired ]; then tasks_in "$home" 'done' "sample-$mode" >/dev/null || fail 'close failed'; fi
+    if [ "$mode" = released ]; then
+      run_captain "$home" answer "sample-$mode" --decision-file "$home/answer.txt" --release >/dev/null || fail 'release failed'
+    else
+      run_captain "$home" answer "sample-$mode" --decision-file "$home/answer.txt" >/dev/null || fail 'answer failed'
+    fi
+    answer=$(run_captain "$home" answer-for "sample-$mode" "$identity") || fail "$mode answer unavailable"
+    assert_contains "$answer" "Answer for $mode" "$mode answer lost"
+    if run_captain "$home" answer-for "sample-$mode" wrong >/dev/null; then fail 'wrong occurrence returned answer'; fi
+    if [ "$mode" = answered ] || [ "$mode" = repaired ]; then
+      jq -n --arg identity "$identity" --arg answer "$answer" \
+        '{phase:"launching",decision:{type:"hold",identity:$identity},answer:$answer}' > "$home/state/sample-$mode.captain-wait"
+      PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+        FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
+        STATE="$home/state" SCRIPT_DIR="$ROOT/bin" FM_CAPTAIN_WAIT_RELAUNCH="sample-$mode" \
+        bash -c '. "$SCRIPT_DIR/fm-captain-wait-lib.sh"; fm_captain_wait_closed_relaunch "$1" "done yes no"' _ "sample-$mode" \
+        || fail "$mode closed relaunch refused"
+      if PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+        FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
+        STATE="$home/state" SCRIPT_DIR="$ROOT/bin" FM_CAPTAIN_WAIT_RELAUNCH=other \
+        bash -c '. "$SCRIPT_DIR/fm-captain-wait-lib.sh"; fm_captain_wait_closed_relaunch "$1" "done yes no"' _ "sample-$mode"; then
+        fail 'ordinary closed relaunch accepted'
+      fi
+    else
+      saved_identity=$identity
+    fi
+  done
+  run_captain "$home" hold sample-released --reason 'new decision' >/dev/null || fail 're-hold failed'
+  if run_captain "$home" answer-for sample-released "$saved_identity" >/dev/null; then fail 're-hold returned old answer'; fi
+  pass 'parked hold answers preserve occurrence across close, repair and release'
+}
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit $?
+fi
+
+test_parked_hold_answer_modes
 test_inventory_accepts_archived_resolutions
 test_hold_reason_round_trips_awkward_characters
 test_hold_origin_is_atomic_with_backend_hold
