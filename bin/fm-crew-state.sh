@@ -615,21 +615,6 @@ nm_gate_status() {
 nm_has_gate() {
   printf '%s\n' "$RUN_OUT" | grep -Eq "$FM_NM_GATE_LINE_RE"
 }
-nm_gate_line_name() {
-  local gate step
-  gate=$(strip_quotes "$(nm_field gate)")
-  [ -n "$gate" ] && { printf '%s' "$gate"; return; }
-  step=$(printf '%s\n' "$RUN_OUT" | sed -n '/^[[:space:]]*gate:[[:space:]]*$/,/^[^[:space:]][^:]*:/s/^[[:space:]]*step:[[:space:]]*\(.*\)/\1/p' | head -1)
-  step=$(strip_quotes "$step")
-  [ -n "$step" ] && printf '%s' "$step"
-}
-nm_gate_name() {
-  local gate row
-  gate=$(nm_gate_line_name)
-  [ -n "$gate" ] && { printf '%s' "$gate"; return; }
-  row=$(nm_gate_step_row)
-  [ -n "$row" ] && printf '%s' "${row%%|*}"
-}
 nm_gate_findings_count() {
   local f row rest
   f=$(nm_findings_count)
@@ -1191,13 +1176,7 @@ if [ "$HAVE_RUN" = 1 ]; then
         *)             RUN_STATE=unknown; RUN_DETAIL="outcome: $outcome" ;;
       esac
     elif [ -n "$awaiting" ] || [ "$status" = awaiting_approval ] || [ "$status" = fix_review ] || [ -n "$gate_status" ] || [ "$has_gate" = 1 ]; then
-      if [ "$has_gate" = 1 ]; then
-        gate=$(nm_gate_line_name)
-      else
-        gate=$(nm_gate_name)
-      fi
-      [ -n "$gate" ] || gate=$status
-      [ -n "$gate" ] || gate=gate
+      gate=$(fm_nm_gate_display "$RUN_OUT")
       RUN_STATE=parked
       RUN_DETAIL="parked at $gate"
       fcount=$(nm_gate_findings_count)

@@ -54,6 +54,9 @@
 # the composer visibly holds pending text the ring is skipped with a notice and
 # the watcher re-rings an ordinary record later; no composer verdict is
 # delivery proof on this plane, and a failed ring never fails the send.
+# A confirmed exited agent additionally queues an actionable stale recovery
+# event immediately; the inbox remains durable and must not be resent. The
+# shared inbox escalation marker prevents the watcher duplicating that event.
 #
 # TYPED - the LOCAL text that must reach the terminal itself: a harness-native
 # invocation (a leading "/", or a leading "$" to a codex target) must reach
@@ -1098,7 +1101,13 @@ else
     case "$ring_rc" in
     1) echo "fm-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at $INBOX_RECORD and $ring_retry" >&2 ;;
     2) echo "fm-send: doorbell did not reach $T; the steer is durably recorded at $INBOX_RECORD and $ring_retry" >&2 ;;
-    3) echo "fm-send: doorbell not typed because the agent in $T has exited; the steer is durably recorded at $INBOX_RECORD for recovery (stuck-crewmate-recovery), and the watcher will not re-ring a dead pane" >&2 ;;
+    3)
+      if fm_task_inbox_queue_unavailable "$STATE" "$INBOX_TASK_ID" "$T" "$INBOX_RECORD"; then
+        echo "fm-send: doorbell not typed because the agent in $T has exited; the steer is durably recorded at $INBOX_RECORD and an actionable recovery wake was queued" >&2
+      else
+        echo "warning: steer delivered, do not resend: $INBOX_RECORD is durable but its exited-agent recovery wake could not be fully recorded; recover $INBOX_TASK_ID manually" >&2
+      fi
+      ;;
     esac
     exit 0
   fi
