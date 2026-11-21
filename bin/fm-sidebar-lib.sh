@@ -43,7 +43,7 @@ fm_sidebar_classify() {
     FM_SIDEBAR_WORD='Waiting for machine'; FM_SIDEBAR_DETAIL=$machine
   elif [ -n "$service" ] && { [ "$state" != working ] || [ "$agent" != alive ]; }; then
     FM_SIDEBAR_WORD=Serving; FM_SIDEBAR_DETAIL=$service
-  elif [ "$state" = done ] && [ "$kind" != secondmate ]; then
+  elif [ "$state" = 'done' ] && [ "$kind" != secondmate ]; then
     case "$line" in
       'state: done · source: run-step · run passed: PR open'*|\
       'state: done · source: run-step · checks green: PR held for merge (ci monitor ended)'*|\
