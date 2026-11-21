@@ -41,6 +41,7 @@ export FM_HOME FM_STATE_OVERRIDE="$STATE"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 
 sidebar_collect() {  # <task>
+  local LC_ALL=C
   id=$1 meta="$STATE/$1.meta"
   case "$id" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
@@ -103,7 +104,7 @@ sidebar_collect() {  # <task>
     fi
   fi
   if [ "$FM_SIDEBAR_WORD" = 'Needs you' ]; then
-    local link
+    local link room
     link=$(fm_nm_strip_quotes "$(fm_nm_field "$run_out" pr)")
     [ -n "$link" ] || link=$(fm_meta_get "$meta" pr)
     if [ -z "$link" ]; then
@@ -115,7 +116,16 @@ sidebar_collect() {  # <task>
           }
         }')
     fi
-    [ -z "$link" ] || FM_SIDEBAR_DETAIL="$FM_SIDEBAR_DETAIL - $link"
+    link=$(printf '%s' "$link" | tr '\n\r\t' '   ')
+    if [ -n "$link" ]; then
+      room=$((300 - ${#link}))
+      if [ "$room" -gt 3 ]; then
+        FM_SIDEBAR_DETAIL=$(printf '%s' "$FM_SIDEBAR_DETAIL" | tr '\n\r\t' '   ' | cut -c "1-$((room - 3))")
+        FM_SIDEBAR_DETAIL="$FM_SIDEBAR_DETAIL - $link"
+      elif [ "$room" -ge 0 ]; then
+        FM_SIDEBAR_DETAIL=$link
+      fi
+    fi
   fi
   # Metadata is one short line. Never allow control bytes into the UI.
   FM_SIDEBAR_DETAIL=$(printf '%s' "$FM_SIDEBAR_DETAIL" | tr '\n\r\t' '   ' | cut -c1-300)

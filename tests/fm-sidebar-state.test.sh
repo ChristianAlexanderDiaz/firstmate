@@ -165,6 +165,28 @@ calls = [json.loads(line) for line in open(sys.argv[1]).readlines()[-2:]]
 for call in calls:
     assert any('http://example.invalid/board/1' in item for item in call), calls
 PY
+long_summary=$(printf '%0400d' 0)
+for link_kind in pr board; do
+  export LAB_LINE="state: paused · source: status-log · $long_summary"
+  if [ "$link_kind" = pr ]; then
+    export LAB_RUN=$'run:\n  pr: https://example.invalid/review/7'
+    expected_link='https://example.invalid/review/7'
+  else
+    export LAB_RUN=''
+    expected_link='http://example.invalid/board/1'
+  fi
+  output=$(bash "$script" sample)
+  [[ "$output" == *"$expected_link" ]] || fail "$link_kind link lost in long detail"
+  bash "$script" sample --refresh
+  python3 - "$LAB_LOG" "$expected_link" <<'PY'
+import json, sys
+calls = [json.loads(line) for line in open(sys.argv[1]).readlines()[-2:]]
+for call in calls:
+    detail = next(item.split('=', 1)[1] for item in call if item.startswith('fm_status_detail='))
+    assert detail.endswith(sys.argv[2]) and len(detail.encode()) <= 300, (call, detail)
+PY
+done
+export LAB_RUN='' LAB_LINE='state: paused · source: status-log · captain decision'
 printf '%s\n' 'resolved [key=board-review]: answered' >> "$FM_HOME/state/sample.status"
 [[ $(bash "$script" sample) != *'http://example.invalid/board/1'* ]] || fail 'closed board link retained'
 rm "$FM_HOME/state/sample.status"
