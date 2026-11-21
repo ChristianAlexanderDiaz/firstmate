@@ -186,6 +186,27 @@ for call in calls:
     assert detail.endswith(sys.argv[2]) and len(detail.encode()) <= 300, (call, detail)
 PY
 done
+long_link="https://example.invalid/$(printf '%0350d' 0)"
+for link_kind in pr board; do
+  if [ "$link_kind" = pr ]; then
+    export LAB_RUN="run:
+  pr: $long_link"
+  else
+    export LAB_RUN=''
+    printf 'needs-decision [key=board-review]: %s\n' "$long_link" > "$FM_HOME/state/sample.status"
+  fi
+  output=$(bash "$script" sample)
+  [ "$output" = "Needs you - $long_link" ] || fail "$link_kind long link lost in direct output"
+  bash "$script" sample --refresh
+  python3 - "$LAB_LOG" "$long_link" <<'PY'
+import json, sys
+calls = [json.loads(line) for line in open(sys.argv[1]).readlines()[-2:]]
+assert {c[0] for c in calls} == {'workspace', 'pane'}, calls
+for call in calls:
+    assert 'fm_status_detail=' + sys.argv[2] in call, call
+PY
+done
+printf '%s\n' 'needs-decision [key=board-review]: http://example.invalid/board/1' > "$FM_HOME/state/sample.status"
 export LAB_RUN='' LAB_LINE='state: paused · source: status-log · captain decision'
 printf '%s\n' 'resolved [key=board-review]: answered' >> "$FM_HOME/state/sample.status"
 [[ $(bash "$script" sample) != *'http://example.invalid/board/1'* ]] || fail 'closed board link retained'

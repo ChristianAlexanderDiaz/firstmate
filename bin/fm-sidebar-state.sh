@@ -41,7 +41,7 @@ export FM_HOME FM_STATE_OVERRIDE="$STATE"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 
 sidebar_collect() {  # <task>
-  local LC_ALL=C
+  local LC_ALL=C link=''
   id=$1 meta="$STATE/$1.meta"
   case "$id" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
@@ -104,7 +104,7 @@ sidebar_collect() {  # <task>
     fi
   fi
   if [ "$FM_SIDEBAR_WORD" = 'Needs you' ]; then
-    local link room
+    local room
     link=$(fm_nm_strip_quotes "$(fm_nm_field "$run_out" pr)")
     [ -n "$link" ] || link=$(fm_meta_get "$meta" pr)
     if [ -z "$link" ]; then
@@ -122,13 +122,14 @@ sidebar_collect() {  # <task>
       if [ "$room" -gt 3 ]; then
         FM_SIDEBAR_DETAIL=$(printf '%s' "$FM_SIDEBAR_DETAIL" | tr '\n\r\t' '   ' | cut -c "1-$((room - 3))")
         FM_SIDEBAR_DETAIL="$FM_SIDEBAR_DETAIL - $link"
-      elif [ "$room" -ge 0 ]; then
+      else
         FM_SIDEBAR_DETAIL=$link
       fi
     fi
   fi
-  # Metadata is one short line. Never allow control bytes into the UI.
-  FM_SIDEBAR_DETAIL=$(printf '%s' "$FM_SIDEBAR_DETAIL" | tr '\n\r\t' '   ' | cut -c1-300)
+  # Metadata is one line. Never allow control bytes into the UI.
+  FM_SIDEBAR_DETAIL=$(printf '%s' "$FM_SIDEBAR_DETAIL" | tr '\n\r\t' '   ')
+  if [ -z "$link" ]; then FM_SIDEBAR_DETAIL=$(printf '%s' "$FM_SIDEBAR_DETAIL" | cut -c1-300); fi
 }
 
 sidebar_agent_state() {
@@ -206,7 +207,8 @@ sidebar_publish() {
   ttl=$(((count + 1) * (125 + poll) * 1000 + 1800000))
   if [ -n "$aggregate" ]; then
     workspace_word=$(printf '%s' "$aggregate" | jq -r '.word')
-    workspace_detail=$(printf '%s' "$aggregate" | jq -j '.detail' | tr '\n\r\t' '   ' | cut -c1-300)
+    workspace_detail=$(printf '%s' "$aggregate" | jq -j '.detail' | tr '\n\r\t' '   ')
+    if [ "$workspace_word" != 'Needs you' ]; then workspace_detail=$(printf '%s' "$workspace_detail" | cut -c1-300); fi
     if [ -n "$workspace_word" ]; then
       fm_run_timed 3 bash -c '. "$1/backends/herdr.sh"; shift; fm_backend_herdr_cli "$@"' \
         bash "$SCRIPT_DIR" "$session" workspace report-metadata --source firstmate-status "$workspace" \
