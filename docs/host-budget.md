@@ -69,6 +69,8 @@ bin/fm-resource-run run --class browser -- ./task-owned-browser-and-server.sh
 bin/fm-resource-stage.sh -- ./unknown-local-validation.sh
 ```
 
+Queue holds and delayed owner replies keep commands waiting; `bin/fm-resource-run run --help` owns interruption and optional queue-deadline behavior.
+
 When configured, worker dispatch validates a restore manifest before starting the model CLI, reserves resident CLI memory separately from compute, and supplies task-owned PATH adapters for common package, compiler, graph, browser and Nix entry points.
 The wrapper surrounds the existing launch command after account resolution and before backend delivery, so it applies to every harness and runtime backend without driving their lifecycle.
 Supervisor sessions do not acquire resident worker leases: primary sessions start outside this wrapper, and persistent second mates keep the compute adapters and selected policy without waiting for resident capacity.

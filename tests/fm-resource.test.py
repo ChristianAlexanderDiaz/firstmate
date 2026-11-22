@@ -203,6 +203,7 @@ class ResourceTests(unittest.TestCase):
             self.server.wait(timeout=5)
 
     def tearDown(self):
+        (self.root / "release-response").touch()
         for child in self.children:
             if child.poll() is None:
                 child.terminate()
@@ -251,6 +252,75 @@ class ResourceTests(unittest.TestCase):
         result = self.call("transitions", "--cursor", str(self.root / "cursor"))
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.splitlines()
+
+    def test_power_hold_survives_slow_reply_and_three_builds_resume(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["power"]["batteryPercent"] = 29
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"] == "battery below 30% admission reserve")
+        (self.root / "delay-response").write_text("acquire")
+        jobs = [self.job(f"echo build-{n}", kind="build") for n in range(3)]
+        wait_for((self.root / "response-waiting").exists)
+        # Cross the production RPC deadline, with no wall-clock queue deadline.
+        time.sleep(6)
+        self.assertTrue(all(job.poll() is None for job in jobs),
+                        "a power-held build exited on the socket deadline: " +
+                        "; ".join(job.stderr.read() for job in jobs if job.poll() is not None))
+        (self.root / "release-response").touch()
+        wait_for(lambda: len(self.status().get("queue", [])) == 3 or any(job.poll() is not None for job in jobs))
+        self.assertTrue(all(job.poll() is None for job in jobs),
+                        "; ".join(job.stderr.read() for job in jobs if job.poll() is not None))
+        sample["power"].update(source="ac", adapterWatts=65, isCharging=True, batteryPercent=31)
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis"))
+        (self.root / "clock").write_text("300")
+        for n, job in enumerate(jobs):
+            out, err = job.communicate(timeout=30)
+            self.assertEqual(job.returncode, 0, err)
+            self.assertEqual(out.strip(), f"build-{n}")
+            self.assertNotIn("timed out", err)
+
+    def test_slow_worker_heartbeat_does_not_cancel_resident_agent(self):
+        marker = self.root / "agent-running"
+        release = self.root / "agent-finish"
+        job = self.job(f"touch {marker}; while [ ! -e {release} ]; do sleep 0.1; done", kind="worker")
+        wait_for(marker.exists)
+        (self.root / "delay-response").write_text("heartbeat")
+        wait_for((self.root / "response-waiting").exists)
+        time.sleep(6)
+        self.assertIsNone(job.poll(), "resident agent wrapper exited on a delayed heartbeat")
+        (self.root / "release-response").touch()
+        wait_for(lambda: len(self.status().get("leases", {})) == 1)
+        self.assertIsNone(job.poll())
+        release.touch()
+        _, err = job.communicate(timeout=15)
+        self.assertEqual(job.returncode, 0, err)
+        self.assertNotIn("timed out", err)
+
+    def test_slow_bind_acknowledgement_starts_command_once(self):
+        marker = self.root / "executions"
+        (self.root / "delay-response").write_text("bind")
+        job = self.job(f"echo ran >> {marker}")
+        wait_for((self.root / "response-waiting").exists)
+        time.sleep(6)
+        self.assertIsNone(job.poll(), "bind acknowledgement timeout killed a reserved command")
+        self.assertFalse(marker.exists(), "barrier ran before durable bind acknowledgement")
+        (self.root / "release-response").touch()
+        _, err = job.communicate(timeout=15)
+        self.assertEqual(job.returncode, 0, err)
+        self.assertEqual(marker.read_text(), "ran\n")
+
+    def test_interrupt_during_delayed_acquire_never_starts_command(self):
+        marker = self.root / "must-not-run"
+        (self.root / "delay-response").write_text("acquire")
+        job = self.job(f"touch {marker}")
+        wait_for((self.root / "response-waiting").exists)
+        job.send_signal(signal.SIGINT)
+        (self.root / "release-response").touch()
+        _, err = job.communicate(timeout=15)
+        self.assertEqual(job.returncode, 130, err)
+        self.assertFalse(marker.exists())
+        wait_for(lambda: not self.status().get("leases") and not self.status().get("queue"))
 
     def test_warning_admits_residents_but_not_compute_and_unknown_holds_residents(self):
         sample = copy.deepcopy(SAMPLE)
@@ -642,6 +712,7 @@ class ResourceTests(unittest.TestCase):
         second = self.job("echo UNSAFE", wait=0.2)
         out, err = second.communicate(timeout=5)
         self.assertEqual(second.returncode, 75, err)
+        self.assertIn("held: queue deadline reached; retry later", err)
         self.assertNotIn("UNSAFE", out)
         first.communicate(timeout=10)
         self.assertFalse(self.status()["queue"])
@@ -1980,7 +2051,7 @@ class PowerLogTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="fm-power-log-")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.now = datetime.datetime.fromisoformat("2026-11-10T22:51:55-05:00").timestamp()
         self.up = 1000
         self.boot = "lab-boot"
@@ -1993,7 +2064,8 @@ class PowerLogTests(unittest.TestCase):
         reader = resource.thermal_sleep_log
         self.reader = reader
         patches = (
-            mock.patch.object(resource, "time", types.SimpleNamespace(time=lambda: self.now, monotonic=lambda: self.up)),
+            mock.patch.object(resource, "time", types.SimpleNamespace(time=lambda: self.now, monotonic=lambda: self.up,
+                strftime=time.strftime, gmtime=time.gmtime)),
             mock.patch.object(resource, "uptime", lambda: self.up),
             mock.patch.object(resource, "boot_id", lambda: self.boot),
             mock.patch.object(resource, "process_table", lambda: {}),
@@ -2176,7 +2248,7 @@ class ClosedLidPolicyTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="fm-lid-", dir="/tmp")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.clock = 1000.0
         self.sample = copy.deepcopy(SAMPLE)
         self.sample.update(lidClosed=True, bootSessionUUID="fixture-boot", sequence=0)
@@ -2651,7 +2723,7 @@ class LevelOwnerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="fm-level-", dir="/tmp")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.config = dict(schemaVersion=1, stateDirectory=str(self.root / "state"),
                            socketPath=str(self.root / "socket"), monitorPath=str(self.root / "sample"),
                            policyMode="on", fullLevelEnabled=True, maxHeavyJobs=2,
