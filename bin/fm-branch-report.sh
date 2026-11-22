@@ -16,7 +16,7 @@
 #
 # Usage:
 #   fm-branch-report.sh --task <id|fleet> --verdict routine|captain \
-#       --summary <text> [--silent true|false] [--wake <text>] [--situation <json>]
+#       --summary <text> [--silent true|false] [--wake <text>] [--situation <json>] [--no-new-result true|false]
 # --situation uses bin/fm-branch-outcome.sh's structured fact contract.
 # The receipt and delivery always use the store's effective verdict.
 #
@@ -65,7 +65,7 @@ refuse() {
   exit 3
 }
 
-TASK='' VERDICT='' SUMMARY='' SILENT=false WAKE='' WAKE_SET=0 SITUATION=''
+TASK='' VERDICT='' SUMMARY='' SILENT=false WAKE='' WAKE_SET=0 SITUATION='' NO_NEW_RESULT=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --task) TASK=${2:-}; shift 2 || usage ;;
@@ -74,6 +74,7 @@ while [ "$#" -gt 0 ]; do
     --silent) SILENT=${2:-}; shift 2 || usage ;;
     --wake) WAKE=${2:-}; WAKE_SET=1; shift 2 || usage ;;
     --situation) SITUATION=${2:-}; shift 2 || usage ;;
+    --no-new-result) NO_NEW_RESULT=${2:-}; shift 2 || usage ;;
     -h|--help) usage ;;
     *) usage ;;
   esac
@@ -83,6 +84,7 @@ TASK=$(printf '%s' "$TASK" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 SUMMARY=$(printf '%s' "$SUMMARY" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 case "$VERDICT" in routine|captain) ;; *) VERDICT= ;; esac
 case "$SILENT" in true|false) ;; *) usage ;; esac
+case "$NO_NEW_RESULT" in true|false) ;; *) usage ;; esac
 if [ -z "$TASK" ] || [ -z "$SUMMARY" ] || [ -z "$VERDICT" ]; then
   echo "invalid report: --task, --verdict (routine|captain), and --summary are required" >&2
   exit 2
@@ -123,6 +125,7 @@ fi
 set -- append --receipt-json --task "$TASK" --verdict "$VERDICT" --summary "$SUMMARY" --silent "$SILENT"
 [ -z "$WAKE" ] || set -- "$@" --wake "$WAKE"
 [ -z "$SITUATION" ] || set -- "$@" --situation "$SITUATION"
+set -- "$@" --no-new-result "$NO_NEW_RESULT"
 if ! ROW=$("$SCRIPT_DIR/fm-branch-outcome.sh" "$@"); then
   echo "outcome store append failed (nothing recorded)" >&2
   exit 1

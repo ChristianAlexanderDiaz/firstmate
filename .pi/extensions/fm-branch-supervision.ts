@@ -1221,6 +1221,7 @@ export default function (pi: ExtensionAPI) {
           state: Type.String(), pr: Type.String(), head: Type.String(), wait: Type.String(),
           decisions: Type.Array(Type.String()), findings: Type.Array(Type.String()), blockers: Type.Array(Type.String()),
         }, { description: "Complete observed facts for a captain report, per fm-branch-outcome.sh; omit if any fact is unknown." })),
+        noNewResult: Type.Optional(Type.Boolean({ description: "True only when no new action was taken and no new result was obtained; omit when uncertain." })),
         silent: Type.Optional(Type.Boolean({
           description: "True only for an eligible routine no-change outcome; captain outcomes are never silent, and actions, state changes, or new results stay rendered",
         })),
@@ -1252,6 +1253,7 @@ export default function (pi: ExtensionAPI) {
         }
         const appendArgs = ["append", "--receipt-json", "--task", task, "--verdict", verdict, "--summary", summary, "--silent", String(silent)];
         if (params.situation) appendArgs.push("--situation", JSON.stringify(params.situation));
+        if (params.noNewResult === true) appendArgs.push("--no-new-result", "true");
         if (wake) appendArgs.push("--wake", wake);
         // Ownership, the durable append, and the delivery it authorizes are
         // ONE unit of the delivery queue: store-before-visible-delivery and

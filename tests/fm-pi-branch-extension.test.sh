@@ -916,13 +916,17 @@ const situation = { state: "ready", pr: "https://example.invalid/pull/1", head: 
 const visibleCount = () => mainEntries.filter((entry) => entry.customType === "fm-branch-visible-outcome").length;
 const visibleBefore = visibleCount();
 for (let cycle = 0; cycle < 4; cycle++) {
-  const result = await report.execute(`repeat-${cycle}`, { task: "review-wait", verdict: "captain", summary: `Review remains pending ${cycle}`, situation }, undefined, undefined, {});
+  const result = await report.execute(`repeat-${cycle}`, { task: "review-wait", verdict: "captain", summary: `Review remains pending ${cycle}`, situation, noNewResult: true }, undefined, undefined, {});
   if (result.isError) throw new Error(`structured report failed: ${JSON.stringify(result)}`);
   if (!result.content[0].text.includes(cycle === 0 ? "[captain]" : "[routine]")) throw new Error("tool returned requested instead of stored verdict");
   if (visibleCount() !== visibleBefore + 1) throw new Error("repeated structured report created another visible entry");
 }
-const changed = await report.execute("new-head", { task: "review-wait", verdict: "captain", summary: "Review a new head", situation: { ...situation, head: "head-b" } }, undefined, undefined, {});
+const changed = await report.execute("new-head", { task: "review-wait", verdict: "captain", summary: "Review a new head", noNewResult: true, situation: { ...situation, head: "head-b" } }, undefined, undefined, {});
 if (changed.isError || visibleCount() !== visibleBefore + 2) throw new Error("changed head did not produce a visible entry");
+for (const [index, novelty] of [undefined, false].entries()) {
+  const result = await report.execute(`new-result-${index}`, { task: "review-wait", verdict: "captain", summary: "A new result arrived", situation: { ...situation, head: "head-b" }, noNewResult: novelty }, undefined, undefined, {});
+  if (result.isError || visibleCount() !== visibleBefore + 3 + index) throw new Error("new or uncertain result was hidden");
+}
 process.exit(0);
 EOF
   status=$?

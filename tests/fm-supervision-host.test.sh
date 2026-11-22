@@ -311,7 +311,7 @@ test_report_repeated_situations_are_durable_routine() {
   for cycle in 1 2 3 4 5 6; do
     facts=$(printf '%s\n' "$facts" | jq -c '.decisions |= reverse')
     out=$(FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
-      --task alpha --verdict captain --summary "Review is still pending, observation $cycle" --situation "$facts") \
+      --task alpha --verdict captain --summary "Review is still pending, observation $cycle" --situation "$facts" --no-new-result true) \
       || fail "structured report failed"
     if [ "$cycle" -eq 1 ]; then
       assert_contains "$out" '[captain]' "first report must surface"
@@ -330,18 +330,25 @@ test_report_repeated_situations_are_durable_routine() {
     changed=$(printf '%s\n' "$facts" | jq -c --arg field "$field" \
       'if (.[$field] | type) == "array" then .[$field] = ["new-key"] else .[$field] = "new-value" end')
     out=$(FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
-      --task alpha --verdict captain --summary 'The situation changed' --situation "$changed") || fail "changed report failed"
+      --task alpha --verdict captain --summary 'The situation changed' --situation "$changed" --no-new-result true) || fail "changed report failed"
     assert_contains "$out" '[captain]' "changed $field must surface"
     facts=$changed
   done
   printf 'needs-decision [key=new]: new finding\n' >> "$state/alpha.status"
   out=$(FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
-    --task alpha --verdict captain --summary 'New recorded event' --situation "$facts") || fail "status change report failed"
+    --task alpha --verdict captain --summary 'New recorded event' --situation "$facts" --no-new-result true) || fail "status change report failed"
   assert_contains "$out" '[captain]' "new status must surface even if supplied facts lag"
+  for novelty in omitted false; do
+    set --
+    [ "$novelty" = omitted ] || set -- --no-new-result false
+    out=$(FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
+      --task alpha --verdict captain --summary 'A new result arrived' --situation "$facts" "$@") || fail "new result report failed"
+    assert_contains "$out" '[captain]' "new or uncertain result must surface"
+  done
   # Late away reports of the same situation must not generate return wakes.
   printf 'turn=t1\nrows=4\ntasks=alpha\nunscoped=0\nposture=away\n' > "$state/.supervision-host-turn"
   out=$(FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
-    --task alpha --verdict captain --summary 'Still unchanged after return' --situation "$facts") || fail "late report failed"
+    --task alpha --verdict captain --summary 'Still unchanged after return' --situation "$facts" --no-new-result true) || fail "late report failed"
   [ ! -s "$state/.wake-queue" ] || fail "silent duplicate queued a return wake"
   # Missing structured facts preserve conservative legacy behavior.
   out=$(FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \

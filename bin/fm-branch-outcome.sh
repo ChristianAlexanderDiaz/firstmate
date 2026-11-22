@@ -13,7 +13,7 @@
 #     Optional `situation` records structured helper facts: state, pr, head,
 #     wait, decisions, findings, and blockers. The last three are sorted arrays
 #     of stable keys (include a revision when a finding or blocker changes).
-#     A captain report with the same complete situation and status provenance
+#     A captain report explicitly confirming no new action or result, with the same complete situation and status provenance
 #     as the previous report for that task becomes silent routine. Missing
 #     facts, fleet reports, and intervening reports without a situation never
 #     suppress delivery. Summary prose is never an identity signal.
@@ -85,7 +85,7 @@
 # Usage:
 #   fm-branch-outcome.sh append --task <id> --verdict routine|captain \
 #       --summary <text> [--wake <text>] [--silent true|false]
-#       [--situation <json>] [--receipt-json]
+#       [--situation <json>] [--no-new-result true|false] [--receipt-json]
 #     Append one outcome record; prints the assigned seq, or the stored row
 #     with --receipt-json so delivery uses the effective verdict and silence.
 #   fm-branch-outcome.sh unread
@@ -184,7 +184,7 @@ RECORDED_AGO_JQ='def recorded_ago: ([$now - .epoch, 0] | max) as $s
     else "\($s / 86400 | floor)d" end;'
 
 usage() {
-  echo "usage: fm-branch-outcome.sh append --task <id> --verdict routine|captain --summary <text> [--wake <text>] [--silent true|false] [--situation <json>] [--receipt-json] | unread | mark-read --through <seq> | unprocessed | mark-processed --through <seq> | present | processed-init [--held-lock] | list [--recent <n>] | lookup --seqs <n,...> | startup-replay | seed-tail" >&2
+  echo "usage: fm-branch-outcome.sh append --task <id> --verdict routine|captain --summary <text> [--wake <text>] [--silent true|false] [--situation <json>] [--no-new-result true|false] [--receipt-json] | unread | mark-read --through <seq> | unprocessed | mark-processed --through <seq> | present | processed-init [--held-lock] | list [--recent <n>] | lookup --seqs <n,...> | startup-replay | seed-tail" >&2
   exit 2
 }
 
@@ -525,7 +525,7 @@ case "$CMD" in
     SUMMARY=''
     WAKE=''
     SILENT=false
-    SITUATION='' RECEIPT_JSON=0
+    SITUATION='' NO_NEW_RESULT=false RECEIPT_JSON=0
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --task) TASK=${2:-}; shift 2 || usage ;;
@@ -534,6 +534,7 @@ case "$CMD" in
         --wake) WAKE=${2:-}; shift 2 || usage ;;
         --silent) SILENT=${2:-}; shift 2 || usage ;;
         --situation) SITUATION=${2:-}; shift 2 || usage ;;
+        --no-new-result) NO_NEW_RESULT=${2:-}; shift 2 || usage ;;
         --receipt-json) RECEIPT_JSON=1; shift ;;
         *) usage ;;
       esac
@@ -543,6 +544,7 @@ case "$CMD" in
     [ -n "$SUMMARY" ] || usage
     case "$VERDICT" in routine|captain) ;; *) usage ;; esac
     case "$SILENT" in true|false) ;; *) usage ;; esac
+    case "$NO_NEW_RESULT" in true|false) ;; *) usage ;; esac
     if [ "$SILENT" = true ] && [ "$VERDICT" != routine ]; then
       echo "error: silent outcomes must have the routine verdict" >&2
       exit 2
@@ -569,7 +571,7 @@ case "$CMD" in
     fi
     SEQ=$(( LAST_SEQ + 1 ))
     capture_status_position "$TASK"
-    if [ -n "$SITUATION" ] && [ "$TASK" != fleet ] \
+    if [ "$NO_NEW_RESULT" = true ] && [ -n "$SITUATION" ] && [ "$TASK" != fleet ] \
       && [ "$CAPTURED_STATUS_IDENT" != - ] && [ -s "$STORE" ] \
       && jq -se --arg task "$TASK" --argjson situation "$SITUATION" \
         --argjson endpoint "$CAPTURED_STATUS_ENDPOINT" --arg ident "$CAPTURED_STATUS_IDENT" '
