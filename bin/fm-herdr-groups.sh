@@ -459,12 +459,13 @@ sidebar_rows() {
 [ui.sidebar.spaces]
 rows = [
   ["state_icon", "workspace"],
-  [{ token = "$fm_group", bold = true }, "$fm_state"],
+  [{ token = "$fm_group", bold = true }, "$fm_status"],
+  ["$fm_status_detail"],
 ]
 
 [ui.sidebar.agents]
 rows = [
-  ["state_icon", { token = "$fm_group", bold = true }, "$fm_state", "$fm_task"],
+  ["state_icon", { token = "$fm_group", bold = true }, "$fm_status", "$fm_task"],
 ]
 EOF
 }

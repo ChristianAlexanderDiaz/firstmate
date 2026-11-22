@@ -20,6 +20,7 @@ Herdr provides the terminal session while Treehouse continues to provide task wo
 | Where task tabs appear and how to watch them | [Watching and task containers](#watching-and-task-containers) |
 | The one-task workspaces, their setting, and their cleanup | [Presentation spaces](#presentation-spaces) |
 | Grouping tasks by project with status tags and a sorted agents list | [Project groups](#project-groups) |
+| What a worker is doing or waiting for | [Plain sidebar status](#plain-sidebar-status) |
 | Why a seeded default tab is or is not closed | [Default-tab prune safety](#default-tab-prune-safety) |
 | What task metadata records for a Herdr endpoint | [Endpoint metadata](#endpoint-metadata) |
 | How text and keys reach a worker and how delivery is confirmed | [Current transport behavior](#current-transport-behavior) and [Composer and injection safety](#composer-and-injection-safety) |
@@ -594,7 +595,7 @@ For each ship and scout task recorded in the home with Herdr endpoint metadata, 
 | Token | On | Value |
 | --- | --- | --- |
 | `fm_group` | pane and projected workspace | The group name. |
-| `fm_state` | pane and projected workspace | The display status. |
+| `fm_state` | pane and projected workspace | The legacy declaration-based sort category. |
 | `fm_task` | pane | The task id. |
 | `fm_sort` | pane | `<group order>.<group>.<status rank>.<task>`, at most 80 characters. |
 | `fm_group_order` | projected workspace | `<group order>.<group>`, the key that [placement](#placement-inside-the-group) compares. |
@@ -602,7 +603,7 @@ For each ship and scout task recorded in the home with Herdr endpoint metadata, 
 Workspace tokens go only to the task's own projected workspace: an exact version 2 [presentation journal](#presentation-journal) binding the task's recorded session, workspace, and pane, whose live workspace holds that single pane.
 A flat-layout task tab shares its workspace with other tasks, so it gets pane tokens only.
 
-The display status comes from the task's status log through the shared classifier that `bin/fm-classify-lib.sh` owns, in this rank order:
+The group sort category comes from the task's status log through the shared classifier that `bin/fm-classify-lib.sh` owns, in this rank order:
 
 | Rank | `fm_state` | Status log |
 | --- | --- | --- |
@@ -636,12 +637,13 @@ Firstmate never edits Herdr's configuration on its own.
 [ui.sidebar.spaces]
 rows = [
   ["state_icon", "workspace"],
-  [{ token = "$fm_group", bold = true }, "$fm_state"],
+  [{ token = "$fm_group", bold = true }, "$fm_status"],
+  ["$fm_status_detail"],
 ]
 
 [ui.sidebar.agents]
 rows = [
-  ["state_icon", { token = "$fm_group", bold = true }, "$fm_state", "$fm_task"],
+  ["state_icon", { token = "$fm_group", bold = true }, "$fm_status", "$fm_task"],
 ]
 ```
 
@@ -661,6 +663,61 @@ A task whose group changes later keeps its position until it ends.
 The tags, the agents view, and the placement are covered by offline tests against a scripted Herdr CLI and socket helper (`tests/fm-herdr-groups.test.sh` and the ordering cases in `tests/fm-backend-herdr.test.sh`).
 They were also exercised against a real Herdr 0.9.5 server (protocol 22) in a guarded lab session: after one watcher poll `herdr pane list` showed the `fm_*` tokens on each task pane, the agents list header read `projects` with tasks ordered by group and then status, a newly spawned projected task landed after the other tasks of its group with only that workspace moving and no focus change, and `fm-herdr-groups.sh clear` removed the tokens and the view.
 To repeat the check on a live session, turn the feature on, wait one watcher poll, and confirm the same four results.
+
+## Plain sidebar status
+
+Each home's watcher publishes reconciled status as display-only workspace and pane metadata, independently of project groups.
+For shared workspaces, the workspace row shows the most urgent published pane status, using the fresh result for the pane being refreshed.
+Urgency is Needs me, Stuck, Needs you, Waiting for machine, Checking, Working, Serving, Idle, then Done; each pane retains its own status.
+`bin/fm-sidebar-state.sh` collects the existing crew, endpoint, captain-hold, and host-budget evidence; `bin/fm-sidebar-lib.sh` is the shared vocabulary and precedence owner.
+`fm-crew-state.sh <task> --sidebar` exposes that same reading without publishing metadata or relaunching anything.
+
+| Status | Meaning |
+| --- | --- |
+| Working | An agent is busy. |
+| Checking | Validation or CI is progressing without an active agent; detail says `no agent` or `agent idle` and includes available CI counts. |
+| Needs you | A captain-owned decision or review; available PR links or open board-review links appear in the detail. |
+| Needs me | Firstmate must handle a blocker or gate. |
+| Waiting for machine | A pane-owned budget request or an explicitly queued CI runner; detail includes elapsed wait. |
+| Stuck | An exited worker has unfinished work or the watcher already reported stalled progress. |
+| Serving | The pane's process tree owns a listening TCP service. |
+| Done | Positive merged-PR evidence, never merely a worker's `done` declaration. |
+| Idle | A healthy secondmate is ready for work. |
+
+Captain ownership takes priority over recovery, and existing stalled-progress evidence takes priority over Checking.
+A current validation gate without an agent is Needs me; a gate with positively established non-captain ownership is eligible for one relaunch per run, gate, and findings.
+Unknown or absent hold ownership prevents relaunch.
+Recovery does not require a previous Checking observation, so gates reached between sweeps or before watcher startup remain eligible.
+Secondmate Working and Idle use Herdr's native busy signal after the existing liveness reader proves the agent alive, rather than a possibly stale status declaration.
+The replacement receives the gate and findings location, with no permission to answer ask-user findings itself.
+The existing exited-worker and no-progress notification paths retain ownership of their alerts, so the display does not add duplicate recovery alerts.
+The watcher's existing all-task status-span scan evaluates declared blockers every sweep, independently of display rotation, and remains the single notification owner for them.
+The reporter adds no duplicate blocker or exited-worker alarm.
+With N eligible tasks, display refresh has a conservative bound of N times (120 + 5 + poll interval) seconds plus scheduler delay; the existing status-signal path uses the poll interval and signal grace instead of that rotation.
+The reporter header owns the sweep mechanics; existing endpoint and stalled-progress readers retain their own alert thresholds.
+
+The tokens are `fm_status` and `fm_status_detail`, under source `firstmate-status`.
+Herdr renders them only when its sidebar rows name them; the generated project-group rows now use these tokens, and existing custom configurations need the same row update.
+For a workspace row without project grouping:
+
+```toml
+[ui.sidebar.spaces]
+rows = [
+  ["state_icon", "workspace", "$fm_status"],
+  ["$fm_status_detail"],
+]
+```
+
+Firstmate does not modify the operator's Herdr configuration.
+The legacy group token `fm_state` remains a declaration-based group sort category, not this reconciled display status.
+Unsupported `report-metadata` quietly omits the labels; it never blocks supervision.
+Closed presentations receive no metadata writes, and workspace closure stays with the presentation lifecycle owner.
+Remote tasks are reported by their owning home, not by querying another home's endpoint namespace.
+Metadata lifetime covers the current inventory's conservative refresh bound plus 30 minutes, then expires if refresh stops.
+
+`tests/fm-sidebar-state.test.sh` exercises all nine labels against a stub Herdr CLI, including recovery, unsupported capability, and kernel listener ownership.
+Real rendering still requires a guarded Herdr lab check: configure the rows, drive all nine states, capture the sidebar, and verify labels survive a refresh and disappear when the presentation closes.
+Use [destructive lab safety](#destructive-lab-safety) for that check.
 
 ## Default-tab prune safety
 

@@ -311,6 +311,13 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(self.acquire("worker")[1], "leased")
         self.assertEqual(self.acquire("graph")[1], "leased")
         self.assertEqual([q["token"] for q in self.status()["queue"]], [exclusive])
+        before = self.status()["queue"][0]["waitedSeconds"]
+        self.assertIsInstance(before, int)
+        self.assertGreaterEqual(before, 0)
+        clock = self.root / "clock"
+        clock.write_text(str(int(clock.read_text()) + 73))
+        after = self.status()["queue"][0]["waitedSeconds"]
+        self.assertGreaterEqual(after, before + 73)
 
     def test_dead_controller_request_is_dropped_on_reconcile(self):
         self.assertEqual(self.acquire("exclusive")[1], "leased")

@@ -548,18 +548,10 @@ window_label() {
   [ -n "$task" ] && printf 'fm-%s' "$task"
 }
 
-# The ONE derivation of a window's per-window marker key: `:`, `/` and `.` become
-# `_` so a window name is usable as a filename suffix. Every per-window file the
-# watcher keeps is named by it (.hash-, .count-, .stale-, .stale-since-,
-# .wedge-escalations-, .paused-*, .writing-*, .waiting-*), and live homes hold those markers on
-# disk under the current format, so the format lives here alone: a second copy is
-# how a future change to it silently orphans a window's markers instead of clearing
-# them. The helpers below take the derived key rather than re-deriving it, so one
-# poll of one window derives it once.
+# fm-classify-lib owns marker identity, including display readers of the same
+# wedge evidence. Keep the local name for the existing hot-loop call sites.
 window_key() {  # <window>
-  local key=${1//:/_}
-  key=${key//\//_}
-  printf '%s' "${key//./_}"
+  fm_window_marker_key "$1"
 }
 
 # Independent of display churn and pause absorption. Probe liveness before
@@ -3039,6 +3031,26 @@ nm_review_pane_tick() {
 }
 
 RECONCILE_REQUEST_PID=
+# Sidebar refresh runs in one bounded child, never in the per-window hot loop.
+# The child rotates the home-local inventory; it also uses the shared classifier
+# exposed by crew-state --sidebar. No additional supervision cycle is created.
+# Alerts stay in this watcher's existing all-task status-span and endpoint
+# checks below: a slow display read cannot postpone Needs me or Stuck triggers.
+SIDEBAR_PID=
+SIDEBAR_NEXT=0
+sidebar_tick() {
+  [ "$SECONDS" -ge "$SIDEBAR_NEXT" ] || return 0
+  if [ -n "$SIDEBAR_PID" ]; then
+    kill -0 "$SIDEBAR_PID" 2>/dev/null && return 0
+    wait "$SIDEBAR_PID" 2>/dev/null || true
+    SIDEBAR_PID=
+  fi
+  SIDEBAR_NEXT=$((SECONDS + 5))
+  (FM_POLL="$POLL" fm_exec_timed 120 2 "$SCRIPT_DIR/fm-sidebar-state.sh" --sweep) \
+    </dev/null >/dev/null 2>"$STATE/.sidebar.log" &
+  SIDEBAR_PID=$!
+}
+
 reconcile_requests_pending() {
   local request
   [ -d "$STATE/reconcile-notify" ] && [ ! -L "$STATE/reconcile-notify" ] || return 1
@@ -3080,6 +3092,10 @@ pr_poll_publish_release() {
 
 watcher_cleanup() {
   local cleanup_status=0 owns_lock=0 transition=release-lock
+  if [ -n "$SIDEBAR_PID" ]; then
+    kill -TERM "$SIDEBAR_PID" 2>/dev/null || true
+    wait "$SIDEBAR_PID" 2>/dev/null || true
+  fi
   pr_poll_publish_release || cleanup_status=1
   pr_poll_control_release || cleanup_status=1
   if [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" = "${WATCHER_PID:-}" ]; then
@@ -3215,6 +3231,7 @@ while :; do
   fi
 
   nm_review_pane_tick
+  sidebar_tick
 
   # Bearings publishes reconcile asks as local one-shot request files and
   # returns before any mate delivery. Supervision owns their later delivery;

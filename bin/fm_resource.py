@@ -1075,7 +1075,9 @@ class Budget:
                 "policy": decision, "summary": summary, "cpuWorkers": self.cpu_workers(),
                 "reservationsMiB": {kind: self.reservation(kind) for kind in CLASSES},
                 "availableHeavySlots": max(0, self.heavy_slots() - sum(l["class"] != "worker" for l in self.data["leases"].values())),
-                "leases": self.data["leases"], "queue": self.data["queue"],
+                "leases": self.data["leases"],
+                "queue": [{**item, "waitedSeconds": max(0, int(time.monotonic() - item["queued"]))}
+                          for item in self.data["queue"]],
                 "telemetry": self.telemetry, "events": self.data["events"], "emergency": self.data["emergency"],
                 "powerLogCheck": self.data.get("powerLogCheck"), "policyLogError": self.data.get("policyLogError")}
         if op == "emergency":

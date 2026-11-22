@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # fm-crew-state.sh - deterministic read of a crew's CURRENT state.
-# Usage: fm-crew-state.sh <id> [--sync-review-pane|--sync-presentation|--work-emoji]
+# Usage: fm-crew-state.sh <id> [--sync-review-pane|--sync-presentation|--work-emoji|--sidebar|--sidebar-evidence]
+# --sidebar renders the shared plain display status; --sidebar-evidence emits
+# the canonical line followed by its attributed raw run for the periodic reporter.
 #
 # Why this exists: state/<id>.status is an append-only, best-effort EVENT LOG.
 # Crews append only wake-worthy transitions (done/needs-decision/blocked/paused/failed)
@@ -189,7 +191,7 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 ID=${1:-}
 SYNC_REVIEW_PANE=${2:-}
-case "$SYNC_REVIEW_PANE" in ''|--sync-review-pane|--sync-presentation|--work-emoji) ;; *) echo "usage: fm-crew-state.sh <id> [--sync-review-pane|--sync-presentation|--work-emoji]" >&2; exit 2 ;; esac
+case "$SYNC_REVIEW_PANE" in ''|--sync-review-pane|--sync-presentation|--work-emoji|--sidebar|--sidebar-evidence) ;; *) echo "usage: fm-crew-state.sh <id> [--sync-review-pane|--sync-presentation|--work-emoji|--sidebar|--sidebar-evidence]" >&2; exit 2 ;; esac
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
 
 # Fleet snapshot composition supplies its captured metadata path here so every
@@ -303,7 +305,13 @@ emit() {  # <state> <source> [detail]
         ;;
     esac
   fi
+  if [ "$SYNC_REVIEW_PANE" = --sidebar ]; then
+    FM_SIDEBAR_CURRENT_LINE="$line" FM_SIDEBAR_RUN_OUT="${RUN_OUT:-}" \
+      "$SCRIPT_DIR/fm-sidebar-state.sh" "$ID"
+    exit $?
+  fi
   printf '%s\n' "$line"
+  if [ "$SYNC_REVIEW_PANE" = --sidebar-evidence ]; then printf '%s\n' "${RUN_OUT:-}"; fi
   exit 0
 }
 
