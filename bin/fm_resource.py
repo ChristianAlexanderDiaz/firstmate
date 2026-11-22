@@ -1804,10 +1804,10 @@ def run_job(args, config_name, config, digest):
                 os.close(read_fd)
         while True:
             child.poll()  # Reap an exited leader while its children drain.
-            if interrupted:
-                request(op="cancel", token=token)
             try:
-                request(op="heartbeat", token=token)
+                if interrupted:
+                    rpc(config, digest, wait=lambda: True, op="cancel", token=token)
+                rpc(config, digest, wait=lambda: True, op="heartbeat", token=token)
             except Refusal as error:
                 if "no longer active" in str(error):
                     released = True

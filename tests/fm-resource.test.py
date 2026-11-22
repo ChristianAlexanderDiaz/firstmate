@@ -310,6 +310,60 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(job.returncode, 0, err)
         self.assertEqual(marker.read_text(), "ran\n")
 
+    def test_interrupted_wrapper_retains_capacity_until_sigterm_ignoring_child_dies(self):
+        self.stop()
+        self.config["graceSeconds"] = 30
+        self.write("config.json", self.config)
+        (self.root / "state/ledger.json").unlink()
+        self.start()
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis"))
+        clock = 300
+        (self.root / "clock").write_text(str(clock))
+        wait_for(lambda: self.status()["reason"] == "ready")
+        for op, sig in (("cancel", signal.SIGINT), ("heartbeat", signal.SIGTERM)):
+            with self.subTest(op=op, signal=sig):
+                (self.root / "release-response").unlink(missing_ok=True)
+                (self.root / "response-waiting").unlink(missing_ok=True)
+                started = self.root / f"started-{op}"
+                next_started = self.root / f"next-started-{op}"
+                code = ("import os, signal, time; from pathlib import Path; "
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                    f"Path({str(started)!r}).write_text(str(os.getpid())); time.sleep(60)")
+                job = self.job("exec " + shlex.join([sys.executable, "-c", code]), kind="build")
+                child_pid = int(wait_for(lambda: started.exists() and started.read_text()))
+                try:
+                    (self.root / "delay-response").write_text(op)
+                    if op == "heartbeat":
+                        wait_for((self.root / "response-waiting").exists)
+                    job.send_signal(sig)
+                    wait_for((self.root / "response-waiting").exists)
+                    self.assertTrue(select.select([job.stderr], [], [], 8)[0], "missing delayed-reply notice")
+                    self.assertIn("budget response delayed", job.stderr.readline())
+                    self.assertIsNone(job.poll(), "interruption abandoned the running child")
+                    (self.root / "release-response").touch()
+                    wait_for(lambda: any("cancelAt" in lease for lease in self.status().get("leases", {}).values()))
+                    next_job = self.job(f"touch {next_started}", kind="build")
+                    wait_for(lambda: self.status().get("queue"))
+                    self.assertIsNone(job.poll())
+                    self.assertEqual(len(self.status()["leases"]), 1)
+                    os.kill(child_pid, 0)
+                    self.assertFalse(next_started.exists(), "capacity was reused before the child stopped")
+                    clock += 100
+                    (self.root / "clock").write_text(str(clock))
+                    _, err = job.communicate(timeout=15)
+                    self.assertEqual(job.returncode, 137, err)
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(child_pid, 0)
+                    _, err = next_job.communicate(timeout=15)
+                    self.assertEqual(next_job.returncode, 0, err)
+                    self.assertTrue(next_started.exists())
+                    self.assertFalse(self.status()["leases"])
+                finally:
+                    try:
+                        os.killpg(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
     def test_interrupt_during_delayed_acquire_never_starts_command(self):
         marker = self.root / "must-not-run"
         (self.root / "delay-response").write_text("acquire")
