@@ -1298,6 +1298,8 @@ def rpc(config, digest, *, wait=None, **request):
                 break
             raw += part
     result = json.loads(raw)
+    if wait is not None and not wait():
+        raise InterruptedError("budget wait cancelled")
     if not result.get("ok"):
         raise Refusal(result.get("error", "invalid budget response"))
     return result
@@ -1756,8 +1758,8 @@ def run_job(args, config_name, config, digest):
                 return 130 if interrupted else 75
             result = request(op="acquire", token=token, controller=owner, parent=parent,
                 **{"class": kind, "memoryMiB": memory, "task": args.task})
-            if interrupted:
-                return 130
+            if interrupted or deadline and time.monotonic() >= deadline:
+                raise InterruptedError("budget wait cancelled")
             if result["state"] == "leased":
                 if kind != "worker" and gaming_fd is None and gaming_flag().exists():
                     request(op="release", token=token)
@@ -1793,6 +1795,8 @@ def run_job(args, config_name, config, digest):
                 signal.signal(signal.SIGTTOU, signal.SIG_IGN)
                 os.tcsetpgrp(terminal, child.pid)
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
+            if interrupted:
+                raise InterruptedError("budget wait cancelled")
             os.write(write_fd, b"go\n")
         finally:
             os.close(write_fd)

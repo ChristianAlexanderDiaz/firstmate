@@ -300,7 +300,7 @@ class ResourceTests(unittest.TestCase):
     def test_slow_bind_acknowledgement_starts_command_once(self):
         marker = self.root / "executions"
         (self.root / "delay-response").write_text("bind")
-        job = self.job(f"echo ran >> {marker}")
+        job = self.job(f"echo ran >> {marker}", wait=1)
         wait_for((self.root / "response-waiting").exists)
         time.sleep(6)
         self.assertIsNone(job.poll(), "bind acknowledgement timeout killed a reserved command")
@@ -321,6 +321,72 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(job.returncode, 130, err)
         self.assertFalse(marker.exists())
         wait_for(lambda: not self.status().get("leases") and not self.status().get("queue"))
+
+    def test_interrupt_after_timeout_before_successful_reply_never_starts_command(self):
+        for op in ("acquire", "status", "bind"):
+            with self.subTest(op=op):
+                (self.root / "release-response").unlink(missing_ok=True)
+                (self.root / "response-waiting").unlink(missing_ok=True)
+                marker = self.root / f"must-not-run-{op}"
+                (self.root / "delay-response").write_text(op)
+                job = self.job(f"touch {marker}")
+                wait_for((self.root / "response-waiting").exists)
+                self.assertTrue(select.select([job.stderr], [], [], 8)[0], "missing delayed-reply notice")
+                self.assertIn("budget response delayed", job.stderr.readline())
+                self.assertIsNone(job.poll())
+                job.send_signal(signal.SIGINT)
+                (self.root / "release-response").touch()
+                _, err = job.communicate(timeout=15)
+                self.assertEqual(job.returncode, 130, err)
+                self.assertFalse(marker.exists())
+                wait_for(lambda: not self.status().get("leases") and not self.status().get("queue"))
+
+    def test_successful_acquire_reply_after_queue_deadline_never_starts_command(self):
+        marker = self.root / "must-not-run"
+        (self.root / "delay-response").write_text("acquire")
+        job = self.job(f"touch {marker}", wait=1)
+        wait_for((self.root / "response-waiting").exists)
+        time.sleep(1.2)
+        self.assertIsNone(job.poll())
+        (self.root / "release-response").touch()
+        _, err = job.communicate(timeout=15)
+        self.assertEqual(job.returncode, 75, err)
+        self.assertIn("held: queue deadline reached; retry later", err)
+        self.assertFalse(marker.exists())
+        wait_for(lambda: not self.status().get("leases") and not self.status().get("queue"))
+
+    def test_interrupt_at_foreground_transfer_never_releases_command(self):
+        marker = self.root / "must-not-run"
+        launcher = self.root / "interrupt-at-transfer.py"
+        launcher.write_text('''import os, runpy, signal, sys
+real_set_foreground = os.tcsetpgrp
+def set_foreground(fd, group):
+    real_set_foreground(fd, group)
+    if group != os.getpgrp():
+        os.kill(os.getpid(), signal.SIGTERM)
+os.tcsetpgrp = set_foreground
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+''')
+        pid, master = pty.fork()
+        if pid == 0:
+            os.execv(sys.executable, [sys.executable, str(launcher), str(ROOT / "bin/fm_resource.py"),
+                "--config", str(self.root / "config.json"), "run", "--class", "test",
+                "--", "/usr/bin/touch", str(marker)])
+        try:
+            def exited():
+                result = os.waitpid(pid, os.WNOHANG)
+                return result if result[0] else None
+            _, status = wait_for(exited)
+            pid = None
+            self.assertEqual(os.waitstatus_to_exitcode(status), 130)
+            self.assertFalse(marker.exists())
+            wait_for(lambda: not self.status().get("leases") and not self.status().get("queue"))
+        finally:
+            if pid is not None:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            os.close(master)
 
     def test_warning_admits_residents_but_not_compute_and_unknown_holds_residents(self):
         sample = copy.deepcopy(SAMPLE)
