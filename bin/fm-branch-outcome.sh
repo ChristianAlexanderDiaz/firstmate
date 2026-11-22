@@ -10,6 +10,13 @@
 #     or status provenance remain valid and are treated as visible. A silent
 #     row must have verdict `routine`; the branch prompt and delivery consumers
 #     own the additional no-change eligibility rule.
+#     Optional `situation` records structured helper facts: state, pr, head,
+#     wait, decisions, findings, and blockers. The last three are sorted arrays
+#     of stable keys (include a revision when a finding or blocker changes).
+#     A captain report explicitly confirming no new action or result, with the same complete situation and status provenance
+#     as the previous report for that task becomes silent routine. Missing
+#     facts, fleet reports, and intervening reports without a situation never
+#     suppress delivery. Summary prose is never an identity signal.
 #     Every read and append validates the complete log as a gap-free sequence;
 #     malformed, duplicate, or reordered rows fail closed.
 #     Existing lines are never rewritten, reordered, or deleted by any
@@ -78,7 +85,9 @@
 # Usage:
 #   fm-branch-outcome.sh append --task <id> --verdict routine|captain \
 #       --summary <text> [--wake <text>] [--silent true|false]
-#     Append one outcome record; prints the assigned seq.
+#       [--situation <json>] [--no-new-result true|false] [--receipt-json]
+#     Append one outcome record; prints the assigned seq, or the stored row
+#     with --receipt-json so delivery uses the effective verdict and silence.
 #   fm-branch-outcome.sh unread
 #     Print every unread record (raw JSONL). Exit 0 with no output when none.
 #   fm-branch-outcome.sh mark-read --through <seq>
@@ -155,6 +164,16 @@ OUTCOME_INDEX_READY="$STATE/.branch-outcome-index-ready"
 OUTCOME_TAIL="$STATE/.branch-outcomes-tail.jsonl"
 OUTCOME_TAIL_ROWS=200
 OUTCOME_TAIL_MAX_BYTES=1048576
+# Used for input and stored-row validation; incomplete observations cannot
+# establish equality. Empty arrays mean positively no such outstanding facts.
+SITUATION_JQ='def valid_situation:
+  type == "object"
+  and keys == ["blockers", "decisions", "findings", "head", "pr", "state", "wait"]
+  and ([.state, .pr, .head, .wait] | all(.[]; type == "string"))
+  and (.state | length > 0)
+  and (.pr == "" or (.head | length > 0))
+  and ([.decisions, .findings, .blockers]
+    | all(.[]; type == "array" and all(.[]; type == "string" and length > 0)));'
 # The "recordedAgo" field present and unprocessed add to captain rows (see the
 # usage above).
 # Callers pass --argjson now "$(date +%s)".
@@ -165,7 +184,7 @@ RECORDED_AGO_JQ='def recorded_ago: ([$now - .epoch, 0] | max) as $s
     else "\($s / 86400 | floor)d" end;'
 
 usage() {
-  echo "usage: fm-branch-outcome.sh append --task <id> --verdict routine|captain --summary <text> [--wake <text>] [--silent true|false] | unread | mark-read --through <seq> | unprocessed | mark-processed --through <seq> | present | processed-init [--held-lock] | list [--recent <n>] | lookup --seqs <n,...> | startup-replay | seed-tail" >&2
+  echo "usage: fm-branch-outcome.sh append --task <id> --verdict routine|captain --summary <text> [--wake <text>] [--silent true|false] [--situation <json>] [--no-new-result true|false] [--receipt-json] | unread | mark-read --through <seq> | unprocessed | mark-processed --through <seq> | present | processed-init [--held-lock] | list [--recent <n>] | lookup --seqs <n,...> | startup-replay | seed-tail" >&2
   exit 2
 }
 
@@ -235,14 +254,14 @@ read_processed() {
 last_seq() { # [<file> [<first expected seq, or null for a bounded suffix>]]
   local file=${1:-$STORE} start=${2:-1}
   [ -s "$file" ] || { printf '0\n'; return 0; }
-  jq -Rse --argjson start "$start" '
+  jq -Rse --argjson start "$start" "$SITUATION_JQ"'
     def valid:
       type == "object"
       and (
         keys == ["epoch", "seq", "summary", "task", "verdict", "wake"]
         or (keys == ["epoch", "seq", "silent", "summary", "task", "verdict", "wake"] and (.silent | type) == "boolean")
         or (
-          keys == ["epoch", "seq", "silent", "statusEndpoint", "statusIdent", "summary", "task", "verdict", "wake"]
+          (del(.situation) | keys) == ["epoch", "seq", "silent", "statusEndpoint", "statusIdent", "summary", "task", "verdict", "wake"]
           and (.silent | type) == "boolean"
           and ((.statusEndpoint | type) == "number" and .statusEndpoint >= 0 and .statusEndpoint <= 9007199254740991 and .statusEndpoint == (.statusEndpoint | floor))
           and ((.statusIdent | type) == "string" and (.statusIdent | test("[\\t\\n]") | not))
@@ -252,6 +271,7 @@ last_seq() { # [<file> [<first expected seq, or null for a bounded suffix>]]
       and ((.epoch | type) == "number" and .epoch >= 0 and .epoch == (.epoch | floor))
       and ((.task | type) == "string" and (.wake | type) == "string")
       and ((.summary | type) == "string" and (.verdict == "routine" or .verdict == "captain"))
+      and ((has("situation") | not) or (.situation | valid_situation))
       and (.silent != true or .verdict == "routine");
     if endswith("\n") then split("\n")[:-1]
     else error("unterminated outcome store")
@@ -505,6 +525,7 @@ case "$CMD" in
     SUMMARY=''
     WAKE=''
     SILENT=false
+    SITUATION='' NO_NEW_RESULT=false RECEIPT_JSON=0
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --task) TASK=${2:-}; shift 2 || usage ;;
@@ -512,6 +533,9 @@ case "$CMD" in
         --summary) SUMMARY=${2:-}; shift 2 || usage ;;
         --wake) WAKE=${2:-}; shift 2 || usage ;;
         --silent) SILENT=${2:-}; shift 2 || usage ;;
+        --situation) SITUATION=${2:-}; shift 2 || usage ;;
+        --no-new-result) NO_NEW_RESULT=${2:-}; shift 2 || usage ;;
+        --receipt-json) RECEIPT_JSON=1; shift ;;
         *) usage ;;
       esac
     done
@@ -520,9 +544,19 @@ case "$CMD" in
     [ -n "$SUMMARY" ] || usage
     case "$VERDICT" in routine|captain) ;; *) usage ;; esac
     case "$SILENT" in true|false) ;; *) usage ;; esac
+    case "$NO_NEW_RESULT" in true|false) ;; *) usage ;; esac
     if [ "$SILENT" = true ] && [ "$VERDICT" != routine ]; then
       echo "error: silent outcomes must have the routine verdict" >&2
       exit 2
+    fi
+    if [ -n "$SITUATION" ]; then
+      [ "$VERDICT" = captain ] || usage
+      SITUATION=$(printf '%s\n' "$SITUATION" | jq -cseS "$SITUATION_JQ"'
+        if length == 1 then .[0] else error("expected one situation") end
+        |
+        if valid_situation then
+          .decisions |= sort | .findings |= sort | .blockers |= sort
+        else error("incomplete situation") end') || usage
     fi
     fm_lock_acquire_wait "$LOCK"
     if ! LAST_SEQ=$(last_seq); then
@@ -537,11 +571,22 @@ case "$CMD" in
     fi
     SEQ=$(( LAST_SEQ + 1 ))
     capture_status_position "$TASK"
+    if [ "$NO_NEW_RESULT" = true ] && [ -n "$SITUATION" ] && [ "$TASK" != fleet ] \
+      && [ "$CAPTURED_STATUS_IDENT" != - ] && [ -s "$STORE" ] \
+      && jq -se --arg task "$TASK" --argjson situation "$SITUATION" \
+        --argjson endpoint "$CAPTURED_STATUS_ENDPOINT" --arg ident "$CAPTURED_STATUS_IDENT" '
+        map(select(.task == $task)) | last
+        | .situation == $situation and .statusEndpoint == $endpoint and .statusIdent == $ident
+        ' "$STORE" >/dev/null; then
+      VERDICT=routine
+      SILENT=true
+    fi
     rm -f -- "$OUTCOME_INDEX_READY" || { fm_lock_release "$LOCK"; exit 1; }
-    printf '{"seq":%s,"epoch":%s,"task":"%s","wake":"%s","verdict":"%s","summary":"%s","silent":%s,"statusEndpoint":%s,"statusIdent":"%s"}\n' \
+    ROW=$(printf '{"seq":%s,"epoch":%s,"task":"%s","wake":"%s","verdict":"%s","summary":"%s","silent":%s,"statusEndpoint":%s,"statusIdent":"%s"%s}\n' \
       "$SEQ" "$(date +%s)" "$(json_escape "$TASK")" "$(json_escape "$WAKE")" \
       "$VERDICT" "$(json_escape "$SUMMARY")" "$SILENT" "$CAPTURED_STATUS_ENDPOINT" \
-      "$(json_escape "$CAPTURED_STATUS_IDENT")" >> "$STORE"
+      "$(json_escape "$CAPTURED_STATUS_IDENT")" "${SITUATION:+,\"situation\":$SITUATION}")
+    printf '%s\n' "$ROW" >> "$STORE"
     write_outcome_tail || echo "warning: outcome $SEQ was stored but its display tail copy could not be refreshed" >&2
     # A task with neither a live meta nor a status log is retired: the branch
     # reports the teardown it just performed, and writing the index here would
@@ -559,7 +604,7 @@ case "$CMD" in
       exit 1
     fi
     fm_lock_release "$LOCK"
-    printf '%s\n' "$SEQ"
+    if [ "$RECEIPT_JSON" -eq 1 ]; then printf '%s\n' "$ROW"; else printf '%s\n' "$SEQ"; fi
     ;;
   unread)
     [ "$#" -eq 0 ] || usage

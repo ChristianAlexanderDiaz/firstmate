@@ -402,6 +402,9 @@ export const Type = {
   String(options) {
     return { type: "string", ...(options ?? {}) };
   },
+  Array(items, options) {
+    return { type: "array", items, ...(options ?? {}) };
+  },
   Number(options) {
     return { type: "number", ...(options ?? {}) };
   },
@@ -906,6 +909,23 @@ const captainRendered = entryRenderers.get("fm-branch-visible-outcome")(
 );
 if (captainRendered.text !== "⚓ [seq 3] task-9: PR https://example.com/pr/9 checks green, ready for review") {
   throw new Error(`captain renderer changed the exact visible outcome: ${captainRendered.text}`);
+}
+// Structured repeats use the stored verdict on Pi as well as the host.
+writeFileSync(`${home}/state/review-wait.status`, "paused: awaiting review\n");
+const situation = { state: "ready", pr: "https://example.invalid/pull/1", head: "head-a", wait: "merge", decisions: ["merge"], findings: [], blockers: [] };
+const visibleCount = () => mainEntries.filter((entry) => entry.customType === "fm-branch-visible-outcome").length;
+const visibleBefore = visibleCount();
+for (let cycle = 0; cycle < 4; cycle++) {
+  const result = await report.execute(`repeat-${cycle}`, { task: "review-wait", verdict: "captain", summary: `Review remains pending ${cycle}`, situation, noNewResult: true }, undefined, undefined, {});
+  if (result.isError) throw new Error(`structured report failed: ${JSON.stringify(result)}`);
+  if (!result.content[0].text.includes(cycle === 0 ? "[captain]" : "[routine]")) throw new Error("tool returned requested instead of stored verdict");
+  if (visibleCount() !== visibleBefore + 1) throw new Error("repeated structured report created another visible entry");
+}
+const changed = await report.execute("new-head", { task: "review-wait", verdict: "captain", summary: "Review a new head", noNewResult: true, situation: { ...situation, head: "head-b" } }, undefined, undefined, {});
+if (changed.isError || visibleCount() !== visibleBefore + 2) throw new Error("changed head did not produce a visible entry");
+for (const [index, novelty] of [undefined, false].entries()) {
+  const result = await report.execute(`new-result-${index}`, { task: "review-wait", verdict: "captain", summary: "A new result arrived", situation: { ...situation, head: "head-b" }, noNewResult: novelty }, undefined, undefined, {});
+  if (result.isError || visibleCount() !== visibleBefore + 3 + index) throw new Error("new or uncertain result was hidden");
 }
 process.exit(0);
 EOF
@@ -6194,6 +6214,18 @@ EOF
 test_outcomes_tool_call_headers_follow_the_loaded_pi_version
 test_outcomes_tool_uses_stock_execution_and_export_consumers
 test_real_pi_picker_primitives_stay_bounded_and_searchable
+test_noop_report_regressions() {
+  test_branch_dispatch_two_stage_filter_and_prefix_contract
+  test_store_failure_during_delivery_neither_loses_nor_duplicates
+  test_mark_read_failure_keeps_routine_redelivery_and_captain_deduplication
+}
+
+# Match the watcher suite's selector for bounded, intent-targeted local runs.
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit 0
+fi
+
 test_branch_dispatch_two_stage_filter_and_prefix_contract
 test_requested_healthy_outcome_and_unsolicited_routine_outcome_delivery
 test_captain_outcome_is_exactly_once_across_crash_reload_and_unrelated_response

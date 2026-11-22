@@ -2723,8 +2723,7 @@ test_own_work_wait_keeps_first_alert_then_long_cadence() {
       ack_stopped_cycle "$state" || fail "could not acknowledge $wait_kind test stop"
     done
 
-    # Both the unchanged declaration and its first alert must be older than
-    # the 240s cadence for a forgotten wait to get its bounded recheck.
+    # Even after the old cadence expires, the same declaration stays quiet.
     set_mtime "$(( $(date +%s) - 500 ))" "$state/.paused-resurfaced-$key"
     PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
       FM_FAKE_TMUX_CURRENT_COMMAND=grok \
@@ -2732,9 +2731,10 @@ test_own_work_wait_keeps_first_alert_then_long_cadence() {
       watch_bg "$state" "$fakebin" "$dir/long-cadence.out" env \
         FM_STALE_ESCALATE_SECS=1 FM_PAUSE_RESURFACE_SECS=240
     pid=$!
-    wait_for_exit "$pid" 100 || { reap "$pid"; fail "$wait_kind never rechecked on the long cadence"; }
-    grep -F 'awaiting external' "$dir/long-cadence.out" >/dev/null || fail "$wait_kind recheck lost its pause reason"
-    grep -F 'possible wedge' "$dir/long-cadence.out" >/dev/null && fail "$wait_kind recheck became a wedge"
+    wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "$wait_kind repeated its unchanged wait after the cadence"; }
+    [ ! -s "$dir/long-cadence.out" ] || { reap "$pid"; fail "$wait_kind repeated an unchanged wait"; }
+    reap "$pid"
+    ack_stopped_cycle "$state" || fail "could not acknowledge the intentional test stop"
   done
   # Disconfirming control: an idle worker with no declaration must still alarm.
   dir=$(make_case own-work-undeclared); state="$dir/state"; fakebin="$dir/fakebin"
@@ -2753,7 +2753,7 @@ test_own_work_wait_keeps_first_alert_then_long_cadence() {
   wait_for_exit "$pid" 100 || { reap "$pid"; fail "undeclared idle worker no longer alarms"; }
   grep -Fx "stale: $window" "$out" >/dev/null || fail "undeclared idle worker did not surface"
   grep -F "stale: $window" "$state/.wake-queue" >/dev/null || fail "undeclared idle worker's wake was not queued"
-  pass "own-work waits keep one first alert, then bounded rechecks without wedges; undeclared idle still alarms"
+  pass "own-work waits keep one alert per declaration without wedges; undeclared idle still alarms"
 }
 
 # A captain-held crew can leave a stable backend endpoint after its agent exits.
@@ -3058,20 +3058,15 @@ test_live_declared_wait_churn_honors_the_resurface_throttle() {
       "$state/.wake-queue" 2>/dev/null || echo 0)
     [ "$wakes" -eq 0 ] || fail "[$name] replacement wait re-alarmed $wakes time(s) inside its own re-surface window"
 
-    # End of the window: the wait must re-surface exactly once, on the same plain
-    # identity as before, so absorbing churn never becomes silence.
+    # Elapsed time alone does not create another notification.
     set_mtime "$(( $(date +%s) - 2000 ))" "$throttle"
     printf 'parked, elapsed 5s' > "$capture_file"
-    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
-      || fail "[$name] a parked worker did not re-surface once its re-surface window elapsed"
-    wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
-      "$state/.wake-queue" 2>/dev/null || echo 0)
-    bare=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w && $5 == "stale: " w { n++ } END { print n + 0 }' \
-      "$state/.wake-queue" 2>/dev/null || echo 0)
-    [ "$wakes" -eq 1 ] || fail "[$name] elapsed re-surface window produced $wakes wakes instead of one"
-    [ "$bare" -eq 1 ] || fail "[$name] elapsed re-surface changed the wake identity: $(cat "$state/.wake-queue")"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
+      || fail "[$name] unchanged parked worker repeated after the cadence"
+    [ ! -s "$state/.wake-queue" ] || fail "[$name] unchanged wait queued another notification"
+
   done
-  pass "a parked live worker surfaces once, absorbs pane churn for the whole re-surface window, then re-surfaces when it elapses"
+  pass "a parked live worker surfaces once per declaration, including across elapsed cadences"
 }
 
 test_live_paused_until_controls_recheck_time() {
@@ -4564,17 +4559,15 @@ test_open_captain_call_bounds_stale_churn() {
     [ "$wakes" -eq 0 ] \
       || fail "[$name] pane churn re-alarmed held work $wakes time(s) inside the re-surface window"
 
-    # After the window ends, the next new pane hash re-surfaces held work exactly
-    # once, so a forgotten call on a churning pane cannot hide behind the bound.
-    [ -e "$throttle" ] || fail "[$name] the absorbed churn recorded no re-surface cadence to elapse"
+    # The same call stays quiet even when the old timer would have expired.
+    [ -e "$throttle" ] || fail "[$name] first sight left no declaration record"
     set_mtime "$(( $(date +%s) - 5000 ))" "$throttle"
-    hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 9s' \
-      || fail "[$name] held work did not re-surface once its re-surface window elapsed"
-    wakes=$(hold_stale_wakes "$state")
-    [ "$wakes" -eq 1 ] \
-      || fail "[$name] elapsed re-surface window produced $wakes wakes instead of one"
+    hold_watch_churn "$dir" "$out" "$capture" 'idle, elapsed' 1 \
+      || fail "[$name] unchanged hold repeated after the cadence"
+    [ "$(hold_stale_wakes "$state")" -eq 0 ] || fail "[$name] unchanged hold queued another notification"
+
   done
-  pass "work under an open captain call surfaces once, absorbs pane churn, then re-surfaces when the window elapses"
+  pass "work under an open captain call surfaces once and stays quiet across elapsed cadences"
 }
 
 
@@ -4723,17 +4716,15 @@ test_ready_pr_poll_bounds_stale_churn() {
     [ "$wakes" -eq 0 ] \
       || fail "[$name] pane churn re-alarmed a ready PR $wakes time(s) inside the re-surface window"
 
-    # After the window ends, the next new pane hash re-surfaces exactly once,
-    # so a forgotten merge on a churning pane cannot hide behind the bound.
+    # Elapsed time alone does not create new information about a ready PR.
     [ -e "$throttle" ] || fail "[$name] the absorbed churn recorded no re-surface cadence to elapse"
     set_mtime "$(( $(date +%s) - 5000 ))" "$throttle"
-    ready_pr_watch_surface "$dir" "$name" "$out" "$capture" 'idle, elapsed 9s' \
-      || fail "[$name] a ready PR did not re-surface once its re-surface window elapsed"
-    wakes=$(ready_pr_stale_wakes "$state" "$name")
-    [ "$wakes" -eq 1 ] \
-      || fail "[$name] elapsed re-surface window produced $wakes wakes instead of one"
+    ready_pr_watch_churn "$dir" "$name" "$out" "$capture" 'idle, elapsed' 1 \
+      || fail "[$name] unchanged ready PR repeated after the cadence"
+    [ "$(ready_pr_stale_wakes "$state" "$name")" -eq 0 ] || fail "[$name] unchanged ready PR queued another notification"
+
   done
-  pass "a ready PR with an armed merge poll surfaces once, absorbs pane churn, then re-surfaces when the window elapses"
+  pass "a ready PR with an armed merge poll surfaces once across elapsed cadences"
 }
 
 # An absent poll or one missing its check must keep alarming on every new hash:
@@ -5734,6 +5725,21 @@ test_busy_declared_pause_is_rechecked_not_wedge_escalated() {
   [ -e "$state/.paused-resurfaced-$key" ] || fail "the declared-pause re-surface throttle was cleared by the busy-turn bound"
   [ ! -e "$state/.stale-since-$key" ] || fail "a declared-pause recheck used the wedge timer"
   ack_stopped_cycle "$state" || fail "could not acknowledge the declared-pause recheck"
+
+  # An unchanged declaration must still be rechecked when the busy call remains over-age.
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.paused-resurfaced-$key"
+  else touch -m -d "@$back" "$state/.paused-resurfaced-$key"; fi
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_FAKE_CREW_STATE='state: working · source: pane · harness busy (pi-ext)' \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=1 FM_PAUSE_RESURFACE_SECS=240 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1000000 FM_HEARTBEAT_MAX=1000000 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "an unchanged busy declared pause was not rechecked again"; }
+  grep -F "awaiting external" "$out" >/dev/null || fail "the repeated busy recheck was not surfaced: $(cat "$out")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the repeated busy recheck"
 
   # Phase C: the pause is lifted on the SAME busy, over-age pane. Nothing else
   # changes, so a still-absorbed pane here would mean the bound was silenced
@@ -7552,7 +7558,7 @@ test_exited_wait_recovery() {
   for detail in gate pause unfinished; do
     dir=$(exited_wait_fixture "exited-$detail")
     if [ "$detail" = gate ]; then
-      printf "working: validation running\n" > "$dir/state/parked.status"
+      printf "paused: awaiting validation\n" > "$dir/state/parked.status"
       prime_status_seen "$dir/state" "$dir/state/parked.status"
       assert_contains "$(exited_wait_state "$dir")" 'state: parked · source: run-step · parked at review' "fixture must bind the current parked run"
       printf 'finding from an earlier gate\n' > "$dir/data/parked/nm-LABRUN-findings.txt"
@@ -7610,8 +7616,8 @@ test_exited_wait_recovery() {
     # A forgotten recovery repeats on the stale cadence, even after restart.
     set_mtime "$(( $(date +%s) - 61 ))" "$dir/state/.wait-agent-reported-test_fm-parked"
     exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
-    wait_for_exit "$pid" 150 || { reap "$pid"; fail "expired recovery did not repeat"; }
-    [ "$(grep -c 'task parked agent dead while' "$dir/watch.out")" -eq "$((n + 1))" ] || fail "expired recovery did not queue exactly once"
+    wait_for_exit "$pid" 150 || { reap "$pid"; fail "exited $detail recovery did not repeat"; }
+    [ "$(grep -c 'task parked agent dead while' "$dir/watch.out")" -eq "$((n + 1))" ] || fail "expired $detail recovery did not queue exactly once"
     ack_stopped_cycle "$dir/state" || fail "could not acknowledge recovery reminder"
     # Replacing the agent clears recovery on the next probe, without waiting
     # for the stale escalation cadence or adding an open status decision.
@@ -7639,7 +7645,7 @@ test_exited_wait_recovery() {
     fail 'unfinished-work recovery duplicated an active validation'
   fi
   test_exited_wait_herdr
-  pass "exited gate, pause and unfinished work wake promptly, throttle repeats, and clear on relaunch"
+  pass "exited gate, pause and unfinished work repeat recovery alerts until relaunch"
 }
 
 # Exercise the actual Herdr dispatch using read-only protocol stubs. Every
@@ -7665,6 +7671,111 @@ STUB
   assert_grep "findings file=$dir/data/parked/nm-LABRUN-recovery-status." "$dir/watch.out" "Herdr must name findings"
 }
 
+test_idle_rearm_suppresses_only_unchanged_empty_recovery() {
+  local dir state out capture window pid cycle
+  dir=$(make_case idle-rearm); state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane"
+  window=test:fm-parked
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+  printf 'paused: waiting for review\n' > "$state/parked.status"
+  prime_status_seen "$state" "$state/parked.status"
+  printf 'parked\n' > "$capture"
+  parked_watch_round "$state" "$dir/fakebin" "$out" "$capture" "$window" exit \
+    || fail "first idle stale did not surface"
+  ack_stopped_cycle "$state" || fail "could not acknowledge initial stale"
+  for cycle in 1 2 3; do
+    FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_transition "$STATE/.watcher-down" publish downtime' \
+      _ "$ROOT/bin/fm-wake-lib.sh" || fail "could not publish recovery"
+    PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+      FM_FAKE_TMUX_CURRENT_COMMAND=grok FM_FAKE_CREW_STATE='state: paused · source: status-log · parked' \
+      watch_bg "$state" "$dir/fakebin" "$out" env FM_PAUSE_RESURFACE_SECS=999
+    pid=$!
+    if [ "$cycle" -eq 1 ]; then
+      wait_for_exit "$pid" 100 || { reap "$pid"; fail "first idle recovery was hidden"; }
+      assert_grep 'check: rearm-resurface' "$out" "first idle recovery must surface"
+    else
+      wait_poll_cycle "$state" "$pid" 300 || { reap "$pid"; fail "unchanged idle recovery repeated: $(cat "$out")"; }
+      [ ! -s "$out" ] || { reap "$pid"; fail "idle recovery printed a wake"; }
+      if [ "$cycle" -eq 3 ]; then
+        FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_wake_append check new-event "check: new event"' \
+          _ "$ROOT/bin/fm-wake-lib.sh" || fail "could not queue changed event"
+        wait_for_exit "$pid" 100 || { reap "$pid"; fail "idle recovery suppression hid a new queue row"; }
+        [ -s "$state/.wake-queue" ] || fail "recovery consumed the event instead of delivering it"
+      else
+        reap "$pid"
+      fi
+    fi
+    ack_stopped_cycle "$state" || fail "could not acknowledge recovery round"
+  done
+  # A changed declaration gets a fresh recovery notification even when its
+  # ordinary status signal was already handled elsewhere.
+  printf 'paused [key=new]: waiting for another review\n' >> "$state/parked.status"
+  prime_status_seen "$state" "$state/parked.status"
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_transition "$STATE/.watcher-down" publish downtime' \
+    _ "$ROOT/bin/fm-wake-lib.sh" || fail "could not publish changed recovery"
+  PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=grok FM_FAKE_CREW_STATE='state: paused · source: status-log · parked' \
+    watch_bg "$state" "$dir/fakebin" "$out" env FM_PAUSE_RESURFACE_SECS=999
+  pid=$!
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "changed idle declaration lost recovery"; }
+  assert_grep 'check: rearm-resurface' "$out" "changed idle declaration must surface"
+  pass "idle recovery wakes once, preserves queued events, and wakes again on changed declarations"
+}
+
+# Optional deterministic quota replay, selected with FM_TEST_ONLY. Baseline
+# callers may point at extracted pre-change executables without a checkout.
+test_idle_noop_lab() {
+  local dir state facts cycle report mode out capture window key helper_wakes parked_wakes
+  dir=$(make_case noop-lab); state="$dir/state"
+  report=${FM_NOOP_LAB_REPORT:-$ROOT/bin/fm-branch-report.sh}
+  WATCH=${FM_NOOP_LAB_WATCH:-$WATCH}
+  printf 'paused [key=merge]: awaiting review\n' > "$state/review.status"
+  printf 'turn=lab\nrows=1\ntasks=review\nunscoped=0\nposture=attended\n' > "$state/.supervision-host-turn"
+  facts='{"state":"ready","pr":"https://example.invalid/pull/1","head":"head-a","wait":"merge","decisions":["merge"],"findings":[],"blockers":[]}'
+  # Twelve half-hour observations represent six hours waiting for a merge.
+  for cycle in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
+    [ "$cycle" -ne 13 ] || facts='{"state":"merged","pr":"https://example.invalid/pull/1","head":"head-a","wait":"","decisions":[],"findings":[],"blockers":[]}'
+    set -- --task review --verdict captain --summary "Observation $cycle"
+    [ "${FM_NOOP_LAB_LEGACY:-0}" -eq 1 ] || set -- "$@" --situation "$facts"
+    if [ "${FM_NOOP_LAB_LEGACY:-0}" -ne 1 ] && [ "$cycle" -lt 13 ]; then set -- "$@" --no-new-result true; fi
+    FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=lab \
+      "$report" "$@" >/dev/null || fail "lab report failed"
+  done
+  helper_wakes=$(awk -F '\t' '$3 == "captain" { n++ } END { print n+0 }' "$state/.supervision-host-receipts")
+  [ "$(wc -l < "$state/branch-outcomes.jsonl")" -eq 13 ] || fail "lab lost an outcome"
+  # The parked worker's display changes and the old reminder interval expires
+  # on each hourly sighting; its declaration stays identical.
+  dir=$(make_case noop-lab-parked); state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane"
+  window=test:fm-parked; key=test_fm-parked
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+  printf 'paused: awaiting external review\n' > "$state/parked.status"
+  prime_status_seen "$state" "$state/parked.status"
+  for cycle in 1 2 3 4 5 6; do
+    if [ -e "$state/.paused-resurfaced-$key" ]; then
+      set_mtime "$(( $(date +%s) - 4000 ))" "$state/.paused-resurfaced-$key"
+    fi
+    printf 'parked observation %s\n' "$cycle" > "$capture"
+    mode=absorb
+    if [ "$cycle" -eq 1 ] || [ "${FM_NOOP_LAB_LEGACY:-0}" -eq 1 ]; then mode='exit'; fi
+    parked_watch_round "$state" "$dir/fakebin" "$out" "$capture" "$window" "$mode" \
+      || fail "lab parked round $cycle failed"
+    ack_stopped_cycle "$state" || fail "lab could not acknowledge round $cycle"
+  done
+  parked_wakes=$(grep -c '^stale:' "$out")
+  printf 'LAB helper_wait_cycles=12 real_changes=1 durable_outcomes=13 helper_wakes=%s parked_cycles=6 parked_wakes=%s total_wakes=%s\n' \
+    "$helper_wakes" "$parked_wakes" "$(( helper_wakes + parked_wakes ))"
+}
+
+test_idle_noop_regressions() {
+  test_live_declared_wait_churn_honors_the_resurface_throttle
+  test_own_work_wait_keeps_first_alert_then_long_cadence
+  test_open_captain_call_bounds_stale_churn
+  test_stale_churn_without_a_captain_call_still_alarms
+  test_ready_pr_poll_bounds_stale_churn
+  test_ready_pr_without_poll_still_alarms
+  test_exited_wait_recovery
+  test_idle_rearm_suppresses_only_unchanged_empty_recovery
+}
+
 # CI's stock macOS Bash lane sets FM_TEST_ONLY to run just the bash-3.2
 # churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
 if [ -n "${FM_TEST_ONLY:-}" ]; then
@@ -7672,6 +7783,7 @@ if [ -n "${FM_TEST_ONLY:-}" ]; then
   exit 0
 fi
 
+test_idle_rearm_suppresses_only_unchanged_empty_recovery
 test_done_pr_url_classifier
 test_done_missing_pr_bounce
 test_exited_steer_wakes_running_successor
