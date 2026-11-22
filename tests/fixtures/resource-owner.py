@@ -83,6 +83,14 @@ def handle(budget, request):
     if legacy and request.get("op") == "inherit-browser":
         raise resource.Refusal("invalid request nonce")
     result = real_handle(budget, request)
+    # Delay one acknowledgement after the real mutation, like an overloaded
+    # single owner. Delay alone must not replay a bind or cancel live work.
+    delay = root / "delay-response"
+    if delay.exists() and delay.read_text() == request.get("op"):
+        delay.unlink()
+        (root / "response-waiting").write_text(request["op"])
+        while not (root / "release-response").exists():
+            time.sleep(0.05)
     if legacy:
         result.pop("cpuWorkers", None)
     if legacy and request.get("op") == "status":

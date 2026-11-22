@@ -69,6 +69,8 @@ bin/fm-resource-run run --class browser -- ./task-owned-browser-and-server.sh
 bin/fm-resource-stage.sh -- ./unknown-local-validation.sh
 ```
 
+Queue holds and delayed owner replies keep commands waiting; `bin/fm-resource-run run --help` owns interruption and optional queue-deadline behavior.
+
 When configured, worker dispatch validates a restore manifest before starting the model CLI, reserves resident CLI memory separately from compute, and supplies task-owned PATH adapters for common package, compiler, graph, browser and Nix entry points.
 The wrapper surrounds the existing launch command after account resolution and before backend delivery, so it applies to every harness and runtime backend without driving their lifecycle.
 Supervisor sessions do not acquire resident worker leases: primary sessions start outside this wrapper, and persistent second mates keep the compute adapters and selected policy without waiting for resident capacity.
@@ -76,7 +78,7 @@ Their local compute commands still require stage reservations.
 Interactive launches retain the controlling terminal, transfer foreground ownership to the verified child process group before execution, and restore it after completion; terminal interrupts reach the running CLI normally.
 Existing account authentication and pin validation remain in the account adapter.
 Worker manifest validation rejects changed directory, branch, task, account configuration or argv rather than choosing another account or directory.
-Recovery never automatically relaunches saved commands.
+Budget-owner recovery never automatically relaunches saved commands; worker recovery belongs to [supervision](architecture.md#event-driven-supervision).
 Relaunch preparation creates a new manifest from the supervisor's validated task record.
 
 PATH adapters catch ordinary graphify launches from commit hooks as well as worker commands.

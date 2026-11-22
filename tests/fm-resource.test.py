@@ -203,6 +203,7 @@ class ResourceTests(unittest.TestCase):
             self.server.wait(timeout=5)
 
     def tearDown(self):
+        (self.root / "release-response").touch()
         for child in self.children:
             if child.poll() is None:
                 child.terminate()
@@ -251,6 +252,195 @@ class ResourceTests(unittest.TestCase):
         result = self.call("transitions", "--cursor", str(self.root / "cursor"))
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.splitlines()
+
+    def test_power_hold_survives_slow_reply_and_three_builds_resume(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["power"]["batteryPercent"] = 29
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"] == "battery below 30% admission reserve")
+        (self.root / "delay-response").write_text("acquire")
+        jobs = [self.job(f"echo build-{n}", kind="build") for n in range(3)]
+        wait_for((self.root / "response-waiting").exists)
+        # Cross the production socket timeout interval without a queue deadline.
+        time.sleep(6)
+        self.assertTrue(all(job.poll() is None for job in jobs),
+                        "a power-held build exited on the socket deadline: " +
+                        "; ".join(job.stderr.read() for job in jobs if job.poll() is not None))
+        (self.root / "release-response").touch()
+        wait_for(lambda: len(self.status().get("queue", [])) == 3 or any(job.poll() is not None for job in jobs))
+        self.assertTrue(all(job.poll() is None for job in jobs),
+                        "; ".join(job.stderr.read() for job in jobs if job.poll() is not None))
+        sample["power"].update(source="ac", adapterWatts=65, isCharging=True, batteryPercent=31)
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis"))
+        (self.root / "clock").write_text("300")
+        for n, job in enumerate(jobs):
+            out, err = job.communicate(timeout=30)
+            self.assertEqual(job.returncode, 0, err)
+            self.assertEqual(out.strip(), f"build-{n}")
+            self.assertNotIn("timed out", err)
+
+    def test_slow_worker_heartbeat_does_not_cancel_resident_agent(self):
+        marker = self.root / "agent-running"
+        release = self.root / "agent-finish"
+        job = self.job(f"touch {marker}; while [ ! -e {release} ]; do sleep 0.1; done", kind="worker")
+        wait_for(marker.exists)
+        (self.root / "delay-response").write_text("heartbeat")
+        wait_for((self.root / "response-waiting").exists)
+        time.sleep(6)
+        self.assertIsNone(job.poll(), "resident agent wrapper exited on a delayed heartbeat")
+        (self.root / "release-response").touch()
+        wait_for(lambda: len(self.status().get("leases", {})) == 1)
+        self.assertIsNone(job.poll())
+        release.touch()
+        _, err = job.communicate(timeout=15)
+        self.assertEqual(job.returncode, 0, err)
+        self.assertNotIn("timed out", err)
+
+    def test_slow_bind_acknowledgement_starts_command_once(self):
+        marker = self.root / "executions"
+        (self.root / "delay-response").write_text("bind")
+        job = self.job(f"echo ran >> {marker}", wait=1)
+        wait_for((self.root / "response-waiting").exists)
+        time.sleep(6)
+        self.assertIsNone(job.poll(), "bind acknowledgement timeout killed a reserved command")
+        self.assertFalse(marker.exists(), "barrier ran before durable bind acknowledgement")
+        (self.root / "release-response").touch()
+        _, err = job.communicate(timeout=15)
+        self.assertEqual(job.returncode, 0, err)
+        self.assertEqual(marker.read_text(), "ran\n")
+
+    def test_interrupted_wrapper_retains_capacity_until_sigterm_ignoring_child_dies(self):
+        self.stop()
+        self.config["graceSeconds"] = 30
+        self.write("config.json", self.config)
+        (self.root / "state/ledger.json").unlink()
+        self.start()
+        wait_for(lambda: self.status()["reason"].startswith("recovery hysteresis"))
+        clock = 300
+        (self.root / "clock").write_text(str(clock))
+        wait_for(lambda: self.status()["reason"] == "ready")
+        for op, sig in (("cancel", signal.SIGINT), ("heartbeat", signal.SIGTERM)):
+            with self.subTest(op=op, signal=sig):
+                (self.root / "release-response").unlink(missing_ok=True)
+                (self.root / "response-waiting").unlink(missing_ok=True)
+                started = self.root / f"started-{op}"
+                next_started = self.root / f"next-started-{op}"
+                code = ("import os, signal, time; from pathlib import Path; "
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                    f"Path({str(started)!r}).write_text(str(os.getpid())); time.sleep(60)")
+                job = self.job("exec " + shlex.join([sys.executable, "-c", code]), kind="build")
+                child_pid = int(wait_for(lambda: started.exists() and started.read_text()))
+                try:
+                    (self.root / "delay-response").write_text(op)
+                    if op == "heartbeat":
+                        wait_for((self.root / "response-waiting").exists)
+                    job.send_signal(sig)
+                    wait_for((self.root / "response-waiting").exists)
+                    self.assertTrue(select.select([job.stderr], [], [], 8)[0], "missing delayed-reply notice")
+                    self.assertIn("budget response delayed", job.stderr.readline())
+                    self.assertIsNone(job.poll(), "interruption abandoned the running child")
+                    (self.root / "release-response").touch()
+                    wait_for(lambda: any("cancelAt" in lease for lease in self.status().get("leases", {}).values()))
+                    next_job = self.job(f"touch {next_started}", kind="build")
+                    wait_for(lambda: self.status().get("queue"))
+                    self.assertIsNone(job.poll())
+                    self.assertEqual(len(self.status()["leases"]), 1)
+                    os.kill(child_pid, 0)
+                    self.assertFalse(next_started.exists(), "capacity was reused before the child stopped")
+                    clock += 100
+                    (self.root / "clock").write_text(str(clock))
+                    _, err = job.communicate(timeout=15)
+                    self.assertEqual(job.returncode, 137, err)
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(child_pid, 0)
+                    _, err = next_job.communicate(timeout=15)
+                    self.assertEqual(next_job.returncode, 0, err)
+                    self.assertTrue(next_started.exists())
+                    self.assertFalse(self.status()["leases"])
+                finally:
+                    try:
+                        os.killpg(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_interrupt_during_delayed_acquire_never_starts_command(self):
+        marker = self.root / "must-not-run"
+        (self.root / "delay-response").write_text("acquire")
+        job = self.job(f"touch {marker}")
+        wait_for((self.root / "response-waiting").exists)
+        job.send_signal(signal.SIGINT)
+        (self.root / "release-response").touch()
+        _, err = job.communicate(timeout=15)
+        self.assertEqual(job.returncode, 130, err)
+        self.assertFalse(marker.exists())
+        wait_for(lambda: not self.status().get("leases") and not self.status().get("queue"))
+
+    def test_interrupt_after_timeout_before_successful_reply_never_starts_command(self):
+        for op in ("acquire", "status", "bind"):
+            with self.subTest(op=op):
+                (self.root / "release-response").unlink(missing_ok=True)
+                (self.root / "response-waiting").unlink(missing_ok=True)
+                marker = self.root / f"must-not-run-{op}"
+                (self.root / "delay-response").write_text(op)
+                job = self.job(f"touch {marker}")
+                wait_for((self.root / "response-waiting").exists)
+                self.assertTrue(select.select([job.stderr], [], [], 8)[0], "missing delayed-reply notice")
+                self.assertIn("budget response delayed", job.stderr.readline())
+                self.assertIsNone(job.poll())
+                job.send_signal(signal.SIGINT)
+                (self.root / "release-response").touch()
+                _, err = job.communicate(timeout=15)
+                self.assertEqual(job.returncode, 130, err)
+                self.assertFalse(marker.exists())
+                wait_for(lambda: not self.status().get("leases") and not self.status().get("queue"))
+
+    def test_successful_acquire_reply_after_queue_deadline_never_starts_command(self):
+        marker = self.root / "must-not-run"
+        (self.root / "delay-response").write_text("acquire")
+        job = self.job(f"touch {marker}", wait=1)
+        wait_for((self.root / "response-waiting").exists)
+        time.sleep(1.2)
+        self.assertIsNone(job.poll())
+        (self.root / "release-response").touch()
+        _, err = job.communicate(timeout=15)
+        self.assertEqual(job.returncode, 75, err)
+        self.assertIn("held: queue deadline reached; retry later", err)
+        self.assertFalse(marker.exists())
+        wait_for(lambda: not self.status().get("leases") and not self.status().get("queue"))
+
+    def test_interrupt_at_foreground_transfer_never_releases_command(self):
+        marker = self.root / "must-not-run"
+        launcher = self.root / "interrupt-at-transfer.py"
+        launcher.write_text('''import os, runpy, signal, sys
+real_set_foreground = os.tcsetpgrp
+def set_foreground(fd, group):
+    real_set_foreground(fd, group)
+    if group != os.getpgrp():
+        os.kill(os.getpid(), signal.SIGTERM)
+os.tcsetpgrp = set_foreground
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+''')
+        pid, master = pty.fork()
+        if pid == 0:
+            os.execv(sys.executable, [sys.executable, str(launcher), str(ROOT / "bin/fm_resource.py"),
+                "--config", str(self.root / "config.json"), "run", "--class", "test",
+                "--", "/usr/bin/touch", str(marker)])
+        try:
+            def exited():
+                result = os.waitpid(pid, os.WNOHANG)
+                return result if result[0] else None
+            _, status = wait_for(exited)
+            pid = None
+            self.assertEqual(os.waitstatus_to_exitcode(status), 130)
+            self.assertFalse(marker.exists())
+            wait_for(lambda: not self.status().get("leases") and not self.status().get("queue"))
+        finally:
+            if pid is not None:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            os.close(master)
 
     def test_warning_admits_residents_but_not_compute_and_unknown_holds_residents(self):
         sample = copy.deepcopy(SAMPLE)
@@ -649,6 +839,7 @@ class ResourceTests(unittest.TestCase):
         second = self.job("echo UNSAFE", wait=0.2)
         out, err = second.communicate(timeout=5)
         self.assertEqual(second.returncode, 75, err)
+        self.assertIn("held: queue deadline reached; retry later", err)
         self.assertNotIn("UNSAFE", out)
         first.communicate(timeout=10)
         self.assertFalse(self.status()["queue"])
@@ -1987,7 +2178,7 @@ class PowerLogTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="fm-power-log-")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.now = datetime.datetime.fromisoformat("2026-11-10T22:51:55-05:00").timestamp()
         self.up = 1000
         self.boot = "lab-boot"
@@ -2000,7 +2191,8 @@ class PowerLogTests(unittest.TestCase):
         reader = resource.thermal_sleep_log
         self.reader = reader
         patches = (
-            mock.patch.object(resource, "time", types.SimpleNamespace(time=lambda: self.now, monotonic=lambda: self.up)),
+            mock.patch.object(resource, "time", types.SimpleNamespace(time=lambda: self.now, monotonic=lambda: self.up,
+                strftime=time.strftime, gmtime=time.gmtime)),
             mock.patch.object(resource, "uptime", lambda: self.up),
             mock.patch.object(resource, "boot_id", lambda: self.boot),
             mock.patch.object(resource, "process_table", lambda: {}),
@@ -2183,7 +2375,7 @@ class ClosedLidPolicyTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="fm-lid-", dir="/tmp")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.clock = 1000.0
         self.sample = copy.deepcopy(SAMPLE)
         self.sample.update(lidClosed=True, bootSessionUUID="fixture-boot", sequence=0)
@@ -2658,7 +2850,7 @@ class LevelOwnerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="fm-level-", dir="/tmp")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.config = dict(schemaVersion=1, stateDirectory=str(self.root / "state"),
                            socketPath=str(self.root / "socket"), monitorPath=str(self.root / "sample"),
                            policyMode="on", fullLevelEnabled=True, maxHeavyJobs=2,

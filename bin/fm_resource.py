@@ -1270,7 +1270,7 @@ def serve(config, digest):
         path.unlink(missing_ok=True)
 
 
-def rpc(config, digest, **request):
+def rpc(config, digest, *, wait=None, **request):
     path = Path(config["socketPath"])
     if path.is_symlink() or not path.exists() or path.stat().st_uid != os.getuid():
         raise Refusal("budget service socket missing or unsafe; compute is held")
@@ -1281,12 +1281,27 @@ def rpc(config, digest, **request):
             raise Refusal("budget owner is not this user")
         connection.sendall(json.dumps(dict(request, configDigest=digest)).encode() + b"\n")
         raw = b""
+        reported = False
         while not raw.endswith(b"\n"):
-            part = connection.recv(65536)
+            try:
+                part = connection.recv(65536)
+            except socket.timeout:
+                if wait is None:
+                    raise
+                if not wait():
+                    raise InterruptedError("budget wait cancelled") from None
+                if not reported:
+                    print("fm-resource-run: held: budget response delayed; continuing to wait", file=sys.stderr, flush=True)
+                    reported = True
+                # Keep this connection and request: the owner may already have
+                # durably acquired or bound the lease. Never replay mutations.
+                continue
             if not part or len(raw) > 4 * 1024 * 1024:
                 break
             raw += part
     result = json.loads(raw)
+    if wait is not None and not wait():
+        raise InterruptedError("budget wait cancelled")
     if not result.get("ok"):
         raise Refusal(result.get("error", "invalid budget response"))
     return result
@@ -1708,7 +1723,7 @@ def run_job(args, config_name, config, digest):
     owner = identity(os.getpid())
     parent = os.getppid()
     if inherited and kind != "worker":
-        result = rpc(config, digest, op="inherit", token=inherited, controller=owner, memoryMiB=memory, **{"class": kind})
+        result = rpc(config, digest, wait=lambda: True, op="inherit", token=inherited, controller=owner, memoryMiB=memory, **{"class": kind})
         command, env = caps(command, kind, os.environ.get("FM_RESOURCE_PORTABLE") == "1", config_name, config, result.get("cpuWorkers"))
         if kind == "browser" and not env.get("FM_RESOURCE_BROWSER_PROFILE"):
             browser_environment(config, inherited, env)
@@ -1728,24 +1743,34 @@ def run_job(args, config_name, config, digest):
     signal.signal(signal.SIGTERM, interrupt)
     signal.signal(signal.SIGINT, interrupt)
     deadline = time.monotonic() + args.wait_seconds if args.wait_seconds else None
+    queuing = True
+
+    def request(**values):
+        return rpc(config, digest, wait=lambda: not interrupted and
+            not (queuing and deadline and time.monotonic() >= deadline), **values)
+
     gaming_fd = None
     try:
         if kind != "worker":
             gaming_fd = gaming_lock(deadline, lambda: interrupted)
         while True:
             if interrupted or deadline and time.monotonic() >= deadline:
-                rpc(config, digest, op="cancel-queued", token=token)
+                if not interrupted:
+                    print("fm-resource-run: held: queue deadline reached; retry later", file=sys.stderr)
                 return 130 if interrupted else 75
-            result = rpc(config, digest, op="acquire", token=token, controller=owner, parent=parent,
+            result = request(op="acquire", token=token, controller=owner, parent=parent,
                 **{"class": kind, "memoryMiB": memory, "task": args.task})
+            if interrupted or deadline and time.monotonic() >= deadline:
+                raise InterruptedError("budget wait cancelled")
             if result["state"] == "leased":
                 if kind != "worker" and gaming_fd is None and gaming_flag().exists():
-                    rpc(config, digest, op="release", token=token)
+                    request(op="release", token=token)
                     gaming_fd = gaming_lock(deadline, lambda: interrupted)
                     continue
                 break
             time.sleep(0.2)
-        state = rpc(config, digest, op="status")
+        queuing = False
+        state = request(op="status")
         portable = state.get("portable", True)
         command, env = caps(command, kind, portable, config_name, config, result.get("cpuWorkers"))
         env.update(FM_RESOURCE_CONFIG=config_name, FM_RESOURCE_PORTABLE="1" if portable else "0")
@@ -1767,11 +1792,13 @@ def run_job(args, config_name, config, digest):
             os.close(read_fd)
             read_fd = -1
             group = identity(child.pid)
-            rpc(config, digest, op="bind", token=token, group=group)
+            request(op="bind", token=token, group=group)
             if terminal is not None:
                 signal.signal(signal.SIGTTOU, signal.SIG_IGN)
                 os.tcsetpgrp(terminal, child.pid)
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
+            if interrupted:
+                raise InterruptedError("budget wait cancelled")
             os.write(write_fd, b"go\n")
         finally:
             os.close(write_fd)
@@ -1779,10 +1806,10 @@ def run_job(args, config_name, config, digest):
                 os.close(read_fd)
         while True:
             child.poll()  # Reap an exited leader while its children drain.
-            if interrupted:
-                rpc(config, digest, op="cancel", token=token)
             try:
-                rpc(config, digest, op="heartbeat", token=token)
+                if interrupted:
+                    rpc(config, digest, wait=lambda: True, op="cancel", token=token)
+                rpc(config, digest, wait=lambda: True, op="heartbeat", token=token)
             except Refusal as error:
                 if "no longer active" in str(error):
                     released = True
@@ -1791,6 +1818,10 @@ def run_job(args, config_name, config, digest):
             time.sleep(2)
         returncode = child.wait()
         return 128 - returncode if returncode < 0 else returncode
+    except InterruptedError:
+        if not interrupted:
+            print("fm-resource-run: held: queue deadline reached; retry later", file=sys.stderr)
+        return 130 if interrupted else 75
     finally:
         if gaming_fd is not None:
             os.close(gaming_fd)
@@ -1888,7 +1919,8 @@ def parser():
     for action in ("emergency", "clear-emergency"):
         q = sub.add_parser(action)
         q.add_argument("--evidence", required=True, help="inspection/cause note; never credentials")
-    q = sub.add_parser("run", help="lease a bounded process group; descendants retain reservation after parent exit")
+    q = sub.add_parser("run", help="lease a bounded process group; descendants retain reservation after parent exit",
+        description="Queue holds and delayed owner replies wait indefinitely by default, without replaying requests or cancelling resident workers. A delayed reply prints a held notice. SIGINT/SIGTERM cancels the wait; --wait-seconds bounds queue admission only. Missing/unsafe sockets and explicit owner refusals still stop compute.")
     q.add_argument("--class", dest="resource_class", choices=CLASSES, default="exclusive",
         help="fallback reservation MiB: test=1024, build=3072, browser=2048, graph=512, exclusive=4096, worker=512")
     q.add_argument("--memory-mib", type=int, help="explicit planning reservation; otherwise owner uses the class peak/default")

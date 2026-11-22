@@ -7549,7 +7549,7 @@ STUB
 
 test_exited_wait_recovery() {
   local dir pid before n detail snapshot
-  for detail in gate pause; do
+  for detail in gate pause unfinished; do
     dir=$(exited_wait_fixture "exited-$detail")
     if [ "$detail" = gate ]; then
       printf "working: validation running\n" > "$dir/state/parked.status"
@@ -7562,7 +7562,14 @@ test_exited_wait_recovery() {
       mv "$dir/run.new" "$dir/run"
       assert_contains "$(exited_wait_state "$dir")" 'state: working · source: run-step' "fixture must bind the running validation"
     fi
-    # Start alive and let the current pause be seen. Then only change liveness.
+    if [ "$detail" = unfinished ]; then
+      printf 'count: 0 of 0 total\n' > "$dir/overview"
+      rm "$dir/run"
+      printf 'working: build waiting for power\n' > "$dir/state/parked.status"
+      prime_status_seen "$dir/state" "$dir/state/parked.status"
+      printf 'bash\n' > "$dir/agent"
+    fi
+    # Gate and pause start alive; unfinished work starts after the agent exits.
     exited_wait_start "$dir"
     pid=$EXITED_WAIT_PID
     if [ "$detail" = gate ]; then
@@ -7570,10 +7577,12 @@ test_exited_wait_recovery() {
       ack_stopped_cycle "$dir/state" || fail "could not acknowledge first sight"
       exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
     fi
-    wait_poll_cycle "$dir/state" "$pid" 300 || fail "live pause repeated an alarm"
-    wait_poll_cycle "$dir/state" "$pid" 300 || fail "live pause repeated an alarm"
-    if grep -q 'agent dead while' "$dir/watch.out"; then
-      reap "$pid"; fail "live pause reported a dead agent"
+    if [ "$detail" != unfinished ]; then
+      wait_poll_cycle "$dir/state" "$pid" 300 || fail "live pause repeated an alarm: $(cat "$dir/watch.out")"
+      wait_poll_cycle "$dir/state" "$pid" 300 || fail "live pause repeated an alarm: $(cat "$dir/watch.out")"
+      if grep -q 'agent dead while' "$dir/watch.out"; then
+        reap "$pid"; fail "live pause reported a dead agent"
+      fi
     fi
     before=$(date +%s)
     printf 'bash\n' > "$dir/agent"
@@ -7586,8 +7595,10 @@ test_exited_wait_recovery() {
       [ -f "$snapshot" ] || fail "must name findings"
       assert_grep 'r1,warning,example.sh,1,ask-user,choose behavior' "$snapshot" "snapshot must contain the gate finding"
       assert_grep 'finding from an earlier gate' "$dir/data/parked/nm-LABRUN-findings.txt" "prior decision snapshot must remain unchanged"
-    else
+    elif [ "$detail" = pause ]; then
       assert_grep 'paused: waiting for validation' "$dir/watch.out" "must name pause"
+    else
+      assert_grep 'unfinished work: working: build waiting for power' "$dir/watch.out" "must recover an exited build without a pause declaration"
     fi
     ack_stopped_cycle "$dir/state" || fail "could not acknowledge recovery"
     n=$(grep -c 'task parked agent dead while' "$dir/watch.out")
@@ -7613,8 +7624,22 @@ test_exited_wait_recovery() {
     [ ! -e "$dir/state/.wait-agent-reported-test_fm-parked" ] || { reap "$pid"; fail "relaunch retained recovery"; }
     reap "$pid"
   done
+  # A dead driver does not invalidate an independently running validation.
+  dir=$(exited_wait_fixture exited-active-validation)
+  printf 'working: validation running\n' > "$dir/state/parked.status"
+  prime_status_seen "$dir/state" "$dir/state/parked.status"
+  sed -e 's/status: awaiting_approval/status: running/' -e '/awaiting_agent:/,$d' "$dir/run" > "$dir/run.new"
+  mv "$dir/run.new" "$dir/run"
+  printf 'bash\n' > "$dir/agent"
+  exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
+  wait_poll_cycle "$dir/state" "$pid" 300 || { reap "$pid"; fail 'active validation requested recovery'; }
+  wait_poll_cycle "$dir/state" "$pid" 300 || { reap "$pid"; fail 'active validation repeated recovery'; }
+  reap "$pid"
+  if grep -q 'agent-recovery:' "$dir/watch.out"; then
+    fail 'unfinished-work recovery duplicated an active validation'
+  fi
   test_exited_wait_herdr
-  pass "exited gate and pause wake promptly, throttle repeats, and clear on relaunch"
+  pass "exited gate, pause and unfinished work wake promptly, throttle repeats, and clear on relaunch"
 }
 
 # Exercise the actual Herdr dispatch using read-only protocol stubs. Every
