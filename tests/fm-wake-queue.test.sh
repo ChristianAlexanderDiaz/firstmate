@@ -49,8 +49,15 @@ test_concurrent_append_and_drain() {
   generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$dir/drain-two.err")
   [ -n "$sequence" ] && [ -n "$generation" ] || fail "final replay omitted its acknowledgement boundary"
   FM_STATE_OVERRIDE="$state" "$DRAIN" --ack-through "$sequence" --recovery-generation "$generation" \
+    > "$dir/ack.out" 2> "$dir/ack.err" \
     || fail "concurrent records could not be acknowledged"
+  [ "$(cat "$dir/ack.out")" = "WAKE_ACK_CONFIRMED: through $sequence generation $generation" ] \
+    || fail "successful acknowledgement omitted its sequence/generation confirmation"
+  [ ! -s "$dir/ack.err" ] || fail "successful acknowledgement printed a diagnostic"
   [ ! -s "$state/.wake-queue" ] || fail "acknowledged concurrent records remained queued"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/after.out" 2> "$dir/after.err" \
+    || fail "post-acknowledgement drain failed"
+  [ ! -s "$dir/after.out" ] || fail "the next drain replayed acknowledged rows"
   pass "concurrent append plus drain preserves durable records through acknowledgement"
 }
 
@@ -1450,7 +1457,11 @@ test_branch_actor_scoped_ack_never_swallows_a_main_owned_row() {
   [ "$sequence" -eq 3 ] || fail "branch ack cutoff must be the max ELIGIBLE seq (3), got $sequence"
 
   FM_STATE_OVERRIDE="$state" FM_SUPERVISION_ACTOR=branch "$DRAIN" --ack-through "$sequence" --recovery-generation "$generation" \
+    > "$dir/branch-ack.out" 2> "$dir/branch-ack.err" \
     || fail "branch-scoped ack failed"
+  [ "$(cat "$dir/branch-ack.out")" = "WAKE_ACK_CONFIRMED: through $sequence generation $generation" ] \
+    || fail "branch acknowledgement omitted its sequence/generation confirmation"
+  [ ! -s "$dir/branch-ack.err" ] || fail "branch acknowledgement printed a diagnostic"
 
   # The core no-swallow property: the main-only row - seq 1, BELOW the
   # branch's own ack cutoff of 3 - must still be there.
@@ -2247,6 +2258,9 @@ SH
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || fail "recovery acknowledgement failure was reported as success"
+  [ ! -s "$dir/drain.out" ] || fail "failed acknowledgement printed a success confirmation"
+  [ "$(wc -l < "$dir/drain.err" | tr -d ' ')" -eq 1 ] \
+    || fail "failed acknowledgement did not print exactly one diagnostic line"
   grep -F 'recovery episode could not be retired safely' "$dir/drain.err" >/dev/null \
     || fail "recovery acknowledgement failure had no explicit diagnostic"
   grep -F 'WAKE_ACK_REQUIRED' "$dir/drain.err" >/dev/null \
@@ -2260,6 +2274,55 @@ SH
   [ "$(cat "$state/.watcher-down")" = "acked:handling:$generation" ] \
     || fail "successful retry did not acknowledge pending recovery state"
   pass "wake drain: recovery acknowledgement failures are explicit and retryable"
+}
+
+test_ack_verifies_persisted_queue_before_confirming() {
+  local dir state fakebin real_mv sequence generation mode rc
+  dir=$(make_case ack-persisted-queue)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  real_mv=$(command -v mv) || fail "could not locate mv for acknowledgement fixture"
+  append_wake "$state" check fixture 'check: fixture' || fail "fixture append failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/initial.out" 2> "$dir/initial.err" \
+    || fail "initial drain failed"
+  sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation .*/\1/p' "$dir/initial.err")
+  generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$dir/initial.err")
+  cat > "$fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+if [ "${!#}" = "$FM_TEST_ACK_QUEUE" ]; then
+  case "$FM_TEST_ACK_MODE" in
+    refuse) exit 1 ;;
+    ineffective) exit 0 ;;
+  esac
+fi
+exec "$FM_TEST_REAL_MV" "$@"
+SH
+  chmod +x "$fakebin/mv"
+  for mode in refuse ineffective; do
+    rc=0
+    PATH="$fakebin:$PATH" FM_TEST_REAL_MV="$real_mv" FM_TEST_ACK_QUEUE="$state/.wake-queue" \
+      FM_TEST_ACK_MODE="$mode" FM_STATE_OVERRIDE="$state" "$DRAIN" \
+      --ack-through "$sequence" --recovery-generation "$generation" \
+      > "$dir/$mode.out" 2> "$dir/$mode.err" || rc=$?
+    [ "$rc" -ne 0 ] || fail "$mode queue replacement was reported as success"
+    [ ! -s "$dir/$mode.out" ] || fail "$mode queue replacement printed a success confirmation"
+    [ "$(wc -l < "$dir/$mode.err" | tr -d ' ')" -eq 1 ] \
+      || fail "$mode queue replacement did not print exactly one diagnostic line"
+    case "$mode" in
+      refuse) assert_grep 'acknowledged wakes could not be consumed safely' "$dir/$mode.err" "missing refusal diagnostic" ;;
+      ineffective) assert_grep 'acknowledged wakes could not be verified absent' "$dir/$mode.err" "missing verification diagnostic" ;;
+    esac
+    [ -s "$state/.wake-queue" ] || fail "$mode replacement lost the queued row"
+    [ -s "$state/.main-eligible-rows" ] || fail "$mode replacement consumed the claim before verification"
+  done
+  rc=0
+  FM_STATE_OVERRIDE="$state" "$DRAIN" --ack-through invalid --recovery-generation "$generation" \
+    > "$dir/invalid.out" 2> "$dir/invalid.err" || rc=$?
+  [ "$rc" -ne 0 ] && [ ! -s "$dir/invalid.out" ] \
+    || fail "invalid acknowledgement was reported as success"
+  [ "$(cat "$dir/invalid.err")" = 'wake drain: invalid acknowledgement sequence' ] \
+    || fail "invalid acknowledgement changed its one-line refusal"
+  pass "acknowledgement confirms persisted removal and reports failed or refused consumption once"
 }
 
 test_interruption_before_and_after_raw_commit() {
@@ -3567,6 +3630,7 @@ test_stale_recovery_generation_cannot_touch_a_newer_episode
 test_stale_ack_that_consumes_nothing_names_the_current_wake
 test_branch_stale_ack_that_consumes_nothing_names_its_granted_wake
 test_recovery_ack_failure_is_reported
+test_ack_verifies_persisted_queue_before_confirming
 test_interruption_before_and_after_raw_commit
 test_wake_queue_prune_task
 test_drain_rotates_orphaned_scratch
