@@ -2112,6 +2112,44 @@ test_empty_recovery_ack_confirms_when_recovery_moves() {
   pass "empty recovery acknowledgement confirms while preserving a newer episode"
 }
 
+test_empty_recovery_ack_after_later_presentation() {
+  local dir state generation next_generation mode
+  for mode in same newer; do
+    dir=$(make_case "empty-ack-presented-$mode")
+    state="$dir/state"
+    printf 'pending:downtime:original-generation\n' > "$state/.watcher-down"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/initial.out" 2> "$dir/initial.err" \
+      || fail "empty recovery drain failed"
+    generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through 0 --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$dir/initial.err")
+    [ "$generation" = original-generation ] || fail "empty recovery acknowledgement missing"
+    if [ "$mode" = newer ]; then
+      printf 'pending:downtime:new-generation\n' > "$state/.watcher-down"
+    fi
+    append_wake "$state" check later 'check: later wake' || fail "later wake append failed"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/later.out" 2> "$dir/later.err" \
+      || fail "later wake drain failed"
+    next_generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$dir/later.err")
+    [ -n "$next_generation" ] || fail "later wake acknowledgement missing"
+    if [ "$mode" = same ]; then
+      [ "$next_generation" = "$generation" ] || fail "fixture changed recovery generation"
+    else
+      [ "$next_generation" != "$generation" ] || fail "fixture did not change recovery generation"
+    fi
+    FM_STATE_OVERRIDE="$state" "$DRAIN" --ack-through 0 --recovery-generation "$generation" \
+      > "$dir/ack.out" 2> "$dir/ack.err" || fail "empty recovery acknowledgement failed"
+    [ "$(cat "$dir/ack.out")" = "WAKE_ACK_CONFIRMED: through 0 generation $generation" ] \
+      || fail "later presentation prevented empty recovery confirmation"
+    ! grep -F 'nothing was acknowledged' "$dir/ack.err" >/dev/null \
+      || fail "empty recovery acknowledgement was treated as a stale cutoff"
+    if [ "$mode" = newer ]; then
+      assert_grep 'a newer recovery episode is pending' "$dir/ack.err" "newer recovery notice missing"
+    fi
+    grep "$(printf '\tcheck\tlater\t')" "$state/.wake-queue" >/dev/null \
+      || fail "later presented wake was consumed"
+  done
+  pass "empty recovery acknowledgement survives a later wake presentation"
+}
+
 test_stale_recovery_generation_cannot_touch_a_newer_episode() {
   local dir state first_err replay_err sequence generation handling_marker
   local newer_marker newer_sequence newer_generation rc
@@ -3689,6 +3727,7 @@ test_legacy_generationless_wake_is_adopted
 test_handover_restore_undoes_only_its_own_stop
 test_ack_confirms_consumption_when_recovery_moves
 test_empty_recovery_ack_confirms_when_recovery_moves
+test_empty_recovery_ack_after_later_presentation
 test_stale_recovery_generation_cannot_touch_a_newer_episode
 test_stale_ack_that_consumes_nothing_names_the_current_wake
 test_branch_stale_ack_that_consumes_nothing_names_its_granted_wake
