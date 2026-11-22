@@ -2083,6 +2083,35 @@ test_ack_confirms_consumption_when_recovery_moves() {
   pass "acknowledgement confirms consumption while preserving a newer recovery episode"
 }
 
+test_empty_recovery_ack_confirms_when_recovery_moves() {
+  local dir state generation remaining
+  for remaining in empty queued; do
+    dir=$(make_case "empty-ack-moved-$remaining")
+    state="$dir/state"
+    printf 'pending:downtime:original-generation\n' > "$state/.watcher-down"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2> "$dir/drain.err" \
+      || fail "empty recovery drain failed"
+    generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through 0 --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$dir/drain.err")
+    [ "$generation" = original-generation ] || fail "empty recovery acknowledgement missing"
+    printf 'pending:downtime:new-generation\n' > "$state/.watcher-down"
+    if [ "$remaining" = queued ]; then
+      append_wake "$state" check second 'check: pending' || fail "pending append failed"
+    fi
+    FM_STATE_OVERRIDE="$state" "$DRAIN" --ack-through 0 --recovery-generation "$generation" \
+      > "$dir/ack.out" 2> "$dir/ack.err" || fail "empty recovery acknowledgement failed"
+    [ "$(cat "$dir/ack.out")" = "WAKE_ACK_CONFIRMED: through 0 generation $generation" ] \
+      || fail "empty recovery acknowledgement omitted confirmation"
+    assert_grep 'a newer recovery episode is pending' "$dir/ack.err" "newer recovery notice missing"
+    [ "$(cat "$state/.watcher-down")" = 'pending:downtime:new-generation' ] \
+      || fail "newer recovery episode was retired"
+    if [ "$remaining" = queued ]; then
+      grep "$(printf '\tcheck\tsecond\t')" "$state/.wake-queue" >/dev/null \
+        || fail "pending row was consumed"
+    fi
+  done
+  pass "empty recovery acknowledgement confirms while preserving a newer episode"
+}
+
 test_stale_recovery_generation_cannot_touch_a_newer_episode() {
   local dir state first_err replay_err sequence generation handling_marker
   local newer_marker newer_sequence newer_generation rc
@@ -3659,6 +3688,7 @@ test_recovery_mint_and_delivery_log_avoid_sibling_subst
 test_legacy_generationless_wake_is_adopted
 test_handover_restore_undoes_only_its_own_stop
 test_ack_confirms_consumption_when_recovery_moves
+test_empty_recovery_ack_confirms_when_recovery_moves
 test_stale_recovery_generation_cannot_touch_a_newer_episode
 test_stale_ack_that_consumes_nothing_names_the_current_wake
 test_branch_stale_ack_that_consumes_nothing_names_its_granted_wake
