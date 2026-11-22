@@ -7558,7 +7558,7 @@ test_exited_wait_recovery() {
   for detail in gate pause unfinished; do
     dir=$(exited_wait_fixture "exited-$detail")
     if [ "$detail" = gate ]; then
-      printf "working: validation running\n" > "$dir/state/parked.status"
+      printf "paused: awaiting validation\n" > "$dir/state/parked.status"
       prime_status_seen "$dir/state" "$dir/state/parked.status"
       assert_contains "$(exited_wait_state "$dir")" 'state: parked · source: run-step · parked at review' "fixture must bind the current parked run"
       printf 'finding from an earlier gate\n' > "$dir/data/parked/nm-LABRUN-findings.txt"
@@ -7616,14 +7616,8 @@ test_exited_wait_recovery() {
     # A forgotten recovery repeats on the stale cadence, even after restart.
     set_mtime "$(( $(date +%s) - 61 ))" "$dir/state/.wait-agent-reported-test_fm-parked"
     exited_wait_start "$dir"; pid=$EXITED_WAIT_PID
-    if [ "$detail" = gate ]; then
-      wait_for_exit "$pid" 150 || { reap "$pid"; fail "unexpected exited gate recovery did not repeat"; }
-      [ "$(grep -c 'task parked agent dead while' "$dir/watch.out")" -eq "$((n + 1))" ] || fail "expired gate recovery did not queue exactly once"
-    else
-      wait_poll_cycle "$dir/state" "$pid" 300 || { reap "$pid"; fail "unchanged exited pause repeated"; }
-      reap "$pid"
-      [ "$(grep -c 'task parked agent dead while' "$dir/watch.out")" -eq "$n" ] || fail "unchanged exited pause queued another notification"
-    fi
+    wait_for_exit "$pid" 150 || { reap "$pid"; fail "exited $detail recovery did not repeat"; }
+    [ "$(grep -c 'task parked agent dead while' "$dir/watch.out")" -eq "$((n + 1))" ] || fail "expired $detail recovery did not queue exactly once"
     ack_stopped_cycle "$dir/state" || fail "could not acknowledge recovery reminder"
     # Replacing the agent clears recovery on the next probe, without waiting
     # for the stale escalation cadence or adding an open status decision.
@@ -7651,7 +7645,7 @@ test_exited_wait_recovery() {
     fail 'unfinished-work recovery duplicated an active validation'
   fi
   test_exited_wait_herdr
-  pass "exited gate, pause and unfinished work wake promptly, declared pauses suppress repeats, and recovery clears on relaunch"
+  pass "exited gate, pause and unfinished work repeat recovery alerts until relaunch"
 }
 
 # Exercise the actual Herdr dispatch using read-only protocol stubs. Every
@@ -7742,6 +7736,7 @@ test_idle_noop_lab() {
     [ "$cycle" -ne 13 ] || facts='{"state":"merged","pr":"https://example.invalid/pull/1","head":"head-a","wait":"","decisions":[],"findings":[],"blockers":[]}'
     set -- --task review --verdict captain --summary "Observation $cycle"
     [ "${FM_NOOP_LAB_LEGACY:-0}" -eq 1 ] || set -- "$@" --situation "$facts"
+    if [ "${FM_NOOP_LAB_LEGACY:-0}" -ne 1 ] && [ "$cycle" -lt 13 ]; then set -- "$@" --no-new-result true; fi
     FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=lab \
       "$report" "$@" >/dev/null || fail "lab report failed"
   done

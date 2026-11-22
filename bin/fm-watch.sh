@@ -23,8 +23,7 @@
 # FM_WAIT_AGENT_CHECK_SECS (default 60), with a 20s bound on the current-state
 # read and a 3s findings read: detection takes at most 60s + one poll + those reads (98s at the default
 # 15s poll), plus other work in the serial poll. Repeat recovery wakes use
-# FM_STALE_ESCALATE_SECS for unexpected gates and failed lifecycle operations; unchanged declared
-# waits are reported once per recovery identity. Only tmux and herdr provide
+# FM_STALE_ESCALATE_SECS while recovery remains necessary. Only tmux and herdr provide
 # recovery-grade agent liveness; unknown/unverified backends keep existing behavior.
 # The same probe schedules conditional captain-wait exit/relaunch through
 # fm-control; bin/fm-captain-wait-lib.sh owns that policy and durable journal.
@@ -635,13 +634,7 @@ exited_wait_check() {  # <window> <task> <kind>
     identity="$identity due"
   fi
   if [ "$(cat "$marker" 2>/dev/null || true)" = "$identity" ]; then
-    case "$phase" in
-      failed|launching) [ "$(age_of "$marker")" -ge "$STALE_ESCALATE_SECS" ] || return 0 ;;
-      *)
-        status_is_paused_or_captain_held "$last" && return 0
-        [ "$(age_of "$marker")" -ge "$STALE_ESCALATE_SECS" ] || return 0
-        ;;
-    esac
+    [ "$(age_of "$marker")" -ge "$STALE_ESCALATE_SECS" ] || return 0
   fi
   case "$line" in
     'state: parked · source: run-step · '*' · run: '*)
