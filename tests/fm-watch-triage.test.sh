@@ -5726,6 +5726,21 @@ test_busy_declared_pause_is_rechecked_not_wedge_escalated() {
   [ ! -e "$state/.stale-since-$key" ] || fail "a declared-pause recheck used the wedge timer"
   ack_stopped_cycle "$state" || fail "could not acknowledge the declared-pause recheck"
 
+  # An unchanged declaration must still be rechecked when the busy call remains over-age.
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.paused-resurfaced-$key"
+  else touch -m -d "@$back" "$state/.paused-resurfaced-$key"; fi
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_FAKE_CREW_STATE='state: working · source: pane · harness busy (pi-ext)' \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=1 FM_PAUSE_RESURFACE_SECS=240 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=1000000 FM_HEARTBEAT=1000000 FM_HEARTBEAT_MAX=1000000 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "an unchanged busy declared pause was not rechecked again"; }
+  grep -F "awaiting external" "$out" >/dev/null || fail "the repeated busy recheck was not surfaced: $(cat "$out")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the repeated busy recheck"
+
   # Phase C: the pause is lifted on the SAME busy, over-age pane. Nothing else
   # changes, so a still-absorbed pane here would mean the bound was silenced
   # rather than taught the declaration. It must wedge-escalate exactly as before.

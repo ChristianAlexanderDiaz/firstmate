@@ -1378,17 +1378,17 @@ FM_WEDGE_GUARD_DEFER_MAX=${FM_WEDGE_GUARD_DEFER_MAX:-3}
 # An optional <scope> instead permits one notification per declaration;
 # callers without a scoped declaration keep the timestamp body. Shared by the
 # declared-pause absorb and the worktree-write deferral for their first-notification
-# timing; each caller owns its own marker and reason.
+# timing; each caller owns its own marker and reason. Busy callers can retain
+# the bounded cadence for an unchanged declaration.
 # Returns without waking while either the absorb or the throttle is inside the
 # window; wake() itself exits the cycle, exactly as it does inline. An optional
 # <min-age> replaces the cadence as the absorb-age gate for one call (0 lets a
 # declared `until` time that has just passed re-surface at once), while the
 # unscoped throttle keeps the cadence between repeats.
-resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min-age]
-  local win=$1 throttle=$2 age=$3 reason=$4 scope=${5-} min_age=${6:-$PAUSE_RESURFACE_SECS}
-  # A scoped declaration is a known wait, not evidence of a wedge. Its first
-  # notification stays durable; elapsed time alone adds nothing to inspect.
-  if [ -n "$scope" ] && [ "$(cat "$throttle" 2>/dev/null || true)" = "$scope" ]; then
+resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min-age] [repeat]
+  local win=$1 throttle=$2 age=$3 reason=$4 scope=${5-} min_age=${6:-$PAUSE_RESURFACE_SECS} repeat=${7-}
+  # An idle scoped declaration is a known wait, not evidence of a wedge.
+  if [ -z "$repeat" ] && [ -n "$scope" ] && [ "$(cat "$throttle" 2>/dev/null || true)" = "$scope" ]; then
     return 0
   fi
   if [ -z "$scope" ] || [ ! -e "$throttle" ] \
@@ -1923,7 +1923,7 @@ busy_turn_over_age() {  # <task>
 }
 
 # Absorb a stale pane under a declared external-wait pause (paused:) or a
-# dead-agent captain-held transfer, and surface once per declaration after
+# dead-agent captain-held transfer, and surface once per idle declaration after
 # PAUSE_RESURFACE_SECS. A declared deadline passing creates a new scope. Called on any
 # stale poll once pause_state_class permits the bounded cadence, so it must be
 # cheap: it NEVER re-reads crew state. The re-surface age is anchored on the
@@ -1938,8 +1938,8 @@ busy_turn_over_age() {  # <task>
 # captain themself for a verified hold. Only the captain-held verb takes the second
 # wording; a caller that reached the bounded cadence off pause tracking alone, with
 # no declaring verb left on the log, keeps the external-wait wording it always had.
-handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age detail reason declaration last until now min_age
+handle_paused_stale() {  # <window> <task> <hash> [repeat]
+  local win=$1 task=$2 h=$3 repeat=${4-} key statusf mtime age detail reason declaration last until now min_age
   key=$(window_key "$win")
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
@@ -1959,7 +1959,7 @@ handle_paused_stale() {  # <window> <task> <hash>
       return 0
     fi
     detail="captain-held, awaiting the captain"
-    reason="captain-held ${age}s, awaiting the captain - verified hold transfer, reported once per wait not a wedge; answer the held decision or release the hold"
+    reason="captain-held ${age}s, awaiting the captain - verified hold transfer, not a wedge; answer the held decision or release the hold"
   elif until=$(status_paused_until "$last"); then
     if [ "$now" -lt "$until" ] && [ "$age" -lt "$PAUSE_RESURFACE_SECS" ]; then
       triage_log "absorbed stale (paused until $(( until - now ))s from now, declared time not reached): $win"
@@ -1968,18 +1968,17 @@ handle_paused_stale() {  # <window> <task> <hash>
       detail="paused, declared time beyond recheck cadence"
       reason="paused ${age}s, awaiting external - the declared time is beyond the recheck cadence; confirm the wait still holds"
     else
-      # The declared time has passed: recheck now, once per declaration, then
-      # stay quiet until the declaration changes.
+      # The declared time has passed: recheck now, then follow the caller's cadence.
       detail="paused, declared time reached"
-      reason="paused ${age}s, awaiting external - the declared clearing time has passed, reported once per wait not a wedge; confirm the wait cleared"
+      reason="paused ${age}s, awaiting external - the declared clearing time has passed, not a wedge; confirm the wait cleared"
       declaration="$declaration:due"
       min_age=0
     fi
   else
     detail="paused, awaiting external"
-    reason="paused ${age}s, awaiting external - declared pause, reported once per wait not a wedge; confirm the wait still holds"
+    reason="paused ${age}s, awaiting external - declared pause, not a wedge; confirm the wait still holds"
   fi
-  resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age"
+  resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age" "$repeat"
   triage_log "absorbed stale ($detail, age ${age}s): $win"
 }
 
@@ -1994,7 +1993,7 @@ handle_paused_stale() {  # <window> <task> <hash>
 # the expected external wait. The caller has already confirmed liveness through
 # the busy verdict, so this exception does not suppress undeclared wedges or
 # alter the separate non-busy classification. handle_paused_stale keeps the
-# exception observable with one notification per declaration.
+# exception observable with bounded rechecks.
 # A pane that declared nothing falls through to the shared wedge timer, which,
 # in a home that armed config/wedge-defer-parked-gate, applies the same rule to
 # the one wait a busy pane cannot declare: a validation gate of its own awaiting
@@ -2045,7 +2044,7 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
       fi
       return 0
     fi
-    handle_paused_stale "$win" "$task" "$h"
+    handle_paused_stale "$win" "$task" "$h" repeat
     return 0
   fi
   wedge_timer_check "$win" "$since_file" "busy (no completed turn)" "$escalation_file" "$task" "$h" "$dialog"
