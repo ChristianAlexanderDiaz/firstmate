@@ -13,7 +13,7 @@
 # although its initial no-verb status signal still surfaces in normal mode.
 # The first recheck is condition-aware: a paused: line naming
 # `until <UTC ISO 8601>` is rechecked when that time passes, but a declared time
-# beyond FM_PAUSE_RESURFACE_SECS cannot extend the ordinary recheck cadence, and
+# beyond FM_PAUSE_RESURFACE_SECS cannot delay the first recheck past that bound, and
 # while an away record (state/.afk-contract, never quiet mode's) exists an
 # item held for the captain is never rechecked at all, in either posture.
 # While state/.afk exists, the daemon owns triage and this watcher queues and exits
