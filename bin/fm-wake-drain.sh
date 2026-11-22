@@ -1033,6 +1033,9 @@ if [ -n "$ACK_THROUGH" ]; then
         ;;
     esac
   elif [ "$RECOVERY_ACK_MOVED" = true ]; then
+    if [ "$ACK_REMOVED" -gt 0 ]; then
+      printf 'WAKE_ACK_CONFIRMED: through %s generation %s\n' "$ACK_THROUGH" "$ACK_GENERATION"
+    fi
     printf 'wake drain: acknowledged wakes through %s (%s row(s) consumed), but a newer recovery episode is pending; re-run bin/fm-wake-drain.sh and use the new WAKE_ACK_REQUIRED command\n' \
       "$ACK_THROUGH" "$ACK_REMOVED" >&2
   else

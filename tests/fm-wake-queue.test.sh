@@ -2051,6 +2051,38 @@ test_handover_restore_undoes_only_its_own_stop() {
   pass "a handover undoes only the downtime its own stop published over an acknowledged episode"
 }
 
+test_ack_confirms_consumption_when_recovery_moves() {
+  local dir state sequence generation remaining
+  for remaining in empty queued; do
+    dir=$(make_case "ack-moved-$remaining")
+    state="$dir/state"
+    append_wake "$state" check first 'check: handled' || fail "fixture append failed"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2> "$dir/drain.err" \
+      || fail "initial drain failed"
+    sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation .*/\1/p' "$dir/drain.err")
+    generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$dir/drain.err")
+    [ -n "$sequence" ] && [ -n "$generation" ] || fail "initial acknowledgement missing"
+    if [ "$remaining" = queued ]; then
+      append_wake "$state" check second 'check: pending' || fail "pending append failed"
+    fi
+    printf 'pending:downtime:new-generation\n' > "$state/.watcher-down"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" --ack-through "$sequence" --recovery-generation "$generation" \
+      > "$dir/ack.out" 2> "$dir/ack.err" || fail "acknowledgement failed"
+    [ "$(cat "$dir/ack.out")" = "WAKE_ACK_CONFIRMED: through $sequence generation $generation" ] \
+      || fail "consumption with newer recovery omitted confirmation"
+    assert_grep 'a newer recovery episode is pending' "$dir/ack.err" "newer recovery notice missing"
+    ! grep "$(printf '\tcheck\tfirst\t')" "$state/.wake-queue" >/dev/null \
+      || fail "handled row remained queued"
+    if [ "$remaining" = queued ]; then
+      grep "$(printf '\tcheck\tsecond\t')" "$state/.wake-queue" >/dev/null \
+        || fail "pending row was consumed"
+    fi
+    [ "$(cat "$state/.watcher-down")" = 'pending:downtime:new-generation' ] \
+      || fail "newer recovery episode was retired"
+  done
+  pass "acknowledgement confirms consumption while preserving a newer recovery episode"
+}
+
 test_stale_recovery_generation_cannot_touch_a_newer_episode() {
   local dir state first_err replay_err sequence generation handling_marker
   local newer_marker newer_sequence newer_generation rc
@@ -3626,6 +3658,7 @@ test_wake_publish_requires_atomic_recovery_evidence
 test_recovery_mint_and_delivery_log_avoid_sibling_subst
 test_legacy_generationless_wake_is_adopted
 test_handover_restore_undoes_only_its_own_stop
+test_ack_confirms_consumption_when_recovery_moves
 test_stale_recovery_generation_cannot_touch_a_newer_episode
 test_stale_ack_that_consumes_nothing_names_the_current_wake
 test_branch_stale_ack_that_consumes_nothing_names_its_granted_wake
