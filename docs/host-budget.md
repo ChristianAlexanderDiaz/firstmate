@@ -78,7 +78,7 @@ Their local compute commands still require stage reservations.
 Interactive launches retain the controlling terminal, transfer foreground ownership to the verified child process group before execution, and restore it after completion; terminal interrupts reach the running CLI normally.
 Existing account authentication and pin validation remain in the account adapter.
 Worker manifest validation rejects changed directory, branch, task, account configuration or argv rather than choosing another account or directory.
-Recovery never automatically relaunches saved commands.
+Budget-owner recovery never automatically relaunches saved commands; worker recovery belongs to [supervision](architecture.md#event-driven-supervision).
 Relaunch preparation creates a new manifest from the supervisor's validated task record.
 
 PATH adapters catch ordinary graphify launches from commit hooks as well as worker commands.

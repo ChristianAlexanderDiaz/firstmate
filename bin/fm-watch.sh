@@ -18,8 +18,8 @@
 # item held for the captain is never rechecked at all, in either posture.
 # While state/.afk exists, the daemon owns triage and this watcher queues and exits
 # on every wake.
-# A confirmed exited ordinary worker with unfinished work, at a gate or under a declared pause
-# bypasses that long cadence, before the ordinary pane capture and triage. Probe every
+# A confirmed exited ordinary worker with unfinished work, a parked gate or a
+# declared pause bypasses that long cadence, before ordinary pane capture and triage. Probe every
 # FM_WAIT_AGENT_CHECK_SECS (default 60), with a 20s bound on the current-state
 # read and a 3s findings read: detection takes at most 60s + one poll + those reads (98s at the default
 # 15s poll), plus other work in the serial poll. Repeat recovery wakes use
