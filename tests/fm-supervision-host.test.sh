@@ -299,6 +299,61 @@ append_status() {  # <home> <text>
 
 # --- report surface -----------------------------------------------------------
 
+# Exercise the public report surface: the host must receive the stored verdict,
+# including when a late away report would otherwise queue a return relay.
+test_report_repeated_situations_are_durable_routine() {
+  local home state facts changed out cycle field
+  home="$TMP_ROOT/report-repeat"; state="$home/state"
+  mkdir -p "$state"
+  printf 'paused [key=merge]: waiting for review\n' > "$state/alpha.status"
+  printf 'turn=t1\nrows=4\ntasks=alpha\nunscoped=0\nposture=attended\nwake=stale: alpha\n' > "$state/.supervision-host-turn"
+  facts='{"state":"ready","pr":"https://example.invalid/pull/1","head":"head-a","wait":"merge","decisions":["merge","review"],"findings":[],"blockers":[]}'
+  for cycle in 1 2 3 4 5 6; do
+    facts=$(printf '%s\n' "$facts" | jq -c '.decisions |= reverse')
+    out=$(FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
+      --task alpha --verdict captain --summary "Review is still pending, observation $cycle" --situation "$facts") \
+      || fail "structured report failed"
+    if [ "$cycle" -eq 1 ]; then
+      assert_contains "$out" '[captain]' "first report must surface"
+    else
+      assert_contains "$out" '[routine]' "repeated report must be routine"
+      assert_contains "$out" 'silent outcome' "repeated report must be silent"
+    fi
+  done
+  [ "$(awk -F '\t' '$3 == "captain" { n++ } END { print n+0 }' "$state/.supervision-host-receipts")" -eq 1 ] \
+    || fail "host receipts repeated the requested verdict instead of the stored verdict"
+  [ "$(wc -l < "$state/branch-outcomes.jsonl")" -eq 6 ] || fail "suppression lost durable reports"
+  # The first unprocessed result remains present; routine repeats never clear it.
+  FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" present | jq -se 'map(select(.verdict == "captain")) | length == 1' >/dev/null \
+    || fail "routine repeats hid the first unprocessed result"
+  for field in state pr head wait decisions findings blockers; do
+    changed=$(printf '%s\n' "$facts" | jq -c --arg field "$field" \
+      'if (.[$field] | type) == "array" then .[$field] = ["new-key"] else .[$field] = "new-value" end')
+    out=$(FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
+      --task alpha --verdict captain --summary 'The situation changed' --situation "$changed") || fail "changed report failed"
+    assert_contains "$out" '[captain]' "changed $field must surface"
+    facts=$changed
+  done
+  printf 'needs-decision [key=new]: new finding\n' >> "$state/alpha.status"
+  out=$(FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
+    --task alpha --verdict captain --summary 'New recorded event' --situation "$facts") || fail "status change report failed"
+  assert_contains "$out" '[captain]' "new status must surface even if supplied facts lag"
+  # Late away reports of the same situation must not generate return wakes.
+  printf 'turn=t1\nrows=4\ntasks=alpha\nunscoped=0\nposture=away\n' > "$state/.supervision-host-turn"
+  out=$(FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
+    --task alpha --verdict captain --summary 'Still unchanged after return' --situation "$facts") || fail "late report failed"
+  [ ! -s "$state/.wake-queue" ] || fail "silent duplicate queued a return wake"
+  # Missing structured facts preserve conservative legacy behavior.
+  out=$(FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
+    --task alpha --verdict captain --summary 'Unknown facts') || fail "legacy report failed"
+  assert_contains "$out" '[captain]' "unknown facts must surface"
+  if FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" append --task alpha --verdict captain \
+      --summary invalid --situation '{"state":"ready"}' >/dev/null 2>&1; then
+    fail "incomplete situation was accepted"
+  fi
+  pass "structured report repeats stay durable and silent, while every changed fact and unknown situation surfaces"
+}
+
 test_report_surface_enforces_actor_turn_and_scope() {
   local home state out rc
   home="$TMP_ROOT/report"
@@ -3020,6 +3075,20 @@ test_sleep_cancels_an_active_host_turn() {
   pass 'sleep: active engine cancellation preserves the wake and does not increment the engine-error latch'
 }
 
+test_noop_outcome_regressions() {
+  test_report_repeated_situations_are_durable_routine
+  test_report_surface_enforces_actor_turn_and_scope
+  test_attended_captain_outcome_reaches_main_through_branch_outcomes
+  test_silent_outcomes_are_not_relayed_when_the_captain_returns
+  test_report_without_acknowledgement_hands_the_wake_to_main
+}
+
+# Match the watcher suite's selector for bounded, intent-targeted local runs.
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit 0
+fi
+
 test_sleep_holds_host_wakes_and_park_boundaries
 test_sleep_cancels_an_active_host_turn
 
@@ -3028,6 +3097,7 @@ test_claude_stop_hook_restores_handoff_when_successor_closed_mid_engine_turn
 test_claude_stop_hook_notifies_when_closed_successor_downtime_restore_fails
 test_claude_stop_hook_notifies_when_closed_announced_successor_downtime_restore_fails
 test_park_exit_probe_uses_half_second_child_sleeps
+test_report_repeated_situations_are_durable_routine
 test_report_surface_enforces_actor_turn_and_scope
 test_report_after_the_return_is_queued_for_main
 test_dispatch_entry_scopes_rows_and_renders_the_away_tail

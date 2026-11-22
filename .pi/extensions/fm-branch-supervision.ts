@@ -1217,6 +1217,10 @@ export default function (pi: ExtensionAPI) {
             "One or two sentences in captain outcome language; include the full https:// PR URL when a PR is involved",
         }),
         wake: Type.Optional(Type.String({ description: "The wake reason line this outcome answers" })),
+        situation: Type.Optional(Type.Object({
+          state: Type.String(), pr: Type.String(), head: Type.String(), wait: Type.String(),
+          decisions: Type.Array(Type.String()), findings: Type.Array(Type.String()), blockers: Type.Array(Type.String()),
+        }, { description: "Complete observed facts for a captain report, per fm-branch-outcome.sh; omit if any fact is unknown." })),
         silent: Type.Optional(Type.Boolean({
           description: "True only for an eligible routine no-change outcome; captain outcomes are never silent, and actions, state changes, or new results stay rendered",
         })),
@@ -1246,7 +1250,8 @@ export default function (pi: ExtensionAPI) {
         if (scopeRefusal) {
           return { content: [{ type: "text", text: scopeRefusal }], details: undefined, isError: true };
         }
-        const appendArgs = ["append", "--task", task, "--verdict", verdict, "--summary", summary, "--silent", String(silent)];
+        const appendArgs = ["append", "--receipt-json", "--task", task, "--verdict", verdict, "--summary", summary, "--silent", String(silent)];
+        if (params.situation) appendArgs.push("--situation", JSON.stringify(params.situation));
         if (wake) appendArgs.push("--wake", wake);
         // Ownership, the durable append, and the delivery it authorizes are
         // ONE unit of the delivery queue: store-before-visible-delivery and
@@ -1269,8 +1274,10 @@ export default function (pi: ExtensionAPI) {
             };
           }
           durableReportRevision += 1;
-          const seq = Number(appended.stdout);
-          if (!Number.isSafeInteger(seq) || seq < 1 || !(await reconcileUnreadOutcomes(toolGeneration))) {
+          let receipt: OutcomeRow | null = null;
+          try { receipt = parseOutcomeRow(JSON.parse(appended.stdout)); } catch { /* Invalid receipts never authorize delivery. */ }
+          const seq = receipt?.seq;
+          if (!receipt || !Number.isSafeInteger(seq) || receipt.seq < 1 || !(await reconcileUnreadOutcomes(toolGeneration))) {
             return {
               content: [{ type: "text", text: `recorded seq ${appended.stdout}, but visible delivery or cursor advancement failed` }],
               details: undefined,
@@ -1278,7 +1285,7 @@ export default function (pi: ExtensionAPI) {
             };
           }
           return {
-            content: [{ type: "text", text: `recorded seq ${appended.stdout} and delivered [${verdict}] into main` }],
+            content: [{ type: "text", text: `recorded seq ${receipt.seq} [${receipt.verdict}]${receipt.silent ? "; silent outcome remains in the outcome store" : " and delivered into main"}` }],
             details: undefined,
           };
         });
