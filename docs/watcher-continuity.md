@@ -325,8 +325,9 @@ So an omitted or failed acknowledgement leaves the durable row available to a la
 A successful acknowledgement has already removed it.
 `bin/fm-wake-drain.sh` owns the sequence/generation confirmation and persisted-queue verification; `tests/fm-wake-queue.test.sh` checks confirmation, replay absence, and explicit consumption failures.
 
-An acknowledgement can remove none of the actor's rows while a presented row above the cutoff still waits.
-Such an acknowledgement is reported as having acknowledged nothing, together with the exact `--ack-through` and `--recovery-generation` command for that presented row.
+An acknowledgement with a nonzero cutoff can remove none of the actor's rows while a presented row above the cutoff still waits.
+Such an acknowledgement is reported as having acknowledged nothing, with the command for that presented row when its recovery generation is available, or a request to drain again otherwise.
+An acknowledgement through zero confirms an empty recovery episode even if a later row has been presented.
 The presented set is read before any re-claim, so a row that arrived after presentation is never named for unseen acknowledgement.
 
 If a branch offer loses the claim race to main, it rejects its settlement so the watcher retains the actionable close until Pi accepts its main follow-up.

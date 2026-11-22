@@ -20,7 +20,8 @@
 # presentation-path locks (default 10); queue mutation locks remain blocking.
 # --ack-through verifies consumed actor rows are absent from the persisted
 # queue under its lock, then prints WAKE_ACK_CONFIRMED with sequence and
-# generation. Failures exit nonzero with a diagnostic; no retry is automatic.
+# generation, except for a stale nonzero cutoff, which reports a remedy.
+# Failures exit nonzero with a diagnostic; no retry is automatic.
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
