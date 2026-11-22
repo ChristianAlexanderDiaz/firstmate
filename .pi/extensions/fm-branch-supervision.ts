@@ -1252,8 +1252,8 @@ export default function (pi: ExtensionAPI) {
           return { content: [{ type: "text", text: scopeRefusal }], details: undefined, isError: true };
         }
         const appendArgs = ["append", "--receipt-json", "--task", task, "--verdict", verdict, "--summary", summary, "--silent", String(silent)];
-        if (params.situation) appendArgs.push("--situation", JSON.stringify(params.situation));
-        if (params.noNewResult === true) appendArgs.push("--no-new-result", "true");
+        if ((params as { situation?: unknown }).situation) appendArgs.push("--situation", JSON.stringify((params as { situation?: unknown }).situation));
+        if ((params as { noNewResult?: unknown }).noNewResult === true) appendArgs.push("--no-new-result", "true");
         if (wake) appendArgs.push("--wake", wake);
         // Ownership, the durable append, and the delivery it authorizes are
         // ONE unit of the delivery queue: store-before-visible-delivery and
