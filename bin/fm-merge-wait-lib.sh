@@ -79,12 +79,9 @@ fm_merge_wait_collect() {  # <state> <bin-dir>; sets requests and GraphQL query
 
 fm_merge_wait_read() {  # <query>; executable via the watcher's bounded runner
   [ -n "$1" ] || return 0
-  gh api graphql -f "query=$1" --jq '
-    if .errors then empty else
-      .data | to_entries[] | select(.value.pullRequest != null)
-      | [.key, .value.pullRequest.url, .value.pullRequest.state,
-         .value.pullRequest.isDraft, .value.pullRequest.headRefOid] | @tsv
-    end' 2>/dev/null
+  local scripts
+  scripts=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  "$scripts/fm-github-read.sh" batch "$1"
 }
 
 fm_merge_wait_lookup() {  # <state> <id> <bin-dir>; sets verdict: waiting, merged, changed

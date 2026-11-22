@@ -15,6 +15,7 @@
 # Mark the pull request ready for review, then arm again; a lane that keeps a
 # draft on purpose declares a wait instead of reporting done. An unreadable
 # draft state does not refuse, matching how the head read below is optional.
+# A shared GitHub quota wait exits 75 without arming; retry after its reset.
 # bin/fm-pr-merge.sh records through this script with FM_PR_CHECK_MERGE=1 and
 # skips this refusal, because its own merge-time draft refusal is authoritative.
 # The recorded pr= also frees the task's place in a declared project capacity
@@ -121,9 +122,13 @@ if [ "$PROVIDER" = forgejo ]; then
 fi
 
 # The draft state is read before anything is recorded or armed. Only a positive
-# draft reading refuses, because an unreadable one must not block arming.
+# draft reading refuses; ordinary unavailable reads remain optional, while a
+# quota refusal retains its waiting exit status.
 if [ "$PROVIDER" = github ] && [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-  DRAFT_JSON=$(gh pr view "$URL" --json isDraft 2>/dev/null || true)
+  DRAFT_JSON=
+  read_rc=0
+  DRAFT_JSON=$("$SCRIPT_DIR/fm-github-read.sh" core "$URL") || read_rc=$?
+  [ "$read_rc" -ne 75 ] || exit 75
   if [ "$(fm_pr_json_draft_state "$DRAFT_JSON")" = true ]; then
     echo "error: $URL is a draft pull request; a draft cannot be merged, so merge monitoring would wait for an event that cannot occur - mark it ready for review and arm again, or declare a wait instead of done if the draft is deliberate" >&2
     exit 1
@@ -151,7 +156,7 @@ fi
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_HEAD=
 if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
-  if REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \
+  if REMOTE_HEAD=$("$SCRIPT_DIR/fm-github-read.sh" core "$URL" head) \
     && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi

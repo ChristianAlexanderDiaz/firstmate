@@ -2,12 +2,12 @@
 # Static watcher program for a validated pull request, merge request, or Gerrit
 # change poll sidecar.
 # It emits exactly one merged line for a merged change and stays silent
-# otherwise, including on every error, so a failed lookup can never be read as
-# a merge. The provider-tagged identity is data in the sidecar and is never
-# interpolated into this source: these bytes are identical for every task.
+# otherwise, except a GitHub quota wait reported as waiting.
+# A failed lookup can never be read as a merge. The provider-tagged identity
+# is data in the sidecar and is never interpolated into this source: these bytes are identical for every task.
 # Each provider is read through its own standard CLI, gh for GitHub, glab for
-# GitLab, gerrit-axi for Gerrit, and tea for Forgejo, so an upstream checkout
-# needs no extra tooling to follow GitHub or GitLab. The Gerrit and Forgejo
+# GitLab, gerrit-axi for Gerrit, and tea for Forgejo. GitHub observations use
+# fm-github-read.sh and its Python standard-library cache. The Gerrit and Forgejo
 # branches additionally need jq, which bin/fm-pr-check.sh refuses to arm those
 # watches without.
 set -u
@@ -66,7 +66,15 @@ case "$provider" in
       .|..|*[!A-Za-z0-9._-]*) exit 0 ;;
     esac
     [ "$url" = "https://github.com/$owner/$repo/pull/$number" ] || exit 0
-    state=$(gh pr view "$url" --json state -q .state 2>/dev/null) || exit 0
+    scripts=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    [ -x "$scripts/fm-github-read.sh" ] || scripts="${FM_ROOT_OVERRIDE:-${FM_HOME:-}}/bin"
+    rc=0
+    state=$("$scripts/fm-github-read.sh" core "$url" state 2>&1) || rc=$?
+    if [ "$rc" -eq 75 ]; then
+      printf '%s\n' "$state"
+      exit 0
+    fi
+    [ "$rc" -eq 0 ] || exit 0
     [ "$state" = MERGED ] && printf '%s\n' merged
     ;;
   gitlab)

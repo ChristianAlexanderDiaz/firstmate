@@ -26,9 +26,9 @@
 # task and records[]. Each record contains url, kind, checked_at, error,
 # observation, verdict, seen event tokens, pending events, notified tokens, and
 # retired provenance once retired.
-# observation is one coherent forge read (a PR head is rechecked after fetching
-# checks/reviews). Checks are normalized by name, id, started_at, status and
-# conclusion; projection picks the newest attempt per distinct name. The last
+# Observation reads may reuse the bounded cache owned by fm-github-read.sh;
+# the final PR head recheck stays live to reject mixed-head checks/reviews.
+# Checks are normalized by name, id, started_at, status and conclusion; projection picks the newest attempt per distinct name. The last
 # observation's lane names also disclose a lane absent from the next head.
 # Reviews keep only id, state, submitted_at, commit_id and user.login, avoiding
 # saved review bodies. A task file above the 1 MiB cap still refuses to read
@@ -275,9 +275,11 @@ forge_bound_result() { # failed-rc failed-why fallback-rc
 }
 
 forge() {
-  local remaining rc=0 failed_rc=0 failed_why='' now read_deadline
+  local remaining rc=0 failed_rc=0 failed_why='' now read_deadline cache_mode=read
   local forge_err=${FORGE_ERR:-$TMP/forge.err} out why
   out=$(mktemp "$TMP/forge-output.XXXXXX")
+  # The final head read must remain live to detect a push during observation.
+  [ "$forge_err" != "$TMP/head.err" ] || cache_mode=fresh
   now=$(date +%s)
   read_deadline=$((now + 5))
   [ "$read_deadline" -le "$DEADLINE" ] || read_deadline=$DEADLINE
@@ -291,11 +293,17 @@ forge() {
     fi
     rc=0
     fm_run_timed "$remaining" env GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 \
-      gh "$@" > "$out" 2> "$forge_err" || rc=$?
+      "$SCRIPT_DIR/fm-github-read.sh" "$cache_mode" "$@" > "$out" 2> "$forge_err" || rc=$?
     if [ "$rc" -eq 0 ]; then
       cat "$out"
       rm -f -- "$out"
       return 0
+    fi
+    if [ "$rc" -eq 75 ]; then
+      : > "$TMP/forge-unavailable"
+      cat "$forge_err" >> "$TMP/why"
+      rm -f -- "$out"
+      return 75
     fi
     # A kill at the read bound or the deadline is budget refusal. If the retry
     # times out, retain the genuine forge failure that caused that retry.
