@@ -261,7 +261,7 @@ class ResourceTests(unittest.TestCase):
         (self.root / "delay-response").write_text("acquire")
         jobs = [self.job(f"echo build-{n}", kind="build") for n in range(3)]
         wait_for((self.root / "response-waiting").exists)
-        # Cross the production RPC deadline, with no wall-clock queue deadline.
+        # Cross the production socket timeout interval without a queue deadline.
         time.sleep(6)
         self.assertTrue(all(job.poll() is None for job in jobs),
                         "a power-held build exited on the socket deadline: " +

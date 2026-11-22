@@ -84,7 +84,7 @@ def handle(budget, request):
         raise resource.Refusal("invalid request nonce")
     result = real_handle(budget, request)
     # Delay one acknowledgement after the real mutation, like an overloaded
-    # single owner. The client must not replay a bind or cancel live work.
+    # single owner. Delay alone must not replay a bind or cancel live work.
     delay = root / "delay-response"
     if delay.exists() and delay.read_text() == request.get("op"):
         delay.unlink()
