@@ -118,7 +118,10 @@
 # with that close printed ahead of the line. The turn limit is the boundary
 # itself unless the owner sets FM_SUPERVISION_HOST_PARK_LIMIT later: Codex's
 # checkpoint, whose bound is the park itself rather than a harness timeout,
-# lets a turn that starts before the boundary finish after it.
+# lets a turn that starts before the boundary finish after it. Its --wait mode
+# sets FM_SUPERVISION_HOST_PARK_RESUME=1: only with the codex primary pin,
+# quiet park boundaries renew in this process without stopping the watcher.
+# Engine turns retain their own timeout. Other primaries ignore this flag.
 #
 # OWNERSHIP. Before activation, every successor cycle, and every engine turn
 # the host proves this session still holds the fleet lock
@@ -500,12 +503,19 @@ park_elapsed() {  # Sets PARK_ELAPSED without a production clock/helper fork.
 boundary_reached() {
   fm_sleep_active "$STATE" && return 1
   park_elapsed
+  if [ "$PRIMARY" = codex ] && [ "${FM_SUPERVISION_HOST_PARK_RESUME:-}" = 1 ]; then
+    [ "$PARK_ELAPSED" -lt "$PARK_SECONDS" ] || HOST_STARTED_SECONDS=$SECONDS
+    return 1
+  fi
   [ "$PARK_ELAPSED" -ge "$PARK_SECONDS" ]
 }
 
 # True when an engine turn started now could still be running at the turn
 # limit (the boundary unless the owner set a later one).
 turn_crosses_boundary() {
+  if [ "$PRIMARY" = codex ] && [ "${FM_SUPERVISION_HOST_PARK_RESUME:-}" = 1 ]; then
+    return 1
+  fi
   park_elapsed
   [ $((PARK_ELAPSED + TURN_TIMEOUT + ENGINE_GRACE)) -ge "$PARK_LIMIT" ]
 }

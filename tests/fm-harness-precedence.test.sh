@@ -819,7 +819,7 @@ test_supervision_protocol_follows_corrected_verdict() {
     "$bin" -c "r=\$(\"$RENDER\"); printf '%s' \"\$r\"")
   assert_contains "$got" "primary harness: codex" \
     "a Codex primary carrying a retained CLAUDECODE did not render the Codex protocol"
-  assert_contains "$got" "Mode: Codex foreground checkpoint." \
+  assert_contains "$got" "Mode: Codex foreground wake wait." \
     "the rendered block is not Codex's foreground-checkpoint protocol"
   assert_not_contains "$got" "Mode: Claude Stop-hook-owned supervision." \
     "the rendered block still carries Claude's Stop-owned protocol"

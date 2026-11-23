@@ -12,7 +12,7 @@ test_selected_harness_block_only() {
   local out
   out=$("$RENDER" --harness codex)
   assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: codex" "codex heading missing"
-  assert_contains "$out" "Mode: Codex foreground checkpoint." "codex snippet missing"
+  assert_contains "$out" "Mode: Codex foreground wake wait." "codex snippet missing"
   assert_contains "$out" "bin/fm-watch-checkpoint.sh" "codex checkpoint helper missing"
   assert_not_contains "$out" "Mode: Claude Stop-hook-owned supervision." "renderer printed the claude snippet too"
   assert_not_contains "$out" "Mode: Pi extension background wake." "renderer printed the pi snippet too"
@@ -98,8 +98,8 @@ test_supervision_host_protocol_on_every_arm_owner() {
   assert_contains "$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness grok --repair-line)" \
     'bin/fm-supervision-host.sh park as its own Grok tracked background task' "grok's repair line must name the host"
   hosted=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex)
-  assert_contains "$hosted" 'FM_CODEX_WATCH_CHECKPOINT_AWAY' "codex must learn that an away checkpoint holds longer"
-  assert_contains "$hosted" 'checkpoint: no actionable wake within' "codex must learn how the park boundary arrives"
+  assert_contains "$hosted" 'the host retains ownership of away wakes' "codex must leave away routing with the host"
+  assert_contains "$hosted" 'Quiet park boundaries renew inside the same wait' "codex must learn how the park boundary arrives"
   pass "renderer gives each non-Pi arm owner the host protocol in its own terms, and grok arms the host"
 }
 
@@ -121,7 +121,7 @@ test_conditional_stanzas() {
   assert_contains "$out" "- Away mode: active" "afk stanza missing"
   assert_contains "$out" "- X mode: active" "x-mode stanza missing"
   assert_contains "$out" "$config/x-mode.env" "x-mode stanza did not render the effective config path"
-  assert_contains "$out" 'Mode: Codex foreground checkpoint.' "codex snippet missing"
+  assert_contains "$out" 'Mode: Codex foreground wake wait.' "codex snippet missing"
   assert_not_contains "$out" "Source \`config/x-mode.env\`" "snippet kept the repo-relative x-mode config path"
   pass "renderer includes read-only, afk, and effective x-mode current-state stanzas"
 }
@@ -156,7 +156,7 @@ test_repair_lines() {
   home="$TMP_ROOT/repair-home"
   mkdir -p "$home/state" "$home/config"
   out=$(FM_HOME="$home" FM_CODEX_WATCH_CHECKPOINT=7 "$RENDER" --harness codex --repair-line)
-  assert_contains "$out" "bin/fm-watch-checkpoint.sh --seconds 7" "codex repair line did not use checkpoint helper and env override"
+  assert_contains "$out" "bin/fm-watch-checkpoint.sh --wait" "codex repair line did not use checkpoint helper and env override"
 
   out=$(FM_HOME="$home" "$RENDER" --harness claude --queue-pending 1 --repair-line)
   assert_contains "$out" "After draining queued wakes" "queue-pending prefix missing"
@@ -169,7 +169,7 @@ test_repair_lines() {
   : > "$home/config/x-mode.env"
   out=$(FM_HOME="$home" FM_CODEX_WATCH_CHECKPOINT=7 "$RENDER" --harness codex --x-mode 1 --repair-line)
   assert_contains "$out" "source '$home/config/x-mode.env' first" "x-mode repair line did not source the effective cadence config"
-  assert_contains "$out" "bin/fm-watch-checkpoint.sh --seconds 7" "x-mode codex repair line lost the checkpoint helper"
+  assert_contains "$out" "bin/fm-watch-checkpoint.sh --wait" "x-mode codex repair line lost the checkpoint helper"
 
   out=$(FM_HOME="$home" "$RENDER" --harness opencode --read-only 1 --repair-line)
   assert_contains "$out" "session holding the fleet lock" "read-only repair line missing"
@@ -240,7 +240,7 @@ test_cross_harness_ordinary_continuation_and_repair_matrix() {
   assert_contains "$ordinary" "bin/fm-watch-checkpoint.sh" "codex ordinary-wake line lost the checkpoint command"
   assert_not_contains "$ordinary" "bin/fm-watch-arm.sh" "codex ordinary-wake line incorrectly uses a background arm"
   out=$("$RENDER" --harness codex --repair-line)
-  assert_contains "$out" "foreground checkpoint" "codex recovery line lost its checkpoint repair"
+  assert_contains "$out" "foreground wake wait" "codex recovery line lost its checkpoint repair"
   assert_contains "$out" "bin/fm-watch-checkpoint.sh" "codex recovery line lost the checkpoint command"
 
   pass "renderer preserves every harness ordinary-continuation and missing-cycle repair path"
@@ -303,6 +303,19 @@ test_pi_snippet_uses_effective_extension_path() {
   assert_not_contains "$out" "state/fm-primary-pi-watch.ts" "pi snippet kept the old generated state-relative extension path"
   pass "pi supervision snippet renders the effective extension path"
 }
+
+test_codex_quiet_timeout_continuation() {
+  local out
+  out=$("$RENDER" --harness codex)
+  assert_contains "$out" 'bin/fm-watch-checkpoint.sh --wait' "normal Codex command is not a quiet wait"
+  assert_contains "$out" 'without draining, replying' "empty timeout must resume without a drain or reply"
+  assert_contains "$out" 'Do not poll the drain, checkpoint' "Codex can still poll inside the model"
+  assert_contains "$out" 'WAKE_ACK_CONFIRMED' "Codex lost generation-bound acknowledgement verification"
+  assert_not_contains "$out" 'drain queued wakes anyway' "old timeout-drain loop survived"
+  pass "Codex quiet timeouts resume the wait without a drain or reply"
+}
+
+test_codex_quiet_timeout_continuation
 
 test_supervision_host_protocol_on_a_claude_home_unless_off
 test_supervision_host_protocol_on_every_arm_owner

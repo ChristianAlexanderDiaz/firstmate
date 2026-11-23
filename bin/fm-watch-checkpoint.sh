@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Run one bounded foreground watcher checkpoint for harnesses that should not
 # rely on background-task completion to wake the model.
+# --wait is the normal Codex path: quiet intervals renew inside one foreground
+# wait, keeping the same watcher alive until a wake or a repair reason arrives.
+# FM_CODEX_WATCH_WAIT_SECONDS sets the renewal interval (default 1800s), while
+# --seconds overrides it for diagnostics. No queue rows are consumed here.
+# The wait observes the existing queue and beacon; it adds no daemon or polling
+# to the watcher. Its owned process group is cleaned up on interruption.
 #
 # SUPERVISION HOST. A home opted in with config/supervision-host
 # (docs/configuration.md "Supervision host" owns the gate;
@@ -14,8 +20,9 @@
 # so a parked main is not woken every few minutes; an engine turn that starts
 # before the bound may finish after it. A close that carries a wake or a
 # "supervision-host:" line other than the park boundary passes through as a
-# wake; the boundary alone is the ordinary quiet checkpoint. On a home that
-# does not run the host nothing below changes.
+# wake; the boundary alone is the ordinary quiet diagnostic checkpoint.
+# --wait instead asks the Codex host to renew the park in place (the host owns
+# that boundary), and observes its liveness without imposing a wall timeout.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,26 +31,39 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 SECONDS_ARG=${FM_CODEX_WATCH_CHECKPOINT:-180}
+WAIT_MODE=0
+SECONDS_EXPLICIT=0
 
 usage() {
   cat <<'EOF'
-Usage: fm-watch-checkpoint.sh [--seconds <n>]
+Usage: fm-watch-checkpoint.sh [--wait] [--seconds <n>]
 
 Run bin/fm-watch.sh in the foreground for a bounded checkpoint.
 On an actionable watcher wake, pass through the watcher output and exit 0.
 On a quiet checkpoint, print "checkpoint: no actionable wake within <n>s" and exit 124.
+With --wait, quiet intervals renew inside the shell without stopping the watcher
+or returning to the model. FM_CODEX_WATCH_WAIT_SECONDS sets that interval
+(default/minimum 1800s); --seconds explicitly overrides it for diagnostics/tests.
+The wait returns only for a wake (0) or a watcher failure (1, with "repair:").
+Without --wait, --seconds retains the bounded diagnostic checkpoint behavior.
 EOF
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --wait)
+      WAIT_MODE=1
+      shift
+      ;;
     --seconds)
       [ "$#" -gt 1 ] || { echo "error: --seconds requires a value" >&2; exit 2; }
       SECONDS_ARG=$2
+      SECONDS_EXPLICIT=1
       shift 2
       ;;
     --seconds=*)
       SECONDS_ARG=${1#--seconds=}
+      SECONDS_EXPLICIT=1
       shift
       ;;
     -h|--help)
@@ -57,6 +77,15 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ "$WAIT_MODE" -eq 1 ] && [ "$SECONDS_EXPLICIT" -eq 0 ]; then
+  SECONDS_ARG=${FM_CODEX_WATCH_WAIT_SECONDS:-1800}
+  # An old short checkpoint preference must not recreate model-side polling.
+  case "$SECONDS_ARG" in
+    ''|*[!0-9]*) ;;
+    *) [ "$SECONDS_ARG" -ge 1800 ] || SECONDS_ARG=1800 ;;
+  esac
+fi
 
 case "$SECONDS_ARG" in
   ''|*[!0-9]*) echo "error: --seconds must be a positive integer" >&2; exit 2 ;;
@@ -74,6 +103,15 @@ ERR=$(mktemp "${TMPDIR:-/tmp}/fm-watch-checkpoint.err.XXXXXX") || {
   exit 1
 }
 trap 'rm -f "$OUT" "$ERR"' EXIT
+
+quiet_boundary() {
+  printf 'checkpoint: no actionable wake within %ss\n' "$1"
+  exit 124
+}
+
+wait_failure() {
+  [ "$WAIT_MODE" -ne 1 ] || echo 'repair: watcher wait ended without a wake; drain queued wakes, inspect watcher liveness, then restore the foreground wait' >&2
+}
 
 run_with_perl_timeout() {  # <seconds> <signal> <kill-after-seconds> <command...>
   perl -e '
@@ -141,6 +179,95 @@ run_bounded() {  # <seconds> <signal> <kill-after-seconds> <command...>
   fi
 }
 
+# Keep one owned child across quiet intervals. Perl is already the portable
+# checkpoint timeout fallback; here it also observes the same durable queue and
+# watcher beacon, without process/endpoint scans or a fork per observation.
+# The queue belongs to the host when hosted, so only plain waits observe it.
+run_waiting() {  # <plain|host> <command...>
+  local kind=$1 stall confirm cleanup
+  shift
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  stall=$(fm_watcher_stall_bound)
+  confirm=$(positive_or "${FM_ARM_CONFIRM_TIMEOUT:-}" 30)
+  [ "$kind" != host ] || confirm=$((confirm + $(positive_or "${FM_SUPERVISION_HOST_READY_TIMEOUT:-}" 25)))
+  cleanup=$(positive_or "${FM_WATCHER_CLEANUP_LOCK_BOUND:-}" 5)
+  [ "$cleanup" -ge 5 ] || cleanup=5
+  perl -e '
+    use strict;
+    use warnings;
+    use POSIX qw(:sys_wait_h);
+    my ($kind, $interval, $queue, $beat, $stall, $confirm, $grace, $lock, $state) = splice @ARGV, 0, 9;
+    my $owner = getppid();
+    my $started = time;
+    my $pid = fork;
+    die "fork failed\n" unless defined $pid;
+    if (!$pid) {
+      setpgrp(0, 0);
+      # A tool/test may launch us with INT ignored. Restore dispositions before
+      # exec so the watcher can install its cleanup traps instead of requiring KILL.
+      $SIG{$_} = "DEFAULT" for qw(INT TERM HUP ALRM);
+      exec @ARGV;
+      die "exec failed: $!\n";
+    }
+    my ($closing, $deadline, $reason) = (0, 0, "");
+    my $stop = sub {
+      my ($signal, $why) = @_;
+      return if $closing;
+      $closing = 1;
+      $reason = $why;
+      $deadline = time + $grace;
+      kill $signal, -$pid;
+    };
+    for my $signal (qw(TERM INT HUP)) {
+      $SIG{$signal} = sub { $stop->($signal, "interrupted"); };
+    }
+    # A quiet interval renews this same wait, never the child or its lock.
+    $SIG{ALRM} = sub { alarm $interval unless $closing; };
+    alarm $interval;
+    while (1) {
+      my $waited = waitpid $pid, WNOHANG;
+      if ($waited == $pid) {
+        my $status = $?;
+        alarm 0;
+        kill "KILL", -$pid if $closing;
+        exit($reason eq "queued" ? 0 : $closing ? 1 :
+          ($status & 127) ? 128 + ($status & 127) : $status >> 8);
+      }
+      if (!$closing) {
+        my $queued = 0;
+        # Match fm_sleep_active: held rows are not a reason to wake the model.
+        if ($kind eq "plain" && !-e "$state/.sleep" && !-e "$state/.sleep-return"
+            && -s $queue && open(my $owner_file, "<", "$lock/pid")) {
+          my $watcher = <$owner_file> // "";
+          close $owner_file;
+          chomp $watcher;
+          # watcher-path is published after the watcher installs its cleanup
+          # traps. Never interrupt it midway through initial lock acquisition.
+          $queued = $watcher eq "$pid" && -s "$lock/watcher-path";
+        }
+        if (getppid() != $owner) {
+          $stop->("INT", "owner died");
+        } elsif ($queued) {
+          $stop->("INT", "queued");
+        } else {
+          my @beat = stat $beat;
+          my $age = @beat ? time - $beat[9] : time - $started;
+          if (time - $started >= $confirm && (!@beat || $age >= $stall)) {
+            print STDERR "repair: watcher beacon stalled during the foreground wait\n";
+            $stop->("INT", "stalled");
+          }
+        }
+      } elsif (time >= $deadline) {
+        kill "KILL", -$pid;
+        waitpid $pid, 0;
+        exit($reason eq "queued" ? 0 : 1);
+      }
+      select undef, undef, undef, 0.2;
+    }
+  ' "$kind" "$SECONDS_ARG" "$FM_WAKE_QUEUE" "$STATE/.last-watcher-beat" "$stall" "$confirm" "$cleanup" "$STATE/.watch.lock" "$STATE" "$@"
+}
+
 positive_or() {  # <value> <default>
   case "$1" in ''|0*|*[!0-9]*) printf '%s\n' "$2" ;; *) printf '%s\n' "$1" ;; esac
 }
@@ -160,9 +287,15 @@ if fm_supervision_host_enabled "$CONFIG" codex; then
   set +e
   # The host ends its own park; the outer bound only catches a host that
   # outlived every one of its own bounds.
-  FM_SUPERVISION_HOST_PRIMARY=codex FM_SUPERVISION_HOST_PARK_SECONDS=$BOUND FM_SUPERVISION_HOST_PARK_LIMIT=$LIMIT \
-    run_bounded $((LIMIT + 120)) TERM 0 "$SCRIPT_DIR/fm-supervision-host.sh" park >"$OUT" 2>"$ERR"
-  RC=$?
+  if [ "$WAIT_MODE" -eq 1 ]; then
+    FM_SUPERVISION_HOST_PRIMARY=codex FM_SUPERVISION_HOST_PARK_SECONDS=$BOUND FM_SUPERVISION_HOST_PARK_LIMIT=$LIMIT FM_SUPERVISION_HOST_PARK_RESUME=1 \
+      run_waiting host "$SCRIPT_DIR/fm-supervision-host.sh" park >"$OUT" 2>"$ERR"
+    RC=$?
+  else
+    FM_SUPERVISION_HOST_PRIMARY=codex FM_SUPERVISION_HOST_PARK_SECONDS=$BOUND FM_SUPERVISION_HOST_PARK_LIMIT=$LIMIT \
+      run_bounded $((LIMIT + 120)) TERM 0 "$SCRIPT_DIR/fm-supervision-host.sh" park >"$OUT" 2>"$ERR"
+    RC=$?
+  fi
   set -e
   if grep -E '^(signal:|stale:|check:|heartbeat($|:)|supervision-host:)' "$OUT" 2>/dev/null \
     | grep -Ev '^supervision-host: cycle boundary' >/dev/null; then
@@ -171,11 +304,15 @@ if fm_supervision_host_enabled "$CONFIG" codex; then
     exit 0
   fi
   if grep -E '^supervision-host: cycle boundary' "$OUT" >/dev/null 2>&1; then
-    printf 'checkpoint: no actionable wake within %ss\n' "$BOUND"
-    exit 124
+    if [ "$WAIT_MODE" -eq 1 ]; then
+      echo 'repair: supervision host ended a continuous wait at a quiet boundary' >&2
+      exit 1
+    fi
+    quiet_boundary "$BOUND"
   fi
   [ ! -s "$OUT" ] || cat "$OUT"
   [ ! -s "$ERR" ] || cat "$ERR" >&2
+  wait_failure
   if [ "$RC" -eq 124 ]; then
     echo "checkpoint: the supervision host outlived its own bound of ${BOUND}s" >&2
     exit 1
@@ -184,10 +321,28 @@ if fm_supervision_host_enabled "$CONFIG" codex; then
   exit "$RC"
 fi
 
+# A previously presented but unacknowledged queue must still return immediately,
+# even when its recovery generation was already announced. The host path above
+# retains actor routing; plain Codex owns the whole queue. Observation never
+# grants, drains, or acknowledges rows (including a row arriving at the bound).
+wait_queue_ready() {
+  [ "$WAIT_MODE" -eq 1 ] && [ -s "${FM_WAKE_QUEUE:-$STATE/.wake-queue}" ] || return 1
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  fm_sleep_active "$STATE" && return 1
+  echo 'check: durable wake queued; drain before other action'
+}
+wait_queue_ready && exit 0
+
 set +e
 # Interrupt the checkpoint's active check group so the watcher's native EXIT cleanup can release its lock; ordinary watcher shutdown still uses TERM.
-run_bounded "$SECONDS_ARG" INT 5 "$SCRIPT_DIR/fm-watch.sh" >"$OUT" 2>"$ERR"
-RC=$?
+if [ "$WAIT_MODE" -eq 1 ]; then
+  run_waiting plain "$SCRIPT_DIR/fm-watch.sh" >"$OUT" 2>"$ERR"
+  RC=$?
+else
+  run_bounded "$SECONDS_ARG" INT 5 "$SCRIPT_DIR/fm-watch.sh" >"$OUT" 2>"$ERR"
+  RC=$?
+fi
 set -e
 
 if grep -E '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" >/dev/null 2>&1; then
@@ -200,14 +355,19 @@ if grep -E '^watcher: already running' "$OUT" "$ERR" >/dev/null 2>&1; then
   [ ! -s "$OUT" ] || cat "$OUT"
   [ ! -s "$ERR" ] || cat "$ERR" >&2
   echo "checkpoint: watcher is already running outside this foreground checkpoint" >&2
+  wait_failure
   exit 1
 fi
 
-if [ "$RC" -eq 124 ]; then
-  printf 'checkpoint: no actionable wake within %ss\n' "$SECONDS_ARG"
-  exit 124
+if [ "$RC" -eq 124 ] && [ "$WAIT_MODE" -eq 0 ]; then
+  quiet_boundary "$SECONDS_ARG"
 fi
 
 [ ! -s "$OUT" ] || cat "$OUT"
 [ ! -s "$ERR" ] || cat "$ERR" >&2
+if [ "$WAIT_MODE" -eq 1 ]; then
+  wait_queue_ready && exit 0
+  wait_failure
+  exit 1
+fi
 exit "$RC"

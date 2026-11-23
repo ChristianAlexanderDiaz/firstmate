@@ -310,17 +310,12 @@ One short main turn per boundary is the cost of never losing the park silently.
 
 ### Codex checkpoint bound
 
-Codex has no asynchronous wake, so its checkpoint's own bound is the park.
-The checkpoint passes it as the boundary and reports the boundary as its ordinary quiet line (`checkpoint: no actionable wake within <n>s`).
+Codex's normal foreground wait renews quiet park intervals in the same host process without stopping the watcher.
+[`fm-watch-checkpoint.sh`](../bin/fm-watch-checkpoint.sh) owns that interface and [`fm-supervision-host.sh`](../bin/fm-supervision-host.sh) owns the Codex-only renewal flag; the [Codex protocol](supervision-protocols/codex.md) owns continuation.
+Engine turns retain their own timeout, and watcher failure still returns a repair reason.
 
-| Posture | Checkpoint bound |
-|---|---|
-| Attended | `FM_CODEX_WATCH_CHECKPOINT` (default 180 seconds). |
-| Away record exists | Raised to `FM_CODEX_WATCH_CHECKPOINT_AWAY` (default 3,600) if longer, then capped at 27,000 seconds so a parked main is not woken every few minutes. |
-
-Because that bound is not a harness timeout, the checkpoint also sets `FM_SUPERVISION_HOST_PARK_LIMIT`.
-That setting lets an engine turn that starts before the boundary finish after it.
-A captain message typed during the park waits for the checkpoint to return, at most the bound plus one engine turn, unless the captain interrupts it.
+The diagnostic checkpoint without `--wait` still ends the park at its requested bound and uses a later park limit to let an engine turn finish.
+A message typed during a quiet foreground wait waits for real work to return it unless the user interrupts it.
 
 ## Engine conversations
 
