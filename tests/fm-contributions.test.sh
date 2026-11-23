@@ -651,6 +651,30 @@ test_watcher_surfaces_new_contribution_once() {
   pass 'watcher surfaces one newly durable contribution signal without re-ringing it'
 }
 
+test_held_freshness_and_summary() {
+  local home child out
+  home=$(new_home held-fresh-parent)
+  child=$(new_home held-fresh-child)
+  mkdir -p "$child/bin"
+  printf '# Fixture\n' > "$child/AGENTS.md"
+  printf 'child\n' > "$child/.fm-secondmate-home"
+  record "$child" waiting 31 open mergeable
+  record "$child" active 32 open mergeable
+  printf 'paused [wait=captain]: review requested\n' > "$child/state/waiting.status"
+  mutate_record "$child" waiting '.records[0].checked_at="2026-09-16T07:30:00Z" | .records[0].verdict={head:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",actor:"maintainer",source:"https://github.com/o/r/pull/31",summary:"waiting"}'
+  FM_SNAPSHOT_NOW="$NOW" with_home "$child" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary > "$child/state/home-summary.json" || fail 'held child summary failed'
+  printf -- '- child - fixture (home: %s; scope: fixture; projects: sample; added 2026-09-16)\n' "$child" > "$home/data/secondmates.md"
+  with_home "$child" "$ROOT/bin/fm-fleet-snapshot.sh" --contribution-input > "$child/input.json" || fail 'held input failed'
+  FM_CONTRIBUTIONS_NOW="$NOW" with_home "$child" "$ROOT/bin/fm-contributions.sh" snapshot "$child/input.json" --all | jq -e '.rows[] | select(.task == "waiting") | .checked and .verdict.freshness == "current"' >/dev/null || fail 'held verdict became unverified'
+  out=$(bearings "$child") || fail 'held contribution projection failed'
+  printf '%s' "$out" | jq -e '.contributions.checked == 2 and .contributions.complete' >/dev/null || fail 'held observation within its interval became unchecked'
+  bearings "$home" | jq -e '.contributions.checked == 2 and .contributions.complete' >/dev/null || fail 'held observation expired the mixed child summary'
+  mutate_record "$child" active '.records[0].checked_at="2026-09-16T07:44:59Z"'
+  FM_SNAPSHOT_NOW="$NOW" with_home "$child" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary > "$child/state/home-summary.json" || fail 'stale active child summary failed'
+  bearings "$home" | jq -e '.contributions.checked == 0 and (.contributions.complete | not)' >/dev/null || fail 'active observation past 900 seconds stayed fresh in child summary'
+  pass 'held freshness and mixed child summary retain the active bound'
+}
+
 test_home_summary_coverage() {
   local home child
   home=$(new_home parent)
@@ -1768,7 +1792,7 @@ test_held_pr_hour_replay() {
 }
 
 failures=0
-for test_name in test_held_pr_hour_replay test_rate_limited_reads_wait test_actor_coverage test_stale_verdict test_unchecked_is_not_silence test_newest_check_has_no_verdict test_comment_wake test_review_wake test_inline_wake test_ready_issue_wake test_fresh_issue_requires_maintainer test_missing_lane_remains_missing test_partial_freshness_keeps_measured_rows test_malformed_record_cannot_prove_silence test_issue_timeline_and_exact_ack test_verdict_retains_judged_head test_verdict_actor_values_are_discoverable test_observed_replacement_refreshes_verdict test_unobserved_head_leaves_verdict_unknown test_away_yolo_is_fleet_work test_away_yolo_cross_home_is_fleet_work test_retired_and_unsupported_coverage test_unsupported_forge_is_not_fleet_work test_held_unsupported_forge_is_not_captain_work test_unsupported_poll_is_silent_and_clears_legacy_errors test_legacy_cleanup_preserves_supported_failure test_shared_contribution_signal_wakes_once test_watcher_keeps_diagnostics_separate_from_contribution_wakes test_expired_child_unsupported_forge_stays_unmeasured test_watcher_surfaces_new_contribution_once test_home_summary_coverage test_unreadable_pending_is_not_empty test_record_task_identity_matches_dirname_basename test_read_only_views_create_no_state test_budget_refusal_between_calls test_budget_bounded_call_timeout test_genuine_failure_near_deadline_is_unavailable test_http_500_once_retries_without_waking test_http_500_twice_records_the_failed_read test_http_404_retry_keeps_diagnostic test_real_gh_errors_drive_retry_and_summary test_next_url_does_not_inherit_a_forge_diagnostic test_shared_url_observed_once test_terminal_contribution_settles test_late_owner_inherits_terminal_observation test_interrupted_multi_owner_poll_settles_every_owner test_done_task_open_pr_still_observed test_reservation_defers_later_url_when_fifteen_seconds_do_not_remain test_three_second_pr_reads_complete_fresh_in_one_cycle test_slow_read_deadline_kill_is_budget_refusal test_unmeasured_url_does_not_starve_the_tail test_budget_is_cut_down_to_the_watcher_check_bound test_arm_plumbs_a_configured_budget_into_the_check_shim test_unavailable_forge_records_error_and_wakes_once_per_episode test_late_owner_keeps_failure_episode_suppressed test_retire_ends_observation_of_a_gone_contribution test_late_owner_of_a_retired_final_contribution_is_not_retired test_retire_is_idempotent_and_refuses_unknown_pairs test_many_reviews_stay_readable test_eof_once_retries_without_waking test_http_404_is_retried; do
+for test_name in test_held_freshness_and_summary test_held_pr_hour_replay test_rate_limited_reads_wait test_actor_coverage test_stale_verdict test_unchecked_is_not_silence test_newest_check_has_no_verdict test_comment_wake test_review_wake test_inline_wake test_ready_issue_wake test_fresh_issue_requires_maintainer test_missing_lane_remains_missing test_partial_freshness_keeps_measured_rows test_malformed_record_cannot_prove_silence test_issue_timeline_and_exact_ack test_verdict_retains_judged_head test_verdict_actor_values_are_discoverable test_observed_replacement_refreshes_verdict test_unobserved_head_leaves_verdict_unknown test_away_yolo_is_fleet_work test_away_yolo_cross_home_is_fleet_work test_retired_and_unsupported_coverage test_unsupported_forge_is_not_fleet_work test_held_unsupported_forge_is_not_captain_work test_unsupported_poll_is_silent_and_clears_legacy_errors test_legacy_cleanup_preserves_supported_failure test_shared_contribution_signal_wakes_once test_watcher_keeps_diagnostics_separate_from_contribution_wakes test_expired_child_unsupported_forge_stays_unmeasured test_watcher_surfaces_new_contribution_once test_home_summary_coverage test_unreadable_pending_is_not_empty test_record_task_identity_matches_dirname_basename test_read_only_views_create_no_state test_budget_refusal_between_calls test_budget_bounded_call_timeout test_genuine_failure_near_deadline_is_unavailable test_http_500_once_retries_without_waking test_http_500_twice_records_the_failed_read test_http_404_retry_keeps_diagnostic test_real_gh_errors_drive_retry_and_summary test_next_url_does_not_inherit_a_forge_diagnostic test_shared_url_observed_once test_terminal_contribution_settles test_late_owner_inherits_terminal_observation test_interrupted_multi_owner_poll_settles_every_owner test_done_task_open_pr_still_observed test_reservation_defers_later_url_when_fifteen_seconds_do_not_remain test_three_second_pr_reads_complete_fresh_in_one_cycle test_slow_read_deadline_kill_is_budget_refusal test_unmeasured_url_does_not_starve_the_tail test_budget_is_cut_down_to_the_watcher_check_bound test_arm_plumbs_a_configured_budget_into_the_check_shim test_unavailable_forge_records_error_and_wakes_once_per_episode test_late_owner_keeps_failure_episode_suppressed test_retire_ends_observation_of_a_gone_contribution test_late_owner_of_a_retired_final_contribution_is_not_retired test_retire_is_idempotent_and_refuses_unknown_pairs test_many_reviews_stay_readable test_eof_once_retries_without_waking test_http_404_is_retried; do
   ( "$test_name" ) || failures=$((failures + 1))
 done
 [ "$failures" -eq 0 ] || fail "$failures contribution regressions"

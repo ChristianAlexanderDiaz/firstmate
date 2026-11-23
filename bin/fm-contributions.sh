@@ -83,7 +83,8 @@
 # output (control characters dropped, at most 160 characters), or the
 # structural check that refused the observation. A later good read clears the
 # record's error, so the unavailable line is the copy that outlives it.
-# FM_CONTRIBUTIONS_MAX_AGE (default 900 seconds) bounds freshness.
+# FM_CONTRIBUTIONS_MAX_AGE (default 900 seconds) bounds active freshness;
+# held PRs remain fresh for at least their configured slow polling interval.
 # A supported URL whose last good observation is merged or closed is final: it is
 # never re-read, stays fresh, and every owner's saved row converges on that
 # observation, with a stale error beside it cleared.
@@ -185,13 +186,31 @@ get_input() {
 }
 
 project() {
+  local task url held interval
+  local -a row
+  interval=$(fm_held_pr_interval "$STATE")
+  [ "$interval" -ge "$MAX_AGE" ] || interval=$MAX_AGE
+  jq_lib -nr --slurpfile input "$1" --slurpfile saved "$TMP/saved.json" '
+    known($input[0];$saved[0]) | map(select(.url | supported_url) | select(.url | contains("/pull/")))
+    | group_by(.url) | .[] | [.[0].url] + (map(.task) | unique) | @tsv' > "$TMP/project-known.tsv"
+  : > "$TMP/held-urls.txt"
+  while IFS=$'\t' read -r -a row; do
+    [ "${#row[@]}" -ge 2 ] || continue
+    url=${row[0]}; held=1
+    for task in "${row[@]:1}"; do
+      if ! fm_held_pr_signature "$STATE" "$task" >/dev/null; then held=0; break; fi
+    done
+    [ "$held" -eq 0 ] || printf '%s\n' "$url" >> "$TMP/held-urls.txt"
+  done < "$TMP/project-known.tsv"
+  jq -Rsc 'split("\n") | map(select(length > 0))' "$TMP/held-urls.txt" > "$TMP/held-urls.json"
   jq_lib -n --slurpfile input "$1" --slurpfile saved "$TMP/saved.json" \
+    --slurpfile held "$TMP/held-urls.json" --argjson held_age "$interval" \
     --argjson now "$EPOCH" --argjson max_age "$MAX_AGE" --argjson errors "$ERRORS" \
     --arg all "${2:-}" '
-    projected($input[0];$saved[0];$now;$max_age) as $rows
+    projected($input[0];$saved[0];$now;$max_age;$held[0];$held_age) as $rows
     | summary($rows;($errors + (if $input[0].backlog.present == true then 0 else 1 end)))
     # Final rows never expire; a home holding only final rows is valid from now.
-    | .valid_until = (if ($rows | length) > 0 and all($rows[]; .final) then $now else .valid_until end) + $max_age
+    | .valid_until = (if ($rows | length) > 0 and all($rows[]; .final) then $now + $max_age else .valid_until end)
     | .captain_omitted = ([0, (.captain | length) - 20] | max)
     | .captain |= .[:20]
     | . + (if $all == "--all" then {rows:$rows} else {} end)'

@@ -35,16 +35,8 @@ fm_held_pr_signature() { # <state> <task>; stdout is the hold generation
   done
 }
 
-fm_held_pr_due() {
-  local state=$1 consumer=$2 url=$3 task signatures='' signature interval=3600
-  local config now key slot stored_key='' stored_at='' extra=''
-  shift 3
-  FM_HELD_PR_STAMP=
-  FM_HELD_PR_RECORD=
-  [ ! -L "$state/held-pr-poll" ] || return 0
-  [ "$#" -gt 0 ] || return 0
-  case "$consumer" in merge|contributions) ;; *) return 0 ;; esac
-  case "$url" in https://github.com/*/pull/*) ;; *) return 0 ;; esac
+fm_held_pr_interval() {
+  local state=$1 config interval=3600
   config=${FM_CONFIG_OVERRIDE:-${FM_HOME:-${state%/state}}/config}
   if [ -f "$config/held-pr-poll-interval" ]; then
     IFS= read -r interval < "$config/held-pr-poll-interval" || :
@@ -52,6 +44,20 @@ fm_held_pr_due() {
     interval=$((10#$interval))
     [ "$interval" -ge 1 ] && [ "$interval" -le 86400 ] || interval=3600
   fi
+  printf '%s\n' "$interval"
+}
+
+fm_held_pr_due() {
+  local state=$1 consumer=$2 url=$3 task signatures='' signature interval
+  local now key slot stored_key='' stored_at='' extra=''
+  shift 3
+  FM_HELD_PR_STAMP=
+  FM_HELD_PR_RECORD=
+  [ ! -L "$state/held-pr-poll" ] || return 0
+  [ "$#" -gt 0 ] || return 0
+  case "$consumer" in merge|contributions) ;; *) return 0 ;; esac
+  case "$url" in https://github.com/*/pull/*) ;; *) return 0 ;; esac
+  interval=$(fm_held_pr_interval "$state")
   key=$(printf '%s\n' "$url" "$@" | cksum)
   slot=${key%% *}; slot=$((slot % 256))
   FM_HELD_PR_STAMP="$state/held-pr-poll/$consumer-$slot"
