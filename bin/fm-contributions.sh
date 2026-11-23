@@ -197,8 +197,12 @@ project() {
   while IFS=$'\t' read -r -a row; do
     [ "${#row[@]}" -ge 2 ] || continue
     url=${row[0]}
-    if [ -d "$STATE/held-pr-poll" ] && [ ! -L "$STATE/held-pr-poll" ] \
-      && ! FM_HELD_PR_READ_ONLY=1 fm_held_pr_due "$STATE" contributions "$url" "${row[@]:1}"; then
+    [ -d "$STATE" ] && [ ! -L "$STATE" ] || continue
+    FM_HELD_PR_READ_ONLY=1 fm_held_pr_due "$STATE" contributions "$url" "${row[@]:1}" || :
+    if [ -n "$FM_HELD_PR_KEY" ] && jq -ne --slurpfile saved "$TMP/saved.json" \
+      --arg url "$url" --arg generation "$FM_HELD_PR_KEY" --args '
+      all($ARGS.positional[]; . as $task | any($saved[0][] | select(.task == $task) | .records[];
+        .url == $url and .held_generation == $generation))' "${row[@]:1}" >/dev/null; then
       printf '%s\n' "$url" >> "$TMP/held-urls.txt"
     fi
   done < "$TMP/project-known.tsv"
@@ -558,12 +562,12 @@ poll() {
         ([$saved[0][] | select(.task == $task) | .records[] | select(.url == $url)] | first)
         // {url:$url,kind:$kind,checked_at:null,observation:null,verdict:null,seen:[],pending:[],notified:[]}' > "$old"
       if [ "$observed" -eq 0 ]; then
-        jq -n --arg now "$NOW" --slurpfile old "$old" --slurpfile observation "$TMP/observation.json" '
+        jq -n --arg now "$NOW" --arg generation "$FM_HELD_PR_KEY" --slurpfile old "$old" --slurpfile observation "$TMP/observation.json" '
           $old[0] as $old | $observation[0] as $o
           | ($o.events + (if $o.ready == true and $old.observation.ready != true and (any($o.events[]; .type == "ready-for-pr") | not) then
               [{token:("ready-for-pr:" + $now),type:"ready-for-pr",source:$old.url,head:null,body:"filed issue reached ready-for-pr"}]
               else [] end)) as $events
-          | $old + {checked_at:$now,error:null,
+          | $old + {checked_at:$now,error:null,held_generation:$generation,
             observation:($o + {absent_checks:((($old.observation.absent_checks // []) + [($old.observation.checks // [])[] | .name]) - [$o.checks[].name] | unique)}),
             seen:($events | map(.token)),
             pending:(($old.pending // []) + [$events[] | select(.token as $t | ($old.seen // [] | index($t)) == null)] | unique_by(.token))}' > "$TMP/row.json"

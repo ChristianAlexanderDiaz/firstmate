@@ -53,6 +53,7 @@ fm_held_pr_due() {
   shift 3
   FM_HELD_PR_STAMP=
   FM_HELD_PR_RECORD=
+  FM_HELD_PR_KEY=
   [ ! -L "$state/held-pr-poll" ] || return 0
   [ "$#" -gt 0 ] || return 0
   case "$consumer" in merge|contributions) ;; *) return 0 ;; esac
@@ -70,6 +71,7 @@ fm_held_pr_due() {
     signatures="$signatures$signature"$'\n'
   done
   key=$(printf '%s\n' "$key" "$signatures" | cksum)
+  FM_HELD_PR_KEY=$key
   now=$(date +%s)
   if [ "${FM_TEST_SEAM:-}" = 1 ]; then now=${FM_TEST_HELD_PR_NOW:-$now}; fi
   if [ -f "$FM_HELD_PR_STAMP" ] && [ ! -L "$FM_HELD_PR_STAMP" ]; then
