@@ -127,7 +127,7 @@ fi
 if [ "$PROVIDER" = github ] && [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   DRAFT_JSON=
   read_rc=0
-  DRAFT_JSON=$("$SCRIPT_DIR/fm-github-read.sh" core "$URL") || read_rc=$?
+  DRAFT_JSON=$("$SCRIPT_DIR/fm-github-read.sh" fresh pr view "$URL" --json isDraft) || read_rc=$?
   [ "$read_rc" -ne 75 ] || exit 75
   if [ "$(fm_pr_json_draft_state "$DRAFT_JSON")" = true ]; then
     echo "error: $URL is a draft pull request; a draft cannot be merged, so merge monitoring would wait for an event that cannot occur - mark it ready for review and arm again, or declare a wait instead of done if the draft is deliberate" >&2
@@ -156,7 +156,7 @@ fi
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_HEAD=
 if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
-  if REMOTE_HEAD=$("$SCRIPT_DIR/fm-github-read.sh" core "$URL" head) \
+  if REMOTE_HEAD=$("$SCRIPT_DIR/fm-github-read.sh" fresh pr view "$URL" --json headRefOid -q .headRefOid) \
     && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi

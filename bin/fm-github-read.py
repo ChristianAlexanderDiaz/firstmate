@@ -188,7 +188,7 @@ class Cache:
             resets = [int(x) for x in re.findall(r"(?im)^< x-ratelimit-reset:\s*([0-9]+)", debug)]
             remaining = [int(x) for x in re.findall(r"(?im)^< x-ratelimit-remaining:\s*([0-9]+)", debug)]
             retry = re.findall(r"(?im)^< retry-after:\s*([^\r\n]+)", debug)
-            deadlines = [x for x in resets if x > observed_at]
+            deadlines = [x for x in resets if x > observed_at] if remaining and remaining[-1] == 0 else []
             for value in retry:
                 try:
                     deadlines.append(observed_at + int(value))

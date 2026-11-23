@@ -84,7 +84,7 @@ assert count() == 3, 'batch result not reused by single reader'
 good(run('core', url, extra={'FM_TEST_GITHUB_NOW':'10300'}))
 assert count() == 4, 'TTL did not expire'
 # Refusal blocks different PRs AND cached successes across homes until reset.
-result = run('core', url[:-1]+'4', extra={'REFUSED':'1', 'RESET':'11000'})
+result = run('core', url[:-1]+'4', extra={'REFUSED':'1', 'RESET':'11000', 'REMAINING':'0'})
 assert result.returncode == 75 and not result.stdout and 'waiting:' in result.stderr
 assert count() == 5
 result = run('core', url, extra={'FM_HOME':str(child), 'FM_TEST_GITHUB_NOW':'10999'})
@@ -103,7 +103,7 @@ assert count() == 5, 'registration retried a quota refusal'
 good(run('core', url, extra={'FM_TEST_GITHUB_NOW':'11000'}))
 assert count() == 6
 # Retry-After wins if later than reset; proven hourly exhaustion waits an hour.
-result = run('core', url[:-1]+'5', extra={'FM_TEST_GITHUB_NOW':'11000', 'REFUSED':'1', 'RESET':'11100', 'RETRY':'200'})
+result = run('core', url[:-1]+'5', extra={'FM_TEST_GITHUB_NOW':'11000', 'REFUSED':'1', 'RESET':'11100', 'RETRY':'200', 'REMAINING':'0'})
 assert result.returncode == 75
 assert run('core', url, extra={'FM_TEST_GITHUB_NOW':'11199'}).returncode == 75
 good(run('core', url, extra={'FM_TEST_GITHUB_NOW':'11200'}))
@@ -119,6 +119,15 @@ assert result.returncode != 0 and not result.stdout
 # Credential changes cannot reuse private observations.
 good(run('core', url, extra={'FM_TEST_GITHUB_NOW':'16000', 'GH_TOKEN':'another-fixture-token'}))
 assert count() == before+3
+# A secondary refusal must ignore the unrelated primary quota reset.
+for retry, delay in ((None, 60), ('120', 120)):
+    secondary = {'FM_GITHUB_CACHE_DIR':str(root/('secondary-'+str(retry))),
+                 'FM_TEST_GITHUB_NOW':'16000', 'REFUSED':'1',
+                 'REMAINING':'3309', 'RESET':'19500'}
+    if retry is not None: secondary['RETRY'] = retry
+    assert run('core', url, extra=secondary).returncode == 75
+    assert run('core', url, extra=dict(secondary, FM_TEST_GITHUB_NOW=str(16000+delay-1), REFUSED='')).returncode == 75
+    good(run('core', url, extra=dict(secondary, FM_TEST_GITHUB_NOW=str(16000+delay), REFUSED='')))
 # Secondary limits without a deadline back off briefly, doubling to 15 minutes.
 # Missing quota headers are not evidence of hourly exhaustion either.
 for remaining in ('3309', None):
@@ -171,7 +180,7 @@ print('PASS: scripted batched hour N=8, homes=2: before=24, after=12 GraphQL req
 # A quota refusal must suppress even a still-fresh cached terminal success.
 terminal = {'FM_GITHUB_CACHE_DIR':str(root/'terminal'), 'FM_TEST_GITHUB_NOW':'40000', 'FORGE_STATE':'MERGED'}
 assert good(run('core', url, 'state', extra=terminal)).strip() == 'MERGED'
-refusal = dict(terminal, REFUSED='1', RESET='41000')
+refusal = dict(terminal, REFUSED='1', RESET='41000', REMAINING='0')
 assert run('core', url[:-1]+'9', extra=refusal).returncode == 75
 poll = run('--validated', 'github', url, 'github.com', 'example/sample', '1', extra=terminal,
            command=repo/'bin/fm-pr-poll.sh')

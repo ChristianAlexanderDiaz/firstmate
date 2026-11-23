@@ -696,6 +696,32 @@ test_draft_pull_request_is_not_armed() {
   pass "arming refuses a draft pull request, naming it, and arms a ready or unreadable one"
 }
 
+test_registration_bypasses_stale_observation() {
+  local dir url expected
+  dir=$(make_case stale-registration)
+  url=https://github.com/o/r/pull/9
+  expected=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  write_task_meta "$dir"
+  FM_GITHUB_CACHE_TTL=300 FM_HOME="$dir/home" FM_TEST_GH_LOG="$dir/gh.log" \
+    PATH="$dir/fakebin:$BASE_PATH" "$ROOT/bin/fm-github-read.sh" core "$url" >/dev/null \
+    || fail "could not seed cached observation"
+  FM_GITHUB_CACHE_TTL=300 FM_TEST_GH_HEAD=$expected run_check_entry "$dir" task-a "$url" \
+    > "$dir/stdout" 2> "$dir/stderr" || fail "registration after push failed"
+  grep -qxF "pr_head=$expected" "$dir/home/state/task-a.meta" || fail "registration used stale head"
+
+  dir=$(make_case stale-draft)
+  write_task_meta "$dir"
+  FM_GITHUB_CACHE_TTL=300 FM_HOME="$dir/home" FM_TEST_GH_LOG="$dir/gh.log" \
+    PATH="$dir/fakebin:$BASE_PATH" "$ROOT/bin/fm-github-read.sh" core "$url" >/dev/null \
+    || fail "could not seed cached observation"
+  if FM_GITHUB_CACHE_TTL=300 FM_TEST_GH_DRAFT=true run_check_entry "$dir" task-a "$url" \
+    > "$dir/stdout" 2> "$dir/stderr"; then
+    fail "registration accepted a newly drafted pull request"
+  fi
+  [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "draft registration armed a poll"
+  pass "registration reads current head and draft state"
+}
+
 # A secondmate is a persistent worker, not a delivery lane: it never owns a
 # pull request of its own. A URL relayed onto its status channel belongs to a
 # task in the mate's own home, which arms its own watch, so arming one here is
@@ -3640,6 +3666,7 @@ test_retirement_queue_failure_and_receipt_tampering
 test_gitlab_merged_poll_retires
 test_invalid_entrypoints_have_zero_side_effects
 test_draft_pull_request_is_not_armed
+test_registration_bypasses_stale_observation
 test_secondmate_record_refuses_a_pr_watch
 test_unpushed_named_head_refuses_registration
 test_direct_pr_unpushed_commit_refuses_registration
