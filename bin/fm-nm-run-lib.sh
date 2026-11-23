@@ -181,6 +181,11 @@ fm_nm_run_status_class() {  # <status_word>
 # Structural completeness applies to the whole table; semantic validation
 # applies only to the requested branch, after complete identity lookup when
 # capped. Branch names are matched exactly without a character whitelist.
+# The table header must name id, branch, status, head, and pr first, in that
+# order; a release may append further named columns (observed 2026-11: a
+# trailing run_counter), which every row must then carry and which are not
+# read. A renamed, reordered, or missing leading column still reads as
+# unreadable rather than being guessed by position.
 # Its rows are ordered by creation time descending (not last update), then id.
 # The newest same-branch row is the candidate regardless of outcome: an older
 # live run must not hide a newer failure. If the newest is live and another
@@ -227,23 +232,25 @@ fm_nm_select_run() {  # <branch> <axi-overview> <worktree> [timeout_secs]
       if (count !~ /^[0-9]+ of [0-9]+ total$/) bad = 1
       split(count, c, " "); shown = c[1]; total = c[3]
     }
-    /^runs\[[0-9]+\]\{id,branch,status,head,pr\}:$/ {
+    /^runs\[[0-9]+\]\{id,branch,status,head,pr(,[A-Za-z0-9_]+)*\}:$/ {
       if (found++) bad = 1
       expected = $0; sub(/^runs\[/, "", expected); sub(/\].*$/, "", expected)
+      columns = $0; sub(/^[^{]*[{]/, "", columns); sub(/[}]:$/, "", columns)
+      width = split(columns, column_names, ",")
       inrows = 1; next
     }
     /^runs\[/ { bad = 1; found = 1 }
     inrows && /^[ \t]+/ {
       seen++
       n = row_fields($0, f)
-      if (n != 5) bad = 1
+      if (n != width) bad = 1
       id = f[1]; br = f[2]; st = f[3]; head = f[4]
       if (br != branch) next
       if (id ~ /^[A-Za-z0-9_-]+$/) {
         if (known[id]++) invalid_run = 1
         else ids = ids (ids == "" ? "" : ", ") id
       }
-      if (n != 5) next
+      if (n != width) next
       if (id !~ /^[A-Za-z0-9_-]+$/ ||
           st !~ /^[a-z_-]+$/ || head !~ /^[a-fA-F0-9]+$/ || length(head) < 7 || length(head) > 40) {
         invalid_run = 1; next

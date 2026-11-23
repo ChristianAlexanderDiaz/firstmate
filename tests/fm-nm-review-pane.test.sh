@@ -274,3 +274,35 @@ assert json.load(open(sys.argv[2]))['label']=='🔍 fm-panes'
 assert sum(c[:2]==['pane','split'] for c in calls)==1
 PY
 pass 'one attributed state read reconciles both the workspace emoji and review viewer without repeated renames'
+
+# The sweep on a home whose no-mistakes release appends a column to its runs
+# table: the worker keeps a readable state, so the sweep applies its emoji and
+# follows the next state change instead of stripping the label to no emoji.
+reset_panes
+change '{"label":"fm-panes"}'
+runs_table() {  # <run>
+  cat > "$FM_FAKE_NM_OVERVIEW" <<TABLE
+count: 1 of 1 total
+runs[1]{id,branch,status,head,pr,run_counter}:
+  "$1",fm/panes,running,${HEAD_SHA:0:8},"","run 1 of 1, 0 fix rounds"
+TABLE
+}
+run_status appended running
+runs_table appended
+"$ROOT/bin/fm-crew-state.sh" panes --sync-presentation >/dev/null
+cat >> "$FM_FAKE_NM_STATUS" <<'STEPS'
+  pr: "https://github.com/o/r/pull/2"
+  steps[2]{step,status,findings,duration_ms}:
+    review,completed,0,0
+    ci,running,0,0
+STEPS
+"$ROOT/bin/fm-crew-state.sh" panes --sync-presentation >/dev/null
+"$ROOT/bin/fm-crew-state.sh" panes --sync-presentation >/dev/null
+python3 - "$FM_FAKE_HERDR_LOG" "$FM_FAKE_HERDR_STATE" <<'PY'
+import json,sys
+calls=[json.loads(l) for l in open(sys.argv[1])]
+renames=[c[3] for c in calls if c[:2]==['workspace','rename']]
+assert renames==['🔍 fm-panes','⏳ fm-panes'], renames
+assert json.load(open(sys.argv[2]))['label']=='⏳ fm-panes'
+PY
+pass 'a runs table with an appended column keeps the swept emoji applied and current across a state change'

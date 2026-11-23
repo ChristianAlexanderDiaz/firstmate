@@ -387,13 +387,23 @@ test_clear_removes_tokens_and_the_view_even_when_off() {
 }
 
 test_sidebar_config_apply_backs_up_and_refuses_twice() {
-  local out cfg backups
+  local out cfg backups spaces agents
   new_home sidebar
   cfg="$FAKE_DIR/config.toml"
   printf '[ui]\nagent_panel_sort = "spaces"\n' > "$cfg"
   out=$(groups sidebar-config 2>&1) || fail "sidebar-config print failed: $out"
   assert_contains "$out" '[ui.sidebar.agents]' "printed rows"
   assert_equals "" "$(cat "$FAKE_HERDR_LOG")" "printing the rows calls no Herdr command"
+  # A worker's emoji is part of its workspace name, so the space rows must not
+  # put Herdr's own icon beside it; the status word and the agent rows stay.
+  spaces=$(printf '%s\n' "$out" | awk '/^\[/ { section = $0 } section == "[ui.sidebar.spaces]"')
+  agents=$(printf '%s\n' "$out" | awk '/^\[/ { section = $0 } section == "[ui.sidebar.agents]"')
+  assert_contains "$spaces" '"workspace"' "space rows name the workspace, which carries the emoji"
+  assert_not_contains "$spaces" 'state_icon' "space rows pair no native icon with the emoji"
+  assert_contains "$spaces" "\"\$fm_status\"" "space rows keep the status word for shared and secondmate spaces"
+  assert_contains "$spaces" "\"\$fm_status_detail\"" "space rows keep the status detail"
+  assert_contains "$agents" '"state_icon"' "agent rows keep the native icon"
+  assert_not_contains "$agents" '"workspace"' "agent rows never show the emoji-carrying name"
   out=$(groups sidebar-config --apply "$cfg" 2>&1) || fail "sidebar-config apply failed: $out"
   backups=$(find "$FAKE_DIR" -maxdepth 1 -name 'config.toml.bak-*')
   [ -n "$backups" ] || fail "apply made no backup"
@@ -406,7 +416,7 @@ test_sidebar_config_apply_backs_up_and_refuses_twice() {
   assert_contains "$out" "already defines Herdr sidebar rows" "refusal reason"
   assert_equals "1" "$(grep -c '^\[ui.sidebar.spaces\]' "$cfg")" "rows appended exactly once"
   assert_equals "" "$(cat "$FAKE_HERDR_LOG")" "apply never reloads Herdr"
-  pass "sidebar-config: prints rows; --apply backs up, appends once, never reloads Herdr"
+  pass "sidebar-config: prints rows with one icon per space row; --apply backs up, appends once, never reloads Herdr"
 }
 
 test_agent_view_helper_sends_only_the_whitelisted_requests() {

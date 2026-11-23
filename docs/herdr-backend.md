@@ -326,10 +326,15 @@ An accepted local-only completion awaiting merge approval also shows 🙋 withou
 Unknown work state has no emoji, and merged workers have no separate check-mark state.
 
 The existing bounded presentation sweep refreshes these labels on every home, including remote PC homes, and renames only when the prefix changes.
+A new or relaunched worker is eligible for an emoji after its endpoint is recorded; failed reads, a busy lock, or ambiguous ownership can delay the update until a later sweep.
+A closed workspace has no label left to refresh.
 The rest of the name, including the `└ ` marker and `· p:<id>` suffix, stays intact.
 The adapter targets the recorded workspace ID and tolerates the prefix in its recovery and ordering checks.
 Shared home spaces, secondmate spaces, and non-Herdr runtimes are untouched.
-The rename requires a matching worker presentation binding or an exact flat worker label and endpoint, so ambiguous or foreign spaces are skipped and retried on a later sweep.
+The rename requires a worker presentation binding that matches the recorded workspace, or an exact flat worker label and endpoint, so ambiguous or foreign spaces are skipped and retried on a later sweep.
+A worker relaunched into a flat workspace keeps the binding of its earlier projected workspace; that binding names another workspace, so only the exact flat label and endpoint decide.
+
+With the [suggested sidebar rows](#sidebar-rows), the emoji is the only status icon on a worker's space row when its work state is known.
 
 ### Cleanup and focus safety
 
@@ -613,7 +618,7 @@ The group sort category comes from the task's status log through the shared clas
 | 4 | `done` | `done`. |
 
 It is the worker's latest declaration, not the reconciled current state that `bin/fm-crew-state.sh` owns, and it can lag one watcher poll behind the log.
-Herdr's own agent status dot stays live beside it.
+Herdr's own agent status icon stays live beside it in the agent rows.
 
 The watcher reconciles every task once per poll cycle, and a spawn tags its new task at once.
 A reconcile reads each session's workspace and pane lists once and reports only tokens whose live value differs.
@@ -636,7 +641,7 @@ Firstmate never edits Herdr's configuration on its own.
 ```toml
 [ui.sidebar.spaces]
 rows = [
-  ["state_icon", "workspace"],
+  ["workspace"],
   [{ token = "$fm_group", bold = true }, "$fm_status"],
   ["$fm_status_detail"],
 ]
@@ -649,6 +654,12 @@ rows = [
 
 Run `herdr server reload-config` afterwards to apply them.
 Colors can be added with Herdr's inline token styles.
+
+The space rows deliberately omit Herdr's own `state_icon`.
+A worker's [work-state emoji](#worker-work-state-emoji) is part of its workspace name, so a space row that also names `state_icon` shows two icons for one worker.
+Herdr has one space-row layout for every workspace and accepts no rule on `state_icon`, so the icon cannot be hidden on worker rows alone.
+The trade-off is that shared home and secondmate space rows show no icon either; they keep their `$fm_status` word, and every agent row keeps `state_icon`.
+A configuration written from an earlier suggestion needs its first space row changed by hand from `["state_icon", "workspace"]` to `["workspace"]`.
 
 ### Placement inside the group
 
@@ -703,10 +714,12 @@ For a workspace row without project grouping:
 ```toml
 [ui.sidebar.spaces]
 rows = [
-  ["state_icon", "workspace", "$fm_status"],
+  ["workspace", "$fm_status"],
   ["$fm_status_detail"],
 ]
 ```
+
+This row leaves out `state_icon` for the reason [Sidebar rows](#sidebar-rows) gives.
 
 Firstmate does not modify the operator's Herdr configuration.
 The legacy group token `fm_state` remains a declaration-based group sort category, not this reconciled display status.

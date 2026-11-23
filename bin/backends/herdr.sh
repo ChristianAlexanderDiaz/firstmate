@@ -794,8 +794,9 @@ fm_backend_herdr_work_state_label_base() {  # <label>
 }
 
 # Display-only rename, serialized with spawn/reclaim/cleanup. The version 2
-# journal, or an exact flat task label, proves this is a worker-owned workspace
-# rather than a shared home space. No endpoint lifecycle is driven.
+# journal bound to the recorded workspace, or an exact flat task label on it,
+# proves this is a worker-owned workspace rather than a shared home space.
+# No endpoint lifecycle is driven.
 # Failed reads or a busy lock retry on the next watcher sweep. The live label
 # is read every time, so a restart needs no cache invalidation; an already
 # matching label produces no rename. Remote homes execute this same path on
@@ -828,16 +829,21 @@ fm_backend_herdr_work_state_label_sync_locked() {  # <meta> <state> <id> <emoji>
   expected="fm-$id"
   if [ -e "$journal" ]; then
     fm_backend_herdr_projection_journal_snapshot "$journal" "$id" || return 0
-    [ "$FM_BACKEND_HERDR_JOURNAL_VERSION" = 2 ] || return 0
-    home=$(fm_backend_herdr_projection_home_identity "$FM_HOME") || return 1
-    [ "$FM_BACKEND_HERDR_JOURNAL_HOME" = "$home" ] \
-      && [ "$FM_BACKEND_HERDR_JOURNAL_SESSION" = "$session" ] \
-      && [ "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" = "$workspace" ] \
-      && [ "$FM_BACKEND_HERDR_JOURNAL_PANE_ID" = "$pane" ] \
-      && [ "$FM_BACKEND_HERDR_JOURNAL_TAB_ID" = "$tab" ] \
-      && [ "$workspace" != "$FM_BACKEND_HERDR_JOURNAL_PARENT_WORKSPACE_ID" ] || return 0
-    expected=$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_LABEL
-    suffix=" · p:$FM_BACKEND_HERDR_JOURNAL_PROJECTION_ID"
+    [ "$workspace" != "$FM_BACKEND_HERDR_JOURNAL_PARENT_WORKSPACE_ID" ] || return 0
+    # A binding for the recorded workspace must match it exactly. One that
+    # names no workspace or another one is what a flat relaunch leaves behind
+    # (the spawn keeps the journal and records the new flat endpoint), so it
+    # grants nothing and the exact flat label proof below decides alone.
+    if [ "$FM_BACKEND_HERDR_JOURNAL_VERSION" = 2 ] \
+      && [ "$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_ID" = "$workspace" ]; then
+      home=$(fm_backend_herdr_projection_home_identity "$FM_HOME") || return 1
+      [ "$FM_BACKEND_HERDR_JOURNAL_HOME" = "$home" ] \
+        && [ "$FM_BACKEND_HERDR_JOURNAL_SESSION" = "$session" ] \
+        && [ "$FM_BACKEND_HERDR_JOURNAL_PANE_ID" = "$pane" ] \
+        && [ "$FM_BACKEND_HERDR_JOURNAL_TAB_ID" = "$tab" ] || return 0
+      expected=$FM_BACKEND_HERDR_JOURNAL_WORKSPACE_LABEL
+      suffix=" · p:$FM_BACKEND_HERDR_JOURNAL_PROJECTION_ID"
+    fi
   fi
   list=$(fm_backend_herdr_cli "$session" workspace list 2>/dev/null) || return 1
   label=$(printf '%s' "$list" | jq -er --arg ws "$workspace" \
