@@ -30,6 +30,7 @@ matrix_case A01 allow 'bin/fm-watch-arm.sh'
 matrix_case A02 allow './bin/fm-watch-arm.sh --restart'
 matrix_case A03 allow 'exec bin/fm-watch-arm.sh'
 matrix_case A04 allow 'bin/fm-watch-checkpoint.sh --seconds 180'
+matrix_case A04_wait allow 'bin/fm-watch-checkpoint.sh --wait'
 matrix_case A05 allow 'exec bin/fm-watch-checkpoint.sh --seconds 180'
 matrix_case A06 allow "$ROOT/bin/fm-watch-checkpoint.sh --seconds 180"
 matrix_case A07 allow "cd '$ROOT'; exec bin/fm-watch-arm.sh"

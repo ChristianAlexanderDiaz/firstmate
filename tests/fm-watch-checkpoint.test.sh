@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for bounded foreground watcher checkpoints used by Codex supervision.
+# Tests for foreground watcher waits and bounded diagnostic checkpoints.
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
@@ -238,10 +238,11 @@ make_host_home() {  # <name>
   mkdir -p "$home/root/bin"
   cp "$CHECKPOINT" "$home/root/bin/fm-watch-checkpoint.sh"
   cp "$ROOT/bin/fm-supervision-engine-lib.sh" "$home/root/bin/fm-supervision-engine-lib.sh"
+  cp "$ROOT/bin/fm-wake-lib.sh" "$ROOT/bin/fm-path-lib.sh" "$home/root/bin/"
   cat > "$home/root/bin/fm-supervision-host.sh" <<'SH'
 #!/usr/bin/env bash
-printf 'args=%s\nprimary=%s\npark=%s\nlimit=%s\n' "$*" "${FM_SUPERVISION_HOST_PRIMARY:-}" \
-  "${FM_SUPERVISION_HOST_PARK_SECONDS:-}" "${FM_SUPERVISION_HOST_PARK_LIMIT:-}" > "$FM_HOME/host-env"
+printf 'args=%s\nprimary=%s\npark=%s\nlimit=%s\nresume=%s\n' "$*" "${FM_SUPERVISION_HOST_PRIMARY:-}" \
+  "${FM_SUPERVISION_HOST_PARK_SECONDS:-}" "${FM_SUPERVISION_HOST_PARK_LIMIT:-}" "${FM_SUPERVISION_HOST_PARK_RESUME:-}" > "$FM_HOME/host-env"
 case "$(cat "$FM_HOME/host-kind")" in
   boundary) printf 'supervision-host: cycle boundary - fixture\n' ;;
   handback)
@@ -343,6 +344,259 @@ test_real_host_checkpoint_ends_quietly_at_its_bound() {
   fi
   pass "checkpoint: the real host ends its park at the checkpoint bound as a quiet checkpoint"
 }
+
+# Exercise quiet waits against the real watcher, not a model or a fake queue.
+test_wait_is_silent_until_a_durable_wake() {
+  local home pid status before started
+  home=$(make_home wait-queue)
+  fm_test_track_watcher_state "$home/state"
+  FM_HOME="$home" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$CHECKPOINT" --wait >"$home/out" 2>"$home/err" &
+  pid=$!
+  wait_for_checkpoint_lock "$home" || fail "wait did not start its watcher"
+  sleep 2
+  kill -0 "$pid" || fail "empty queue completed the wait"
+  [ ! -s "$home/out" ] && [ ! -s "$home/err" ] || fail "idle wait emitted model-visible output"
+  append_wake "$home/state" check example 'check: queued during quiet wait' || fail "append failed"
+  before=$(cat "$home/state/.wake-queue")
+  started=$SECONDS
+  status=0
+  wait "$pid" || status=$?
+  expect_code 0 "$status" "queued wait exit"
+  [ "$((SECONDS - started))" -lt 15 ] || fail "queued wake waited for the long bound"
+  assert_contains "$(cat "$home/out")" 'check:' "wait did not return a wake reason"
+  assert_contains "$(cat "$home/state/.wake-queue")" "$before" "wait consumed a queued wake"
+  pass "quiet wait stays silent while empty and returns on a durable wake"
+}
+
+test_wait_returns_already_announced_rows() {
+  local home status before
+  home=$(make_home wait-announced)
+  append_wake "$home/state" check retained 'check: retained wake' || fail "append failed"
+  printf 'announced:downtime:retained.1\n' > "$home/state/.watcher-down"
+  before=$(cat "$home/state/.wake-queue")
+  status=0
+  FM_HOME="$home" "$CHECKPOINT" --wait >"$home/out" 2>"$home/err" || status=$?
+  expect_code 0 "$status" "already queued wait exit"
+  assert_equals "$(cat "$home/state/.wake-queue")" "$before" "wait changed the durable rows"
+  assert_equals "$(cat "$home/state/.watcher-down")" 'announced:downtime:retained.1' "wait changed the recovery generation"
+  assert_absent "$home/state/.watch.lock/pid" "pending queue unnecessarily started a watcher"
+  pass "quiet wait immediately returns unacknowledged rows without changing their generation"
+}
+
+test_host_wait_returns_already_announced_rows() {
+  local home fakebin status before
+  home=$(make_home host-wait-announced)
+  : > "$home/config/supervision-host"
+  append_wake "$home/state" check retained 'check: retained wake' || fail "append failed"
+  printf 'announced:downtime:retained.1\n' > "$home/state/.watcher-down"
+  before=$(cat "$home/state/.wake-queue")
+  fakebin="$home/fakebin"
+  mkdir -p "$fakebin"
+  ln -s /bin/bash "$fakebin/codex"
+  status=0
+  # The fake Codex process expands these variables, not this shell.
+  # shellcheck disable=SC2016
+  FM_HOME="$home" timeout 20 "$fakebin/codex" -c '
+    printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+    "$0" --wait
+  ' "$CHECKPOINT" >"$home/out" 2>"$home/err" || status=$?
+  expect_code 0 "$status" "host queued wait exit: $(cat "$home/out" "$home/err")"
+  assert_contains "$(cat "$home/out")" 'check: durable wake queued' "host lost the queued wake"
+  assert_equals "$(cat "$home/state/.wake-queue")" "$before" "host changed the durable rows"
+  pass "host wait routes already announced unacknowledged work"
+}
+
+test_wait_dead_watcher_requests_repair() {
+  local home pid watcher status
+  home=$(make_home wait-dead)
+  fm_test_track_watcher_state "$home/state"
+  FM_HOME="$home" FM_POLL=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$CHECKPOINT" --wait >"$home/out" 2>"$home/err" &
+  pid=$!
+  wait_for_checkpoint_lock "$home" || fail "wait did not start its watcher"
+  watcher=$(cat "$home/state/.watch.lock/pid")
+  kill -TERM "$watcher" || fail "could not stop fixture watcher"
+  status=0
+  wait "$pid" || status=$?
+  expect_code 1 "$status" "dead watcher wait exit"
+  assert_contains "$(cat "$home/err")" 'repair: watcher wait ended without a wake' "dead watcher lost its repair reason"
+  pass "quiet wait returns a repair reason when its watcher dies"
+}
+
+test_wait_timeout_is_silent_and_can_resume() {
+  local home status pid watcher marker
+  home=$(make_home wait-timeout)
+  fm_test_track_watcher_state "$home/state"
+  FM_HOME="$home" FM_POLL=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$CHECKPOINT" --wait >"$home/out" 2>"$home/err" &
+  pid=$!
+  wait_for_checkpoint_lock "$home" || fail "wait did not start its watcher"
+  watcher=$(cat "$home/state/.watch.lock/pid")
+  marker=$(cat "$home/state/.watcher-down" 2>/dev/null || true)
+  sleep 5
+  kill -0 "$pid" || fail "quiet time returned to the model"
+  assert_equals "$(cat "$home/state/.watch.lock/pid")" "$watcher" "quiet time replaced the watcher"
+  assert_equals "$(cat "$home/state/.watcher-down" 2>/dev/null || true)" "$marker" "quiet time changed recovery generation"
+  [ ! -s "$home/out" ] && [ ! -s "$home/err" ] || fail "quiet time emitted model-visible output"
+  [ ! -s "$home/state/.wake-queue" ] || fail "quiet time created a recovery wake"
+  append_wake "$home/state" check after-bound 'check: wake after quiet time' || fail "append failed"
+  status=0
+  wait "$pid" || status=$?
+  expect_code 0 "$status" "same wait after quiet time"
+  assert_contains "$(cat "$home/out")" 'check:' "same wait lost wake"
+  pass "quiet wait keeps the same watcher alive without a return or recovery wake"
+}
+
+test_wait_stalled_beacon_requests_repair() {
+  local home status
+  home=$(make_home wait-stalled)
+  status=0
+  FM_HOME="$home" FM_POLL=30 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=1 FM_WATCHER_STALL_BOUND=1 \
+    "$CHECKPOINT" --wait >"$home/out" 2>"$home/err" || status=$?
+  expect_code 1 "$status" "stalled beacon wait exit"
+  assert_contains "$(cat "$home/err")" 'repair: watcher beacon stalled' "stalled watcher was treated as a quiet boundary"
+  pass "quiet wait distinguishes a stalled beacon from a healthy timeout"
+}
+
+test_wait_host_handback_and_missing_watcher() {
+  local home status
+  home=$(make_host_home wait-failures)
+  run_host_checkpoint "$home" handback --wait
+  expect_code 0 "$STATUS" "host wait handback"
+  assert_contains "$(cat "$home/out.txt")" 'signal: demo.status' "host wait lost its handback"
+  run_host_checkpoint "$home" stood-down --wait
+  expect_code 1 "$STATUS" "host wait failure"
+  assert_contains "$(cat "$home/err.txt")" 'repair:' "host wait failure lost its repair reason"
+  rm -f "$home/config/supervision-host" "$home/root/bin/fm-watch.sh"
+  status=0
+  FM_HOME="$home" "$home/root/bin/fm-watch-checkpoint.sh" --wait >"$home/out" 2>"$home/err" || status=$?
+  expect_code 1 "$status" "missing watcher wait exit"
+  assert_contains "$(cat "$home/err")" 'repair:' "missing watcher was treated as a quiet boundary"
+  pass "quiet wait preserves host handbacks and reports missing watcher repair"
+}
+
+test_real_host_wait_keeps_the_same_watcher() {
+  local home fakebin pid watcher status
+  home=$(make_home host-wait-real)
+  fm_test_track_watcher_state "$home/state"
+  : > "$home/config/supervision-host"
+  fakebin="$home/fakebin"
+  mkdir -p "$fakebin"
+  ln -s /bin/bash "$fakebin/codex"
+  # shellcheck disable=SC2016 # Expanded by the fake owning harness.
+  FM_HOME="$home" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$fakebin/codex" -c '
+    printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+    "$0" --wait
+  ' "$CHECKPOINT" >"$home/out" 2>"$home/err" &
+  pid=$!
+  wait_for_checkpoint_lock "$home" || fail "host wait did not start its watcher"
+  watcher=$(cat "$home/state/.watch.lock/pid")
+  sleep 5
+  kill -0 "$pid" || fail "host quiet time returned to the model"
+  assert_equals "$(cat "$home/state/.watch.lock/pid")" "$watcher" "host quiet time replaced the watcher"
+  [ ! -s "$home/out" ] && [ ! -s "$home/err" ] || fail "host quiet time emitted output"
+  [ ! -s "$home/state/.wake-queue" ] || fail "host quiet time generated a recovery wake"
+  append_wake "$home/state" check example 'check: host wait event' || fail "append failed"
+  status=0
+  wait "$pid" || status=$?
+  expect_code 0 "$status" "host wait event handback"
+  assert_contains "$(cat "$home/out")" 'check:' "host wait lost the queued event"
+  pass "host wait preserves the same watcher and hands back real work"
+}
+
+test_wait_interruption_reaps_its_watcher() {
+  local home pid watcher i status
+  home=$(make_home wait-interrupt)
+  fm_test_track_watcher_state "$home/state"
+  FM_HOME="$home" FM_POLL=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$CHECKPOINT" --wait >"$home/out" 2>"$home/err" &
+  pid=$!
+  wait_for_checkpoint_lock "$home" || fail "wait did not start its watcher"
+  watcher=$(cat "$home/state/.watch.lock/pid")
+  kill -TERM "$pid" || fail "could not interrupt wait"
+  status=0
+  wait "$pid" || status=$?
+  [ "$status" -ne 0 ] || fail "interrupted wait reported a wake"
+  i=0
+  while kill -0 "$watcher" 2>/dev/null && [ "$i" -lt 150 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "$watcher" 2>/dev/null; then fail "interrupted wait orphaned its watcher"; fi
+  assert_absent "$home/state/.watch.lock/pid" "interrupted wait left its watcher lock"
+  pass "interrupting a quiet wait reaps its owned watcher"
+}
+
+test_wait_preserves_sleep_held_rows() {
+  local home marker pid status
+  for marker in .sleep .sleep-return; do
+    home=$(make_home "wait-held-$marker")
+    fm_test_track_watcher_state "$home/state"
+    : > "$home/state/$marker"
+    append_wake "$home/state" check held 'check: held event' || fail "append failed"
+    FM_HOME="$home" FM_POLL=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+      "$CHECKPOINT" --wait >"$home/out" 2>"$home/err" &
+    pid=$!
+    wait_for_checkpoint_lock "$home" || fail "held wait did not start its watcher"
+    sleep 2
+    kill -0 "$pid" || fail "held queue returned to the model"
+    [ ! -s "$home/out" ] && [ ! -s "$home/err" ] || fail "held wait emitted output"
+    [ -s "$home/state/.wake-queue" ] || fail "wait consumed held rows"
+    rm -f "$home/state/$marker"
+    status=0
+    wait "$pid" || status=$?
+    expect_code 0 "$status" "released queue wait"
+  done
+  pass "quiet wait preserves sleep-held rows until release"
+}
+
+test_wait_preserves_parent_route_sleep_held_rows() {
+  local home state marker pid status i
+  for marker in .sleep .sleep-return; do
+    home=$(make_home "wait-parent-held-$marker")
+    state="$home/state/parent-route"
+    mkdir -p "$state"
+    fm_test_track_watcher_state "$state"
+    FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+      "$CHECKPOINT" --wait >"$home/out" 2>"$home/err" &
+    pid=$!
+    i=0
+    while [ "$i" -lt 100 ] && { [ ! -s "$state/.watch.lock/pid" ] || [ ! -e "$state/.last-watcher-beat" ]; }; do
+      sleep 0.05
+      i=$((i + 1))
+    done
+    [ -s "$state/.watch.lock/pid" ] || fail "parent-route wait did not start its watcher"
+    : > "$home/state/$marker"
+    append_wake "$state" check held 'check: held parent-route event' || fail "append failed"
+    sleep 2
+    kill -0 "$pid" || fail "parent sleep hold returned to the model"
+    [ ! -s "$home/out" ] && [ ! -s "$home/err" ] || fail "parent sleep hold emitted output"
+    [ -s "$state/.wake-queue" ] || fail "wait consumed parent-held rows"
+    rm -f "$home/state/$marker"
+    status=0
+    wait "$pid" || status=$?
+    expect_code 0 "$status" "released parent-route queue wait"
+    assert_contains "$(cat "$home/out")" 'check:' "released parent-route wake was lost"
+  done
+  pass "quiet wait respects parent sleep holds for parent-route wakes"
+}
+
+test_wait_preserves_parent_route_sleep_held_rows
+test_wait_preserves_sleep_held_rows
+
+test_wait_interruption_reaps_its_watcher
+
+test_real_host_wait_keeps_the_same_watcher
+
+test_wait_stalled_beacon_requests_repair
+test_wait_host_handback_and_missing_watcher
+
+test_wait_is_silent_until_a_durable_wake
+test_wait_returns_already_announced_rows
+test_host_wait_returns_already_announced_rows
+test_wait_dead_watcher_requests_repair
+test_wait_timeout_is_silent_and_can_resume
 
 test_quiet_checkpoint_exits_124_cleanly
 test_perl_timeout_fallback_honors_cleanup_bound_before_escalating

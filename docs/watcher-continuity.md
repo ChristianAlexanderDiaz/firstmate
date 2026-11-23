@@ -205,7 +205,7 @@ It enters its poll loop immediately and keeps scanning signals, stale panes, and
 - No PreToolUse hook denies fleet commands based on watcher status.
 - A genuine auto-arm failure describes the automatic mechanism as broken and never directs a routine manual background arm.
 - Terminal arm-output classification (`started`, `attached`, or `FAILED`) remains defense in depth for the manual recovery path.
-- Codex retains its bounded foreground checkpoint protocol.
+- Codex uses the [foreground wake-wait protocol](supervision-protocols/codex.md).
 - Grok retains its tracked background-task notification protocol.
 
 No adapter starts a replacement with a fire-and-forget shell `&` from a model command.
@@ -227,8 +227,8 @@ The first recovery marks that generation announced, and later empty-queue arms l
 A non-successor watcher start checks the durable queue and recovery marker under their locks.
 If an announced-but-unacknowledged episode has an empty queue, the arm leaves that generation announced, making repeated empty-queue arms idempotent while a long-poll source is merely alive.
 If a durable row arrived after the announcement, the arm opens a fresh pending downtime generation so buried work still resurfaces once.
-A Codex foreground checkpoint skips the announced-episode reopen transition, so an already-announced generation stays announced while the checkpoint continues its bounded supervision.
-Its ordinary arm check still announces a never-announced generation, including one made pending by a durable queue append during the checkpoint.
+A Codex foreground wait skips the announced-episode reopen transition, so an already-announced generation stays announced.
+The wait still surfaces unacknowledged durable work, and the ordinary arm check announces a never-announced generation.
 
 ### Generation reuse
 
@@ -538,6 +538,6 @@ The other harnesses rely on these mechanisms:
 - Claude depends on the Stop `asyncRewake` rewake.
 - Cursor depends on its awaited stop-hook park.
 - Grok retains native background-completion notifications.
-- Codex retains bounded foreground checkpoints.
+- Codex uses the [foreground wake-wait protocol](supervision-protocols/codex.md).
 
 [`verification/supervision.md`](verification/supervision.md#watcher-continuity) records the current cross-harness live evidence, the dated Stop-owned Claude auto-arm results, and exact opt-in commands.

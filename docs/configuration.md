@@ -1006,7 +1006,7 @@ Enabled primary-session turn-end guard integrations are tracked as repo-level ho
 Kimi remains outside the primary turn-end guard integrations; [`docs/turnend-guard.md`](turnend-guard.md#compatibility-limits) owns its separate captain-approved crew wake hook.
 Primary-session watcher wake protocols are rendered at session start by [`bin/fm-supervision-instructions.sh`](../bin/fm-supervision-instructions.sh) from [`docs/supervision-protocols/`](supervision-protocols/).
 
-Claude's Stop `asyncRewake` hook owns tokenless re-arm cycles, Cursor's stop hook parks on the watcher, Grok uses background-notify cycles, Codex uses bounded foreground checkpoints, Pi and pi-signed use the same two tracked primary extensions, omp uses its own two tracked `.omp/extensions/` files with a blocking `session_stop` turn-end hook, and OpenCode uses its TUI plugin.
+Claude's Stop `asyncRewake` hook owns tokenless re-arm cycles, Cursor's stop hook parks on the watcher, Grok uses background-notify cycles, Codex uses quiet foreground wake waits, Pi and pi-signed use the same two tracked primary extensions, omp uses its own two tracked `.omp/extensions/` files with a blocking `session_stop` turn-end hook, and OpenCode uses its TUI plugin.
 
 ### Choose the worker harness
 
@@ -2899,7 +2899,7 @@ FM_PROCEVENT_OWNER_CHECK_SECONDS=15     # a runner guard's detection interval, r
 FM_PROCEVENT_LAUNCH_FLOOR_SECONDS=1     # minimum interval between launches of one registration generation's source command; 1..3600
 FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=3   # how long reconcile waits for the runners it started to prove they are running; 1..600, keep well below FM_POLL
 FM_WHEN_OUTPUT_TAIL_BYTES=8192          # bound on the command-output tail inside one condition->action outcome document
-FM_CODEX_WATCH_CHECKPOINT=180   # seconds per foreground watcher checkpoint in Codex primary supervision
+FM_CODEX_WATCH_CHECKPOINT=180   # legacy diagnostic checkpoint bound, not the normal --wait path
 FM_CODEX_WATCH_CHECKPOINT_AWAY=3600  # requested away checkpoint bound on a home that runs the supervision host; longer of this and attended bound, capped at 27000
 FM_CREW_STATE_NM_TIMEOUT=10   # seconds allowed per no-mistakes query inside fm-crew-state.sh, and per state-database run-inventory read behind a capped AXI overview
 FM_TEARDOWN_NM_TIMEOUT=10    # seconds allowed per no-mistakes query or abort inside fm-teardown.sh
@@ -3046,7 +3046,7 @@ All homes must run code containing the sleep guards before fleet sleep is used; 
 Sleep uses each recorded endpoint's existing [control-plane interrupt](agent-control.md), whose backend refusals and acknowledgement limits still apply.
 An explicitly started standalone gnhf process has no Firstmate task endpoint and is left running; a worker's name never grants an exemption.
 Only while a parked watcher is alive, it re-interrupts recorded busy workers each poll, never a secondmate primary; a native self-wake can run until the next sweep.
-No sweep runs in a Codex-primary home, which parks no watcher, or after a Claude primary's Stop-hook watcher reaches its hook timeout (about 8 hours).
+No sweep runs after a Claude primary's Stop-hook watcher reaches its hook timeout (about 8 hours).
 If a secondmate cannot confirm a return, `off` still wakes this home, names that secondmate as still held with its release command, and exits nonzero; a later `off` retries only the held secondmates.
 In-flight no-mistakes runs are not paused and can continue until their next gate; sleep holds their workers from driving further gates.
 Automatic sleep detection, overnight-work orchestration, pausing in-flight validation runs, a sleep sweep independent of harness watchers, and long-running-turn alarms remain follow-ups.
