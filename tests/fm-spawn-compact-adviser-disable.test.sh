@@ -392,19 +392,19 @@ test_native_context_threshold() {
       # Install before spawn for Pi's executable/capability lookup.
       fm_fake_exit0 "$FAKEBIN_DIR" "$harness"
       target=$PROJ_DIR
-      want=200000
+      want=500000
       case "$kind" in
       ship)
         : > "$HOME_DIR/config/launch-env-allowlist"
         out=$(run_case_spawn "$id" "$target" --mode no-mistakes --yolo off)
         ;;
       scout)
-        want=180000
+        want=600000
         printf '%s\n' "$want" > "$HOME_DIR/config/context-cap"
         out=$(run_case_spawn "$id" "$target" --scout)
         ;;
       secondmate)
-        want=150000
+        want=750000
         printf '%s\n' "$want" > "$HOME_DIR/config/context-cap"
         target="$CASE_DIR/secondmate-home"
         mkdir -p "$target/bin" "$target/data"

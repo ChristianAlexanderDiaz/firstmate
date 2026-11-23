@@ -33,7 +33,7 @@ Its generated `v2/ConfigReadResponse.json` exposes integer `model_auto_compact_t
 An isolated native `codex app-server --stdio` launched through `bin/fm-context-launch.sh codex` returned these effective values from `config/read`, despite a saved 800,000-token limit with `body_after_prefix` counting:
 
 ```text
-model_auto_compact_token_limit=200000
+model_auto_compact_token_limit=500000
 model_auto_compact_token_limit_scope=total
 ```
 

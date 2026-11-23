@@ -1412,9 +1412,9 @@ Regression coverage executes emitted launch commands with synthetic nonsecret va
 
 ### Automatic compaction (`config/context-cap`)
 
-Claude and Codex workers, scouts, and secondmates launch with automatic compaction near 200,000 tokens by default.
+Claude and Codex workers, scouts, and secondmates launch with automatic compaction near 500,000 tokens by default.
 Start a primary with `bin/fm-context-launch.sh claude` or `bin/fm-context-launch.sh codex` to apply the same threshold.
-Put a decimal token count in the home's gitignored `config/context-cap` to override it; the primary's setting also propagates to secondmates.
+Put a decimal token count of at least 500,000 in the home's gitignored `config/context-cap` to override it; the primary's setting also propagates to secondmates.
 The helper's [usage header](../bin/fm-context-launch.sh) owns the accepted range, configuration resolution, and native launch settings.
 
 The setting applies on the next launch, including relaunch, without modifying global harness settings or restarting an existing session.

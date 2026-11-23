@@ -381,7 +381,7 @@ test_invalid_context_cap_refuses_before_stopping() {
         sed -i.bak "s/^kind=ship$/kind=$kind/" "$dir/home/state/cap1.meta"
       fi
       mkdir -p "$dir/home/config"
-      printf '99999\n' > "$dir/home/config/context-cap"
+      printf '499999\n' > "$dir/home/config/context-cap"
       out=$(run_control "$dir" cap1 relaunch --harness "$harness" --note resume); rc=$?
       expect_code 1 "$rc" "invalid context cap must refuse $kind relaunch onto $harness"
       assert_contains "$out" 'config/context-cap' "refusal must identify the invalid setting"
