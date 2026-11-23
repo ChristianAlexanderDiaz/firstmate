@@ -91,8 +91,11 @@ Then launch one of the co-primary harnesses; AGENTS.md takes over from there:
 **Claude Code**
 
 ```sh
-claude
+bin/fm-context-launch.sh claude
 ```
+
+For a Codex primary, use `bin/fm-context-launch.sh codex`.
+These launch commands apply the [home's compaction threshold](docs/configuration.md#automatic-compaction-configcontext-cap).
 
 **Grok**
 

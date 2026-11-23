@@ -6,6 +6,49 @@ This record contains reusable version-scoped evidence for active runtime guarant
 The backend guides own current setup, safety boundaries, and limitations.
 Exact task chronology, branch names, temporary homes, local paths, process ids, thread ids, and delivery transcripts remain in private reports or PR evidence.
 
+## Automatic compaction launch settings
+
+Verified on 2026-11-22 with Claude Code 2.1.330 and codex-cli 0.162.1 on Linux.
+The [configuration guide](../configuration.md#automatic-compaction-configcontext-cap) owns setup and supported limits.
+
+```sh
+claude --version
+claude --help
+codex --version
+codex --help
+codex app-server generate-json-schema --out "$LAB/schema" --experimental
+```
+
+Claude's installed help includes:
+
+```text
+--autocompact <auto|tokens>           Auto-compact window size (auto, or at
+                                      least 100k tokens)
+```
+
+The installed binary also contains `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and its token-count validation diagnostics.
+The [vendor model configuration reference](https://code.claude.com/docs/en/model-config#set-the-auto-compact-window) documents that environment variable as the script-level override, taking precedence over saved settings.
+Codex's installed help documents `-c key=value` as a per-invocation TOML override.
+Its generated `v2/ConfigReadResponse.json` exposes integer `model_auto_compact_token_limit` and the `total` counting scope; the [official configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) documents their compaction semantics.
+An isolated native `codex app-server --stdio` launched through `bin/fm-context-launch.sh codex` returned these effective values from `config/read`, despite a saved 800,000-token limit with `body_after_prefix` counting:
+
+```text
+model_auto_compact_token_limit=500000
+model_auto_compact_token_limit_scope=total
+```
+
+No model request was submitted for that configuration read.
+
+Refresh portable behavior evidence with:
+
+```sh
+bash bin/fm-test-run.sh tests/fm-context-launch.test.sh tests/fm-spawn-compact-adviser-disable.test.sh
+```
+
+These regressions execute probe harnesses through the primary helper and emitted spawn commands, including an empty launch environment allowlist, config overrides, secondmate inheritance, and unchanged Pi-family commands.
+They verify launch delivery without filling a real model conversation to the threshold.
+Pi and Pi-signed were absent on the verification machine, and Grok 1.0.77's installed help exposed no per-launch compaction threshold, so those adapters remain unchanged.
+
 ## Polytoken worker lifecycle
 
 Verified on 2026-10-14 with Polytoken 0.9.0 on macOS arm64 using the tmux worker path.
@@ -699,7 +742,7 @@ Reproduced live: a crewmate task spawned by `bin/fm-spawn.sh` from a primary run
 A herdr server started from inside a Claude Code 2.1.273 session additionally carried `CLAUDE_CODE_MESSAGING_SOCKET`/`CLAUDE_CODE_MESSAGING_TOKEN` (path- and value-scoped to that ancestor's own pid), which every pane it hosts inherits before `bin/fm-spawn.sh` runs.
 
 Fix: the claude branch of the post-substitution `env -u` prefix stage in `bin/fm-spawn.sh` (the `case "$HARNESS"` block that runs after every launch placeholder is filled) clears `CURSOR_AGENT`, `CURSOR_INVOKED_AS`, `GEMINI_CLI`, `CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `AI_AGENT`, and `CLAUDE_CODE_INVOKED_SKILLS` before every claude-harness exec, for every kind (crewmate, scout, secondmate) and every runtime backend, since the same generated launch string executes wherever the backend delivers it to the pane.
-`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (captain configuration) and this same launch's own `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION`/`CLAUDE_CODE_SEND_FEEDBACK` are deliberately left untouched.
+The scrub leaves `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, and this same launch's own `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION`/`CLAUDE_CODE_SEND_FEEDBACK` untouched; the built-in template separately sets the [compaction threshold](../configuration.md#automatic-compaction-configcontext-cap).
 `tests/fm-spawn-dispatch-profile.test.sh`'s `test_claude_launch_clears_inherited_parent_session_markers` executes the generated launch in a shell seeded with every marker above and asserts the launched `claude` inherits none of them while still receiving `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`.
 
 ### Secondmate homes

@@ -382,6 +382,65 @@ SH
   pass "a compound raw launch-command still starts its agent with the compact-adviser switch on"
 }
 
+test_native_context_threshold() {
+  local harness kind id rec target out seen want
+  for harness in claude codex pi pi-signed; do
+    for kind in ship scout secondmate; do
+      id="context-$harness-$kind"
+      rec=$(make_case "$id" "$harness" "$id")
+      read_case "$rec"
+      # Install before spawn for Pi's executable/capability lookup.
+      fm_fake_exit0 "$FAKEBIN_DIR" "$harness"
+      target=$PROJ_DIR
+      want=500000
+      case "$kind" in
+      ship)
+        : > "$HOME_DIR/config/launch-env-allowlist"
+        out=$(run_case_spawn "$id" "$target" --mode no-mistakes --yolo off)
+        ;;
+      scout)
+        want=600000
+        printf '%s\n' "$want" > "$HOME_DIR/config/context-cap"
+        out=$(run_case_spawn "$id" "$target" --scout)
+        ;;
+      secondmate)
+        want=750000
+        printf '%s\n' "$want" > "$HOME_DIR/config/context-cap"
+        target="$CASE_DIR/secondmate-home"
+        mkdir -p "$target/bin" "$target/data"
+        printf '# Firstmate\n' > "$target/AGENTS.md"
+        printf '%s\n' "$id" > "$target/.fm-secondmate-home"
+        printf 'charter\n' > "$target/data/charter.md"
+        printf '%s\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$target/.gitignore"
+        git -C "$target" init -q -b main
+        out=$(run_case_spawn "$id" "$target" --secondmate)
+        ;;
+      esac
+      expect_code 0 "$?" "$harness $kind spawn: $out"
+      if [ "$kind" = secondmate ]; then
+        assert_equals "$want" "$(cat "$target/config/context-cap")" 'threshold propagates to secondmate workers'
+      fi
+      cat > "$FAKEBIN_DIR/$harness" <<'SH'
+#!/usr/bin/env bash
+printf 'window=%s\n' "${CLAUDE_CODE_AUTO_COMPACT_WINDOW-unset}"
+printf 'arg=<%s>\n' "$@"
+SH
+      chmod +x "$FAKEBIN_DIR/$harness"
+      seen=$(emitted_launch_env "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG") \
+        || fail "$harness $kind emitted launch failed"
+      case "$harness" in
+      claude) assert_contains "$seen" "window=$want" "$harness $kind threshold" ;;
+      codex) assert_contains "$seen" "arg=<model_auto_compact_token_limit=$want>" "$harness $kind threshold" ;;
+      *)
+        assert_contains "$seen" 'window=unset' "$harness $kind has no Claude override"
+        case "$seen" in *model_auto_compact_token_limit*) fail "$harness received an unsupported setting" ;; esac
+        ;;
+      esac
+    done
+  done
+  pass 'native context defaults and overrides reach workers, scouts and secondmates; Pi launches remain unchanged'
+}
+
 test_ship_allowlist_absent
 test_ship_allowlist_enabled
 test_launch_command_carries_the_switch_without_the_pane_export
@@ -389,3 +448,4 @@ test_secondmate_launch
 test_launch_exports_task_inbox
 test_relaunch_rebuilds_the_switch
 test_raw_compound_launch_command_carries_the_switch
+test_native_context_threshold

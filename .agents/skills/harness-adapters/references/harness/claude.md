@@ -63,7 +63,7 @@ Styled capture stays internal to the boolean detector; `fm-peek` and model-facin
 
 A claude spawn's own pane, tmux server, or herdr server can carry `CLAUDECODE`/`CLAUDE_CODE_*`/`AI_AGENT` set by whichever ancestor Claude Code process happened to start it (a primary's tool shell, or a herdr server itself started inside one), rather than by the captain.
 On 2.1.276 an inherited `CLAUDE_CODE_CHILD_SESSION` turns transcript saving off, shown in the worker's footer as `Transcript saving is off - inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 to keep future transcripts`, so that worker cannot be resumed natively if it dies.
-Every claude-harness spawn (crewmate, scout, and secondmate, on every runtime backend) therefore clears the ancestor's session-identity markers before exec, while leaving captain configuration such as `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` untouched.
+Every claude-harness spawn (crewmate, scout, and secondmate, on every runtime backend) therefore clears the ancestor's session-identity markers before exec, while leaving captain configuration such as `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` outside that scrub; the built-in launch template supplies `CLAUDE_CODE_AUTO_COMPACT_WINDOW` separately from the [home's compaction threshold](../../../../../docs/configuration.md#automatic-compaction-configcontext-cap).
 The claude branch of the post-substitution `env -u` prefix stage in `../../../../../bin/fm-spawn.sh` owns the exact scrub list and the reason for each exclusion; `../../../../../docs/verification/runtime-backends.md` under "Session-identity marker scrub" owns the dated binary and live evidence.
 
 ## Feedback drafts

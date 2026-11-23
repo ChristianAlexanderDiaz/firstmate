@@ -371,6 +371,27 @@ SH
 
 # --- 1. same-harness relaunch -----------------------------------------------
 
+test_invalid_context_cap_refuses_before_stopping() {
+  local dir out rc kind harness
+  for kind in ship scout secondmate; do
+    for harness in claude codex; do
+      dir=$(new_case "cap-$kind-$harness" cap1)
+      add_ship_task "$dir" cap1 claude
+      if [ "$kind" != ship ]; then
+        sed -i.bak "s/^kind=ship$/kind=$kind/" "$dir/home/state/cap1.meta"
+      fi
+      mkdir -p "$dir/home/config"
+      printf '499999\n' > "$dir/home/config/context-cap"
+      out=$(run_control "$dir" cap1 relaunch --harness "$harness" --note resume); rc=$?
+      expect_code 1 "$rc" "invalid context cap must refuse $kind relaunch onto $harness"
+      assert_contains "$out" 'config/context-cap' "refusal must identify the invalid setting"
+      [ "$(cat "$dir/fake/command")" = claude ] || fail "invalid context cap stopped the agent"
+      [ ! -s "$dir/fake/literal" ] || fail "invalid context cap sent lifecycle input"
+    done
+  done
+  pass "fm-control relaunch: invalid context caps leave running agents untouched"
+}
+
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
   local dir out rc gen_before gen_after
   dir=$(new_case same rl1)
@@ -3038,6 +3059,7 @@ SH
 test_relaunch_off_opencode_removes_tracked_wiring
 test_exit_and_relaunch_remove_the_dialog_file
 test_exit_removes_the_dialog_file_before_releasing_the_lock
+test_invalid_context_cap_refuses_before_stopping
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
