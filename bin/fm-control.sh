@@ -1308,6 +1308,7 @@ do_relaunch() {
   require_relaunch_backlog_eligible
   require_state_verified_backend relaunch
   resolve_relaunch_profile
+  "$FM_ROOT/bin/fm-context-launch.sh" --config-dir "$CONFIG" --print-command "$TARGET_HARNESS" >/dev/null || return 1
 
   case "$KIND" in
     ship|scout)
