@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run one bounded foreground watcher checkpoint for harnesses that should not
-# rely on background-task completion to wake the model.
+# Run a foreground watcher wait or bounded diagnostic checkpoint for harnesses
+# that should not rely on background-task completion to wake the model.
 # --wait is the normal Codex path: one foreground wait keeps the watcher alive
 # until a wake or a repair reason arrives. No queue rows are consumed here.
 # The wait observes the existing queue and beacon; it adds no daemon or polling
@@ -9,11 +9,10 @@
 # SUPERVISION HOST. A home opted in with config/supervision-host
 # (docs/configuration.md "Supervision host" owns the gate;
 # config/supervision-host-off opts out, and a Codex home without the file does not run the host) runs
-# bin/fm-supervision-host.sh in the watcher's place for the checkpoint's bound,
-# as the host's park boundary; the host takes away-posture wakes itself and
+# bin/fm-supervision-host.sh in the watcher's place; the host takes away-posture wakes itself and
 # returns only when main is needed (its header owns the output read here).
 # While an away record state/.afk-contract exists (never quiet mode's, whose
-# captain is present: bin/fm-afk-contract.sh mode), the bound is
+# captain is present: bin/fm-afk-contract.sh mode), the diagnostic bound is
 # raised to FM_CODEX_WATCH_CHECKPOINT_AWAY (default 3600) when that is longer,
 # so a parked main is not woken every few minutes; an engine turn that starts
 # before the bound may finish after it. A close that carries a wake or a
