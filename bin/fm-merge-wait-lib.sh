@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Watcher-owned waiting-on-you list, rebuilt once per due check sweep.
 # Source after fm-backend, fm-pr-lib, fm-classify-lib, fm-dod-lib, and fm-busy-lib.
-# GitHub ready ships share one GraphQL state read. Other forge providers retain
+# GitHub ready ships share cached observations and batch missing state reads. Other forge providers retain
 # their existing authenticated polls. No merge authority is granted here.
 # The list is process-local: restarting the watcher rebuilds it. Each row binds
 # the task metadata, status, activity, local head and authenticated

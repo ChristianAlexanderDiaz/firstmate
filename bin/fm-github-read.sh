@@ -4,8 +4,8 @@
 #        fm-github-read.sh batch <fm-merge-wait GraphQL query>
 #        fm-github-read.sh fresh-head <canonical-pr-url>
 #        fm-github-read.sh read|fresh <read-only gh arguments...>
-# core and batch share PR observations for 300 seconds. read caches exact
-# requests for that interval; fresh bypasses success caching for coherence checks.
+# core and batch share PR observations for the configured interval. read caches
+# exact requests for that interval; fresh bypasses success caching for coherence checks.
 # fresh-head reads the head live and invalidates its shared PR observation.
 # All modes share quota backoff. Exit 75 and "waiting:" mean no observation,
 # never a failed check or readiness. Other read errors retain a nonzero status.

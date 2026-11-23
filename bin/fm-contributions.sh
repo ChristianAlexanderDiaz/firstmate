@@ -58,8 +58,8 @@
 # and is cut down to the watcher's own per-check bound (FM_CHECK_TIMEOUT,
 # default 30, read from the poll's environment because the watcher runs it as
 # a direct child) with a three-second margin. Every read, including one retry,
-# is capped at five seconds. Every non-timeout failure is retried once with a
-# 0.2-second backoff when time remains in that bound. A first attempt
+# is capped at five seconds. Non-timeout failures other than quota waits are
+# retried once with a 0.2-second backoff when time remains in that bound. A first attempt
 # killed at the bound or deadline is budget refusal; a killed retry retains the
 # genuine failure that caused it. A pull observation has three
 # dependent waves: core, six independent reads, then the closing head read;
