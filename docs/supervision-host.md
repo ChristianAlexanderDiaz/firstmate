@@ -71,7 +71,7 @@ The host's header owns the output contract they read.
 | OpenCode | the TUI plugin, `.opencode/plugins/fm-primary-watch-arm.js`, which restarts its own successor after each close | a `watcher` prompt through `promptAsync` |
 | omp | the watch extension, `.omp/extensions/fm-primary-omp-watch.ts`, which restarts its own successor after each close | the extension's `watcher` follow-up |
 | Grok | the model's tracked background call, rendered as `bin/fm-supervision-host.sh park` at session start | the background task's completion notification |
-| Codex | the foreground checkpoint, `bin/fm-watch-checkpoint.sh`, in the watcher's place | the checkpoint's own output |
+| Codex | the foreground wait, `bin/fm-watch-checkpoint.sh --wait`, in the watcher's place | the wait's own output |
 
 Hook, plugin, extension, and checkpoint owners pass their harness as the primary pin.
 Grok's model-owned call relies on primary detection.
@@ -153,7 +153,7 @@ A captain message typed while an engine turn is already running reaches the engi
 A captain prompt whose hook write fails is not mirrored, so the engine may judge the next attended wake without it; Claude and Cursor have no later source for it.
 
 Claude and Cursor have writers, proven against the real harness to record the session's dialog from its first captain prompt, so only they run the attended posture.
-Codex has no writer yet: a supervising Codex main stays inside one turn across its foreground checkpoints, so a captain message typed then fires no prompt or Stop hook, and only a reader of its transcript could record it.
+Codex has no writer yet: a supervising Codex main stays inside one turn during its foreground wait, so a captain message typed then fires no prompt or Stop hook, and only a reader of its transcript could record it.
 Grok and OpenCode have no writer, because their session takes the fleet lock during its first turn, so that turn's captain prompt could never be recorded.
 omp has no verified writer, because no omp was available to prove one against.
 
@@ -308,7 +308,7 @@ It judges this when the close arrives and again just before the turn starts.
 When it declines such a turn, that close reaches main ahead of the boundary line instead, and its wake stays durable in the queue.
 One short main turn per boundary is the cost of never losing the park silently.
 
-### Codex checkpoint bound
+### Codex foreground wait
 
 Codex's normal foreground wait has no quiet park boundary and keeps the watcher running.
 [`fm-watch-checkpoint.sh`](../bin/fm-watch-checkpoint.sh) owns that interface and [`fm-supervision-host.sh`](../bin/fm-supervision-host.sh) owns the Codex-only continuous park flag; the [Codex protocol](supervision-protocols/codex.md) owns continuation.

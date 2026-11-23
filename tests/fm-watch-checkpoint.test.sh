@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for bounded foreground watcher checkpoints used by Codex supervision.
+# Tests for foreground watcher waits and bounded diagnostic checkpoints.
 set -u
 
 # shellcheck source=tests/wake-helpers.sh

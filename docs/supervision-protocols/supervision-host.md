@@ -15,7 +15,7 @@ Supervision host: on for this home (`config/supervision-host-off` turns it off; 
 {claude}    Only a wake the host hands back reaches you, as `Stop hook feedback` carrying the close plus one `supervision-host: <why>` line.
 {cursor,opencode,omp}    Only a wake the host hands back reaches you, as a `watcher` follow-up carrying the close plus one `supervision-host: <why>` line.
 {grok}    Only a wake the host hands back reaches you, as the arm's background-task-completed notification whose output carries the close plus one `supervision-host: <why>` line.
-{codex}    Only a wake the host hands back reaches you, as wait output carrying the close plus one `supervision-host: <why>` line.
+{codex}    A wake the host hands back reaches you as wait output; an already queued wake can also appear as `check: durable wake queued`.
 {codex}    The same foreground wait applies; the host retains ownership of away wakes.
    That wake is automatic supervision, not the captain's return: drain and handle it under the away posture, and never run the return from it.
    After the return, a `supervision-host:` line naming the captain's return during a turn means that turn has visible outcomes missing from the return brief, whether the wake was handled or handed back: relay every following `supervision-host: outcome ...` line to the captain (the rows also remain in `bin/fm-branch-outcome.sh list`), then drain and handle any queued wake before acknowledging.
