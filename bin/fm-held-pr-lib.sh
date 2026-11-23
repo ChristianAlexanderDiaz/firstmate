@@ -63,7 +63,7 @@ fm_held_pr_due() {
   FM_HELD_PR_STAMP="$state/held-pr-poll/$consumer-$slot"
   for task in "$@"; do
     if ! signature=$(fm_held_pr_signature "$state" "$task"); then
-      rm -f -- "$FM_HELD_PR_STAMP"
+      [ "${FM_HELD_PR_READ_ONLY:-0}" = 1 ] || rm -f -- "$FM_HELD_PR_STAMP"
       FM_HELD_PR_STAMP=
       return 0
     fi

@@ -186,7 +186,7 @@ get_input() {
 }
 
 project() {
-  local task url held interval
+  local url interval
   local -a row
   interval=$(fm_held_pr_interval "$STATE")
   [ "$interval" -ge "$MAX_AGE" ] || interval=$MAX_AGE
@@ -196,11 +196,11 @@ project() {
   : > "$TMP/held-urls.txt"
   while IFS=$'\t' read -r -a row; do
     [ "${#row[@]}" -ge 2 ] || continue
-    url=${row[0]}; held=1
-    for task in "${row[@]:1}"; do
-      if ! fm_held_pr_signature "$STATE" "$task" >/dev/null; then held=0; break; fi
-    done
-    [ "$held" -eq 0 ] || printf '%s\n' "$url" >> "$TMP/held-urls.txt"
+    url=${row[0]}
+    if [ -d "$STATE/held-pr-poll" ] && [ ! -L "$STATE/held-pr-poll" ] \
+      && ! FM_HELD_PR_READ_ONLY=1 fm_held_pr_due "$STATE" contributions "$url" "${row[@]:1}"; then
+      printf '%s\n' "$url" >> "$TMP/held-urls.txt"
+    fi
   done < "$TMP/project-known.tsv"
   jq -Rsc 'split("\n") | map(select(length > 0))' "$TMP/held-urls.txt" > "$TMP/held-urls.json"
   jq_lib -n --slurpfile input "$1" --slurpfile saved "$TMP/saved.json" \

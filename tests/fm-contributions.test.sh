@@ -652,27 +652,33 @@ test_watcher_surfaces_new_contribution_once() {
 }
 
 test_held_freshness_and_summary() {
-  local home child out
+  local home child out observed_epoch now_epoch
   home=$(new_home held-fresh-parent)
   child=$(new_home held-fresh-child)
   mkdir -p "$child/bin"
   printf '# Fixture\n' > "$child/AGENTS.md"
   printf 'child\n' > "$child/.fm-secondmate-home"
-  record "$child" waiting 31 open mergeable
-  record "$child" active 32 open mergeable
-  printf 'paused [wait=captain]: review requested\n' > "$child/state/waiting.status"
-  mutate_record "$child" waiting '.records[0].checked_at="2026-09-16T07:30:00Z" | .records[0].verdict={head:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",actor:"maintainer",source:"https://github.com/o/r/pull/31",summary:"waiting"}'
-  FM_SNAPSHOT_NOW="$NOW" with_home "$child" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary > "$child/state/home-summary.json" || fail 'held child summary failed'
+  forge_home "$child"
+  mutate_record "$child" delivery '.records[0].checked_at="2026-09-16T07:30:00Z" | .records[0].verdict={head:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",actor:"maintainer",source:"https://github.com/o/r/pull/8",summary:"waiting"}'
+  printf 'paused [wait=captain]: review requested\n' > "$child/state/delivery.status"
+  observed_epoch=$(jq -nr '"2026-09-16T07:30:00Z" | fromdateiso8601')
+  now_epoch=$((observed_epoch + 1800))
   printf -- '- child - fixture (home: %s; scope: fixture; projects: sample; added 2026-09-16)\n' "$child" > "$home/data/secondmates.md"
   with_home "$child" "$ROOT/bin/fm-fleet-snapshot.sh" --contribution-input > "$child/input.json" || fail 'held input failed'
-  FM_CONTRIBUTIONS_NOW="$NOW" with_home "$child" "$ROOT/bin/fm-contributions.sh" snapshot "$child/input.json" --all | jq -e '.rows[] | select(.task == "waiting") | .checked and .verdict.freshness == "current"' >/dev/null || fail 'held verdict became unverified'
-  out=$(bearings "$child") || fail 'held contribution projection failed'
-  printf '%s' "$out" | jq -e '.contributions.checked == 2 and .contributions.complete' >/dev/null || fail 'held observation within its interval became unchecked'
-  bearings "$home" | jq -e '.contributions.checked == 2 and .contributions.complete' >/dev/null || fail 'held observation expired the mixed child summary'
+  with_home "$child" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$now_epoch" "$ROOT/bin/fm-contributions.sh" snapshot "$child/input.json" --all | jq -e '.rows[] | select(.task == "delivery") | (.checked | not) and .verdict.freshness == "unverified"' >/dev/null || fail 'new hold revived an old verdict'
+  FM_SNAPSHOT_NOW="$NOW" with_home "$child" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$now_epoch" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary > "$child/state/home-summary.json" || fail 'held child summary failed'
+  bearings "$home" | jq -e '.contributions.checked == 0 and (.contributions.complete | not)' >/dev/null || fail 'new hold revived an old child summary'
+  with_home "$child" env FM_CONTRIBUTIONS_NOW=2026-09-16T07:30:00Z FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$observed_epoch" "$ROOT/bin/fm-contributions.sh" poll >/dev/null || fail 'held observation failed'
+  record "$child" active 32 open mergeable
+  with_home "$child" "$ROOT/bin/fm-fleet-snapshot.sh" --contribution-input > "$child/input.json" || fail 'mixed input failed'
+  with_home "$child" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$now_epoch" "$ROOT/bin/fm-contributions.sh" snapshot "$child/input.json" --all | jq -e '.rows[] | select(.task == "delivery") | .checked and .verdict.freshness == "current"' >/dev/null || fail 'current hold observation became unverified'
+  FM_SNAPSHOT_NOW="$NOW" with_home "$child" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$now_epoch" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary > "$child/state/home-summary.json" || fail 'mixed child summary failed'
+  out=$(bearings "$home") || fail 'parent contribution projection failed'
+  printf '%s' "$out" | jq -e '.contributions.checked == 2 and .contributions.complete' >/dev/null || fail 'held observation expired the mixed child summary'
   mutate_record "$child" active '.records[0].checked_at="2026-09-16T07:44:59Z"'
-  FM_SNAPSHOT_NOW="$NOW" with_home "$child" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary > "$child/state/home-summary.json" || fail 'stale active child summary failed'
+  FM_SNAPSHOT_NOW="$NOW" with_home "$child" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$now_epoch" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary > "$child/state/home-summary.json" || fail 'stale active child summary failed'
   bearings "$home" | jq -e '.contributions.checked == 0 and (.contributions.complete | not)' >/dev/null || fail 'active observation past 900 seconds stayed fresh in child summary'
-  pass 'held freshness and mixed child summary retain the active bound'
+  pass 'held freshness requires an observation in the current hold'
 }
 
 test_home_summary_coverage() {
