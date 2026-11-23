@@ -216,7 +216,13 @@ run_waiting() {  # <plain|host> <command...>
       if (!$closing) {
         my $queued = 0;
         # Match fm_sleep_active: held rows are not a reason to wake the model.
-        if ($kind eq "plain" && !-e "$state/.sleep" && !-e "$state/.sleep-return"
+        my $sleep_state = $state;
+        my $sleeping = 0;
+        while (1) {
+          $sleeping = -e "$sleep_state/.sleep" || -e "$sleep_state/.sleep-return";
+          last if $sleeping || $sleep_state !~ s{/parent-route$}{};
+        }
+        if ($kind eq "plain" && !$sleeping
             && -s $queue && open(my $owner_file, "<", "$lock/pid")) {
           my $watcher = <$owner_file> // "";
           close $owner_file;

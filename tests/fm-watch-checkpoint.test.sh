@@ -549,6 +549,38 @@ test_wait_preserves_sleep_held_rows() {
   pass "quiet wait preserves sleep-held rows until release"
 }
 
+test_wait_preserves_parent_route_sleep_held_rows() {
+  local home state marker pid status i
+  for marker in .sleep .sleep-return; do
+    home=$(make_home "wait-parent-held-$marker")
+    state="$home/state/parent-route"
+    mkdir -p "$state"
+    fm_test_track_watcher_state "$state"
+    FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+      "$CHECKPOINT" --wait >"$home/out" 2>"$home/err" &
+    pid=$!
+    i=0
+    while [ "$i" -lt 100 ] && { [ ! -s "$state/.watch.lock/pid" ] || [ ! -e "$state/.last-watcher-beat" ]; }; do
+      sleep 0.05
+      i=$((i + 1))
+    done
+    [ -s "$state/.watch.lock/pid" ] || fail "parent-route wait did not start its watcher"
+    : > "$home/state/$marker"
+    append_wake "$state" check held 'check: held parent-route event' || fail "append failed"
+    sleep 2
+    kill -0 "$pid" || fail "parent sleep hold returned to the model"
+    [ ! -s "$home/out" ] && [ ! -s "$home/err" ] || fail "parent sleep hold emitted output"
+    [ -s "$state/.wake-queue" ] || fail "wait consumed parent-held rows"
+    rm -f "$home/state/$marker"
+    status=0
+    wait "$pid" || status=$?
+    expect_code 0 "$status" "released parent-route queue wait"
+    assert_contains "$(cat "$home/out")" 'check:' "released parent-route wake was lost"
+  done
+  pass "quiet wait respects parent sleep holds for parent-route wakes"
+}
+
+test_wait_preserves_parent_route_sleep_held_rows
 test_wait_preserves_sleep_held_rows
 
 test_wait_interruption_reaps_its_watcher
