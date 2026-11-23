@@ -6785,7 +6785,7 @@ test_wait_transition_clean_timeout_returns_1
 
 # The CLI is scripted; no real Herdr server or lifecycle action is used.
 test_work_state_label_sync() {
-  local dir fb mode label want out rc mutations token base home
+  local dir fb mode label want out rc mutations token base home stale_parent
   dir="$TMP_ROOT/work-state-label"
   mkdir -p "$dir/responses" "$dir/state" "$dir/home"
   home=$(cd "$dir/home" && pwd -P)
@@ -6798,7 +6798,8 @@ test_work_state_label_sync() {
     printf "%s" "$token"
   ' "$ROOT" "$dir/state" "$home") || fail "could not create emoji journal"
   base="└ emoji · p:$token"
-  for mode in initial unchanged replace stacked unknown foreign duplicate secondmate tmux remote failed flat shared; do
+  for mode in initial unchanged replace stacked unknown foreign duplicate secondmate tmux remote failed flat shared \
+    relaunched relaunched-clear relaunched-projected relaunched-parent attempt; do
     rm -f "$dir/responses/.count" "$dir/responses/3.exit"
     : > "$dir/log"
     fm_write_meta "$dir/state/emoji.meta" "backend=herdr" "kind=ship" "herdr_session=fmtest" "herdr_workspace_id=w2" "herdr_tab_id=w2:t2" "herdr_pane_id=w2:p2"
@@ -6819,6 +6820,26 @@ test_work_state_label_sync() {
         label=fm-emoji; want='🔨 fm-emoji'
         [ "$mode" != shared ] || label=firstmate
         ;;
+      relaunched*|attempt)
+        # A flat relaunch keeps the old journal and records the new endpoint,
+        # so the journal names another workspace, or none while still an attempt.
+        cp "$dir/state/emoji.herdr-presentation" "$dir/state/saved-journal"
+        if [ "$mode" = attempt ]; then
+          grep -E '^(task_id|projection_id)=' "$dir/state/saved-journal" \
+            | { printf 'version=1\n'; cat; } > "$dir/state/emoji.herdr-presentation"
+        else
+          stale_parent=w1
+          [ "$mode" != relaunched-parent ] || stale_parent=w2
+          sed -e 's/^workspace_id=.*/workspace_id=w9/' -e 's/^tab_id=.*/tab_id=w9:t2/' \
+            -e 's/^pane_id=.*/pane_id=w9:p2/' -e "s/^parent_workspace_id=.*/parent_workspace_id=$stale_parent/" \
+            "$dir/state/saved-journal" > "$dir/state/emoji.herdr-presentation"
+        fi
+        label=fm-emoji; want='🔨 fm-emoji'
+        case "$mode" in
+          relaunched-clear) label='💤 fm-emoji'; want=fm-emoji ;;
+          relaunched-projected) label=$base ;;
+        esac
+        ;;
     esac
     jq -cn --arg label "$label" --arg mode "$mode" '
       {result:{workspaces:[{workspace_id:"w1",label:"firstmate"},{workspace_id:"w2",label:$label}]}}
@@ -6830,12 +6851,12 @@ test_work_state_label_sync() {
       bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source herdr
         # Override the lock path, not the lock implementation.
         fm_backend_herdr_presentation_session_lock_path() { printf "%s/lock" "$LABEL_TEST_DIR"; }
-        emoji=🔨; [ "$2" != unknown ] || emoji=
+        emoji=🔨; case "$2" in unknown|relaunched-clear) emoji= ;; esac
         fm_backend_herdr_work_state_label_sync "$1/state/emoji.meta" "$1/state" emoji "$emoji"
       ' "$ROOT" "$dir" "$mode" 2>&1) || rc=$?
     mutations=$(tr '\037' ' ' < "$dir/log")
     case "$mode" in
-      initial|replace|stacked|unknown|failed|flat)
+      initial|replace|stacked|unknown|failed|flat|relaunched|relaunched-clear|attempt)
         assert_contains "$mutations" "workspace rename w2 $want" "rename preserves the exact existing task name ($mode): $out"
         ;;
       *) assert_not_contains "$mutations" 'workspace rename' "unsafe or unchanged label must not rename ($mode): $out" ;;
@@ -6844,6 +6865,7 @@ test_work_state_label_sync() {
     else [ "$rc" -eq 0 ] || fail "label sync failed ($mode): $out"; fi
   done
   pass "work-state label sync: exact ID, replacement, no stacking, no repeat rename, unknown removal and ownership guards"
+  pass "work-state label sync: a flat relaunch behind a stale or unbound journal is renamed only on its exact flat label"
 }
 test_work_state_label_sync
 test_projection_order_moves_only_exact_new_workspace_and_preserves_relative_order '🔨 '

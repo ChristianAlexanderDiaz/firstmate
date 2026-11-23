@@ -5956,6 +5956,53 @@ EOF
 }
 test_work_state_emoji
 
+# A no-mistakes release may append columns to its runs table after `pr`. The
+# worker must keep its current state and emoji rather than read unknown, and a
+# changed state must change the emoji through that same table.
+test_work_state_emoji_reads_appended_runs_columns() {
+  reset_fakes
+  local d out short
+  d=$(new_case work-emoji-appended-columns)
+  make_repo_on_branch "$d/wt" fm/appended
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/appended.meta" "window=fm:fm-appended" "worktree=$d/wt" "kind=ship" "harness=claude" "yolo=off"
+  short=$(git -C "$d/wt" rev-parse --short=8 HEAD)
+  FM_FAKE_AXI_HOME="count: 2 of 2 total
+runs[2]{id,branch,status,head,pr,run_counter}:
+  \"01RUN\",fm/appended,running,$short,\"\",\"run 1 of 1, 0 fix rounds\"
+  \"01ELSE\",fm/elsewhere,completed,$short,\"https://github.com/o/r/pull/1\",\"run 2 of 2, 3 fix rounds\""
+  FM_FAKE_AXI_STATUS="$(run_running fm/appended)"
+  FM_FAKE_AXI_STATUS_RUN=$FM_FAKE_AXI_STATUS
+  out=$(run_crew_state "$d" appended)
+  assert_contains "$out" "state: working" "an appended column keeps the run readable: $out"
+  assert_contains "$out" "source: run-step" "the run stays the state source: $out"
+  assert_not_contains "$out" "unreadable runs table" "an appended column is not a malformed table: $out"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" appended --work-emoji)
+  [ "$out" = 🔍 ] || fail "a worker in review behind an appended column: expected 🔍, got '$out'"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/appended)"
+  FM_FAKE_AXI_STATUS_RUN=$FM_FAKE_AXI_STATUS
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" appended --work-emoji)
+  [ "$out" = ⏳ ] || fail "the emoji must follow the run into CI: expected ⏳, got '$out'"
+
+  # A row narrower than its header is truncated, and a table whose leading
+  # columns moved cannot be read by position: both stay unknown with no emoji.
+  FM_FAKE_AXI_HOME="count: 1 of 1 total
+runs[1]{id,branch,status,head,pr,run_counter}:
+  \"01RUN\",fm/appended,running,$short,\"\""
+  out=$(run_crew_state "$d" appended)
+  assert_contains "$out" "state: unknown" "a row missing its appended column: $out"
+  assert_contains "$out" "unreadable runs table" "a truncated row names the unreadable table: $out"
+  FM_FAKE_AXI_HOME="count: 1 of 1 total
+runs[1]{id,status,branch,head,pr,run_counter}:
+  \"01RUN\",running,fm/appended,$short,\"\",\"run 1 of 1, 0 fix rounds\""
+  out=$(run_crew_state "$d" appended)
+  assert_contains "$out" "unreadable runs table" "reordered leading columns are never read by position: $out"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" appended --work-emoji)
+  [ -z "$out" ] || fail "an unreadable table must not guess an emoji: $out"
+  pass "work-state emoji: appended runs-table columns stay readable, follow state changes, and malformed tables stay unknown"
+}
+test_work_state_emoji_reads_appended_runs_columns
+
 test_work_state_emoji_reconciles_declarations() {
   command -v jq >/dev/null 2>&1 || { pass "herdr emoji transitions skipped without jq"; return; }
   reset_fakes

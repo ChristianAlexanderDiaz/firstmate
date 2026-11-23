@@ -39,6 +39,8 @@
 # sidebar-config prints the suggested Herdr sidebar rows; with --apply it
 # copies the named file to <file>.bak-<epoch> and appends the rows, refusing
 # when the file already defines [ui.sidebar.spaces] or [ui.sidebar.agents].
+# The space rows carry no state_icon, so a worker's work-state emoji is the one
+# icon on its row (docs/herdr-backend.md "Sidebar rows" owns the trade-off).
 # It never reloads Herdr; `herdr server reload-config` stays the operator's call.
 #
 # A Herdr client below protocol FM_HERDR_GROUPS_MIN_PROTOCOL warns once per
@@ -458,7 +460,7 @@ sidebar_rows() {
 # Firstmate project groups (docs/herdr-backend.md "Project groups").
 [ui.sidebar.spaces]
 rows = [
-  ["state_icon", "workspace"],
+  ["workspace"],
   [{ token = "$fm_group", bold = true }, "$fm_status"],
   ["$fm_status_detail"],
 ]
