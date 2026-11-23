@@ -99,7 +99,7 @@ test_supervision_host_protocol_on_every_arm_owner() {
     'bin/fm-supervision-host.sh park as its own Grok tracked background task' "grok's repair line must name the host"
   hosted=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex)
   assert_contains "$hosted" 'the host retains ownership of away wakes' "codex must leave away routing with the host"
-  assert_contains "$hosted" 'Quiet park boundaries renew inside the same wait' "codex must learn how the park boundary arrives"
+  assert_contains "$hosted" 'The host stays parked in the same wait until work or failure; quiet time does not need a model turn.' "codex must learn the continuous-wait contract"
   pass "renderer gives each non-Pi arm owner the host protocol in its own terms, and grok arms the host"
 }
 
