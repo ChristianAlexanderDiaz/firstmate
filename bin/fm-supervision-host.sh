@@ -120,7 +120,7 @@
 # checkpoint, whose bound is the park itself rather than a harness timeout,
 # lets a turn that starts before the boundary finish after it. Its --wait mode
 # sets FM_SUPERVISION_HOST_PARK_RESUME=1: only with the codex primary pin,
-# quiet park boundaries renew in this process without stopping the watcher.
+# the park has no quiet boundary and does not stop the watcher.
 # Engine turns retain their own timeout. Other primaries ignore this flag.
 #
 # OWNERSHIP. Before activation, every successor cycle, and every engine turn
@@ -504,7 +504,6 @@ boundary_reached() {
   fm_sleep_active "$STATE" && return 1
   park_elapsed
   if [ "$PRIMARY" = codex ] && [ "${FM_SUPERVISION_HOST_PARK_RESUME:-}" = 1 ]; then
-    [ "$PARK_ELAPSED" -lt "$PARK_SECONDS" ] || HOST_STARTED_SECONDS=$SECONDS
     return 1
   fi
   [ "$PARK_ELAPSED" -ge "$PARK_SECONDS" ]
@@ -556,6 +555,16 @@ await_close() {
   while fm_pid_alive "$ARM_PID"; do
     refresh_process "$ARM_PID"
     [ "$READY_PENDING" -eq 0 ] || stream_ready_line
+    if [ "${INITIAL_QUEUED:-0}" -eq 1 ] && [ "$READY_PENDING" -eq 0 ] \
+      && [ "$PRIMARY" = codex ] && [ "${FM_SUPERVISION_HOST_PARK_RESUME:-}" = 1 ] \
+      && ! fm_sleep_active "$STATE" && [ -s "$FM_WAKE_QUEUE" ]; then
+      CLOSED_ARM_PID=$ARM_PID
+      retire_arm "$ARM_PID" "$ARM_OUT"
+      ARM_PID=
+      ARM_OUT=
+      ARM_TEXT='check: durable wake queued; drain before other action'
+      return 0
+    fi
     boundary_reached && return 1
     # Probe the arm's exit twice a second between POLL-cadence checks, without
     # changing the outer identity refresh, readiness, or boundary cadence.
@@ -1109,11 +1118,13 @@ else
 fi || { echo "watcher: FAILED - the supervision host could not start a watcher cycle"; exit 1; }
 ARM_PID=$STARTED_ARM_PID
 ARM_OUT=$STARTED_ARM_OUT
+INITIAL_QUEUED=1
 
 while :; do
   boundary_reached && boundary_exit
   fm_sleep_wait "$STATE"
   await_close || boundary_exit
+  INITIAL_QUEUED=0
   fm_sleep_wait "$STATE"
   REASON=$(printf '%s\n' "$ARM_TEXT" | grep -E '^(signal:|stale:|check:|heartbeat($|:))' || true)
 

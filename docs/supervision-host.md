@@ -310,8 +310,8 @@ One short main turn per boundary is the cost of never losing the park silently.
 
 ### Codex checkpoint bound
 
-Codex's normal foreground wait renews quiet park intervals in the same host process without stopping the watcher.
-[`fm-watch-checkpoint.sh`](../bin/fm-watch-checkpoint.sh) owns that interface and [`fm-supervision-host.sh`](../bin/fm-supervision-host.sh) owns the Codex-only renewal flag; the [Codex protocol](supervision-protocols/codex.md) owns continuation.
+Codex's normal foreground wait has no quiet park boundary and keeps the watcher running.
+[`fm-watch-checkpoint.sh`](../bin/fm-watch-checkpoint.sh) owns that interface and [`fm-supervision-host.sh`](../bin/fm-supervision-host.sh) owns the Codex-only continuous park flag; the [Codex protocol](supervision-protocols/codex.md) owns continuation.
 Engine turns retain their own timeout, and watcher failure still returns a repair reason.
 
 The diagnostic checkpoint without `--wait` still ends the park at its requested bound and uses a later park limit to let an engine turn finish.

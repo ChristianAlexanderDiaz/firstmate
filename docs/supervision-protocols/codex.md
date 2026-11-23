@@ -5,7 +5,7 @@ When this session owns supervision and away mode is not active:
    After handling all emitted wakes and reconciling open decisions and unread status lines, run the exact `--ack-through` command printed as `WAKE_ACK_REQUIRED` and verify `WAKE_ACK_CONFIRMED`; until then the work remains durable for idempotent re-handling after interruption.
 2. Source `__FM_X_MODE_ENV__` first when Relay is active.
 3. Run exactly one foreground `bin/fm-watch-checkpoint.sh --wait` and let it block until a wake or repair reason returns.
-   The script's help owns the quiet renewal interval and exit statuses; never shorten the normal wait with `--seconds` or the legacy checkpoint setting.
+   The script's help owns the wait and diagnostic checkpoint exit statuses.
    Do not poll the drain, checkpoint, or a short timed wait while this command is running.
    If the tool yields a running command handle, keep waiting on that same command with the longest supported blocking wait; never start a second command or drain merely because the tool yielded.
 4. Ordinary wake (`signal:`, `stale:`, `check:`, or `heartbeat`): drain before any other action, handle, acknowledge using the printed generation-bound command, then issue the next foreground wait.

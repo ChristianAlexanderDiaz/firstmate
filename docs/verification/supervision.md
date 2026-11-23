@@ -947,7 +947,7 @@ Cases requiring an installed Pi coding-agent package were skipped because that p
 
 On 2026-11-22, Bash 5.2.21 and GNU coreutils 9.4 exercised the quiet foreground wait with real watcher processes and isolated state.
 The [Codex protocol](../supervision-protocols/codex.md) is the operating owner, and `bin/fm-watch-checkpoint.sh --help` owns the command interface.
-Shortened renewal intervals in the regression prove that the same watcher survives multiple intervals with no output, no queue row, and no recovery-generation change.
+The regression checks that the same watcher survives quiet time with no output, no queue row, and no recovery-generation change.
 The hosted case exercises the real supervision host, while the dead-watcher, stalled-beacon, and interruption cases exercise failure and cleanup.
 These checks depend on Firstmate process and queue behavior, not vendor-rendered output.
 
@@ -959,10 +959,10 @@ FM_SUPERVISION_HOST_PARK_RESUME=1 FM_TEST_ONLY=test_park_boundary_ends_the_park_
 Observed behavior includes:
 
 ```text
-ok - host quiet intervals preserve the same watcher and hand back real work
+ok - host wait preserves the same watcher and hands back real work
 ok - quiet wait returns a repair reason when its watcher dies
-ok - quiet intervals keep the same watcher alive without a return or recovery wake
+ok - quiet wait keeps the same watcher alive without a return or recovery wake
 ```
 
-The second command exercises the unchanged Claude park boundary even with the Codex-only renewal flag present.
+The second command exercises the unchanged Claude park boundary even with the Codex-only continuous park flag present.
 Task-specific replay counts and token-saving estimates belong to private delivery evidence, rather than this behavioral guarantee.
