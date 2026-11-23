@@ -326,14 +326,15 @@ An accepted local-only completion awaiting merge approval also shows 🙋 withou
 Unknown work state has no emoji, and merged workers have no separate check-mark state.
 
 The existing bounded presentation sweep refreshes these labels on every home, including remote PC homes, and renames only when the prefix changes.
-A new or relaunched worker therefore gets its emoji on the first sweep after its endpoint is recorded, and a closed workspace has no label left to refresh.
+A new or relaunched worker is eligible for an emoji after its endpoint is recorded; failed reads, a busy lock, or ambiguous ownership can delay the update until a later sweep.
+A closed workspace has no label left to refresh.
 The rest of the name, including the `└ ` marker and `· p:<id>` suffix, stays intact.
 The adapter targets the recorded workspace ID and tolerates the prefix in its recovery and ordering checks.
 Shared home spaces, secondmate spaces, and non-Herdr runtimes are untouched.
 The rename requires a worker presentation binding that matches the recorded workspace, or an exact flat worker label and endpoint, so ambiguous or foreign spaces are skipped and retried on a later sweep.
 A worker relaunched into a flat workspace keeps the binding of its earlier projected workspace; that binding names another workspace, so only the exact flat label and endpoint decide.
 
-The emoji is the one status icon on a worker's space row: the [suggested sidebar rows](#sidebar-rows) leave Herdr's own `state_icon` out of the space rows.
+With the [suggested sidebar rows](#sidebar-rows), the emoji is the only status icon on a worker's space row when its work state is known.
 
 ### Cleanup and focus safety
 
