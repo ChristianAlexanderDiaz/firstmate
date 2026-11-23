@@ -25,6 +25,7 @@ if os.environ.get('REFUSED'):
     print('< HTTP/2.0 403 Forbidden', file=sys.stderr)
     if os.environ.get('RESET'): print('< X-Ratelimit-Reset: ' + os.environ['RESET'], file=sys.stderr)
     if os.environ.get('RETRY'): print('< Retry-After: ' + os.environ['RETRY'], file=sys.stderr)
+    if 'REMAINING' in os.environ: print('< X-Ratelimit-Remaining: ' + os.environ['REMAINING'], file=sys.stderr)
     print('gh: API rate limit exceeded', file=sys.stderr)
     sys.exit(1)
 if os.environ.get('BROKEN'): sys.exit(1)
@@ -101,12 +102,12 @@ assert not (parent/'state/sample.check.sh').exists()
 assert count() == 5, 'registration retried a quota refusal'
 good(run('core', url, extra={'FM_TEST_GITHUB_NOW':'11000'}))
 assert count() == 6
-# Retry-After wins if later than reset; no-header limits wait a full hour.
+# Retry-After wins if later than reset; proven hourly exhaustion waits an hour.
 result = run('core', url[:-1]+'5', extra={'FM_TEST_GITHUB_NOW':'11000', 'REFUSED':'1', 'RESET':'11100', 'RETRY':'200'})
 assert result.returncode == 75
 assert run('core', url, extra={'FM_TEST_GITHUB_NOW':'11199'}).returncode == 75
 good(run('core', url, extra={'FM_TEST_GITHUB_NOW':'11200'}))
-result = run('core', url[:-1]+'6', extra={'FM_TEST_GITHUB_NOW':'12000', 'REFUSED':'1'})
+result = run('core', url[:-1]+'6', extra={'FM_TEST_GITHUB_NOW':'12000', 'REFUSED':'1', 'REMAINING':'0'})
 assert result.returncode == 75
 before = count()
 assert run('core', url, extra={'FM_TEST_GITHUB_NOW':'15599'}).returncode == 75
@@ -118,6 +119,25 @@ assert result.returncode != 0 and not result.stdout
 # Credential changes cannot reuse private observations.
 good(run('core', url, extra={'FM_TEST_GITHUB_NOW':'16000', 'GH_TOKEN':'another-fixture-token'}))
 assert count() == before+3
+# Secondary limits without a deadline back off briefly, doubling to 15 minutes.
+# Missing quota headers are not evidence of hourly exhaustion either.
+for remaining in ('3309', None):
+    burst = {'FM_GITHUB_CACHE_DIR':str(root/('burst-'+str(remaining)))}
+    if remaining is not None: burst['REMAINING'] = remaining
+    tick = 16000
+    for delay in (60, 120, 240, 480, 900, 900):
+        result = run('core', url, extra=dict(burst, FM_TEST_GITHUB_NOW=str(tick), REFUSED='1'))
+        assert result.returncode == 75 and not result.stdout and 'waiting:' in result.stderr
+        calls = count()
+        result = run('core', url2, extra=dict(burst, FM_HOME=str(child), FM_TEST_GITHUB_NOW=str(tick+delay-1)))
+        assert result.returncode == 75 and not result.stdout
+        assert count() == calls, 'burst cooldown retried early'
+        tick += delay
+    good(run('core', url, extra=dict(burst, FM_TEST_GITHUB_NOW=str(tick))))
+    # A successful request resets the exponential sequence.
+    result = run('core', url2, extra=dict(burst, FM_TEST_GITHUB_NOW=str(tick), REFUSED='1'))
+    assert result.returncode == 75
+    good(run('core', url2, extra=dict(burst, FM_TEST_GITHUB_NOW=str(tick+60))))
 # Generic REST observations share results, while coherence reads stay live.
 start = count()
 for home in (parent, child):

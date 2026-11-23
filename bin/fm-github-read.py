@@ -186,6 +186,7 @@ class Cache:
         if refused:
             observed_at = now()
             resets = [int(x) for x in re.findall(r"(?im)^< x-ratelimit-reset:\s*([0-9]+)", debug)]
+            remaining = [int(x) for x in re.findall(r"(?im)^< x-ratelimit-remaining:\s*([0-9]+)", debug)]
             retry = re.findall(r"(?im)^< retry-after:\s*([^\r\n]+)", debug)
             deadlines = [x for x in resets if x > observed_at]
             for value in retry:
@@ -196,10 +197,21 @@ class Cache:
                         deadlines.append(email.utils.parsedate_to_datetime(value).timestamp())
                     except (ValueError, TypeError):
                         pass
-            until = max([observed_at + 60, *deadlines]) if deadlines else observed_at + 3600
             with self.locks(["quota"]):
-                until = max(until, self.load("quota").get("until", 0))
-                self.save("quota", {"until": until})
+                quota = self.load("quota")
+                # Without a deadline, only explicit zero remaining proves hourly
+                # exhaustion. Secondary/unknown refusals start at one minute and
+                # grow to fifteen minutes, shared across all local readers.
+                delay = 0
+                if deadlines:
+                    until = max(observed_at + 60, *deadlines)
+                elif remaining and remaining[-1] == 0:
+                    until = observed_at + 3600
+                else:
+                    delay = min(900, max(60, quota.get("burst_delay", 0) * 2))
+                    until = observed_at + delay
+                until = max(until, quota.get("until", 0))
+                self.save("quota", {"until": until, "burst_delay": delay})
             self.cooldown()
         if result.returncode:
             # Never persist raw debug headers/bodies, credentials or comments.
@@ -210,6 +222,11 @@ class Cache:
                 message = "\n".join(line for line in debug.splitlines()
                                     if line.startswith(("gh:", "HTTP ", "error:", "Get ", "Post ")))
             raise ReadError(message or "GitHub read unavailable (exit %d)" % result.returncode, result.returncode)
+        with self.locks(["quota"]):
+            quota = self.load("quota")
+            # A success already in flight must not erase a newer refusal.
+            if quota.get("burst_delay", 0) and quota.get("until", 0) <= now():
+                self.save("quota", {"until": 0, "burst_delay": 0})
         return result.stdout
 
     def read(self, args, fresh=False):
