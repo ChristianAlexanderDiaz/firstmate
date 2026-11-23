@@ -220,7 +220,7 @@ assert run(*rest_args, extra=dict(replacement, FM_TEST_GITHUB_NOW='53000', BROKE
 good(run(*rest_args, extra=dict(replacement, FM_TEST_GITHUB_NOW='140000')))
 assert not any(x.startswith('If-') for x in json.loads((root/'calls').read_text().splitlines()[-1]))
 # Every page is revalidated separately. A 304 missing Link metadata cannot
-# establish pagination topology, so the linked page gets an unconditional read.
+# establish pagination topology, so the page with the prior link is read again.
 paged = dict(conditional, FM_GITHUB_CACHE_DIR=str(root/'paged'), REST_PAGES='1',
              REST_BODY='[1]', REST_BODY2='[2]', REST_TAG2='"page2-v1"')
 page_args = (*rest_args, '--paginate', '--slurp')
