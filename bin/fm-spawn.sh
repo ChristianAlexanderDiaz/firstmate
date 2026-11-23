@@ -6599,8 +6599,8 @@ case "$HARNESS" in
 # sets it again for its own later subprocesses once running: this only clears
 # what the ancestor left in the pane's shell before the fresh process starts.
 # Deliberately NOT included: CLAUDE_CODE_ENABLE_FUNCTION_HOOKS and
-# CLAUDE_CODE_AUTO_COMPACT_WINDOW are configuration, not identity (the latter
-# is supplied by fm-context-launch.sh from the home's threshold),
+# CLAUDE_CODE_AUTO_COMPACT_WINDOW are configuration, not identity (the built-in
+# template supplies the latter from the home's threshold),
 # and CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION/CLAUDE_CODE_SEND_FEEDBACK are set
 # fresh by this same launch string (docs/verification/runtime-backends.md).
 claude)
