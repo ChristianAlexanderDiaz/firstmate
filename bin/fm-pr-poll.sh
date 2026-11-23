@@ -68,6 +68,19 @@ case "$provider" in
     [ "$url" = "https://github.com/$owner/$repo/pull/$number" ] || exit 0
     scripts=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
     [ -x "$scripts/fm-github-read.sh" ] || scripts="${FM_ROOT_OVERRIDE:-${FM_HOME:-}}/bin"
+    # The watcher supplies the authenticated task; a registered standalone
+    # sidecar derives it from its own filename. Unowned reads keep full cadence.
+    task=${FM_PR_POLL_TASK:-}
+    poll_state=${FM_STATE_OVERRIDE:-${FM_HOME:-${scripts%/bin}}/state}
+    if [ -n "${data:-}" ]; then
+      poll_state=${data%/*}
+      task=${data##*/}; task=${task%.pr-poll}
+    fi
+    # shellcheck source=bin/fm-held-pr-lib.sh
+    . "$scripts/fm-held-pr-lib.sh" 2>/dev/null || exit 0
+    fm_held_pr_due "$poll_state" merge "$url" "$task" || exit 0
+    # A cached pre-merge OPEN must not postpone detection by another slow period.
+    if [ -n "$FM_HELD_PR_RECORD" ]; then export FM_GITHUB_CACHE_TTL=0; fi
     rc=0
     state=$("$scripts/fm-github-read.sh" core "$url" state 2>&1) || rc=$?
     if [ "$rc" -eq 75 ]; then
@@ -75,6 +88,8 @@ case "$provider" in
       exit 0
     fi
     [ "$rc" -eq 0 ] || exit 0
+    # Keep a detected merge visible until the caller retires its registration.
+    [ "$state" = MERGED ] || fm_held_pr_observed
     [ "$state" = MERGED ] && printf '%s\n' merged
     ;;
   gitlab)

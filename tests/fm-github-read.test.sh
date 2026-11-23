@@ -185,5 +185,64 @@ assert run('core', url[:-1]+'9', extra=refusal).returncode == 75
 poll = run('--validated', 'github', url, 'github.com', 'example/sample', '1', extra=terminal,
            command=repo/'bin/fm-pr-poll.sh')
 assert poll.returncode == 0 and poll.stdout.startswith('waiting:') and 'merged' not in poll.stdout
+# Held merge polling preserves rate waits and resumes after structured changes.
+held = root / 'held'
+(held/'state').mkdir(parents=True)
+(held/'config').mkdir()
+status = held/'state'/'waiting.status'
+status.write_text('paused [wait=captain]: review requested\n')
+held_env = dict(FM_HOME=str(held), FM_STATE_OVERRIDE=str(held/'state'),
+                FM_CONFIG_OVERRIDE=str(held/'config'), FM_GITHUB_CACHE_TTL='0',
+                FM_PR_POLL_TASK='waiting', FM_TEST_HELD_PR_NOW='20000')
+def held_poll(at, **extra):
+    return run('--validated', 'github', url, 'github.com', 'example/sample', '1',
+               command=repo/'bin/fm-pr-poll.sh',
+               extra=dict(held_env, FM_TEST_HELD_PR_NOW=str(at), **extra))
+start = count()
+good(held_poll(20000))
+for at in range(20300, 23600, 300): good(held_poll(at))
+assert count() == start + 1
+assert good(held_poll(23600, FORGE_STATE='MERGED')).strip() == 'merged'
+assert count() == start + 2
+# A recent shared OPEN cannot postpone a due held merge by another hour.
+warm = dict(held_env, FM_GITHUB_CACHE_TTL='300', FM_TEST_GITHUB_NOW='23599')
+good(run('core', url, 'state', extra=warm))
+assert good(held_poll(23600, FORGE_STATE='MERGED', FM_GITHUB_CACHE_TTL='300',
+                      FM_TEST_GITHUB_NOW='23600')).strip() == 'merged'
+start += 2  # cache warm plus fresh due read
+# Repeat merge output until registration retirement, rather than hiding success.
+assert good(held_poll(23601, FORGE_STATE='MERGED')).strip() == 'merged'
+status.write_text('working: resumed\n')
+good(held_poll(23602)); good(held_poll(23603))
+assert count() == start + 5
+status.write_text('paused: waiting for external dependency\n')
+(held/'config'/'held-pr-poll-interval').write_text('600\n')
+good(held_poll(24000)); good(held_poll(24599)); good(held_poll(24600))
+assert count() == start + 7
+# A changed declaration refreshes immediately, including a resolved wait.
+status.write_text('paused [key=review]: waiting\nresolved [key=review]: answered\n')
+good(held_poll(24601))
+assert count() == start + 8
+status.write_text('paused: waiting again\n')
+result = held_poll(25000, REFUSED='1', RESET='30000', REMAINING='0', FM_TEST_GITHUB_NOW='25000')
+assert result.stdout.startswith('waiting:')
+blocked_count = count()
+result = held_poll(28600, FM_TEST_GITHUB_NOW='28600')
+assert result.stdout.startswith('waiting:') and count() == blocked_count
+# No successful interval stamp was written by either refusal.
+good(held_poll(28601, FM_TEST_GITHUB_NOW='30001'))
+assert count() == blocked_count + 1
+# The byte-static sidecar path derives the same task identity as the watcher.
+sidecar = held/'state'/'waiting.check.sh'
+sidecar.write_bytes((repo/'bin/fm-pr-poll.sh').read_bytes())
+sidecar.chmod(0o755)
+(held/'state'/'waiting.pr-poll').write_text('github\n' + url + '\ngithub.com\nexample/sample\n1\n')
+standalone = dict(held_env, FM_TEST_HELD_PR_NOW='28602', FM_TEST_GITHUB_NOW='30002')
+assert good(run(command=sidecar, extra=standalone)) == ''
+assert count() == blocked_count + 1
+# An unavailable helper keeps the poll's existing quiet-failure contract.
+missing = run(command=sidecar, extra=dict(standalone, FM_ROOT_OVERRIDE=str(root/'missing')))
+assert missing.returncode == 0 and not missing.stdout and not missing.stderr
+print('PASS: held merge cadence, release, merge detection, config override and quota precedence')
 print('PASS: cross-home and concurrent reuse, batch sharing, expiry, reset, Retry-After, fallback, credential isolation and waiting semantics')
 PY

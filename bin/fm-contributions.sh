@@ -120,6 +120,8 @@ export FM_HOME FM_STATE_OVERRIDE="$STATE"
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-path-lib.sh
 . "$SCRIPT_DIR/fm-path-lib.sh"
+# shellcheck source=bin/fm-held-pr-lib.sh
+. "$SCRIPT_DIR/fm-held-pr-lib.sh"
 
 fail() { printf 'fm-contributions: %s\n' "$*" >&2; exit 1; }
 usage() { sed -n '2,/^set -eu$/s/^# \{0,1\}//p' "$0"; }
@@ -280,6 +282,7 @@ forge() {
   out=$(mktemp "$TMP/forge-output.XXXXXX")
   # The final head read must remain live to detect a push during observation.
   [ "$forge_err" != "$TMP/head.err" ] || cache_mode=fresh
+  [ -z "${FM_HELD_PR_RECORD:-}" ] || cache_mode=fresh
   now=$(date +%s)
   read_deadline=$((now + 5))
   [ "$read_deadline" -le "$DEADLINE" ] || read_deadline=$DEADLINE
@@ -516,6 +519,7 @@ poll() {
   while IFS=$'\t' read -r -a row; do
     [ $((DEADLINE - $(date +%s))) -ge "$OBSERVATION_RESERVE" ] || break
     url=${row[0]}
+    fm_held_pr_due "$STATE" contributions "$url" "${row[@]:1}" || continue
     observed=0
     observe "$url" || observed=$?
     [ "$BUDGET_EXHAUSTED" -eq 0 ] || continue
@@ -551,6 +555,7 @@ poll() {
       write_record "$task" "$TMP/row.json"
       publish_pending "$task" "$url" "$TMP/row.json"
     done
+    [ "$observed" -ne 0 ] || fm_held_pr_observed
   done < "$TMP/known.tsv"
 }
 

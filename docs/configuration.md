@@ -106,6 +106,11 @@ Untracked files and directories whose names begin with `scratchpad` are also git
 
 - [`bin/fm-github-read.sh`](../bin/fm-github-read.sh) owns shared GitHub observation caching and quota waits, including the directory override for independent local homes.
 
+Held GitHub PRs use a slower merge and contribution polling interval, configured by a positive number of seconds in `config/held-pr-poll-interval` (default `3600`, maximum `86400`).
+Releasing a hold or changing the task's status restores a read on the next scheduled sweep; active PRs retain the ordinary sweep cadence.
+Quota waits still take precedence over reads, and failed observations do not restart the interval.
+[`bin/fm-held-pr-lib.sh`](../bin/fm-held-pr-lib.sh) owns hold detection and bounded scheduling records.
+
 - The producing PR and Relay helpers own the fields they append, [`bin/fm-classify-lib.sh`](../bin/fm-classify-lib.sh) owns status-event vocabulary, optional emission-time syntax, and legacy unknown-time handling, and `bin/fm-crew-state.sh` owns current-state reconciliation.
 
 - The [`bin/fm-fleet-snapshot.sh` header](../bin/fm-fleet-snapshot.sh) owns the snapshot's event-time and age fields, including secondmate parent-event projections.
