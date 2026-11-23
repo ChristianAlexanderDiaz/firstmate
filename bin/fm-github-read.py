@@ -9,6 +9,8 @@ in separate homes/processes share a single fetch. No stale success is returned
 on any read error. Quota cooldown takes precedence even over cached success.
 Credentials are hashed in memory, never persisted. Debug transport output is
 kept in memory only; only reset/retry headers and a generic failure escape.
+REST validators and page bodies survive expiry for up to one day, within the
+same slot/size limits. Only a successful 304 permits expired body reuse.
 """
 import contextlib
 import datetime
@@ -27,6 +29,7 @@ import stat
 import subprocess
 import sys
 import time
+import urllib.parse
 
 LIMIT = 1024 * 1024
 SLOTS = 256
@@ -157,14 +160,20 @@ class Cache:
             return record.get("value")
         return None
 
-    def put(self, key, value):
+    def put(self, key, value, pages=None):
         if self.ttl == 0:
             return
         records = self.load(self.slot(key))
-        records = {k: r for k, r in records.items() if 0 <= now() - r.get("at", 0) < self.ttl}
+        records = {k: r for k, r in records.items()
+                   if 0 <= now() - r.get("at", 0) < (86400 if r.get("pages") else self.ttl)}
         if key not in records and len(records) >= 16:
-            raise Waiting("GitHub cache slot full until observations expire")
+            expired = [k for k, r in records.items() if now() - r["at"] >= self.ttl]
+            if not expired:
+                raise Waiting("GitHub cache slot full until observations expire")
+            del records[min(expired, key=lambda k: records[k]["at"])]
         records[key] = {"at": now(), "value": value}
+        if pages:
+            records[key]["pages"] = pages
         self.save(self.slot(key), records)
 
     def cooldown(self):
@@ -176,13 +185,22 @@ class Cache:
             stamp = datetime.datetime.fromtimestamp(until, datetime.timezone.utc).isoformat()
             raise Waiting("GitHub rate limit until " + stamp)
 
-    def fetch(self, args):
+    def fetch(self, args, headers=False):
         self.cooldown()
         env = dict(os.environ, GH_HOST="github.com", GH_DEBUG="api", GH_PROMPT_DISABLED="1", GH_NO_UPDATE_NOTIFIER="1")
         result = subprocess.run(["gh", *args], env=env, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, timeout=25, text=True, encoding="utf-8")
         debug = result.stderr
-        refused = result.returncode and re.search(r"rate.?limit.{0,30}(exceeded|exhausted)|secondary rate limit|RATE_LIMITED|HTTP[^\n]* 429", debug + (result.stdout if result.returncode else ""), re.I)
+        status, response_headers, body = None, {}, result.stdout
+        if headers:
+            parts = re.split(r"\r?\n\r?\n", result.stdout, maxsplit=1)
+            match = re.match(r"HTTP/\S+ ([0-9]{3})\b", parts[0])
+            if match and len(parts) == 2:
+                status = int(match[1])
+                response_headers = dict((name.lower(), value.strip())
+                                        for name, value in re.findall(r"^([^:\r\n]+):([^\r\n]*)", parts[0], re.M))
+                body = parts[1]
+        refused = status != 304 and result.returncode and re.search(r"rate.?limit.{0,30}(exceeded|exhausted)|secondary rate limit|RATE_LIMITED|HTTP[^\n]* 429", debug + (result.stdout if result.returncode else ""), re.I)
         if refused:
             observed_at = now()
             resets = [int(x) for x in re.findall(r"(?im)^< x-ratelimit-reset:\s*([0-9]+)", debug)]
@@ -213,7 +231,7 @@ class Cache:
                 until = max(until, quota.get("until", 0))
                 self.save("quota", {"until": until, "burst_delay": delay})
             self.cooldown()
-        if result.returncode:
+        if result.returncode and status != 304:
             # Never persist raw debug headers/bodies, credentials or comments.
             if "* Request at" not in debug:
                 # Transport shims may supply only the ordinary CLI diagnostic.
@@ -222,12 +240,80 @@ class Cache:
                 message = "\n".join(line for line in debug.splitlines()
                                     if line.startswith(("gh:", "HTTP ", "error:", "Get ", "Post ")))
             raise ReadError(message or "GitHub read unavailable (exit %d)" % result.returncode, result.returncode)
+        if headers and status is None:
+            raise ReadError("GitHub REST response headers unavailable", 1)
         with self.locks(["quota"]):
             quota = self.load("quota")
             # A success already in flight must not erase a newer refusal.
             if quota.get("burst_delay", 0) and quota.get("until", 0) <= now():
                 self.save("quota", {"until": 0, "burst_delay": 0})
-        return result.stdout
+        self.cooldown()
+        return (status, response_headers, body) if headers else result.stdout
+
+    def rest(self, args, prior, projection):
+        # gh's --paginate cannot apply a distinct validator to each page. Walk
+        # its Link headers explicitly so an unchanged first page never hides a
+        # changed later page. Formatting stays outside the cached page bodies.
+        endpoint = args[1]
+        pages, visited = [], set()
+        previous = {page["url"]: page for page in prior.get("pages", [])}
+        while endpoint:
+            if endpoint in visited:
+                raise ValueError("cyclic GitHub pagination")
+            visited.add(endpoint)
+            old = previous.get(endpoint, {})
+            request = ["api", endpoint, "--include"]
+            if old.get("etag"):
+                request += ["-H", "If-None-Match: " + old["etag"]]
+            elif old.get("modified"):
+                request += ["-H", "If-Modified-Since: " + old["modified"]]
+            status, headers, body = self.fetch(request, headers=True)
+            if status == 304 and "--paginate" in args and "link" not in headers and old:
+                # A full page can gain a successor without changing its body.
+                # Missing Link metadata cannot prove the old topology is still
+                # current. Re-read it unconditionally rather than hide a page.
+                payload = json.loads(old["body"])
+                size = int(urllib.parse.parse_qs(urllib.parse.urlsplit(endpoint).query).get("per_page", ["30"])[-1])
+                collections = [payload] if isinstance(payload, list) else list(payload.values()) if isinstance(payload, dict) else []
+                if old.get("link") or any(isinstance(value, list) and len(value) >= size for value in collections):
+                    status, headers, body = self.fetch(["api", endpoint, "--include"], headers=True)
+            if status == 304:
+                if not old or not (old.get("etag") or old.get("modified")):
+                    raise ValueError("GitHub returned 304 without a stored representation")
+                body = old["body"]
+                # 304 may omit unchanged representation metadata.
+                page = dict(old)
+            elif status == 200:
+                page = {"url": endpoint, "body": body}
+            else:
+                raise ReadError("Unexpected GitHub REST status %s" % status, 1)
+            for name, field in (("etag", "etag"), ("last-modified", "modified"), ("link", "link")):
+                if name in headers:
+                    if "\r" in headers[name] or "\n" in headers[name]:
+                        raise ValueError("invalid GitHub response header")
+                    page[field] = headers[name]
+            pages.append(page)
+            endpoint = None
+            if "--paginate" in args:
+                link = re.search(r'<([^>]+)>;\s*rel="next"', page.get("link", ""))
+                if link:
+                    url = urllib.parse.urlsplit(link[1])
+                    if url.scheme != "https" or url.netloc != "api.github.com" or not url.path.startswith("/repos/") or url.fragment:
+                        raise ValueError("unexpected GitHub pagination URL")
+                    endpoint = url.path.lstrip("/") + ("?" + url.query if url.query else "")
+        if "--slurp" in args:
+            value = json.dumps([json.loads(page["body"]) for page in pages]) + "\n"
+        else:
+            value = "".join(page["body"] + ("" if page["body"].endswith("\n") else "\n") for page in pages)
+        if projection:
+            # jq is already required by the REST consumers; -r matches gh's
+            # string output while retaining JSON for objects and arrays.
+            formatted = subprocess.run(["jq", "-r", projection], input=value,
+                                       text=True, capture_output=True, timeout=25)
+            if formatted.returncode:
+                raise ReadError("GitHub REST projection failed", formatted.returncode)
+            value = formatted.stdout
+        return value, pages if any(p.get("etag") or p.get("modified") for p in pages) else None
 
     def read(self, args, fresh=False):
         # Admit only the observation forms used by these callers. In particular,
@@ -241,21 +327,33 @@ class Cache:
             tail = args[3:]
         else:
             raise ValueError("expected a GitHub read")
+        projection = None
         while tail:
             if api and tail[0] in ("--paginate", "--slurp"):
                 tail = tail[1:]
             elif len(tail) >= 2 and tail[0] in (("--jq", "-q") if api else ("--json", "--jq", "-q")):
+                if api:
+                    projection = tail[1]
                 tail = tail[2:]
             else:
                 raise ValueError("unsupported GitHub read option")
+        if api and "--slurp" in args and ("--paginate" not in args or "--jq" in args or "-q" in args):
+            raise ValueError("--slurp requires --paginate and cannot be combined with --jq")
         key = self.key(json.dumps(args))
         with self.locks([self.slot(key)]):
             self.cooldown()
             value = None if fresh else self.get(key)
             if value is None:
-                value = self.fetch(args)
+                pages = None
+                if api and not fresh and self.ttl:
+                    prior = self.load(self.slot(key)).get(key, {})
+                    if not 0 <= now() - prior.get("at", 0) < 86400:
+                        prior = {}
+                    value, pages = self.rest(args, prior, projection)
+                else:
+                    value = self.fetch(args)
                 if not fresh:
-                    self.put(key, value)
+                    self.put(key, value, pages)
             return value
 
     def fresh_head(self, url):
