@@ -1410,6 +1410,21 @@ This is not a sandbox: it cannot revoke same-user access to credential files, pr
 
 Regression coverage executes emitted launch commands with synthetic nonsecret values in [`tests/fm-spawn-dispatch-profile.test.sh`](../tests/fm-spawn-dispatch-profile.test.sh), and the Orca environment source in [`tests/fm-spawn-orca-worktree.test.sh`](../tests/fm-spawn-orca-worktree.test.sh).
 
+### Automatic compaction (`config/context-cap`)
+
+Claude and Codex workers, scouts, and secondmates launch with automatic compaction near 200,000 tokens by default.
+Start a primary with `bin/fm-context-launch.sh claude` or `bin/fm-context-launch.sh codex` to apply the same threshold.
+Put a decimal token count in the home's gitignored `config/context-cap` to override it; the primary's setting also propagates to secondmates.
+The helper's [usage header](../bin/fm-context-launch.sh) owns the accepted range, configuration resolution, and native launch settings.
+
+The setting applies on the next launch, including relaunch, without modifying global harness settings or restarting an existing session.
+The harness still owns compaction and may compact earlier for a smaller model window; this is a compaction trigger rather than a hard bound on a single response or tool result.
+Existing persistence instructions and session-start re-emission stay unchanged.
+Pi, Pi-signed, and other harnesses retain their existing launches until a supported per-launch threshold is verified; raw custom launch commands also remain operator-owned.
+The compact adviser setting below controls a separate optional tool, not native automatic compaction.
+Portable regressions exercise the launch helper and emitted worker and secondmate commands in [`tests/fm-context-launch.test.sh`](../tests/fm-context-launch.test.sh) and [`tests/fm-spawn-compact-adviser-disable.test.sh`](../tests/fm-spawn-compact-adviser-disable.test.sh).
+[Runtime verification](verification/runtime-backends.md#automatic-compaction-launch-settings) records the supported versions and settings evidence.
+
 ### Compact adviser setting
 
 Every crewmate, scout, and secondmate Firstmate launches starts with `COMPACT_ADVISER_DISABLE=1` in its environment, on a fresh spawn and on a relaunch alike, so an unattended session never activates the compact adviser.

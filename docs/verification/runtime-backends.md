@@ -6,6 +6,49 @@ This record contains reusable version-scoped evidence for active runtime guarant
 The backend guides own current setup, safety boundaries, and limitations.
 Exact task chronology, branch names, temporary homes, local paths, process ids, thread ids, and delivery transcripts remain in private reports or PR evidence.
 
+## Automatic compaction launch settings
+
+Verified on 2026-11-22 with Claude Code 2.1.330 and codex-cli 0.162.1 on Linux.
+The [configuration guide](../configuration.md#automatic-compaction-configcontext-cap) owns setup and supported limits.
+
+```sh
+claude --version
+claude --help
+codex --version
+codex --help
+codex app-server generate-json-schema --out "$LAB/schema" --experimental
+```
+
+Claude's installed help includes:
+
+```text
+--autocompact <auto|tokens>           Auto-compact window size (auto, or at
+                                      least 100k tokens)
+```
+
+The installed binary also contains `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and its token-count validation diagnostics.
+The [vendor model configuration reference](https://code.claude.com/docs/en/model-config#set-the-auto-compact-window) documents that environment variable as the script-level override, taking precedence over saved settings.
+Codex's installed help documents `-c key=value` as a per-invocation TOML override.
+Its generated `v2/ConfigReadResponse.json` exposes integer `model_auto_compact_token_limit` and the `total` counting scope; the [official configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) documents their compaction semantics.
+An isolated native `codex app-server --stdio` launched through `bin/fm-context-launch.sh codex` returned these effective values from `config/read`, despite a saved 800,000-token limit with `body_after_prefix` counting:
+
+```text
+model_auto_compact_token_limit=200000
+model_auto_compact_token_limit_scope=total
+```
+
+No model request was submitted for that configuration read.
+
+Refresh portable behavior evidence with:
+
+```sh
+bash bin/fm-test-run.sh tests/fm-context-launch.test.sh tests/fm-spawn-compact-adviser-disable.test.sh
+```
+
+These regressions execute probe harnesses through the primary helper and emitted spawn commands, including an empty launch environment allowlist, config overrides, secondmate inheritance, and unchanged Pi-family commands.
+They verify launch delivery without filling a real model conversation to the threshold.
+Pi and Pi-signed were absent on the verification machine, and Grok 1.0.77's installed help exposed no per-launch compaction threshold, so those adapters remain unchanged.
+
 ## Polytoken worker lifecycle
 
 Verified on 2026-10-14 with Polytoken 0.9.0 on macOS arm64 using the tmux worker path.
