@@ -395,6 +395,8 @@ test_host_wait_returns_already_announced_rows() {
   mkdir -p "$fakebin"
   ln -s /bin/bash "$fakebin/codex"
   status=0
+  # The fake Codex process expands these variables, not this shell.
+  # shellcheck disable=SC2016
   FM_HOME="$home" timeout 20 "$fakebin/codex" -c '
     printf "%s\n" "$$" > "$FM_HOME/state/.lock"
     "$0" --wait
