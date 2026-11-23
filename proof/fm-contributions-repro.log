@@ -1,0 +1,75 @@
+ok - primary and secondary quota refusals wait without retries or green observations
+ok - only required-captain contributions are rows; other actors are counted
+ok - replaced-head verdict is stale and cannot create a captain requirement
+ok - unchecked ownership is disclosed and cannot prove silence
+ok - newest check with no verdict is distinct from passing and pending
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+ok - new maintainer comment wakes once and stays pending until acknowledged
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+ok - new maintainer review wakes once and stays pending until acknowledged
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+ok - new maintainer inline wakes once and stays pending until acknowledged
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+ok - ready-for-pr on a filed issue becomes a planning wake
+ok - a fresh open issue remains measured maintainer triage
+ok - an absent check lane remains missing across repeated observations
+ok - mixed freshness retains measured captain work and discloses the gap
+ok - malformed durable evidence cannot prove silence
+ok - a transient ready-for-pr label wakes and its exact acknowledgement survives replay
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+ok - recorded judgment keeps its exact head and is stale immediately on a published replacement
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+ok - verdict help and refusal name exactly the actors the command accepts
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+ok - a current forge observation refreshes a verdict after a replacement
+ok - an unavailable current head leaves verdict freshness unknown
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+ok - away yolo delivery is fleet work without granting merge authority
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+actionable: PR https://github.com/o/r/pull/8 is registered but its ready line did not reach the parent channel (rc=3)
+ok - cross-home away yolo delivery is fleet work
+ok - retired ownership persists and unsupported forge remains visibly unmeasured
+ok - unsupported forge coverage is disclosed without inventing fleet work
+ok - held unsupported forge coverage remains unmeasured
+ok - unsupported ownership stays silent and unmeasured; legacy errors clear without fabricated evidence
+ok - legacy cleanup preserves unsupported ownership and supported missing-evidence failure in the same file
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+ok - shared contribution signal wakes once while retaining both acknowledgements
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+ok - watcher keeps observer diagnostics separate from contribution wakes
+ok - expired child unsupported-forge coverage remains unmeasured
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+ok - watcher surfaces one newly durable contribution signal without re-ringing it
+ok - parent consumes measured child coverage and refuses expired child silence
+ok - unreadable pending signals refuse an empty-inbox claim
+ok - record task identity is the directory dirname/basename named
+ok - snapshot and pending create nothing in a home without state
+ok - budget exhausted mid-observation (exhaust) keeps the prior record and stays silent
+ok - budget exhausted mid-observation (hang) keeps the prior record and stays silent
+ok - a genuine forge failure inside the budget still records the error, its cause and wakes
+ok - each of the eight reads retries and discards its partial response without waking (gh: Internal Server Error (HTTP 500))
+ok - two transient failures wake once and name the failed read in the record
+ok - an HTTP 404 keeps its diagnostic after the fork retry
+ok - real gh error shapes drive the intended retry decision and keep their error
+ok - a URL never inherits the previous URL read diagnostic
+jq: error (at /tmp/fm-contributions.snCvLs/after.json:1): null (null) cannot be matched, as it is not a string
+ok - a URL owned by two tasks is observed once and every owner receives the result
+ok - a merged or closed contribution settles once, is not re-read, and never wakes again
+ok - a late owner inherits a terminal observation without a forge read or wake
+ok - a retry converges every owner whose saved row is not terminal, keeping its own acknowledgement state
+ok - an open PR linked from a done task keeps being observed
+ok - a later URL waits when fewer than fifteen seconds remain for its observation
+ok - eight 3-second PR reads complete fresh within one 20-second poll cycle
+ok - a read killed at the five-second bound is budget refusal and stays silent
+ok - rotation preserves timed-out records and refreshes every slow PR on successive cycles
+ok - the effective budget is cut down to the watcher per-check bound with margin
+ok - generated checks enforce configured and inherited budgets at runtime
+ok - a genuinely unavailable forge records an error and wakes once per failure episode
+ok - a late owner does not restart a shared forge failure episode
+ok - retire stops the unavailable check, leaves rotation and restores complete coverage
+ok - a late owner settled beside a retired final record stays unretired and known
+ok - retire is idempotent and refuses non-captain, unknown, malformed and signal-bearing pairs
+unexpected gh fixture call: pr view https://github.com/o/r/pull/8 --json isDraft
+ok - a many-review PR stores only classified review fields and stays readable
+ok - each of the eight reads retries and discards its partial response without waking (Get "https://api.github.com/repos/o/r/pulls/8": EOF)
+ok - a persistent HTTP 404 is reported after one retry

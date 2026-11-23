@@ -2,6 +2,7 @@
 # Security and regression tests for canonical PR parsing, static merge polls,
 # private atomic artifacts, authenticated custom checks, and teardown cleanup.
 set -u
+export FM_GITHUB_CACHE_TTL=0
 
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -141,6 +142,12 @@ SH
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case "${1:-} ${2:-}" in
   "api graphql")
+    case " $* " in
+      *"query=query { w0: repository("*)
+        printf 'w0\thttps://github.com/o/r/pull/9\tOPEN\tfalse\t%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+        exit 0
+        ;;
+    esac
     printf '%s\n' \
       "state=${FM_TEST_GH_GRAPHQL_STATE:-MERGED}" \
       "merged=${FM_TEST_GH_GRAPHQL_MERGED:-true}" \
@@ -149,7 +156,19 @@ case "${1:-} ${2:-}" in
     exit 0
     ;;
   "pr view")
+    if [ "${FM_TEST_GH_HEAD_QUOTA:-0}" = 1 ] && [ "${5:-}" = headRefOid ]; then
+      printf '%s\n' 'gh: API rate limit exceeded' >&2
+      exit 1
+    fi
     case " $* " in
+      *" --json state,isDraft,headRefOid,url "*)
+        [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
+        [ -z "${FM_TEST_GH_STATE_STARTED:-}" ] || : > "$FM_TEST_GH_STATE_STARTED"
+        [ "${FM_TEST_GH_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_SLEEP"
+        printf '{"url":"%s","state":"%s","isDraft":%s,"headRefOid":"%s"}\n' \
+          "$3" "${FM_TEST_GH_STATE:-OPEN}" "${FM_TEST_GH_DRAFT:-false}" "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+        exit 0
+        ;;
       *statusCheckRollup*)
         printf '%s\n' "{\"state\":\"OPEN\",\"isDraft\":false,\"mergeable\":\"MERGEABLE\",\"mergeStateStatus\":\"CLEAN\",\"headRefOid\":\"${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}\",\"baseRefName\":\"main\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"name\":\"ci\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}]}"
         exit 0
@@ -687,6 +706,47 @@ test_draft_pull_request_is_not_armed() {
   pass "arming refuses a draft pull request, naming it, and arms a ready or unreadable one"
 }
 
+test_registration_bypasses_stale_observation() {
+  local dir url expected query observed rc
+  dir=$(make_case stale-registration)
+  url=https://github.com/o/r/pull/9
+  expected=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  write_task_meta "$dir"
+  FM_GITHUB_CACHE_TTL=300 FM_HOME="$dir/home" FM_TEST_GH_LOG="$dir/gh.log" \
+    PATH="$dir/fakebin:$BASE_PATH" "$ROOT/bin/fm-github-read.sh" core "$url" >/dev/null \
+    || fail "could not seed cached observation"
+  FM_GITHUB_CACHE_TTL=300 FM_TEST_GH_HEAD=$expected run_check_entry "$dir" task-a "$url" \
+    > "$dir/stdout" 2> "$dir/stderr" || fail "registration after push failed"
+  grep -qxF "pr_head=$expected" "$dir/home/state/task-a.meta" || fail "registration used stale head"
+  query='query { w0: repository(owner: "o", name: "r") { pullRequest(number: 9) { url state isDraft headRefOid } } }'
+  observed=$(FM_GITHUB_CACHE_TTL=300 FM_HOME="$dir/home" FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GH_HEAD=$expected \
+    PATH="$dir/fakebin:$BASE_PATH" "$ROOT/bin/fm-github-read.sh" batch "$query") \
+    || fail "batch read after registration failed"
+  [ "$observed" = "$(printf 'w0\t%s\tOPEN\tfalse\t%s' "$url" "$expected")" ] \
+    || fail "batch read returned the stale head"
+
+  dir=$(make_case stale-draft)
+  write_task_meta "$dir"
+  FM_GITHUB_CACHE_TTL=300 FM_HOME="$dir/home" FM_TEST_GH_LOG="$dir/gh.log" \
+    PATH="$dir/fakebin:$BASE_PATH" "$ROOT/bin/fm-github-read.sh" core "$url" >/dev/null \
+    || fail "could not seed cached observation"
+  if FM_GITHUB_CACHE_TTL=300 FM_TEST_GH_DRAFT=true run_check_entry "$dir" task-a "$url" \
+    > "$dir/stdout" 2> "$dir/stderr"; then
+    fail "registration accepted a newly drafted pull request"
+  fi
+  [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "draft registration armed a poll"
+  dir=$(make_case head-quota)
+  write_task_meta "$dir"
+  cp "$dir/home/state/task-a.meta" "$dir/meta.before"
+  rc=0
+  FM_TEST_GH_HEAD_QUOTA=1 run_check_entry "$dir" task-a "$url" \
+    > "$dir/stdout" 2> "$dir/stderr" || rc=$?
+  [ "$rc" -eq 75 ] || fail "head quota refusal did not return waiting"
+  cmp -s "$dir/meta.before" "$dir/home/state/task-a.meta" || fail "head quota refusal changed metadata"
+  [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "head quota refusal armed a poll"
+  pass "registration reads current head and draft state"
+}
+
 # A secondmate is a persistent worker, not a delivery lane: it never owns a
 # pull request of its own. A URL relayed onto its status channel belongs to a
 # task in the mate's own home, which arms its own watch, so arming one here is
@@ -967,7 +1027,8 @@ make_poll_fixture() {
 
 run_poll() {
   local dir=$1
-  FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$dir/home" \
+    FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
     FM_TEST_GERRIT_AXI_LOG="$dir/gerrit-axi.log" \
     PATH="$dir/fakebin:$BASE_PATH" \
     bash "$dir/home/state/task-a.check.sh"
@@ -3630,6 +3691,7 @@ test_retirement_queue_failure_and_receipt_tampering
 test_gitlab_merged_poll_retires
 test_invalid_entrypoints_have_zero_side_effects
 test_draft_pull_request_is_not_armed
+test_registration_bypasses_stale_observation
 test_secondmate_record_refuses_a_pr_watch
 test_unpushed_named_head_refuses_registration
 test_direct_pr_unpushed_commit_refuses_registration

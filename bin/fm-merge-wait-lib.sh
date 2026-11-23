@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Watcher-owned waiting-on-you list, rebuilt once per due check sweep.
 # Source after fm-backend, fm-pr-lib, fm-classify-lib, fm-dod-lib, and fm-busy-lib.
-# GitHub ready ships share one GraphQL state read. Other forge providers retain
+# GitHub ready ships share cached observations and batch missing state reads. Other forge providers retain
 # their existing authenticated polls. No merge authority is granted here.
 # The list is process-local: restarting the watcher rebuilds it. Each row binds
 # the task metadata, status, activity, local head and authenticated
@@ -79,12 +79,9 @@ fm_merge_wait_collect() {  # <state> <bin-dir>; sets requests and GraphQL query
 
 fm_merge_wait_read() {  # <query>; executable via the watcher's bounded runner
   [ -n "$1" ] || return 0
-  gh api graphql -f "query=$1" --jq '
-    if .errors then empty else
-      .data | to_entries[] | select(.value.pullRequest != null)
-      | [.key, .value.pullRequest.url, .value.pullRequest.state,
-         .value.pullRequest.isDraft, .value.pullRequest.headRefOid] | @tsv
-    end' 2>/dev/null
+  local scripts
+  scripts=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  "$scripts/fm-github-read.sh" batch "$1"
 }
 
 fm_merge_wait_lookup() {  # <state> <id> <bin-dir>; sets verdict: waiting, merged, changed

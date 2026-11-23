@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Task-scoped cleanup after handling acknowledgements and ordinary teardown safety.
 set -eu
+export FM_GITHUB_CACHE_TTL=0
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 TMP_ROOT=$(fm_test_tmproot fm-auto-teardown)
@@ -186,7 +187,7 @@ fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a "$1/bin"
 FM_MERGE_WAIT_RESULTS=$(FM_TEST_PR_STATE=CLOSED fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
 fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a "$1/bin"
 [ "$FM_MERGE_WAIT_VERDICT" = changed ]
-FM_MERGE_WAIT_RESULTS=$(FM_TEST_PR_HEAD=changed fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
+FM_MERGE_WAIT_RESULTS=$(FM_TEST_PR_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
 fm_merge_wait_lookup "$FM_STATE_OVERRIDE" task-a "$1/bin"
 [ "$FM_MERGE_WAIT_VERDICT" = changed ]
 FM_MERGE_WAIT_RESULTS=''
