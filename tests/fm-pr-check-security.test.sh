@@ -142,6 +142,12 @@ SH
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case "${1:-} ${2:-}" in
   "api graphql")
+    case " $* " in
+      *"query=query { w0: repository("*)
+        printf 'w0\thttps://github.com/o/r/pull/9\tOPEN\tfalse\t%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+        exit 0
+        ;;
+    esac
     printf '%s\n' \
       "state=${FM_TEST_GH_GRAPHQL_STATE:-MERGED}" \
       "merged=${FM_TEST_GH_GRAPHQL_MERGED:-true}" \
@@ -150,6 +156,10 @@ case "${1:-} ${2:-}" in
     exit 0
     ;;
   "pr view")
+    if [ "${FM_TEST_GH_HEAD_QUOTA:-0}" = 1 ] && [ "${5:-}" = headRefOid ]; then
+      printf '%s\n' 'gh: API rate limit exceeded' >&2
+      exit 1
+    fi
     case " $* " in
       *" --json state,isDraft,headRefOid,url "*)
         [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
@@ -697,7 +707,7 @@ test_draft_pull_request_is_not_armed() {
 }
 
 test_registration_bypasses_stale_observation() {
-  local dir url expected
+  local dir url expected query observed rc
   dir=$(make_case stale-registration)
   url=https://github.com/o/r/pull/9
   expected=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -708,6 +718,12 @@ test_registration_bypasses_stale_observation() {
   FM_GITHUB_CACHE_TTL=300 FM_TEST_GH_HEAD=$expected run_check_entry "$dir" task-a "$url" \
     > "$dir/stdout" 2> "$dir/stderr" || fail "registration after push failed"
   grep -qxF "pr_head=$expected" "$dir/home/state/task-a.meta" || fail "registration used stale head"
+  query='query { w0: repository(owner: "o", name: "r") { pullRequest(number: 9) { url state isDraft headRefOid } } }'
+  observed=$(FM_GITHUB_CACHE_TTL=300 FM_HOME="$dir/home" FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GH_HEAD=$expected \
+    PATH="$dir/fakebin:$BASE_PATH" "$ROOT/bin/fm-github-read.sh" batch "$query") \
+    || fail "batch read after registration failed"
+  [ "$observed" = "$(printf 'w0\t%s\tOPEN\tfalse\t%s' "$url" "$expected")" ] \
+    || fail "batch read returned the stale head"
 
   dir=$(make_case stale-draft)
   write_task_meta "$dir"
@@ -719,6 +735,15 @@ test_registration_bypasses_stale_observation() {
     fail "registration accepted a newly drafted pull request"
   fi
   [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "draft registration armed a poll"
+  dir=$(make_case head-quota)
+  write_task_meta "$dir"
+  cp "$dir/home/state/task-a.meta" "$dir/meta.before"
+  rc=0
+  FM_TEST_GH_HEAD_QUOTA=1 run_check_entry "$dir" task-a "$url" \
+    > "$dir/stdout" 2> "$dir/stderr" || rc=$?
+  [ "$rc" -eq 75 ] || fail "head quota refusal did not return waiting"
+  cmp -s "$dir/meta.before" "$dir/home/state/task-a.meta" || fail "head quota refusal changed metadata"
+  [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "head quota refusal armed a poll"
   pass "registration reads current head and draft state"
 }
 

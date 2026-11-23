@@ -156,8 +156,10 @@ fi
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_HEAD=
 if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
-  if REMOTE_HEAD=$("$SCRIPT_DIR/fm-github-read.sh" fresh pr view "$URL" --json headRefOid -q .headRefOid) \
-    && fm_pr_head_valid "$REMOTE_HEAD"; then
+  read_rc=0
+  REMOTE_HEAD=$("$SCRIPT_DIR/fm-github-read.sh" fresh-head "$URL") || read_rc=$?
+  [ "$read_rc" -ne 75 ] || exit 75
+  if [ "$read_rc" -eq 0 ] && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi
 fi

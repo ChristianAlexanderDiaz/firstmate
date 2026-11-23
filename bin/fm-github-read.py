@@ -258,6 +258,19 @@ class Cache:
                     self.put(key, value)
             return value
 
+    def fresh_head(self, url):
+        if not PR.fullmatch(url):
+            raise ValueError("expected canonical GitHub PR URL")
+        key = self.key(url.lower())
+        slot = self.slot(key)
+        with self.locks([slot]):
+            value = self.fetch(["pr", "view", url, "--json", "headRefOid", "-q", ".headRefOid"])
+            records = self.load(slot)
+            if key in records:
+                del records[key]
+                self.save(slot, records)
+            return value
+
     def core(self, url):
         if not PR.fullmatch(url):
             raise ValueError("expected canonical GitHub PR URL")
@@ -322,6 +335,8 @@ def main():
         value = cache.core(args[0])
         field = args[1] if len(args) > 1 else "json"
         print(value["state"] if field == "state" else value["headRefOid"] if field == "head" else json.dumps(value))
+    elif mode == "fresh-head":
+        print(cache.fresh_head(args[0]), end="")
     elif mode == "batch":
         print(cache.batch(args[0]), end="")
     elif mode in ("read", "fresh"):
