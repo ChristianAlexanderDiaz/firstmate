@@ -83,8 +83,9 @@
 # output (control characters dropped, at most 160 characters), or the
 # structural check that refused the observation. A later good read clears the
 # record's error, so the unavailable line is the copy that outlives it.
-# FM_CONTRIBUTIONS_MAX_AGE (default 900 seconds) bounds active freshness;
-# held PRs remain fresh for at least their configured slow polling interval.
+# FM_CONTRIBUTIONS_MAX_AGE (default 900 seconds) bounds active freshness.
+# Observations from the current hold use at least the configured slow polling
+# interval as their freshness bound.
 # A supported URL whose last good observation is merged or closed is final: it is
 # never re-read, stays fresh, and every owner's saved row converges on that
 # observation, with a stale error beside it cleared.
