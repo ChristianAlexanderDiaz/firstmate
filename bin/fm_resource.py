@@ -281,7 +281,8 @@ def capacity_relaxation(previous, config):
     if any(type(previous.get(key)) is not int for key in CAPACITY_FIELDS if key != "maxHeavyJobs"):
         return False
     # Switching policy changes safety/cancellation semantics as well as capacity,
-    # so it is never a live relaxation. Full may only be enabled, never disabled.
+    # so it is never a capacity-only relaxation. This path only enables Full;
+    # resident-only policy changes are checked separately at ledger recovery.
     fields = (*CAPACITY_FIELDS, "fullLevelEnabled")
     old_other = {key: value for key, value in previous.items() if key not in fields}
     new_other = {key: value for key, value in config.items() if key not in fields}
@@ -574,7 +575,8 @@ class Budget:
                     new_capacity["fullLevelEnabled"] = config.get("fullLevelEnabled", False)
                 transition = f"capacity relaxed: {json.dumps(old_capacity, sort_keys=True)} -> {json.dumps(new_capacity, sort_keys=True)}"
                 # Running controllers retain the digest loaded at launch. Only
-                # policies in this verified relaxation chain remain compatible.
+                # policies in this verified relaxation/resident-only change
+                # chain remain compatible.
                 if relaxed or resident_change:
                     self.data.setdefault("compatibleConfigDigests", []).append(self.data["configDigest"])
                 else:
@@ -1077,8 +1079,8 @@ class Budget:
         self.config, self.digest = current, config_digest(current)
         self.data.update(configPolicy=current, configDigest=self.digest)
         self.data.pop("pendingPolicy", None)
-        # Ledger first: a crash before the config rename is recoverable by the
-        # installation command without forgetting leases or emergency evidence.
+        # Ledger first: owner startup completes an interrupted config rename
+        # without forgetting leases or emergency evidence.
         self.data["pendingConfigWrite"] = name
         atomic_json(self.path, self.data)
         atomic_json(name, current)
@@ -1599,7 +1601,8 @@ def rpc_once(config, digest, *, wait=None, **request):
                             pass
                     reported = True
                 # Keep this connection and request: the owner may already have
-                # durably acquired or bound the lease. Never replay mutations.
+                # durably acquired or bound the lease. A timeout alone must not
+                # replay it; disconnection recovery reuses the same arguments.
                 continue
             if not part:
                 raise EOFError("owner disconnected before acknowledgement")
@@ -2295,7 +2298,7 @@ def parser():
         q = sub.add_parser(action)
         q.add_argument("--evidence", required=True, help="inspection/cause note; never credentials")
     q = sub.add_parser("run", help="lease a bounded process group; descendants retain reservation after parent exit",
-        description="Queue holds and delayed replies wait indefinitely by default. A delayed reply prints a held notice. Missing/refusing/disconnected owner sockets retry the same idempotent request for up to 120s; unsafe sockets and explicit policy refusals stop compute. SIGINT/SIGTERM cancels the wait; --wait-seconds bounds queue admission only. Queued clients poll every 2s.")
+        description="Queue holds and delayed replies wait indefinitely by default. A delayed reply writes a held notice to non-terminal stderr, or to the private host-budget.log when stderr is a terminal; logging failure does not interrupt the wait. Missing/refusing/disconnected owner sockets retry the same idempotent request for up to 120s; unsafe sockets and explicit policy refusals stop compute. SIGINT/SIGTERM cancels the wait; --wait-seconds bounds queue admission only. Queued clients poll every 2s.")
     q.add_argument("--class", dest="resource_class", choices=CLASSES, default="exclusive",
         help="fallback reservation MiB: test=1024, build=3072, browser=2048, graph=512, exclusive=4096, worker=512")
     q.add_argument("--memory-mib", type=int, help="explicit planning reservation; otherwise owner uses the class peak/default")

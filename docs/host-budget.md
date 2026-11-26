@@ -26,7 +26,7 @@ No client starts or repairs an owner automatically.
 For a LaunchAgent, use that exact argv, `RunAtLoad`, a conservative restart throttle and `Umask` 63; retain transition output with bounded logging.
 Keep the executable and configuration paths stable across Firstmate worktree cleanup.
 
-On owner startup, a capacity-only relaxation is accepted with live reservations: `maxResidentWorkers`, `memoryMiB` and `maxHeavyJobs` must all stay unchanged or increase, and `fullLevelEnabled` may change from false to true, with at least one increase and every other normalized policy field identical.
+On owner startup, a capacity-only relaxation is accepted with live reservations: `maxResidentWorkers`, `memoryMiB` and `maxHeavyJobs` must all stay unchanged or increase (omitting `maxHeavyJobs` removes its ceiling), and `fullLevelEnabled` may change from false to true, with at least one increase and every other normalized policy field identical.
 Schema validation still applies; `maxHeavyJobs` is now an optional emergency cap rather than the normal admission limit.
 Changing `policyMode` changes cancellation and recovery semantics, so it is never classified as a live capacity relaxation.
 Policy-mode changes can carry resident worker leases when the queue is empty and capacity does not decrease; reductions require an empty ledger and queue.
@@ -140,12 +140,12 @@ Launch the browser/server under the composite stage and connect the client to th
 
 The ledger binds boot identity, kernel process start time, nonce and process group.
 Heartbeat expiry alone cannot release capacity while the controller and an owned group survive.
-Reconciliation releases a held lease when its controller identity is dead or was reparented to process 1 after requesting the lease, even if a detached child group survives.
-The recorded-parent rule below also applies to held leases, preserving launchd-parented controllers and recording the first observed parent for older ledgers.
+Reconciliation releases an unbound lease when its controller identity is dead or was reparented to process 1 after requesting the lease; a bound lease retains capacity until its tracked groups drain, even if its controller dies or becomes orphaned.
+The recorded-parent rule below applies to unbound leases, preserving launchd-parented controllers and recording the first observed parent for older ledgers.
 An unanchored surviving group with a live controller is quarantined, retaining capacity without signaling an unverified process.
 Cancellation sends TERM to verified members, then KILL after the configured grace, and never kills by executable name or port.
 Stopping the owner preserves live reservations for reconciliation by its replacement.
-Once a lease's verified process group has drained or its controller is gone or orphaned under the recorded-parent rule, the owner checks the browser manifest's lease, boot and profile identity and removes the token directory, including its profile and caches.
+Once a lease is released under these reconciliation rules, the owner checks the browser manifest's lease, boot and profile identity and removes the token directory, including its profile and caches.
 The same reconciliation handles completion, cancellation, inherited browser stages, attached bridge groups and owner recovery.
 Unknown or corrupt recovery state fails closed; preserve it for inspection rather than deleting it to regain slots.
 
@@ -177,7 +177,7 @@ With `policyMode=on`, one level sets admission and caps:
 The exact headroom thresholds, admission spacing, idle-lease accounting and optional emergency ceiling are owned by `bin/fm-resource-run --help`.
 Playwright stays at one worker at every admitted level.
 Worker caps are applied when a command starts; running tools retain their existing arguments, while new and nested commands receive the current owner cap without exceeding the outer command's cap.
-Nested builds use the same headroom checks as queued builds; nested exclusive work is refused while another heavy lease exists.
+Nested reservation growth uses the same headroom checks as queued work; nested exclusive work is refused while another heavy lease exists.
 Admission combines measured free memory with pressure, swap, CPU load and reservations for recently admitted or increased work whose RSS has not caught up.
 The resident-session exemption for warning memory pressure remains; sustained swap growth, unknown readings and critical pressure still hold resident admissions.
 
@@ -190,9 +190,9 @@ After clearing a thermal latch, each recovery rung still requires the heat dwell
 Enabled reservations use the largest recorded per-class process-tree RSS peak plus 25% headroom, rounded up to 64 MiB; unmeasured classes retain their defaults and resident sessions retain 512 MiB.
 For example, a recorded 1,591 MiB exclusive peak reserves 2,048 MiB, and a 2,048 MiB browser peak reserves 2,560 MiB.
 Peaks accumulate in the durable ledger and are recovered from available metrics; status reports the resulting reservations for every class.
-An explicit reservation must meet that class's current measured minimum and the total configured budget.
+An explicit reservation must meet that class's current measured minimum without exceeding the configured individual reservation limit.
 These observed peaks are planning estimates, not memory ceilings or proof that a different job of the same class will fit; request a larger reservation for a larger workload.
-The existing memory budget remains enforced, and measured pressure and swap growth remain independent safety inputs.
+Enabled aggregate admission uses live headroom rather than the legacy total reservation budget; measured pressure and swap growth remain independent safety inputs.
 
 ### Legacy admission during shadow observation
 
