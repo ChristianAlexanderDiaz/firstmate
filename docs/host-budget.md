@@ -38,7 +38,7 @@ Editing the policy file does not reload a running owner; its replacement accepts
 Other changes with live reservations or queued requests retain the policy-change refusal; path changes and other non-capacity changes remain outside this configuration-change path.
 
 Use `bin/fm-resource-install --help` for the installation command and atomic handoff preconditions.
-The installer can wait for safe installation and defer policy activation automatically without cancelling leases.
+The installer can wait for safe installation; a protocol-capable handoff activates headroom admission immediately with live leases and queued clients preserved.
 A running legacy owner cannot provide an atomic handoff, even with an empty status snapshot; the installer reports that limitation and requires an offline empty ledger instead of signalling it.
 Upgraded clients tolerate bounded owner outages, and the replacement owner recovers the persisted process identities and reservations.
 A legacy ledger containing only a digest cannot prove a relaxation; first start the updated owner with the matching original policy to record it, or reconcile the ledger before changing policy.
@@ -168,7 +168,7 @@ With `policyMode=on`, one level sets admission and caps:
 
 | Level | Measurements | Admission |
 |---|---|---|
-| Full | Wall power, nominal thermal, normal memory, Full enabled | Heavy jobs admitted by measured headroom, at most one build or exclusive job, four test workers |
+| Full | Wall power, nominal thermal, normal memory, Full enabled | Heavy jobs admitted by measured headroom, exclusive jobs run alone, four test workers |
 | Normal | Healthy battery operation with lid open, fair thermal, or wall power with Full disabled | One heavy job, four test workers on wall power or two on battery |
 | Reduced | Memory warning without growing swap, or staged recovery | One test, graph or browser job, two test workers; builds and exclusive jobs wait |
 | Stop | Serious thermal, battery below 30%, missing/stale readings, growing swap during warning, sustained swap growth or AC discharge | No new compute; running jobs finish |
@@ -177,8 +177,8 @@ With `policyMode=on`, one level sets admission and caps:
 The exact headroom thresholds, admission spacing, idle-lease accounting and optional emergency ceiling are owned by `bin/fm-resource-run --help`.
 Playwright stays at one worker at every admitted level.
 Worker caps are applied when a command starts; running tools retain their existing arguments, while new and nested commands receive the current owner cap without exceeding the outer command's cap.
-Nested work cannot upgrade a second small job into another build or exclusive job.
-Admission combines measured free memory with pressure, swap, CPU load and reservations for recently admitted work whose RSS has not caught up.
+Nested builds use the same headroom checks as queued builds; nested exclusive work is refused while another heavy lease exists.
+Admission combines measured free memory with pressure, swap, CPU load and reservations for recently admitted or increased work whose RSS has not caught up.
 The resident-session exemption for warning memory pressure remains; sustained swap growth, unknown readings and critical pressure still hold resident admissions.
 
 Level reductions are immediate; recovery climbs only one level per uninterrupted dwell: 240 seconds after heat, 60 after memory, and 30 after missing readings, source changes or sampling discontinuities.

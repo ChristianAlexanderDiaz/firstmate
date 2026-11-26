@@ -814,12 +814,19 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         job = self.job(f'while [ ! -e {marker} ]; do sleep 0.1; done')
         lease = wait_for(lambda: next((l for l in self.status().get("leases", {}).values()
                                       if l.get("group")), None))
+        queued_marker = self.root / "second-started"
+        second = self.job(f'touch {queued_marker}; while [ ! -e {marker} ]; do sleep 0.1; done')
+        wait_for(lambda: len(self.status().get("queue", [])) == 1)
+        sample = copy.deepcopy(SAMPLE)
+        sample["power"].update(source="ac", adapterWatts=94, isCharging=True)
+        self.write("input.json", sample)
+        wait_for(lambda: self.status().get("telemetry", {}).get("power") == sample["power"])
         owner_pid = self.server.pid
         inode = Path(self.config["socketPath"]).stat().st_ino
         result = self.call("install", "--destination", str(self.root / "installed"))
         self.assertEqual(result.returncode, 0, result.stderr)
         wait_for(lambda: (self.root / "installed/fm_resource.py").exists())
-        wait_for(lambda: self.status().get("pendingPolicy"))
+        wait_for(lambda: json.loads((self.root / "config.json").read_text()).get("policyMode") == "on")
         self.assertEqual(self.server.pid, owner_pid)
         self.assertIsNone(self.server.poll())
         self.assertEqual(Path(self.config["socketPath"]).stat().st_ino, inode)
@@ -827,8 +834,18 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         with (self.root / "state/owner.lock").open("a+") as lock:
             with self.assertRaises(BlockingIOError):
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        self.assertNotEqual(json.loads((self.root / "config.json").read_text()).get("policyMode"), "on")
+        self.assertFalse(self.status().get("pendingPolicy"))
+        clock = self.root / "clock"
+        for level in ("Reduced", "Normal", "Full"):
+            wait_for(lambda: self.status().get("policy", {}).get("nextStepUp"))
+            clock.write_text(str(int(clock.read_text()) + 31))
+            wait_for(lambda: self.status().get("policy", {}).get("level") == level)
+        wait_for(queued_marker.exists)
+        self.assertIsNone(job.poll())
+        self.assertIsNone(second.poll())
         marker.touch()
+        second.communicate(timeout=12)
+        self.assertEqual(second.returncode, 0)
         job.communicate(timeout=12)
         self.assertEqual(job.returncode, 0)
         wait_for(lambda: json.loads((self.root / "config.json").read_text()).get("policyMode") == "on")
@@ -3015,11 +3032,11 @@ class LevelOwnerTests(unittest.TestCase):
                               "start": "fixture-start"}, parent=99, **{"class": kind, "task": "fixture", **values})
         return token, result["state"]
 
-    def test_class_pair_limit_and_memory_reservations(self):
+    def test_builds_overlap_and_manual_emergency_cap_holds(self):
         self.assertEqual(self.acquire("build")[1], "leased")
         self.assertEqual(self.acquire("exclusive")[1], "queued")
         self.step(30)
-        self.assertEqual(self.acquire("test")[1], "leased")
+        self.assertEqual(self.acquire("build")[1], "leased")
         self.assertEqual(self.acquire("graph")[1], "queued")
         self.assertEqual(self.request("status")["availableHeavySlots"], 0)
 
@@ -3051,6 +3068,81 @@ class LevelOwnerTests(unittest.TestCase):
             self.sample["memory"]["freePercent"] = value
             self.step()
             self.assertEqual(len(self.request("status")["leases"]), 1)
+
+    def test_malformed_memory_holds_resident_and_compute_admission(self):
+        for memory in (None, [], "unknown"):
+            with self.subTest(memory=memory):
+                self.sample["memory"] = memory
+                self.step()
+                self.assertEqual(self.acquire("worker")[1], "queued")
+                self.assertEqual(self.acquire("test")[1], "queued")
+                self.assertEqual(self.request("status")["policy"]["level"], "Stop")
+                self.assertFalse(self.budget.data["leases"])
+
+    def nested(self, token, kind, memory):
+        return self.request("inherit", token=token,
+                            controller={"boot": "fixture-boot", "pid": 100, "start": "fixture-start"},
+                            **{"class": kind, "memoryMiB": memory})
+
+    def bind_nested(self, token, rss):
+        self.rows[100]["rssKiB"] = rss * 1024
+        lease = self.budget.data["leases"][token]
+        lease["group"] = {"pid": 100, "boot": "fixture-boot", "start": "fixture-start"}
+        lease["members"] = [lease["group"]]
+
+    def test_nested_growth_charges_only_unresident_memory(self):
+        token, state = self.acquire("build")
+        self.assertEqual(state, "leased")
+        self.bind_nested(token, 3072)
+        self.sample["memory"]["freePercent"] = 40
+        self.step()
+        self.assertTrue(self.nested(token, "build", 4096)["ok"])
+        self.assertEqual(self.budget.data["leases"][token]["memoryMiB"], 4096)
+
+    def test_nested_growth_renews_pending_memory_across_recovery(self):
+        token, state = self.acquire("test")
+        self.assertEqual(state, "leased")
+        self.bind_nested(token, 128)
+        self.step(62)
+        self.sample["memory"]["freePercent"] = 42
+        self.step()
+        self.assertTrue(self.nested(token, "test", 3072)["ok"])
+        increased = self.now
+        self.assertEqual(self.request("status")["policy"]["level"], "Full")
+        self.assertEqual(self.acquire("browser")[1], "queued")
+        self.budget.lock.close()
+        self.budget = resource.Budget(self.config, resource.config_digest(self.config))
+        self.addCleanup(self.budget.lock.close)
+        self.assertEqual(self.budget.data["leases"][token]["reservationUpdated"], increased)
+        self.step(92)
+        self.assertTrue(any(l["class"] == "browser" for l in self.budget.data["leases"].values()))
+
+    def test_exclusive_jobs_exclude_all_other_heavy_classes(self):
+        for kind in ("test", "graph", "browser", "build", "exclusive"):
+            with self.subTest(kind=kind):
+                token, state = self.acquire("exclusive")
+                self.assertEqual(state, "leased")
+                self.step(30)
+                queued, state = self.acquire(kind)
+                self.assertEqual(state, "queued")
+                self.request("cancel-queued", token=queued)
+                self.request("release", token=token)
+                token, state = self.acquire(kind)
+                self.assertEqual(state, "leased")
+                self.step(30)
+                queued, state = self.acquire("exclusive")
+                self.assertEqual(state, "queued")
+                self.request("cancel-queued", token=queued)
+                self.request("release", token=token)
+
+    def test_nested_builds_can_overlap_other_builds(self):
+        self.acquire("build")
+        self.step(30)
+        token, state = self.acquire("test")
+        self.assertEqual(state, "leased")
+        self.bind_nested(token, 0)
+        self.assertTrue(self.nested(token, "build", 3072)["ok"])
+        self.assertEqual(self.budget.data["leases"][token]["class"], "build")
 
     def test_cpu_headroom_and_idle_lease_alarm(self):
         self.config.pop("maxHeavyJobs")

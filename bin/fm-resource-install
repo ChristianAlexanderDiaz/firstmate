@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install the resource owner without dropping live leases.
 # Usage: fm-resource-install [--config PATH] [--destination DIR] [--wait]
-# Detailed preconditions and automatic deferred activation: --help.
+# Detailed preconditions and automatic activation: --help.
 # Never signals a legacy owner; an empty status snapshot is not an atomic lock.
 set -eu
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)

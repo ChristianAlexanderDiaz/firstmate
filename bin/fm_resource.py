@@ -1070,9 +1070,6 @@ class Budget:
         name, current, digest = load_config(pending)
         if digest != self.digest:
             raise Refusal("pending policy config changed externally; inspect before activation")
-        if current.get("policyMode", "shadow") != "on" and (self.data["queue"] or
-                any(l["class"] != "worker" for l in self.data["leases"].values())):
-            return
         already_enabled = current.get("policyMode", "shadow") == "on"
         current.update(policyMode="on", fullLevelEnabled=True)
         current.pop("maxHeavyJobs", None)
@@ -1127,22 +1124,27 @@ class Budget:
             return True
         if not self.host or not self.telemetry:
             return False
-        free = self.telemetry.get("memory", {}).get("freePercent")
+        memory = self.telemetry.get("memory")
+        if not isinstance(memory, dict):
+            return False
+        free = memory.get("freePercent")
         if type(free) not in (float, int) or not math.isfinite(free) or not 0 <= free <= 100:
             return False
         now = time.monotonic()
         pending = 0
         cpu = 0
+        candidate = request["memoryMiB"]
         for token, lease in self.data["leases"].items():
+            rss = sum(self.table[m["pid"]]["rssKiB"] / 1024
+                      for m in lease.get("members", []) if matches(m, self.table))
             if token == excluding:
+                candidate = max(0, candidate - rss)
                 continue
-            if now - lease["acquired"] < 60:
-                rss = sum(self.table[m["pid"]]["rssKiB"] / 1024
-                          for m in lease.get("members", []) if matches(m, self.table))
+            if now - lease.get("reservationUpdated", lease["acquired"]) < 60:
                 pending += max(0, lease["memoryMiB"] - rss)
             if lease["class"] != "worker" and not lease.get("idleCPU"):
                 cpu += lease.get("cpuWorkers", 1)
-        if free - 100 * (pending + request["memoryMiB"]) / self.host["memoryMiB"] < 30:
+        if free - 100 * (pending + candidate) / self.host["memoryMiB"] < 30:
             return False
         if request["class"] == "worker":
             return True
@@ -1156,7 +1158,7 @@ class Budget:
         if self.config.get("policyMode", "shadow") == "on":
             if self.decision["smallOnly"] and kind not in SMALL_CLASSES:
                 return False
-            if kind in LARGE_CLASSES and any(l["class"] in LARGE_CLASSES
+            if any(l["class"] != "worker" and (kind == "exclusive" or l["class"] == "exclusive")
                     for token, l in self.data["leases"].items() if token != excluding):
                 return False
         return True
@@ -1444,6 +1446,7 @@ class Budget:
                     not self.headroom_allows({"class": kind, "memoryMiB": memory}, excluding=token)):
                     raise Refusal("nested lease upgrade cannot fit; declare composite reservation at outer stage")
                 lease["memoryMiB"] = memory
+                lease["reservationUpdated"] = time.monotonic()
             if (self.config.get("policyMode", "shadow") == "on" and
                     kind in LARGE_CLASSES and lease["class"] != "exclusive"):
                 lease["class"] = kind
@@ -2205,7 +2208,7 @@ def install_owner(args, config_name, config, digest):
                                  sha256=hashlib.sha256(content).hexdigest(),
                                  destination=str(destination), configPath=config_name)
                     if result.get("state") == "accepted":
-                        print("Owner accepted installation; policy activates automatically when the queue is empty and only resident leases remain.")
+                        print("Owner accepted installation; headroom policy activates on handoff with live leases and queued clients preserved.")
                         return 0
                     reason = result.get("reason", "owner has not accepted installation")
                 except (Refusal, OSError, ValueError) as error:
@@ -2246,11 +2249,11 @@ def install_owner(args, config_name, config, digest):
 
 def parser():
     p = argparse.ArgumentParser(description="One per-user atomic host budget. No auto-start or unlimited fallback.",
-        epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; memoryMiB=10240 (legacy aggregate and individual reservation limit), maxResidentWorkers=12, recoverySeconds=120 (legacy dwell), graceSeconds=5. maxHeavyJobs is an optional positive emergency cap, omitted by default. policyMode=shadow|on defaults to shadow; fullLevelEnabled is boolean, defaults to true, and false limits enabled admission to one. Shadow preserves legacy decisions and logs proposed levels each tick in policy.jsonl. On admits by headroom: more than one heavy job needs nominal thermal and AC without battery discharge; fair thermal or battery admits at most one, warning memory admits small classes only, serious heat stops, critical/emergency heat cancels and latches. Battery below 30% stops and below 15% or closed lid on battery cancels. Swap growth >=256 MiB/60s stops admission. Free memory minus candidate reservation and the unresident part of reservations admitted within 60s must remain >=30% of physical RAM. max(load1, non-idle leased CPU workers) plus candidate workers must be <= cores minus 2. At most one build/exclusive and one new heavy admission every 30s. A heavy lease below 2% CPU for 10 minutes stops reserving CPU and emits one possibly-hung alert; its memory and process ownership remain. Recovery uses 240s heat, 60s memory, 30s missing/source dwell per level; AC wattage alone does not reset it. Class reservations use recorded RSS peaks plus 25%, rounded to 64 MiB, otherwise class defaults. Status includes headroom, clocked summary and reservationsMiB; availableHeavySlots=null means no count ceiling, not unlimited resources. Capacity increases can carry live leases; mode changes also allow resident-only leases with an empty queue and no capacity decrease. Other decreases require empty queue and ledger. Emergency evidence survives. install --help owns cooperative upgrade and deferred activation. All homes must select the same config via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger and 30-minute metrics ring are private atomic JSON; metrics flush every 30s, transitions append to transitions.jsonl. register-check --directory STATE requires an existing home state directory and registers a host-budget check; transitions --cursor PATH relays alarms and holds over ten minutes once per cursor; --start-at-end initializes without replay. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
+        epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; memoryMiB=10240 (legacy aggregate and individual reservation limit), maxResidentWorkers=12, recoverySeconds=120 (legacy dwell), graceSeconds=5. maxHeavyJobs is an optional positive emergency cap, omitted by default. policyMode=shadow|on defaults to shadow; fullLevelEnabled is boolean, defaults to true, and false limits enabled admission to one. Shadow preserves legacy decisions and logs proposed levels each tick in policy.jsonl. On admits by headroom: more than one heavy job needs nominal thermal and AC without battery discharge; fair thermal or battery admits at most one, warning memory admits small classes only, serious heat stops, critical/emergency heat cancels and latches. Battery below 30% stops and below 15% or closed lid on battery cancels. Swap growth >=256 MiB/60s stops admission. Free memory minus candidate reservation and the unresident part of reservations admitted or increased within 60s must remain >=30% of physical RAM. max(load1, non-idle leased CPU workers) plus candidate workers must be <= cores minus 2. Exclusive jobs run without other heavy jobs; at most one new heavy admission every 30s. A heavy lease below 2% CPU for 10 minutes stops reserving CPU and emits one possibly-hung alert; its memory and process ownership remain. Recovery uses 240s heat, 60s memory, 30s missing/source dwell per level; AC wattage alone does not reset it. Class reservations use recorded RSS peaks plus 25%, rounded to 64 MiB, otherwise class defaults. Status includes headroom, clocked summary and reservationsMiB; availableHeavySlots=null means no count ceiling, not unlimited resources. Capacity increases can carry live leases; mode changes also allow resident-only leases with an empty queue and no capacity decrease. Other decreases require empty queue and ledger. Emergency evidence survives. install --help owns cooperative upgrade and activation. All homes must select the same config via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger and 30-minute metrics ring are private atomic JSON; metrics flush every 30s, transitions append to transitions.jsonl. register-check --directory STATE requires an existing home state directory and registers a host-budget check; transitions --cursor PATH relays alarms and holds over ten minutes once per cursor; --start-at-end initializes without replay. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
     p.add_argument("--config")
     sub = p.add_subparsers(dest="action", required=True)
     q = sub.add_parser("install", help="install by atomic owner handoff or an empty offline ledger; never signal a legacy owner",
-        description="Installs into the private destination. Live owners must implement the upgrade protocol and every lease/queued client must advertise restartProtocol=1. The owner preserves its socket and ledger lock across exec, then enables policyMode=on and removes maxHeavyJobs at the first empty-queue, resident-only moment. Legacy running owners are refused even if a status snapshot is empty. Offline installation requires an empty ledger under its lifetime lock. No lease is killed or forgotten. --wait retries every 2s; stopping the installer does not cancel work. The installer does not start launchd or signal any service.")
+        description="Installs into the private destination. Live owners must implement the upgrade protocol and every lease/queued client must advertise restartProtocol=1. The owner preserves its socket and ledger lock across exec, then immediately enables policyMode=on and removes maxHeavyJobs with live leases and queued clients preserved. Legacy running owners are refused even if a status snapshot is empty. Offline installation requires an empty ledger under its lifetime lock. No lease is killed or forgotten. --wait retries every 2s; stopping the installer does not cancel work. The installer does not start launchd or signal any service.")
     q.add_argument("--destination", default=str(Path.home() / "Library/Application Support/firstmate-host-budget/bin"))
     q.add_argument("--wait", action="store_true")
     q = sub.add_parser("gaming-run", help="run with the home gaming gate only; no host policy required",
