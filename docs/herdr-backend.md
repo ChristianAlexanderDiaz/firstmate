@@ -533,19 +533,25 @@ Any of these preserves the candidate and lets session startup continue with at m
 
 ## Live no-mistakes pane
 
-While a ship has an attributed no-mistakes run, the existing watcher opens its live attach view in the same task tab as the chat.
+While a worker has a current-branch no-mistakes run, the existing watcher opens its live attach view in the same task tab as the chat.
 The view is named `no-mistakes` and runs in the task worktree.
-The default places chat above the view; a sufficiently wide pane can place it to the right.
-The layout is selected when the pane opens, without moving focus.
+The chat stays on the left and the view on the right, at every pane width, without moving focus.
+Existing views are moved to the right on the next sweep, including views created before this rule.
+This is enforced by Firstmate's code for every worker harness, independently of tool hooks and the stricter run-attribution checks used for supervision and cleanup.
 
 The viewer has its own presentation record and never replaces the chat endpoint used for steering, capture, or liveness.
 Repeated observations of the same run do not open another viewer.
+A pre-existing attach view is adopted only when its process arguments, working directory and tab prove its identity; an unknown neighbouring pane prevents an extra split and is never closed.
 A terminal run closes the viewer; a replacement run opens its own view.
+A view the user closes stays closed until that worker starts a different run.
 A relaunched chat closes any viewer left beside its earlier pane, and task teardown closes the remaining viewer.
 An unreadable run or pane preserves the current view until supervision can verify it again.
 Other runtime backends are unaffected.
+If a known run lacks a working right-hand view for thirty seconds after first observation, Firstmate reports the concrete failure once for that missed run and keeps retrying.
+An intentionally closed view is exempt from that alarm.
+The bounded diagnostic log retains failures between sweeps.
 
-[`bin/fm-nm-review-pane.sh`](../bin/fm-nm-review-pane.sh) owns the record, exact layout threshold, reconciliation entry points, and cleanup mechanics.
+[`bin/fm-nm-review-pane.sh`](../bin/fm-nm-review-pane.sh) owns the record, sweep, alarm, layout and cleanup mechanics.
 [`Runtime verification`](verification/runtime-backends.md#no-mistakes-pane-lifecycle) records the portable regression and live verification limits.
 ## Project groups
 
