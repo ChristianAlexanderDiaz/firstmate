@@ -292,7 +292,7 @@ cpu_count() {
 family_for_basename() {
   case "$1" in
     fm-arm-pretool-check.test.sh|fm-ask-user-authority.test.sh|\
-    fm-bearings-board.test.sh|fm-plan-board.test.sh|\
+    fm-bearings-board.test.sh|fm-board-live.test.sh|fm-plan-board.test.sh|\
     fm-brief.test.sh|fm-dod-lib.test.sh|fm-vendor-auth-probe.test.sh|\
     fm-calm-pi-extension.test.sh|fm-cd-pretool-check.test.sh|\
     fm-classify-decision-key.test.sh|fm-context-launch.test.sh|\
@@ -361,7 +361,7 @@ family_for_basename() {
       printf '%s\n' session-bootstrap
       ;;
     fm-afk-pi-herdr-return-e2e.test.sh|\
-    fm-bearings-board-lavish-live-e2e.test.sh|\
+    fm-bearings-board-lavish-live-e2e.test.sh|fm-board-live-lavish-live-e2e.test.sh|\
     fm-claude-stop-autoarm-live-e2e.test.sh|\
     fm-cmux-claude-composer-live-e2e.test.sh|\
     fm-composer-matrix-live-e2e.test.sh|\
@@ -1597,6 +1597,15 @@ families_for_changed_path() {
       ;;
     bin/fm-plan-board.sh|.agents/skills/crewmate-briefs/assets/plan-board-template.html|tests/assets/plan-board-sample.json|tests/fm-plan-board-submit.test.js)
       printf '%s\n' "__script__:fm-plan-board.test.sh"
+      ;;
+    tests/assets/board-render-harness.mjs)
+      printf '%s\n' "__script__:fm-bearings-board-render.test.sh"
+      ;;
+    bin/fm-board-live.sh|.agents/skills/crewmate-briefs/assets/board-live.js|tests/fm-board-live-page.test.js)
+      printf '%s\n' "__script__:fm-board-live.test.sh"
+      printf '%s\n' "__script__:fm-board-live-lavish-live-e2e.test.sh"
+      printf '%s\n' "__script__:fm-plan-board.test.sh"
+      printf '%s\n' "__script__:fm-bearings-board-render.test.sh"
       ;;
     bin/fm-bootstrap.sh)
       printf '%s\n' session-bootstrap

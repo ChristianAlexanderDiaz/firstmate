@@ -6,7 +6,9 @@
 #   fm-plan-board.sh lint <board.html>
 #
 # build validates fm-plan-board.v1, fills the shipped template, and lints before
-# atomically replacing the destination. It neither opens Lavish nor arms answers.
+# atomically replacing the destination, then stamps the live block so an open
+# page keeps its state line across a rebuild (bin/fm-board-live.sh owns that
+# block). It neither opens Lavish nor arms answers.
 # Run lint immediately before showing an existing board. Delivery and feedback
 # remain with the existing crew-hosted Lavish review workflow.
 #
@@ -42,7 +44,7 @@ if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then
   exit 0
 fi
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-exec python3 - "$ROOT/.agents/skills/crewmate-briefs/assets/plan-board-template.html" "$@" <<'PY'
+python3 - "$ROOT/.agents/skills/crewmate-briefs/assets/plan-board-template.html" "$@" <<'PY'
 import html
 from html.parser import HTMLParser
 import json
@@ -215,3 +217,4 @@ try:
 except (OSError, ValueError) as error:
     sys.exit('fm-plan-board: ' + str(error))
 PY
+[ "${1:-}" != build ] || "$ROOT/bin/fm-board-live.sh" stamp "$3" >/dev/null

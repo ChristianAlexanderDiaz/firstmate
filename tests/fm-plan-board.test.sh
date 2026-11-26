@@ -144,7 +144,8 @@ build(safe)
 parsed = Inspect()
 parsed.feed(board.read_text())
 assert safe['builder_detail'] in parsed.text
-assert len([tag for tag, _ in parsed.tags if tag == 'script']) == 1
+# The template's own script and the stamped live block are the only scripts.
+assert [attrs.get('data-fm-board-live') is not None for tag, attrs in parsed.tags if tag == 'script'] == [False, True]
 assert not any(tag == 'img' for tag, _ in parsed.tags)
 print('ok - builder detail stays escaped and outside the visible word budget')
 PY

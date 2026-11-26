@@ -52,13 +52,17 @@
 #            Malformed content or a declared/presented count mismatch yields
 #            complete: no; inspect that verdict, not just the command's exit
 #            status. A declared nonempty block parsed as empty is incomplete.
+# arm        Register and confirm the listener, then make the board's own state
+#            line say it is ready through bin/fm-board-live.sh, which owns that
+#            line and how an open page stays current.
 # poll       The registered listener command `arm` publishes, not a command to
 #            run in a conversational turn. It runs the published blocking poll
 #            and prints its response verbatim, absorbing only the one exact
 #            transient interruption described below. A staged reply still
 #            present when it starts is posted before the long-poll: through
 #            `lavish-axi reply` when supported, otherwise through the legacy
-#            best-effort `poll --agent-reply` path.
+#            best-effort `poll --agent-reply` path. Feedback that leaves the
+#            session open flips the board's state line to working.
 # deliver-reply
 #            Run by `fm-procevent.sh register-task` under the source lock, only
 #            after the task is eligible to own the board, with the listener argv
@@ -247,6 +251,18 @@ cmd_source_id() {
   fi
 }
 
+# The board's own state line belongs to bin/fm-board-live.sh. A failure there
+# never fails the caller: by then the listener is live or the result is already
+# on its way to the runner, and the line is a courtesy on top of both.
+board_live() {  # <ready|working> <artifact>
+  local out
+  if out=$("$SCRIPT_DIR/fm-board-live.sh" "$1" "$2" 2>&1); then
+    printf '%s\n' "$out"
+  else
+    printf 'note: the board state line was not updated: %s\n' "$out"
+  fi
+}
+
 cmd_arm() {
   local artifact='' task='' reply_file='' id real owner listening
   local -a listener=()
@@ -298,6 +314,7 @@ cmd_arm() {
     printf 'still-listening: %s\n' "$id"
     printf 'artifact: %s\n' "$real"
     [ -z "$task" ] || printf 'owner-task: %s\n' "$task"
+    board_live ready "$real"
     printf 'note: an earlier listener is still live and serving this board; this registration takes effect only after the source is retired and armed again\n'
     exit 0
   fi
@@ -313,6 +330,7 @@ cmd_arm() {
   printf 'armed: %s\n' "$id"
   printf 'artifact: %s\n' "$real"
   [ -z "$task" ] || printf 'owner-task: %s\n' "$task"
+  board_live ready "$real"
 }
 
 cmd_deliver_reply() {
@@ -422,7 +440,7 @@ poll_iteration_floor_wait() {
 cmd_poll() {
   local artifact=${1-} delay attempt=0 response cleanup_command rc filter_rc iteration_started
   local pipeline_status reply_file=''
-  local reply_text='' reply_pending=0
+  local reply_text='' reply_pending=0 delivered
   [ -n "$artifact" ] || usage
   if [ "$#" -eq 3 ] && [ "${2-}" = --agent-reply-file ]; then
     reply_file=$3
@@ -432,7 +450,8 @@ cmd_poll() {
   command -v lavish-axi >/dev/null 2>&1 || die "lavish-axi is not installed"
   delay=$(poll_retry_delay) || exit 1
   response=$(mktemp "${TMPDIR:-/tmp}/fm-lavish-poll.XXXXXX") || die "cannot stage the poll response"
-  printf -v cleanup_command 'rm -f -- %q' "$response"
+  delivered=$(mktemp "${TMPDIR:-/tmp}/fm-lavish-delivered.XXXXXX") || die "cannot stage the delivered response"
+  printf -v cleanup_command 'rm -f -- %q %q' "$response" "$delivered"
   # shellcheck disable=SC2064 # $cleanup_command must expand now, while the staged path is still set.
   trap "$cleanup_command" EXIT
   # Retirement stops this listener by signalling its process group, and bash runs
@@ -465,9 +484,9 @@ cmd_poll() {
       fi
     fi
     if [ "$reply_pending" -eq 1 ]; then
-      lavish-axi poll "$artifact" --agent-reply "$reply_text" | poll_response_filter "$response"
+      lavish-axi poll "$artifact" --agent-reply "$reply_text" | poll_response_filter "$response" | tee -- "$delivered"
     else
-      lavish-axi poll "$artifact" | poll_response_filter "$response"
+      lavish-axi poll "$artifact" | poll_response_filter "$response" | tee -- "$delivered"
     fi
     pipeline_status=("${PIPESTATUS[@]}")
     reply_pending=0
@@ -488,6 +507,12 @@ cmd_poll() {
       *) die "cannot classify the poll response" ;;
     esac
   done
+  # Feedback that leaves the session open means a worker is about to change
+  # the board, so its state line says so the moment the captain sends.
+  if [ "$(cmd_classify "$delivered" 2>/dev/null)" = feedback ] \
+    && ! (cmd_terminal "$delivered") >/dev/null 2>&1; then
+    board_live working "$artifact" >/dev/null 2>&1 || true
+  fi
   return "$rc"
 }
 

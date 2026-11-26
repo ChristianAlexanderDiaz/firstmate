@@ -10,6 +10,11 @@ set -u
 
 BOARD="$ROOT/bin/fm-bearings-board.sh"
 TMP_ROOT=$(fm_test_tmproot fm-bearings-board)
+# Every build here arms a real detached listener, and the shipped three-second
+# confirmation window is too short for a busy host: the arm then fails with
+# "listener is not running" although nothing is wrong. The wait ends the moment
+# the listener is live, so a generous window only removes that dependence.
+export FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=30
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 

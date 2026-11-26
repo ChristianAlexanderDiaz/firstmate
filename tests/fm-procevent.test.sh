@@ -313,6 +313,10 @@ printf 'session:\n  status: feedback\nprompts[1]{uid,prompt,selector,tag,text}:\
 wait_capture "$ATT" "$att_id" || fail 'board answer was not captured and released'
 mv "$ATT/state/procevent-inbox/$att_id.1.registration" "$ATT/registration"
 PATH="$ATT_BIN:$PATH" FM_HOME="$ATT" "$ROOT/bin/fm-procevent-lavish.sh" arm "$ATT_ART" --for board-worker >/dev/null || fail 'could not re-arm answered board'
+# The stand-in poll still holds its answer, so the re-armed listener captures
+# it again at once. Wait for that capture rather than assume it has landed: one
+# that arrives after the rebuild below would belong to the rebuilt board.
+wait_for "$ATT/state/procevent-inbox/$att_id.2.result" || fail 'the re-armed board listener never captured its round'
 # Remove dedup receipts to check each reminder after feedback.
 rm "$ATT/state/procevent/.$att_id.attention-owner-stopped" "$ATT/state/procevent/.$att_id.attention-unanswered"
 : > "$ATT/state/.wake-queue"
@@ -5248,7 +5252,9 @@ undisp_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$undisp_art")
 fm_test_track_procevent_home "$UNDISP/home"
 export READY_MARK="$UNDISP/mark" READY_RELEASE="$UNDISP/release"
 : > "$READY_MARK"
-PATH="$UNDISP/bin:$PATH" FM_HOME="$UNDISP/home" \
+# This arm must succeed, so it gets a window a busy host cannot outlast; the
+# wait ends as soon as the listener is live.
+PATH="$UNDISP/bin:$PATH" FM_HOME="$UNDISP/home" FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=30 \
   "$ROOT/bin/fm-procevent-lavish.sh" arm "$undisp_art" >/dev/null
 wait_for_lines "$READY_MARK" 1 || fail "the undisplaceable fixture's listener never ran"
 undisp_claim="$FM_PROCEVENT_CLAIM_ROOT/$undisp_id.claim"

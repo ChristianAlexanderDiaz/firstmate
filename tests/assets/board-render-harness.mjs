@@ -81,7 +81,8 @@ globalThis.document = {
 globalThis.window = {};
 globalThis.TextEncoder = TextEncoder;
 
-const script = html.slice(html.indexOf("<script>") + "<script>".length, html.lastIndexOf("</script>"));
+const scriptStart = html.indexOf("<script>") + "<script>".length;
+const script = html.slice(scriptStart, html.indexOf("</script>", scriptStart));
 new Function(script)();
 
 const badgesOf = (row) =>

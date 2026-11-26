@@ -1140,6 +1140,10 @@ test_scout_lavish_line_follows_presentation_floor() {
     brief="$case_dir/home/data/scout-lavish/brief.md"
     if [ "$expect" = hosting ]; then
       assert_grep "$hosting" "$brief" "$label: scout brief did not offer the Lavish review loop"
+      assert_grep 'Never open the session address in a browser of your own' "$brief" \
+        "$label: scout brief does not keep a second opener off the captain's board"
+      assert_grep 'changing that same board file' "$brief" \
+        "$label: scout brief does not say how a round is republished"
       assert_no_grep "$text_only" "$brief" "$label: scout brief withheld Lavish from a compatible build"
     else
       assert_grep "$text_only" "$brief" "$label: scout brief did not ask for a text report"
