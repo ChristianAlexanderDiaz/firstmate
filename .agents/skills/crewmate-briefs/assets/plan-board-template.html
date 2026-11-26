@@ -40,20 +40,24 @@ body { margin: 0; background: var(--page); }
 .bd-words { margin-top: 26px; padding-left: 18px; border-left: 2px solid var(--ink); }
 .bd-words p { font-size: 18.5px; line-height: 1.42; text-wrap: pretty; }
 .bd-words footer { margin-top: 8px; font-size: 14px; line-height: 1.4; color: var(--soft); }
-.bd-pic { margin-top: 28px; padding: 20px 18px; border-radius: 18px; background: var(--wash); }
+.bd-pic { container: pic / inline-size; margin-top: 28px; padding: 20px 18px; border-radius: 18px; background: var(--wash); }
 .bd figcaption { margin-bottom: 20px; font-size: 19px; line-height: 1.25; font-weight: 600; }
-/* One frame, the same size on every board, whatever kind of picture it holds. */
+/* One frame, the same size on every board. The picture inside is drawn by hand for that ticket, 640 by 216, and
+   takes every colour from the page, so it follows light and dark. */
 .bd-frame { height: 216px; display: flex; flex-direction: column; justify-content: center; min-width: 0; overflow: hidden; }
-.bd-chart { display: block; overflow: visible; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-.bd-chart .c-label { fill: var(--ink); font-size: 14px; font-weight: 600; }
-.bd-chart .c-note { fill: var(--soft); font-size: 13px; font-weight: 400; font-variant-numeric: tabular-nums; }
-.bd-chart .c-value { fill: var(--ink); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.bd-chart .c-value-missing { fill: var(--soft); font-size: 13px; font-weight: 400; }
-.bd-chart .c-track { fill: var(--page); }
-.bd-chart .c-bar, .bd-chart .c-dot { fill: var(--accent); }
-.bd-chart .c-shade { fill: var(--ring); }
-.bd-chart .c-tick { stroke: var(--ink); stroke-width: 2; stroke-linecap: round; }
-.bd-chart .c-empty { fill: none; stroke: var(--ring); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 1 7; }
+.bd-art { display: block; flex: none; width: 100%; height: 100%; color: var(--ink); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 13px; }
+.bd-art text { fill: var(--ink); }
+.bd-art .p-soft { fill: var(--soft); }
+.bd-art .p-strong { font-weight: 650; }
+.bd-art .p-num { font-variant-numeric: tabular-nums; }
+.bd-art .p-serif { font-family: ui-serif, "New York", "Iowan Old Style", "Palatino Linotype", Georgia, serif; font-weight: 600; }
+.bd-pan { display: none; margin-top: 10px; font-size: 13px; line-height: 1.4; color: var(--soft); }
+/* A frame too narrow to keep the labels readable shows the picture at full size and slides sideways. */
+@container pic (max-width: 520px) {
+  .bd-frame { display: block; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; }
+  .bd-art { width: 640px; height: 216px; }
+  .bd-pan { display: block; }
+}
 .bd-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
 .bd-facts strong, .bd-facts span { display: block; }
 .bd-facts strong { font-size: 24px; line-height: 1.2; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -164,6 +168,34 @@ body { margin: 0; background: var(--page); }
 .bd-all, .bd-jump { min-height: 44px; padding: 0; border: 0; background: none; font-size: 14.5px; text-decoration: underline; text-decoration-color: var(--ring); text-underline-offset: 4px; white-space: nowrap; }
 .bd-send-btn { min-height: 48px; padding: 0 28px; border: 0; border-radius: 14px; background: var(--accent); color: var(--on-accent); font-size: 16px; font-weight: 650; white-space: nowrap; }
 
+/* ---- The research brief: the answer, his question, one picture, then what we found, expect, could not check
+   and will watch. Every claim is its own row. The mark says how sure: a dot was seen, a dashed ring is a guess,
+   an open ring was not checked. ---- */
+.rb-lead { min-width: 0; }
+.rb-top .bd-title { font-size: 21px; line-height: 1.25; letter-spacing: 0; }
+.rb-answer { margin-top: 14px; font-family: ui-serif, "New York", "Iowan Old Style", "Palatino Linotype", Georgia, serif; font-size: 25px; line-height: 1.22; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
+.rb-tag { display: inline-block; margin-left: 12px; padding: 2px 10px; border: 1px dashed var(--ring); border-radius: 999px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 12.5px; line-height: 1.4; font-weight: 600; letter-spacing: 0; vertical-align: middle; white-space: nowrap; }
+.rb-topic { margin-top: 26px; }
+.rb-rows { margin-top: 12px; border-bottom: 1px solid var(--line); }
+.rb-row { position: relative; display: grid; grid-template-columns: 26px minmax(0, 1fr); column-gap: 10px; row-gap: 6px; padding: 14px 0; border-top: 1px solid var(--line); scroll-margin-top: 24px; }
+.rb-row::before { content: ""; grid-column: 1; grid-row: 1; justify-self: start; width: 11px; height: 11px; margin: 0.42em 0 0 1px; border: 1.5px solid var(--ink); border-radius: 50%; background: var(--ink); }
+.rb-guess::before { border-style: dashed; border-color: var(--ink); background: transparent; }
+.rb-gap::before { border-color: var(--ring); background: transparent; }
+.rb-main, .rb-side { grid-column: 2; min-width: 0; }
+.rb-claim { font-size: 16.5px; line-height: 1.45; text-wrap: pretty; }
+.rb-detail { margin-top: 4px; font-size: 14.5px; line-height: 1.45; color: var(--soft); text-wrap: pretty; }
+.rb-side { font-size: 14px; line-height: 1.45; color: var(--soft); overflow-wrap: anywhere; }
+.rb-side b { margin-right: 8px; color: var(--ink); font-size: 12.5px; font-weight: 650; }
+.rb-side a { color: inherit; text-decoration: underline; text-decoration-color: var(--ring); text-underline-offset: 3px; }
+.rb-side a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.rb-sure { margin-top: 12px; padding: 16px 18px; border-radius: 16px; background: var(--wash); font-size: 16px; line-height: 1.45; text-wrap: pretty; }
+.rb-sure b { display: block; font-size: 12.5px; font-weight: 650; }
+.rb-date::before { display: none; }
+.rb-date { grid-template-columns: minmax(0, 1fr); }
+.rb-date .rb-when, .rb-date .rb-main { grid-column: 1; }
+.rb-when { font-size: 15px; line-height: 1.45; font-weight: 650; font-variant-numeric: tabular-nums; }
+.bd[data-board="research"] .bd-page { padding-bottom: 56px; }
+
 /* ---- Under 980 px (a phone): the Scroll order. One column, questions last, send bar on the bottom edge. ---- */
 .bd-answer { display: contents; }
 .bd-call { margin-top: 46px; scroll-margin-top: calc(var(--top, 0px) + 24px); }
@@ -218,11 +250,39 @@ body { margin: 0; background: var(--page); }
   .bd-send { position: static; flex: none; margin: 0; padding: 12px 34px; background: transparent; }
   .bd-jump { display: none; }
 }
+/* A research brief that asks for a pick borrows the split above. One with nothing to pick has no right pane:
+   a single column from 980 px, and from 1160 px the answer sits beside its picture and each source beside its fact. */
+@container bd (min-width: 980px) {
+  .bd[data-board="research-pick"] .bd-answer { grid-row: 1 / span 6; }
+  .bd[data-board="research"] .bd-page { display: block; max-width: 808px; padding: 44px 48px 72px; }
+  .bd[data-board="research"] .bd-part { margin-top: 54px; padding: 0; }
+  .bd[data-board="research"] .rb-top { margin-top: 0; }
+  .bd[data-board="research"] .bd-extra { margin-top: 28px; }
+  .rb-top .bd-title { font-size: 23px; }
+  .rb-answer { margin-top: 16px; font-size: 30px; line-height: 1.2; }
+  .rb-claim { font-size: 17px; }
+  .rb-date { grid-template-columns: 190px minmax(0, 1fr); column-gap: 24px; }
+  .rb-date .rb-when { grid-row: 1; }
+  .rb-date .rb-main { grid-column: 2; grid-row: 1; }
+}
+@container bd (min-width: 1160px) {
+  .bd[data-board="research"] .bd-page { max-width: 1240px; }
+  .bd[data-board="research"] .rb-top { display: grid; grid-template-columns: minmax(0, 1fr) 688px; column-gap: 56px; align-items: start; }
+  .bd[data-board="research"] .rb-top .bd-head { grid-column: 1 / -1; }
+  .bd[data-board="research"] .rb-top .bd-pic { grid-column: 2; margin-top: 16px; }
+  .bd[data-board="research"] .rb-lead { grid-column: 1; }
+  .bd[data-board="research"] .rb-top:not(:has(.bd-pic)) .rb-lead { grid-column: 1 / -1; max-width: 760px; }
+  .bd[data-board="research"] .rb-row { grid-template-columns: 26px minmax(0, 64ch) minmax(0, 1fr); }
+  .bd[data-board="research"] .rb-side { grid-column: 3; grid-row: 1; padding-left: 36px; }
+  .bd[data-board="research"] .rb-side b { display: block; margin-right: 0; }
+  .bd[data-board="research"] .rb-date { grid-template-columns: 216px minmax(0, 64ch); column-gap: 10px; }
+  .bd[data-board="research"] .rb-sure, .bd[data-board="research"] .bd-note { max-width: calc(36px + 64ch); }
+}
 @media (prefers-reduced-motion: reduce) { .bd *, .bd *::before, .bd *::after { transition: none !important; animation: none !important; } }
 </style>
 </head>
 <body>
-<main class="bd"><div class="bd-page">
+<main class="bd" data-board="__FM_PLAN_KIND__"><div class="bd-page">
 __FM_PLAN_BOARD__
 </div></main>
 <script>
@@ -254,11 +314,12 @@ window.fmPlanBoard = {
   "use strict";
   var board = document.querySelector(".bd");
   var count = board.querySelector(".bd-count");
+  var pane = board.querySelector(".bd-answer");
   var calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   function glide() { return calm ? "auto" : "smooth"; }
 
   /* True when the questions sit in their own pane on the right (a laptop). False in the one-column order. */
-  function split() { return window.getComputedStyle(board.querySelector(".bd-answer")).position === "sticky"; }
+  function split() { return !!pane && window.getComputedStyle(pane).position === "sticky"; }
   function stepOf(q) { return board.querySelector('.bd-steps li[data-q="' + q + '"]'); }
   function questionOf(q) { return board.querySelector('.bd-q[data-i="' + q + '"]'); }
 

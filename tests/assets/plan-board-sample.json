@@ -5,13 +5,9 @@
   "tldr": "Reviews take too long to answer. This ticket makes each one open on a short overview and a clear recommendation.",
   "words": {"quote": "I just want to see the choice and why", "from": "You, when you sent this ticket"},
   "picture": {
-    "kind": "comparison",
     "caption": "Words before the first choice",
-    "bars": [
-      {"label": "Today", "note": "last five reviews", "value": "640", "share": 1},
-      {"label": "After", "value": "120", "share": 0.19},
-      {"label": "Phone", "value": "not measured yet", "share": null}
-    ],
+    "alt": "Today a review runs 640 words before the first choice, and after the change it runs 120.",
+    "file": "plan-board-sample-picture.svg",
     "facts": [{"big": "5", "label": "reviews looked at"}]
   },
   "plans": [
