@@ -3090,6 +3090,40 @@ class LevelOwnerTests(unittest.TestCase):
         lease["group"] = {"pid": 100, "boot": "fixture-boot", "start": "fixture-start"}
         lease["members"] = [lease["group"]]
 
+    def test_nested_reservations_enforce_individual_limit(self):
+        token, state = self.acquire("test")
+        self.assertEqual(state, "leased")
+        self.bind_nested(token, 0)
+        with self.assertRaises(resource.Refusal):
+            self.acquire("test", memoryMiB=12288)
+        with self.assertRaisesRegex(resource.Refusal, "invalid nested reservation"):
+            self.nested(token, "test", 12288)
+        self.assertEqual(self.budget.data["leases"][token]["memoryMiB"], 1024)
+        self.assertTrue(self.nested(token, "test", 10240)["ok"])
+        self.assertEqual(self.budget.data["leases"][token]["memoryMiB"], 10240)
+
+    def test_refreshed_automatic_reservation_cannot_exceed_individual_limit(self):
+        token, state = self.acquire("test")
+        self.assertEqual(state, "leased")
+        queued, state = self.acquire("test")
+        self.assertEqual(state, "queued")
+        self.bind_nested(token, 9216)
+        self.step(32)
+        status = self.request("status")
+        self.assertEqual(status["policy"]["level"], "Full")
+        self.assertEqual(status["reservationsMiB"]["test"], 11520)
+        self.assertNotIn(queued, status["leases"])
+        self.assertIn(queued, [q["token"] for q in status["queue"]])
+        with self.assertRaisesRegex(resource.Refusal, "invalid nested reservation"):
+            self.nested(token, "test", None)
+        self.assertEqual(self.acquire("graph")[1], "leased")
+
+    def test_adaptive_aggregate_can_exceed_individual_limit(self):
+        self.assertEqual(self.acquire("test", memoryMiB=6144)[1], "leased")
+        self.step(30)
+        self.assertEqual(self.acquire("test", memoryMiB=6144)[1], "leased")
+        self.assertEqual(sum(l["memoryMiB"] for l in self.request("status")["leases"].values()), 12288)
+
     def test_nested_growth_charges_only_unresident_memory(self):
         token, state = self.acquire("build")
         self.assertEqual(state, "leased")

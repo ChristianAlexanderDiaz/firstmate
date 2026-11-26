@@ -1185,6 +1185,8 @@ class Budget:
             worker = request["class"] == "worker"
             if request.get("automaticReservation"):
                 request["memoryMiB"] = self.reservation(request["class"])
+            if request["memoryMiB"] > self.config["memoryMiB"]:
+                continue
             if not worker and not self.class_allowed(request["class"]):
                 continue
             active_heavy = sum(l["class"] != "worker" for l in leases.values())
@@ -1436,7 +1438,7 @@ class Budget:
             memory = request.get("memoryMiB")
             minimum = self.reservation(kind)
             memory = minimum if memory is None else memory
-            if type(memory) is not int or memory < minimum:
+            if type(memory) is not int or not minimum <= memory <= self.config["memoryMiB"]:
                 raise Refusal("invalid nested reservation")
             if memory > lease["memoryMiB"]:
                 # Atomic in-place upgrade, never acquire a second slot while
