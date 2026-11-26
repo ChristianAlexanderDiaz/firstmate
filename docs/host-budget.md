@@ -27,15 +27,20 @@ For a LaunchAgent, use that exact argv, `RunAtLoad`, a conservative restart thro
 Keep the executable and configuration paths stable across Firstmate worktree cleanup.
 
 On owner startup, a capacity-only relaxation is accepted with live reservations: `maxResidentWorkers`, `memoryMiB` and `maxHeavyJobs` must all stay unchanged or increase, and `fullLevelEnabled` may change from false to true, with at least one increase and every other normalized policy field identical.
-Schema validation still applies, including the `maxHeavyJobs` range of 1 to 2.
+Schema validation still applies; `maxHeavyJobs` is now an optional emergency cap rather than the normal admission limit.
 Changing `policyMode` changes cancellation and recovery semantics, so it is never classified as a live capacity relaxation.
-To change policy mode or reduce capacity, drain all leases and queued requests, stop the owner, change only those capacity/policy settings, and restart it against the same ledger.
-The owner verifies the saved policy digest and empty ledger, preserves emergency evidence and recorded peaks, discards the old client compatibility chain, and records the change.
+Policy-mode changes can carry resident worker leases when the queue is empty and capacity does not decrease; reductions require an empty ledger and queue.
+For an empty-ledger policy change, the owner verifies the saved digest, preserves emergency evidence and recorded peaks, discards the old client compatibility chain, and records the change.
 Never delete the ledger to bypass a latch or a live reservation.
 The owner atomically saves the accepted normalized policy and digest with the carried-forward ledger, records one `host-budget-capacity-relaxed` transition naming the old and new capacities, and uses the new limits for admissions under the existing telemetry rules.
 Previously accepted policy digests remain compatible after a relaxation so running controllers can maintain their reservations across owner recovery.
 Editing the policy file does not reload a running owner; its replacement accepts a capacity relaxation without requiring workers to drain.
-Any decrease or policy-mode change with live reservations or queued requests retains the policy-change refusal; path changes and other non-capacity changes remain outside this configuration-change path.
+Other changes with live reservations or queued requests retain the policy-change refusal; path changes and other non-capacity changes remain outside this configuration-change path.
+
+Use `bin/fm-resource-install --help` for the installation command and atomic handoff preconditions.
+The installer can wait for safe installation and defer policy activation automatically without cancelling leases.
+A running legacy owner cannot provide an atomic handoff, even with an empty status snapshot; the installer reports that limitation and requires an offline empty ledger instead of signalling it.
+Upgraded clients tolerate bounded owner outages, and the replacement owner recovers the persisted process identities and reservations.
 A legacy ledger containing only a digest cannot prove a relaxation; first start the updated owner with the matching original policy to record it, or reconcile the ledger before changing policy.
 
 `bin/fm-resource-run status` gives the compact exception view, active reservations, pending queue, monitor timestamp and last cause, with a `summary` line containing the UTC clock, policy mode, level, reason, since time, waiting tasks and earliest step-up time.
@@ -155,26 +160,25 @@ If a policy log append fails or its retention limit is reached, the owner report
 Other persistence failures, including a full filesystem, can stop the owner and prevent the error marker from being saved.
 Such gaps make the observation window incomplete and unsuitable as rollout proof.
 The metrics ring and JSON status also include the policy decision.
-Retain at least 48 hours of this log for comparison before enabling `policyMode=on`; policy logs are separate from supervisor transition notifications.
-Replay the measured history, including available incident readings, against both policies and verify all safety stops before activation.
-Start enabled operation with `fullLevelEnabled=false` (the default), and consider Full only after a clean week and coordinated live calibration.
-The owner never changes either setting automatically.
+Use retained policy logs for comparison and replay of measured history, including available incident readings; policy logs are separate from supervisor transition notifications.
+Enabled operation uses live headroom by default; `fullLevelEnabled=false` remains a conservative single-job override.
+The explicit installation command enables the policy automatically when its documented safety conditions hold.
 
 With `policyMode=on`, one level sets admission and caps:
 
 | Level | Measurements | Admission |
 |---|---|---|
-| Full | Wall power, nominal or fair thermal, normal memory, Full enabled | Up to two heavy jobs, at most one build or exclusive job, four test workers |
-| Normal | Healthy battery operation with lid open, or wall power with Full disabled | One heavy job, four test workers on wall power or two on battery |
+| Full | Wall power, nominal thermal, normal memory, Full enabled | Heavy jobs admitted by measured headroom, at most one build or exclusive job, four test workers |
+| Normal | Healthy battery operation with lid open, fair thermal, or wall power with Full disabled | One heavy job, four test workers on wall power or two on battery |
 | Reduced | Memory warning without growing swap, or staged recovery | One test, graph or browser job, two test workers; builds and exclusive jobs wait |
 | Stop | Serious thermal, battery below 30%, missing/stale readings, growing swap during warning, sustained swap growth or AC discharge | No new compute; running jobs finish |
 | Stop and cancel | Critical thermal or memory, battery below 15%, emergency latch, lid closed without wall power | Running heavy jobs are cancelled using the configured grace period |
 
-`maxHeavyJobs` remains a ceiling: Full needs both `fullLevelEnabled=true` and `maxHeavyJobs=2` to expose two slots.
+The exact headroom thresholds, admission spacing, idle-lease accounting and optional emergency ceiling are owned by `bin/fm-resource-run --help`.
 Playwright stays at one worker at every admitted level.
 Worker caps are applied when a command starts; running tools retain their existing arguments, while new and nested commands receive the current owner cap without exceeding the outer command's cap.
 Nested work cannot upgrade a second small job into another build or exclusive job.
-No `memory.freePercent` reading is used.
+Admission combines measured free memory with pressure, swap, CPU load and reservations for recently admitted work whose RSS has not caught up.
 The resident-session exemption for warning memory pressure remains; sustained swap growth, unknown readings and critical pressure still hold resident admissions.
 
 Level reductions are immediate; recovery climbs only one level per uninterrupted dwell: 240 seconds after heat, 60 after memory, and 30 after missing readings, source changes or sampling discontinuities.

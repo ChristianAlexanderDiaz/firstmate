@@ -15,4 +15,4 @@ for dir in "${entries[@]}"; do
   clean=${clean:+$clean:}$dir
 done
 export PATH=$clean
-exec python3 "$ROOT/tests/fm-resource.test.py"
+exec python3 "$ROOT/tests/fm-resource.test.py" "$@"

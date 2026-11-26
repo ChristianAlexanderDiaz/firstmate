@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Install the resource owner without dropping live leases.
+# Usage: fm-resource-install [--config PATH] [--destination DIR] [--wait]
+# Detailed preconditions and automatic deferred activation: --help.
+# Never signals a legacy owner; an empty status snapshot is not an atomic lock.
+set -eu
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+if [ "${1:-}" = --config ]; then
+  if [ "$#" -lt 2 ]; then
+    printf '%s\n' 'fm-resource-install: --config requires a path' >&2
+    exit 2
+  fi
+  exec python3 "$root/fm_resource.py" --config "$2" install "${@:3}"
+fi
+exec python3 "$root/fm_resource.py" install "$@"
