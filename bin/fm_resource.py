@@ -1584,7 +1584,19 @@ def rpc_once(config, digest, *, wait=None, **request):
                 if not wait():
                     raise InterruptedError("budget wait cancelled") from None
                 if not reported:
-                    print("fm-resource-run: held: budget response delayed; continuing to wait", file=sys.stderr, flush=True)
+                    notice = "fm-resource-run: held: budget response delayed; continuing to wait"
+                    if not sys.stderr.isatty():
+                        print(notice, file=sys.stderr, flush=True)
+                    else:
+                        # Never interrupt an agent's terminal with wait notices.
+                        # Logging failure must not abandon a pending mutation.
+                        try:
+                            path = Path(config["stateDirectory"]) / "host-budget.log"
+                            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+                            with os.fdopen(fd, "a") as log:
+                                print(notice, file=log)
+                        except OSError:
+                            pass
                     reported = True
                 # Keep this connection and request: the owner may already have
                 # durably acquired or bound the lease. Never replay mutations.

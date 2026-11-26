@@ -297,6 +297,43 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(job.returncode, 0, err)
         self.assertNotIn("timed out", err)
 
+    def test_delayed_acquire_notice_never_reaches_terminal(self):
+        # TOOL-124: a held client's diagnostics must not corrupt the agent's
+        # terminal. A real PTY catches stderr writes as well as /dev/tty writes.
+        marker = self.root / "command-ran"
+        (self.root / "delay-response").write_text("acquire")
+        pid, master = pty.fork()
+        if pid == 0:
+            os.execv(sys.executable, [sys.executable, str(ROOT / "bin/fm_resource.py"),
+                "--config", str(self.root / "config.json"), "run", "--class", "test",
+                "--", "/usr/bin/touch", str(marker)])
+        try:
+            wait_for((self.root / "response-waiting").exists)
+            # Cross the real five-second socket deadline while the owner holds
+            # its acknowledgement. No command or terminal output is expected.
+            readable = select.select([master], [], [], 7)[0]
+            output = os.read(master, 65536) if readable else b""
+            self.assertEqual(output, b"", "held client wrote to its terminal")
+            self.assertFalse(marker.exists())
+            self.assertIn("held: budget response delayed; continuing to wait",
+                          (self.root / "state/host-budget.log").read_text())
+            (self.root / "release-response").touch()
+
+            def exited():
+                result = os.waitpid(pid, os.WNOHANG)
+                return result if result[0] else None
+
+            _, status = wait_for(exited)
+            pid = None
+            self.assertEqual(os.waitstatus_to_exitcode(status), 0)
+            self.assertTrue(marker.exists())
+        finally:
+            (self.root / "release-response").touch()
+            if pid is not None:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            os.close(master)
+
     def test_slow_bind_acknowledgement_starts_command_once(self):
         marker = self.root / "executions"
         (self.root / "delay-response").write_text("bind")
