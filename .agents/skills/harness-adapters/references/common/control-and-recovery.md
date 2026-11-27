@@ -37,9 +37,8 @@ The tool reference records repeat, acknowledgement, and clearing behavior, while
 
 ## Resume and recovery
 
-Native resume availability and form belong solely to the selected tool reference.
-Use native resume only when both that reference and the recovery procedure call for it.
-Deterministic relaunch instead trusts instructions on disk, not a private session, and never needs a session id printed at exit.
+Use `fm-control resume` for a stopped Claude or Codex board author; [agent control](../../../../../docs/agent-control.md) owns the saved-session contract, fallback and safety refusals.
+Other adapters continue through relaunch, which trusts instructions on disk and never needs a session id printed at exit.
 One relaunch-time exception is the runtime's own recorded session identity, used only to keep that runtime's status authority valid across the replacement - `../../../docs/agent-control.md` "Transactional relaunch" owns it.
 
 `../stuck-crewmate-recovery/SKILL.md` owns worker recovery and `../secondmate-provisioning/SKILL.md` owns secondmate recovery; both preserve recorded work.

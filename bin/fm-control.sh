@@ -4,6 +4,7 @@
 #
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
+#        fm-control.sh <task-id> resume
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
 #                                         [--claude-account <name>]
@@ -121,10 +122,11 @@
 # stays with bin/fm-teardown.sh, which owns the landed-work test. Independent
 # waiting-worker presentation cleanup is owned by bin/fm-presentation-close.sh.
 #
-# `resume` is not a verb: it is not deterministic across the verified adapters
-# (bin/fm-control-lib.sh's header owns that reasoning). `relaunch` covers the
-# same need for every adapter because the brief on disk, not a harness-private
-# session, is the durable instruction.
+# `resume` reopens the recorded Claude or Codex conversation, without submitting
+# the launch brief, changing its profile, or choosing a recent session. It
+# requires a stopped worker and the original account and directory. Exit 3
+# means that the saved conversation is unavailable before any launch; other
+# errors are safety or launch failures and must not trigger a blind fallback.
 #
 # Targeting is EXACT: only a bare task id with a state/<id>.meta record in
 # THIS home is accepted, and the record must pass the shared endpoint-identity
@@ -220,6 +222,9 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-captain-wait-lib.sh
 . "$SCRIPT_DIR/fm-captain-wait-lib.sh"
+# shellcheck source=bin/fm-agent-session-lib.sh
+. "$SCRIPT_DIR/fm-agent-session-lib.sh"
+RESUME_MODE=0
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -279,11 +284,7 @@ shift 2
 
 if ! fm_control_verb_allowed "$VERB"; then
   {
-    if [ "$VERB" = resume ]; then
-      echo "error: 'resume' is not a control verb: resuming an exited agent is not deterministic across the verified adapters (codex and grok need a session id printed at exit, opencode continues the most recent session for the cwd, and claude, pi, pi-signed, and kimi have no verified pane-resume contract). Use 'relaunch', which carries the brief plus a progress note into a fresh agent on any adapter."
-    else
-      echo "error: '$VERB' is not a control verb"
-    fi
+    echo "error: '$VERB' is not a control verb"
     echo "allowed verbs:"
     fm_control_verbs | sed 's/^/  /'
   } >&2
@@ -351,7 +352,7 @@ if [ -n "$control_want_value" ]; then
   die "--$control_want_value requires a value"
 fi
 
-if [ "$VERB" = relaunch ] && fm_sleep_active; then
+if { [ "$VERB" = relaunch ] || [ "$VERB" = resume ]; } && fm_sleep_active; then
   die "relaunch refused while sleep is active in $FM_HOME"
 fi
 
@@ -361,7 +362,7 @@ if [ "$VERB" != relaunch ]; then
     || die "--harness, --model, --effort, --claude-account, and --note/--usage-limit apply to 'relaunch' only"
 fi
 if [ "$CAPTAIN_WAIT" = 1 ]; then
-  case "$VERB" in exit|relaunch) ;; *) die "--captain-wait requires exit or relaunch" ;; esac
+  case "$VERB" in exit|relaunch|resume) ;; *) die "--captain-wait requires exit, resume or relaunch" ;; esac
   [ "$HARNESS_SET$MODEL_SET$EFFORT_SET$NOTE_SET$CLAUDE_ACCOUNT_SET$USAGE_LIMIT" = 000000 ] \
     || die "--captain-wait cannot be combined with overrides"
 fi
@@ -769,7 +770,7 @@ do_exit() {
   local state cmd hazard verdict composer_state cancel absence interrupt_result=not-needed dialog
   require_state_verified_backend exit
   state=$(agent_state)
-  if [ "$CAPTAIN_WAIT" = 1 ] && [ "$VERB" = relaunch ]; then
+  if [ "$CAPTAIN_WAIT" = 1 ] && { [ "$VERB" = relaunch ] || [ "$VERB" = resume ]; }; then
     fm_captain_wait_matches "$STATE/$ID.captain-wait" "$META" "$ID" \
       && [ "$state" = dead ] || die "parked worker identity or liveness changed before relaunch"
   fi
@@ -1302,12 +1303,14 @@ require_relaunch_backlog_eligible() {
 }
 
 do_relaunch() {
-  local exit_result state note_line
+  local exit_result state note_line elapsed composer
   local -a spawn_args
 
   require_relaunch_backlog_eligible
   require_state_verified_backend relaunch
-  resolve_relaunch_profile
+  if [ "$RESUME_MODE" = 0 ]; then
+    resolve_relaunch_profile
+  fi
   "$FM_ROOT/bin/fm-context-launch.sh" --config-dir "$CONFIG" --print-command "$TARGET_HARNESS" >/dev/null || return 1
 
   case "$KIND" in
@@ -1315,7 +1318,7 @@ do_relaunch() {
       RELAUNCH_BRIEF="$DATA/$ID/brief.md"
       [ -f "$RELAUNCH_BRIEF" ] \
         || die "task $ID has no instructions at $RELAUNCH_BRIEF; refusing to relaunch a worker with nothing to work from"
-      [ "$NOTE_SET" = 1 ] && [ -n "$NOTE" ] \
+      { [ "$RESUME_MODE" = 1 ] || { [ "$NOTE_SET" = 1 ] && [ -n "$NOTE" ]; }; } \
         || die "relaunch of a $KIND task requires --note (or --note-file): the replacement worker inherits the local copy but none of the conversation, so it must be told what happened"
       ;;
     secondmate)
@@ -1328,7 +1331,9 @@ do_relaunch() {
       ;;
   esac
 
-  if [ -n "$NOTE" ]; then
+  if [ "$RESUME_MODE" = 1 ]; then
+    note_line="native_session=$RESUME_SESSION"
+  elif [ -n "$NOTE" ]; then
     note_line="note_file=$NOTE_FILE"
   else
     note_line="note=none"
@@ -1338,7 +1343,7 @@ do_relaunch() {
   RELAUNCH_ACTIVE=1
   journal_write checkpoint "${CHECKPOINT_LINES[@]}" "$note_line"
 
-  record_note
+  [ "$RESUME_MODE" = 1 ] || record_note
   journal_write noted "${CHECKPOINT_LINES[@]}" "$note_line"
 
   [ "$USAGE_LIMIT" = 0 ] || fm_account_failover_require_current_turn
@@ -1354,7 +1359,8 @@ do_relaunch() {
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
   [ "$CLAUDE_ACCOUNT_SET" = 0 ] || spawn_args+=(--claude-account "$NEW_CLAUDE_ACCOUNT")
-  if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" FM_CAPTAIN_WAIT_RELAUNCH="${FM_CAPTAIN_WAIT_RELAUNCH:-}" \
+  if FM_CONTROL_RESUME_SESSION="${RESUME_SESSION:-}" \
+      FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" FM_CAPTAIN_WAIT_RELAUNCH="${FM_CAPTAIN_WAIT_RELAUNCH:-}" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
     # $T was resolved from the record before the launch. When the recorded
@@ -1385,13 +1391,70 @@ do_relaunch() {
   state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {
     die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
   }
+  if [ "$RESUME_MODE" = 1 ]; then
+    # A process that briefly exists and exits on a bad native session is not a
+    # resumed conversation. Require the native composer, not merely a PID.
+    elapsed=0
+    while :; do
+      state=$(agent_state)
+      [ "$state" = alive ] || die "saved-session launch for $ID did not remain alive (state: $state)"
+      composer=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) || composer=unknown
+      [ "$composer" != empty ] || break
+      awk -v e="$elapsed" -v t="$LAUNCH_WAIT" 'BEGIN { exit !(e < t) }' \
+        || die "saved-session launch for $ID did not reach its native composer; inspect the endpoint before recovery"
+      sleep "$POLL"
+      elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN { print e+p }')
+    done
+  fi
   RELAUNCH_AGENT_CONFIRMED=1
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
   if [ "$USAGE_LIMIT" = 0 ]; then
-    echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT${TARGET_CLAUDE_ACCOUNT:+ claude_account=$TARGET_CLAUDE_ACCOUNT} backend=$BACKEND endpoint=$T worktree=$WT"
+    if [ "$RESUME_MODE" = 1 ]; then
+      echo "resumed $ID session=$RESUME_SESSION harness=$HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
+    else
+      echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT${TARGET_CLAUDE_ACCOUNT:+ claude_account=$TARGET_CLAUDE_ACCOUNT} backend=$BACKEND endpoint=$T worktree=$WT"
+    fi
   fi
+}
+
+do_resume() {
+  local root state absence
+  require_state_verified_backend resume
+  case "$KIND:$HARNESS" in ship:claude|scout:claude|ship:codex|scout:codex) ;;
+    *) echo "resume unavailable: task $ID has no supported native conversation" >&2; return 3 ;;
+  esac
+  [ "$(fm_meta_get "$META" harness)" = "$HARNESS" ] || die "resume requires a canonical launch, not a raw command"
+  state=$(agent_state)
+  case "$state" in
+    dead|reused) ;;
+    missing)
+      absence=$(fm_control_endpoint_absence_verdict "$BACKEND" "$T" "$META" "$ID")
+      case "${absence%%$'\t'*}" in gone|dead|reused) ;; *) die "resume cannot prove task $ID's endpoint absent" ;; esac ;;
+    *) die "resume requires a stopped worker; task $ID reads $state" ;;
+  esac
+  RESUME_SESSION=$(fm_meta_get "$META" agent_session_id)
+  root=$(fm_meta_get "$META" agent_session_root)
+  if ! grep -q '^agent_session_root=' "$META" \
+    || ! fm_agent_session_file "$HARNESS" "$root" "$RESUME_SESSION" "$WT" >/dev/null; then
+    echo "resume unavailable: saved $HARNESS conversation for $ID is missing or unreadable" >&2
+    RESUME_SESSION=
+    return 3
+  fi
+  # Resume must never move the saved conversation into a successor's slot.
+  fm_treehouse_slot_owner_state "$WT" "$ID"
+  case "$FM_TREEHOUSE_SLOT_OWNER" in other|unsafe) die "resume cannot use task $ID's reassigned or unreadable local copy" ;; esac
+  case "$HARNESS" in
+    claude) if [ -n "$root" ]; then export CLAUDE_CONFIG_DIR=$root; else unset CLAUDE_CONFIG_DIR; fi ;;
+    codex) export CODEX_HOME=$root ;;
+  esac
+  TARGET_HARNESS=$HARNESS
+  TARGET_MODEL=$(fm_meta_get "$META" model); TARGET_MODEL=${TARGET_MODEL:-default}
+  TARGET_EFFORT=$(fm_meta_get "$META" effort); TARGET_EFFORT=${TARGET_EFFORT:-default}
+  TARGET_CLAUDE_ACCOUNT=$(fm_meta_get "$META" claude_account)
+  RESUME_MODE=1
+  do_relaunch
 }
 
 if [ "$CAPTAIN_WAIT" = 1 ]; then
@@ -1402,6 +1465,7 @@ fi
 # --- verbs ------------------------------------------------------------------
 
 case "$VERB" in
+  resume) do_resume ;;
   interrupt)
     state=$(agent_state)
     case "$state" in

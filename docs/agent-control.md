@@ -15,7 +15,7 @@ The failure repeated across harnesses and homes, and the workaround (remember to
 
 `bin/fm-control-lib.sh` is the single executable owner of three capability tables, which have no side effects, so they can be read as a contract:
 
-- The **verb allowlist**: `interrupt`, `exit`, `relaunch`.
+- The **verb allowlist**: `interrupt`, `exit`, `resume`, `relaunch`.
   There is no arbitrary-text and no generic raw-key entry point.
   A caller either names an allowlisted verb or is refused.
 - **Per-harness mechanics**: the key that cancels a running turn, how many times it must be delivered, whether the composer needs clearing afterwards, the command that exits the agent, and which task kinds the adapter is verified to run.
@@ -35,6 +35,7 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
 | `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. An endpoint reading `missing` goes through the same [absence proof](#reclaiming-a-task-whose-endpoint-is-gone) the reclaim uses before anything is claimed about it, and only Herdr can supply one: proven gone reports `endpoint-gone` (the agent went with it, and the endpoint this verb normally preserves did not survive), a pane that turns out to be there and idle is the ordinary `already-stopped`, one whose agent is back takes the ordinary interrupt-then-exit path. A tmux `missing` always refuses rather than claim a stop it cannot see. |
 | `relaunch` | Replace the running agent with a new one in the same worktree - and the same endpoint whenever that endpoint still exists - on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the endpoint the task's record now names, and that record names the harness that is actually running. |
+| `resume` | Reopen the exact saved Claude or Codex conversation of a stopped ship or scout, with its recorded model, effort, account root and working directory. | The replacement is alive, the native session identity is retained, and the original brief is neither rewritten nor resubmitted. |
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
 Interrupt never infers idle from key delivery alone; the [Polytoken adapter](../.agents/skills/harness-adapters/references/harness/polytoken.md) owns its acknowledged REST-settlement exception.
@@ -59,14 +60,29 @@ The clear is refused before anything is sent when the recorded backend cannot de
 Removing a worktree or discarding work stays with [`bin/fm-teardown.sh`](../bin/fm-teardown.sh), which owns the landed-work test.
 The independent [waiting-worker presentation cleanup](herdr-backend.md#waiting-worker-presentation) can close an exited worker's Herdr workspace while retaining its unlanded work.
 
-**`resume` is not a verb.**
-It is not deterministic across the verified adapters: codex, grok, gemini, devin, and commandcode resume only from a session id printed at exit, polytoken resumes only from a session id held in its own sessions registry, opencode continues the most recent session for the cwd, and claude, pi, pi-signed, omp, kimi, and agy have no verified general pane-resume contract.
-`relaunch` uses the brief on disk - not a harness-private session - as the durable instruction when the backend can prove the old agent stopped and the composer is empty; Devin on Herdr currently fails that composer check and refuses.
-A relaunch does take one session reference when the endpoint's own runtime recorded it - see [the relaunch transaction](#transactional-relaunch) - but that is a relaunch input, not a caller-facing verb.
+### Saved conversations
+
+Resume applies to canonical Claude and Codex ship/scout launches on the recovery-capable tmux and Herdr backends.
+It never selects a latest session, changes harness, supplies replacement instructions, or moves a conversation into a reassigned local copy.
+The native session fields and callback mechanics are owned by [`bin/fm-agent-session-lib.sh`](../bin/fm-agent-session-lib.sh) and [`bin/fm-agent-session-notify.sh`](../bin/fm-agent-session-notify.sh).
+Claude receives a UUID at launch; Codex supplies its thread UUID through its native completion notification, so the record is available after the initial turn.
+Each fresh relaunch replaces the native identity, while resume retains it across the new launch generation.
+Old Codex callbacks cannot overwrite a successor's record or signal its completion.
+
+When an answer arrives for a stopped board author, firstmate resumes that author before delivering the answer through the ordinary message channel.
+The parked captain-wait path does this automatically with its saved answer.
+Exit status 3 means the adapter or saved conversation is unavailable before launch; only that result permits a fresh relaunch with the answer and a progress note, and the task's status must say that the saved conversation was unavailable and a fresh agent is being started.
+Other failures require reconciliation, including a live or ambiguous endpoint, changed account pin, mismatched profile, and an unconfirmed launch.
+No account pin is edited, removed or bypassed to recover a conversation.
+Other adapters and secondmates retain their existing relaunch contract.
+
+The opt-in [`native recall guard`](../tests/fm-control-resume-live-e2e.test.sh) tests two conversation rounds, exit, resume and the first recalled answer inside a named Herdr lab.
+[`Runtime verification`](verification/runtime-backends.md) records the versions and exact scope actually exercised.
 
 ## Transactional relaunch
 
-`relaunch` is the only verb that changes durable records, so it runs as a transaction with a journal at `state/<id>.control-relaunch`, the prior record preserved beside it, and a ship or scout's prior instructions preserved when a progress note is appended.
+`relaunch` and `resume` share the transaction with a journal at `state/<id>.control-relaunch` and the prior record preserved beside it.
+A fresh relaunch also preserves a ship or scout's prior instructions when appending its progress note; resume leaves those instructions untouched.
 
 1. **Resolve the profile.**
    An explicit `--harness`, `--model`, or `--effort` wins.

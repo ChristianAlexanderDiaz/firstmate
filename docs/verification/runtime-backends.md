@@ -6,6 +6,38 @@ This record contains reusable version-scoped evidence for active runtime guarant
 The backend guides own current setup, safety boundaries, and limitations.
 Exact task chronology, branch names, temporary homes, local paths, process ids, thread ids, and delivery transcripts remain in private reports or PR evidence.
 
+## Saved Claude and Codex conversations
+
+Verified on 2026-11-27 with Claude Code 2.1.332 and codex-cli 0.171.0 on macOS (Darwin 27.0.0), using canonical ship workers in a named Herdr lab.
+The [saved-conversation contract](../agent-control.md#saved-conversations) owns supported adapters, account checks and fallback behavior.
+Refresh the token-spending proof with:
+
+```sh
+bin/fm-resource-run run --class test --memory-mib 2048 --task native-resume -- \
+  env FM_CONTROL_RESUME_LIVE=1 bash tests/fm-control-resume-live-e2e.test.sh
+```
+
+The guard starts throwaway workers, supplies two facts in separate conversation rounds, closes each through `fm-control exit`, and reopens its recorded UUID through `fm-control resume`.
+Claude used `sonnet` with low effort and a pinned account root; Codex used `gpt-5.6-luna` with low effort and its original `CODEX_HOME`.
+Both retained their original working directory and native session ID, and their launch instructions remained byte-identical across resume.
+Their first native assistant answers after resume were:
+
+```text
+Claude: RECALL launch code: cobalt-731; meeting place: orchard-29
+Codex: RECALL cobalt-731 orchard-29
+```
+
+The guard verifies these answers in each native transcript and rejects tool calls after the recall question.
+Neither fact appears in the launch instructions.
+The Codex worker launch disables its startup update prompt with the documented per-invocation `check_for_update_on_startup=false` setting, leaving installed versions and account settings untouched ([configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)).
+Guarded lab cleanup completed with the default-session tripwire unchanged.
+This proves native conversation recall on Herdr; tmux launch construction, account-pin refusal, generation-bound notification and board-answer routing have portable regression coverage, not a separate live tmux proof.
+It does not verify other harnesses, secondmates, or an actual browser board.
+
+```sh
+bin/fm-test-run.sh tests/fm-agent-session.test.sh tests/fm-control.test.sh tests/fm-control-relaunch.test.sh
+```
+
 ## Automatic compaction launch settings
 
 Verified on 2026-11-22 with Claude Code 2.1.330 and codex-cli 0.162.1 on Linux.
