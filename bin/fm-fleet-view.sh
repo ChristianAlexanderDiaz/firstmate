@@ -73,6 +73,14 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
     (.tasks[] | task_row(.))
    end),
   "",
+  "## Boards",
+  (if ((.boards // []) | length) == 0 then "No board sessions found."
+   else
+     "| Board | Session | Author | Worker |",
+     "| --- | --- | --- | --- |",
+     (.boards[] | "| \(if .url == "" then .artifact else .url end) | \(.status) | \(dash(.task)) | \(.author) |")
+   end),
+  "",
   "## Queued",
   (if ([.backlog.records[]? | select(.state == "queued")] | length) == 0 then
     "No queued backlog records found."

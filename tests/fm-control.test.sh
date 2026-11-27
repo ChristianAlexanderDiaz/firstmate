@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # fm-control.sh: the agent lifecycle CONTROL plane.
+# Pass --boards to refresh only board lifetime and pressure-exit regressions.
 #
 # These tests pin the control plane's observable behavior hermetically - a
 # stubbed session provider, no real agent - through the executable interface
@@ -1335,6 +1336,86 @@ SH
   chmod +x "$dir/fakebin/date"
 }
 
+test_board_author_never_parks_or_exits() {
+  local dir out rc=0
+  dir=$(new_case board-author)
+  captain_wait_fixture "$dir"
+  out=$(run_control "$dir" t1 exit --captain-wait) || fail "board initial observation: $out"
+  mkdir -p "$dir/home/state/procevent"
+  printf 'adapter=lavish\nowner_task=t1\nargv:\n%s\npoll\n%s\n' \
+    "$ROOT/bin/fm-procevent-lavish.sh" "$dir/board.html" > "$dir/home/state/procevent/lavish-test.source"
+  printf '11800\n' > "$dir/fake/clock"
+  out=$(run_control "$dir" t1 exit --captain-wait) || fail "board parking guard: $out"
+  [ ! -s "$dir/fake/literal" ] || fail 'captain-wait exited board author'
+  [ ! -e "$dir/home/state/t1.captain-wait" ] || fail 'board retained stale parking observation'
+  out=$(run_control "$dir" t1 exit) || rc=$?
+  [ "$rc" != 0 ] || fail 'ordinary exit stopped board author'
+  [ ! -s "$dir/fake/literal" ] || fail 'exit typed into board author pane'
+  alive_as "$dir" zsh
+  out=$(run_control "$dir" t1 exit) || fail "stopped board author blocked recovery's no-op exit: $out"
+  assert_contains "$out" already-stopped 'stopped author was not idempotent'
+  alive_as "$dir" claude
+  rm "$dir/home/state/procevent/lavish-test.source"
+  out=$(run_control "$dir" t1 exit) || fail "finished board could not exit: $out"
+  [ "$(literals "$dir")" = /exit ] || fail 'finished board author did not exit'
+  pass 'board author remains resident until review registration is retired'
+}
+
+test_pressure_exit_requires_evidence_and_oldest_idle_author() (
+  local dir out rc gen task
+  dir=$(new_case board-pressure)
+  export FM_PROCEVENT_CLAIM_ROOT="$dir/claims" LAVISH_AXI_STATE_DIR="$dir/lavish"
+  export FM_RESOURCE_CONFIG="$dir/pressure-config.json"
+  mkdir -p "$dir/lavish" "$dir/home/state/procevent"
+  for task in t1 t2; do
+    add_task "$dir" "$task" claude
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" "$task" --state idle --source fm-spawn --event seed)
+    printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/$task.meta"
+    printf 'adapter=lavish\nowner_task=%s\nargv:\n%s\npoll\n%s\n' \
+      "$task" "$ROOT/bin/fm-procevent-lavish.sh" "$dir/$task.html" > "$dir/home/state/procevent/lavish-$task.source"
+  done
+  printf 'fm-t1\nfm-t2\n' > "$dir/fake/windows"
+  alive_as "$dir" claude
+  # Fixture timestamps use actual valid busy records, then distinguish the two
+  # idle transitions. Pressure samples bind to this test host's boot and uptime.
+  sed -i.bak 's/ ts=[0-9]*/ ts=10000/' "$dir/home/state/t1.busy-state"
+  sed -i.bak 's/ ts=[0-9]*/ ts=20000/' "$dir/home/state/t2.busy-state"
+  write_pressure_sample() {
+    python3 - "$ROOT/bin" "$dir" "$1" "${2:-0}" <<'PY'
+import json, pathlib, sys, time
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+from fm_resource import boot_id, uptime
+directory = pathlib.Path(sys.argv[2])
+config = dict(schemaVersion=1, stateDirectory=str(directory / "budget"),
+              socketPath="/tmp/fm-board-fixture.sock", monitorPath=str(directory / "monitor.json"))
+(directory / "pressure-config.json").write_text(json.dumps(config))
+sample = dict(schemaVersion=1, lifecycle="running", bootSessionUUID=boot_id(),
+              timestamp=time.time()-int(sys.argv[4]), uptimeSeconds=uptime()-int(sys.argv[4]),
+              unavailable=[], memory=dict(pressure=sys.argv[3]), thermalState="nominal")
+(directory / "monitor.json").write_text(json.dumps(sample))
+PY
+  }
+  write_pressure_sample normal
+  rc=0; out=$(run_control "$dir" t1 exit --machine-pressure) || rc=$?
+  [ "$rc" != 0 ] && [ ! -s "$dir/fake/literal" ] || fail 'normal machine allowed pressure exit'
+  write_pressure_sample warning 20
+  rc=0; out=$(run_control "$dir" t1 exit --machine-pressure) || rc=$?
+  [ "$rc" != 0 ] && [ ! -s "$dir/fake/literal" ] || fail 'stale pressure allowed exit'
+  write_pressure_sample warning
+  rc=0; out=$(run_control "$dir" t2 exit --machine-pressure) || rc=$?
+  [ "$rc" != 0 ] && [ ! -s "$dir/fake/literal" ] || fail 'newer idle author exited before older one'
+  write_pressure_sample warning
+  printf 'board_pressure_closed_at=1\n' >> "$dir/home/state/t1.meta"
+  out=$(run_control "$dir" t1 exit --machine-pressure) || fail "oldest pressure exit failed: $out"
+  [ "$(literals "$dir")" = /exit ] || fail 'eligible pressure exit not sent'
+  grep -q '^board_pressure_closed_at=[0-9]' "$dir/home/state/t1.meta" || fail 'pressure closure not recorded for resume'
+  [ "$(grep -c '^board_pressure_closed_at=' "$dir/home/state/t1.meta")" = 1 ] || fail 'pressure exit duplicated its resume marker'
+  ! grep -q '^board_pressure_closed_at=1$' "$dir/home/state/t1.meta" || fail 'pressure exit retained an earlier closure timestamp'
+  [ -f "$dir/home/state/procevent/lavish-t1.source" ] || fail 'pressure exit retired the answer listener'
+  pass 'pressure exception requires current pressure, oldest idle author, and records resume intent'
+)
+
 test_captain_wait_parking_boundary_and_guards() {
   local dir out record variant gen
   dir=$(new_case captain-boundary)
@@ -1361,10 +1442,10 @@ test_captain_wait_parking_boundary_and_guards() {
       busy|unknown)
         "$ROOT/bin/fm-busy-event.sh" apply "$dir/home/state" t1 "$variant" --current-gen --source fm-recovery --event changed >/dev/null ;;
       firstmate) printf 'needs-decision [key=choice]: firstmate answer owed\n' > "$dir/home/state/t1.status" ;;
-      secondmate) sed -i 's/kind=ship/kind=secondmate/' "$dir/home/state/t1.meta" ;;
+      secondmate) sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/t1.meta" ;;
       generation)
         gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1 --state idle --source fm-spawn --event seed)
-        sed -i "s/^busy_gen=.*/busy_gen=$gen/" "$dir/home/state/t1.meta" ;;
+        sed -i.bak "s/^busy_gen=.*/busy_gen=$gen/" "$dir/home/state/t1.meta" ;;
       resumed)
         "$ROOT/bin/fm-busy-event.sh" apply "$dir/home/state" t1 busy --current-gen --source fm-recovery --event begin >/dev/null
         "$ROOT/bin/fm-busy-event.sh" apply "$dir/home/state" t1 idle --current-gen --source fm-recovery --event end >/dev/null ;;
@@ -1480,6 +1561,9 @@ test_captain_wait_answer_binding_and_interruption() {
   pass 'captain parking: answer identity, exactly one relaunch, durable answer across interruption'
 }
 
+test_board_author_never_parks_or_exits
+test_pressure_exit_requires_evidence_and_oldest_idle_author
+[ "${1-}" != --boards ] || exit 0
 test_captain_wait_parking_boundary_and_guards
 test_captain_wait_direct_hold_with_other_question
 test_captain_wait_rechecks_before_exit_submission

@@ -11,6 +11,9 @@
 # launch. An interrupted launch is never retried automatically: the existing
 # exited-wait recovery wake and once-per-gate marker request reconciliation.
 # No lifecycle implementation lives here; exit/relaunch remain fm-control's.
+# STATE and VERB are fm-control's caller-owned globals, not the local lowercase
+# variables used while parsing journal/status fields.
+# shellcheck disable=SC2153
 
 fm_captain_wait_meta() {  # <meta>
   sed '/^busy_gen=/d' "$1"
@@ -106,6 +109,7 @@ fm_captain_wait_closed_relaunch() {  # <task> <row>
 # worker or exit after its decision was answered during composer inspection.
 fm_captain_wait_exit_guard() {
   local record="$STATE/$ID.captain-wait" decision busy
+  python3 "$SCRIPT_DIR/fm-board.py" guard "$STATE" "$ID" >/dev/null 2>&1 || return 1
   fm_captain_wait_matches "$record" "$META" "$ID" || return 1
   [ "$(fm_busy_current_gen "$STATE" "$ID" 2>/dev/null)" = "$(jq -r '.gen' "$record")" ] || return 1
   busy=$(fm_busy_classify_meta "$META" "$ID" "$STATE")
@@ -158,8 +162,10 @@ fm_captain_wait_control() {
       # replacement generation resolve interruption; never launch twice blindly.
       json=$(jq --arg answer "$answer" '.answer=$answer | .phase="launching"' "$record") || return 1
       fm_captain_wait_save "$record" "$json" || return 1
+      # shellcheck disable=SC2034 # Consumed by fm-control's do_relaunch.
       NOTE="Resume this task after its captain wait. The recorded answer is:
 $answer"
+      # shellcheck disable=SC2034 # Consumed by fm-control's do_relaunch.
       NOTE_SET=1
       if [ -f "$CONFIG/$FM_WORKER_ACCOUNT_FAILOVER_FILE" ]; then
         fm_worker_account_decision_start "$CONFIG" || return 1
@@ -172,6 +178,12 @@ $answer"
       ;;
   esac
   [ "$VERB" = exit ] || return 0
+  # A board author stays resident even between listener rounds. Discard the
+  # old idle observation so finishing a board cannot trigger immediate parking.
+  if ! python3 "$SCRIPT_DIR/fm-board.py" guard "$STATE" "$ID" >/dev/null 2>&1; then
+    rm -f "$record"
+    return 0
+  fi
   gen=$(fm_busy_current_gen "$STATE" "$ID" 2>/dev/null) || return 0
   busy=$(fm_busy_classify_meta "$META" "$ID" "$STATE")
   if [ "${busy%% *}" != idle ] || ! decision=$(fm_captain_wait_decision "$ID"); then

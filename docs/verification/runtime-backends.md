@@ -3196,3 +3196,21 @@ Without Firstmate's hooks, Herdr reported the question panel as `blocked`, which
 This live proof covers the watcher and queue boundary; it does not establish live daemon-consumer delivery.
 `bin/fm-test-run.sh tests/fm-daemon.test.sh` exercises that consumer routing separately with portable regressions for busy escalation and busy-bookkeeping failures in away and quiet mode.
 Repeat the hooked-worker check above before publication if watcher or task-inbox busy code changes; `bin/fm-test-run.sh tests/fm-task-inbox.test.sh` refreshes the portable ladder regressions.
+
+## Board author lifetime
+
+Verified on 2026-11-27 with Lavish 0.1.86, Herdr 0.9.3, and codex-cli 0.171.0 on macOS.
+Refresh with `bash bin/fm-test-run.sh tests/fm-board-live-e2e.test.sh` under the configured host budget.
+The test uses a throwaway home, private Lavish store and port, and a named Herdr lab with the default-session tripwire; it opens no browser and submits no model prompt.
+Its private Codex profile disables daemon auto-start, keeping the author inside the lab lifetime.
+
+```text
+ok - real Lavish listener protects a live Codex author until terminal acknowledgement
+versions: lavish=0.1.86 herdr=0.9.3 codex=codex-cli 0.171.0
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=24675
+```
+
+The guard refused ordinary exit while the real author and listener were alive, then released protection after session end and terminal acknowledgement.
+The fleet projection reported the author alive before finish and the board closed afterward, and lab cleanup passed the default-session tripwire.
+This does not establish answer latency or pressure-driven closure against a real worker.
+`tests/fm-board.test.sh` covers cross-home inventory and cleanup protection, and `tests/fm-control.test.sh --boards` covers captain-wait parking and explicit pressure ordering through fixture transports.

@@ -207,6 +207,8 @@ test_ship_modes_generate_clean_briefs() {
     expect_code 0 "$status" "fm-brief.sh $id --mode $mode should exit 0"
     brief="$home/data/$id/brief.md"
     assert_present "$brief" "$id: brief was not scaffolded"
+    assert_grep 'read the project vision document and the full task ticket' "$brief" 'ship omitted dispatch decision inputs'
+    assert_grep 'Do not exit or treat an unanswered board as completed work.' "$brief" 'ship omitted author lifetime'
     assert_grep "# Definition of done" "$brief" "$id: brief missing Definition of done section"
     grep -qx "Delivery contract: mode=$mode" "$brief" \
       || fail "$id: brief did not record its machine-readable delivery contract line"
@@ -222,8 +224,10 @@ test_ship_modes_generate_clean_briefs() {
       "$id: brief missing nonterminal working:/setup-complete gate protection"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
   done
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-scout-a4 some-proj --scout >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-scout-a4 some-proj --scout --needs-board >/dev/null 2>&1
   brief="$home/data/brief-scout-a4/brief.md"
+  assert_grep 'Board required: yes' "$brief" 'scout omitted dispatch board declaration'
+  assert_grep 'read the project vision document and the full task ticket' "$brief" 'scout omitted dispatch decision inputs'
   assert_grep '[wait=captain]' "$brief" "scout brief missing opt-in wait owner instruction"
   assert_grep "When a declared \`[wait=captain]\` wait ends after the captain's answer, append \`resolved [key=<slug>] [at=<epoch>]: {how it was answered}\` yourself with that wait's key, or a keyless \`resolved\` line for a keyless pause." "$brief" \
     "scout brief did not close an answered captain wait"

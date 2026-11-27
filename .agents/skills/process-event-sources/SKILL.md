@@ -99,7 +99,7 @@ Two rules the commands cannot enforce for you:
 ## Handling a wake
 
 `process-event board needs attention` (queue keys `procevent:<source-id>:attention:<reason>`)
-: Read the queued payload for the board and task: an owner-stopped notice calls for a holding reply within five minutes and moving the work; an unanswered notice calls for a two-line recap or close.
+: Read the queued payload for the board and task: an owner-stopped notice calls for resuming the same author session through `fm-control.sh <task-id> resume` before ordinary answer delivery; an unanswered notice calls for a two-line recap or close.
 : Recheck the board's registration, captured results, and owner liveness before acting, since an answer, close, or recovery may have arrived after the notification was queued.
 : These are reminders, not captured results; acknowledge the ordinary drain row, with no synthetic `handled` call, reply, or ownership transfer performed by the monitor.
 : The adapter's `attention` command owns eligibility and timing; existing board ownership and recovery rules still apply.

@@ -462,6 +462,7 @@ fi
 fm_lease_guard "$ID" "teardown (fm-teardown)"
 
 META="$STATE/$ID.meta"
+python3 "$SCRIPT_DIR/fm-board.py" guard "$STATE" "$ID" || exit $?
 TREEHOUSE_PROJECT_LOCK=
 TREEHOUSE_PROJECT_LOCK_HELD=0
 TREEHOUSE_SLOT_LOCK_REQUIRED=0
@@ -544,6 +545,7 @@ fm_lock_try_acquire "$CONTROL_LOCK" || {
   exit 1
 }
 CONTROL_LOCK_HELD=1
+python3 "$SCRIPT_DIR/fm-board.py" guard "$STATE" "$ID" || exit $?
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never tear
 # down a worktree (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -3028,6 +3030,7 @@ preflight_descendant_task_locks() {
       return 1
     fi
     DESCENDANT_LOCK_PATHS+=("$control_lock")
+    python3 "$SCRIPT_DIR/fm-board.py" guard "$state" "$task_id" || return 1
     if ! fm_lock_try_acquire "$meta_lock"; then
       echo "REFUSED: descendant task $task_id has a metadata update in flight (metadata lock is held); forced teardown changed nothing" >&2
       return 1

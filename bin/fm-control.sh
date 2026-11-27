@@ -10,6 +10,11 @@
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> relaunch --usage-limit
 #        fm-control.sh <task-id> exit|relaunch --captain-wait
+#        fm-control.sh <task-id> exit --machine-pressure
+# --machine-pressure is the sole board-author exit exception: fresh same-boot
+# RAM/thermal pressure and the longest-idle live author are required. It records
+# board_pressure_closed_at in task metadata after verified exit. On an answer,
+# use `resume` (the saved-session path), then ordinary fm-send delivery.
 #
 # --captain-wait is the watcher-owned conditional parking operation;
 # bin/fm-captain-wait-lib.sh owns eligibility, journal and answer binding.
@@ -264,6 +269,9 @@ control_cleanup() {
     CONTROL_LOCK_HELD=0
     fm_lock_release "$CONTROL_LOCK" || true
   fi
+  if [ -n "${BOARD_PRESSURE_LOCK:-}" ]; then
+    fm_lock_release "$BOARD_PRESSURE_LOCK" || true
+  fi
   if declare -F fm_lease_guard_release >/dev/null 2>&1; then
     fm_lease_guard_release || true
   fi
@@ -302,6 +310,8 @@ NEW_CLAUDE_ACCOUNT=
 CLAUDE_ACCOUNT_SET=0
 USAGE_LIMIT=0
 CAPTAIN_WAIT=0
+MACHINE_PRESSURE=0
+BOARD_PRESSURE_LOCK=
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -326,6 +336,7 @@ for control_arg in "$@"; do
   case "$control_arg" in
     --usage-limit) USAGE_LIMIT=1 ;;
     --captain-wait) CAPTAIN_WAIT=1 ;;
+    --machine-pressure) MACHINE_PRESSURE=1 ;;
     --harness) control_want_value=harness ;;
     --harness=*) NEW_HARNESS=${control_arg#--harness=}; HARNESS_SET=1 ;;
     --model) control_want_value=model ;;
@@ -365,6 +376,9 @@ if [ "$CAPTAIN_WAIT" = 1 ]; then
   [ "$HARNESS_SET$MODEL_SET$EFFORT_SET$NOTE_SET$CLAUDE_ACCOUNT_SET$USAGE_LIMIT" = 000000 ] \
     || die "--captain-wait cannot be combined with overrides"
 fi
+if [ "$MACHINE_PRESSURE" = 1 ]; then
+  [ "$VERB" = exit ] && [ "$CAPTAIN_WAIT" = 0 ] || die '--machine-pressure requires an explicit exit without captain-wait'
+fi
 if [ "$USAGE_LIMIT" = 1 ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] \
     && [ "$NOTE_SET" = 0 ] && [ "$CLAUDE_ACCOUNT_SET" = 0 ] \
@@ -399,6 +413,12 @@ trap control_cleanup EXIT
 fm_lock_try_acquire "$CONTROL_LOCK" \
   || die "another lifecycle action is already running for task $ID"
 CONTROL_LOCK_HELD=1
+if [ "$MACHINE_PRESSURE" = 1 ]; then
+  pressure_lock=$(python3 "$SCRIPT_DIR/fm-board.py" pressure-lock "$STATE") || exit 1
+  mkdir -p "$(dirname "$pressure_lock")"
+  fm_lock_try_acquire "$pressure_lock" || die 'another board pressure exit is in progress'
+  BOARD_PRESSURE_LOCK=$pressure_lock
+fi
 # do_exit runs in a command substitution. That subshell does not run this
 # EXIT trap, so the parent has to hold the path the trap removes. Set it
 # only once the lock is held: a process that loses the lock runs the same
@@ -763,6 +783,14 @@ wait_agent_exit() {
   return 1
 }
 
+board_exit_guard() {
+  if [ "$MACHINE_PRESSURE" = 1 ]; then
+    python3 "$SCRIPT_DIR/fm-board.py" pressure-guard "$STATE" "$ID"
+  else
+    python3 "$SCRIPT_DIR/fm-board.py" guard "$STATE" "$ID"
+  fi
+}
+
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
@@ -823,13 +851,17 @@ do_exit() {
       ;;
     *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to send a lifecycle command into an unattributed endpoint" ;;
   esac
+  # A dead author's no-op exit must still permit saved-session recovery (or
+  # its explicit unavailable-session fallback). Only stopping a live author
+  # needs the board lifetime guard.
+  board_exit_guard || return $?
   if [ "$CAPTAIN_WAIT" = 1 ] && [ "$VERB" = exit ]; then
     fm_captain_wait_exit_guard || die "captain wait or idle evidence changed before exit"
   fi
   # A busy agent is interrupted first before the exit command is submitted.
   case "$(busy_verdict)" in
     busy*)
-      [ "$CAPTAIN_WAIT" = 0 ] || die "worker became busy before parking"
+      [ "$CAPTAIN_WAIT$MACHINE_PRESSURE" = 00 ] || die "worker became busy before parking"
       cancel=$(deliver_interrupt) || return $?
       state=$(agent_state)
       case "$state" in
@@ -877,6 +909,7 @@ do_exit() {
   if [ "$CAPTAIN_WAIT" = 1 ] && [ "$VERB" = exit ]; then
     fm_captain_wait_exit_guard || die "captain wait or idle evidence changed before submission"
   fi
+  board_exit_guard || return $?
   verdict=$(fm_backend_send_text_submit "$BACKEND" "$T" "$cmd" "$EXIT_RETRIES" "$POLL" 1.2 "$LABEL") \
     || die "the exit command could not be sent to task $ID on $BACKEND"
   [ "$verdict" != send-failed ] \
@@ -1420,6 +1453,22 @@ case "$VERB" in
     ;;
   exit)
     result=$(do_exit)
+    if [ "$MACHINE_PRESSURE" = 1 ] && [ "$result" = stopped ]; then
+      pressure_meta_lock=$(fm_meta_lock_path "$META")
+      fm_lock_acquire_wait "$pressure_meta_lock"
+      pressure_meta_tmp=$(mktemp "$STATE/.$ID.meta.pressure.XXXXXX") || {
+        fm_lock_release "$pressure_meta_lock"
+        exit 1
+      }
+      if ! { sed '/^board_pressure_closed_at=/d' "$META" > "$pressure_meta_tmp" \
+        && printf 'board_pressure_closed_at=%s\n' "$(date +%s)" >> "$pressure_meta_tmp" \
+        && mv "$pressure_meta_tmp" "$META"; }; then
+        rm -f "$pressure_meta_tmp"
+        fm_lock_release "$pressure_meta_lock"
+        die 'author stopped but its pressure-resume marker could not be saved'
+      fi
+      fm_lock_release "$pressure_meta_lock"
+    fi
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)

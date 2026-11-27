@@ -10,10 +10,16 @@
 #   fm-procevent-lavish.sh reconciles <result-file>
 #   fm-procevent-lavish.sh read <result-file>
 #   fm-procevent-lavish.sh attention <source-id>
+#   fm-procevent-lavish.sh author-state <state-directory> <task-id>
+#   fm-procevent-lavish.sh idle-since <state-directory> <task-id>
+#   fm-procevent-lavish.sh finish <artifact.html> --for <task-id>
 #   fm-procevent-lavish.sh source-id <artifact.html>
 #   fm-procevent-lavish.sh retire <artifact.html>
 #   fm-procevent-lavish.sh poll <artifact.html> [--agent-reply-file <path>]
 #   fm-procevent-lavish.sh deliver-reply poll <artifact.html> --agent-reply-file <path>
+#
+# finish ends only the named author's session and
+# leaves its final acknowledgement to the normal terminal-round path.
 #
 # classify   Print the lifecycle state a handler should act on: feedback, ended,
 #            waiting, disconnected, missing, or unknown.
@@ -22,8 +28,8 @@
 #            5 seconds), so an eligible stopped owner can be reported on the next
 #            cycle while supervision is running.
 #            Emit owner-stopped for a dead/missing worker and unanswered after
-#            172800 seconds from registration. Captured feedback suppresses
-#            the unanswered reminder; a terminal result
+#            172800 seconds from registration or the latest captured feedback.
+#            Repeat the recap-or-close reminder every two days; a terminal result
 #            suppresses both, even before acknowledgement.
 #            Reconcile deduplicates each reminder per board generation. Unknown
 #            liveness never proves death; backends without recovery-grade agent
@@ -281,13 +287,13 @@ cmd_arm() {
   [ -z "$reply_file" ] || listener+=(--agent-reply-file "$reply_file")
   if [ -n "$task" ]; then
     FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" register-task lavish "$id" "$task" -- \
-      "${listener[@]}" || exit 1
+      "${listener[@]}" || exit $?
   else
     # This adapter's own listener command, which runs the plain blocking form
     # with no --timeout-ms so completion is a server event, and absorbs only
     # the exact transient interruption.
     FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" register lavish "$id" \
-      -- "${listener[@]}" || exit 1
+      -- "${listener[@]}" || exit $?
   fi
   # Registration is not a running listener. Readiness is the process-event
   # owner's evidence for this generation; a miss retires a source that never
@@ -327,6 +333,57 @@ cmd_retire() {
   [ -n "$artifact" ] || usage
   id=$(cmd_source_id "$artifact") || exit 1
   "$SCRIPT_DIR/fm-procevent.sh" retire "$id"
+}
+
+# The author explicitly finishes an accepted plan; the existing listener captures
+# End and retains ownership until its terminal acknowledgement. Never infer plan
+# acceptance from arbitrary freeform comments or from an empty feedback round.
+cmd_finish() {
+  [ "$#" -eq 3 ] && [ "$2" = --for ] || usage
+  local id record owner
+  id=$(cmd_source_id "$1") || return 1
+  record="${FM_STATE_OVERRIDE:-$FM_HOME/state}/procevent/$id.source"
+  owner=$(sed -n '/^argv:$/q; s/^owner_task=//p' "$record") || return 1
+  [ -n "$owner" ] && [ "$owner" = "$3" ] || die 'only the registered author may finish this board'
+  apply_session_port "$1"
+  lavish-axi end "$1"
+}
+
+# The same recovery-grade backend verdict is used by attention and the fleet
+# projection. Unknown transports never turn into a false alive/dead assertion.
+cmd_author_state() {
+  local state=${1:?state required} task=${2:?task required} backend target
+  fm_pr_task_id_valid "$task" || return 1
+  # shellcheck source=bin/fm-backend.sh
+  . "$SCRIPT_DIR/fm-backend.sh"
+  if [ ! -e "$state/$task.meta" ]; then
+    printf 'missing\n'
+  elif fm_backend_validate_task_endpoint "$state/$task.meta" "$task" >/dev/null 2>&1 \
+    && ! grep -q '^remote_host=.' "$state/$task.meta"; then
+    backend=$(fm_backend_of_meta "$state/$task.meta")
+    target=$(fm_backend_target_of_meta "$state/$task.meta")
+    fm_backend_agent_state "$backend" "$target"
+  else
+    printf 'unknown\n'
+  fi
+}
+
+# Epoch of the current generation's semantic idle transition. Busy authors are
+# never pressure candidates; unknown age cannot be ordered and refuses eviction.
+cmd_idle_since() {
+  local state=${1:?state required} task=${2:?task required} verdict before after stamp
+  # shellcheck source=bin/fm-backend.sh
+  . "$SCRIPT_DIR/fm-backend.sh"
+  # shellcheck source=bin/fm-busy-lib.sh
+  . "$SCRIPT_DIR/fm-busy-lib.sh"
+  verdict=$(fm_busy_classify_meta "$state/$task.meta" "$task" "$state")
+  case "$verdict" in busy\ *) printf 'busy\n'; return 0 ;; idle\ *) ;; *) return 1 ;; esac
+  before=$(fm_busy_record_read "$state" "$task") || return 1
+  case "$before" in idle\ *) ;; *) return 1 ;; esac
+  stamp=$(sed -n 's/.* ts=\([0-9]*\).*/\1/p' "$state/$task.busy-state")
+  after=$(fm_busy_record_read "$state" "$task") || return 1
+  [ "$before" = "$after" ] && [ -n "$stamp" ] || return 1
+  printf '%s\n' "$stamp"
 }
 
 # The bounded quiet retry described in the header. The bound is a constant
@@ -507,7 +564,7 @@ session_field() {  # <result-file> <field>
 }
 
 cmd_attention() {
-  local id=${1-} state reg record result task backend target verdict stamp now artifact mode identity answered=0
+  local id=${1-} state reg record result task verdict stamp now artifact mode identity last_answer=0 age
   fm_procevent_source_id_valid "$id" || return 1
   state=${FM_STATE_OVERRIDE:-$FM_HOME/state}
   reg=$(fm_procevent_registry_dir "$state")
@@ -525,33 +582,28 @@ cmd_attention() {
       [ "$(cat "${result%.result}.registration")" = "$identity" ] || continue
     fi
     cmd_terminal "$result" && return 0
-    [ "$(cmd_classify "$result")" != feedback ] || answered=1
+    if [ "$(cmd_classify "$result")" = feedback ]; then
+      stamp=$(fm_path_mtime "$result") || return 1
+      [ "$stamp" -le "$last_answer" ] || last_answer=$stamp
+    fi
   done
   task=$(sed -n '/^argv:$/q; s/^owner_task=//p' "$record")
   if [ -n "$task" ] && fm_pr_task_id_valid "$task"; then
     # Reuse the same structural classifier as recovery; never infer death from
     # a quiet pane, a failed transport read, or an old status-log event.
-    # shellcheck source=bin/fm-backend.sh
-    . "$SCRIPT_DIR/fm-backend.sh"
-    verdict=unknown
-    if [ ! -e "$state/$task.meta" ]; then
-      verdict=missing
-    elif fm_backend_validate_task_endpoint "$state/$task.meta" "$task" >/dev/null 2>&1 \
-      && ! grep -q '^remote_host=.' "$state/$task.meta"; then
-      backend=$(fm_backend_of_meta "$state/$task.meta")
-      target=$(fm_backend_target_of_meta "$state/$task.meta")
-      verdict=$(fm_backend_agent_state "$backend" "$target")
-    fi
+    verdict=$(cmd_author_state "$state" "$task") || verdict=unknown
     case "$verdict" in
       dead|missing)
-        printf 'owner-stopped\tLavish board %s (%s), task %s: its worker stopped; post a holding reply within 5 minutes and move the work.\n' "$artifact" "$id" "$task"
+        printf 'owner-stopped\tLavish board %s (%s), task %s: its author stopped; resume the same session with fm-control.sh %s resume, then deliver the answer through fm-send.\n' "$artifact" "$id" "$task" "$task"
         ;;
     esac
   fi
   stamp=$(fm_procevent_registered_at "$record")
+  [ "$last_answer" -le "$stamp" ] || stamp=$last_answer
   now=$(date +%s)
-  if [ "$answered" -eq 0 ] && [ "$((now - stamp))" -ge 172800 ]; then
-    printf 'unanswered\tLavish board %s (%s), owner %s: unanswered for 2 days; provide a two-line recap or close.\n' "$artifact" "$id" "${task:-firstmate}"
+  age=$((now - stamp))
+  if [ "$age" -ge 172800 ]; then
+    printf 'unanswered-%s-%s\tLavish board %s (%s), owner %s: unanswered for 2 days; provide a two-line recap or close.\n' "$stamp" "$((age / 172800))" "$artifact" "$id" "${task:-firstmate}"
   fi
 }
 
@@ -1030,6 +1082,9 @@ cmd_read() {
 case "${1-}" in
   arm)       shift; cmd_arm "$@" ;;
   attention) shift; cmd_attention "$@" ;;
+  author-state) shift; cmd_author_state "$@" ;;
+  idle-since) shift; cmd_idle_since "$@" ;;
+  finish)    shift; cmd_finish "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
   poll)      shift; cmd_poll "$@" ;;
   deliver-reply) shift; cmd_deliver_reply "$@" ;;

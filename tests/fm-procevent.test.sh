@@ -259,7 +259,7 @@ PATH="$ATT_BIN:$PATH" FM_HOME="$ATT" "$ROOT/bin/fm-procevent-lavish.sh" arm "$AT
 att_reconcile() { PATH="$ATT_BIN:$PATH" pe "$ATT" reconcile >/dev/null || fail 'board reconcile failed'; }
 att_count() {
   [ -f "$ATT/state/.wake-queue" ] || { printf '0\n'; return; }
-  awk -F '\t' -v key="procevent:$att_id:attention:$1" '$4 == key {n++} END {print n+0}' "$ATT/state/.wake-queue"
+  awk -F '\t' -v key="procevent:$att_id:attention:$1" '$4 == key || index($4, key "-") == 1 {n++} END {print n+0}' "$ATT/state/.wake-queue"
 }
 att_reconcile
 [ "$(att_count owner-stopped)" = 0 ] || fail 'live board worker raised a stopped-owner reminder'
@@ -308,13 +308,17 @@ att_reconcile
 assert_contains "$(wake_payloads "$ATT")" 'two-line recap or close' 'recap omitted the requested action'
 att_reconcile
 [ "$(att_count unanswered)" = 1 ] || fail 'two-day reminder was not deduplicated'
+printf '%s\n' "$((att_opened + 345600))" > "$ATT/clock"
+att_reconcile
+[ "$(att_count unanswered)" = 2 ] || fail 'unanswered board was forgotten after its first recap reminder'
 # Capture a real fake-poll answer, before its worker acknowledges the round.
 printf 'session:\n  status: feedback\nprompts[1]{uid,prompt,selector,tag,text}:\n  "","approved","","message",""\n' > "$ATT/answer"
 wait_capture "$ATT" "$att_id" || fail 'board answer was not captured and released'
+perl -e 'utime $ARGV[0], $ARGV[0], $ARGV[1] or die $!' "$((att_opened + 345600))" "$ATT/state/procevent-inbox/$att_id.1.result"
 mv "$ATT/state/procevent-inbox/$att_id.1.registration" "$ATT/registration"
 PATH="$ATT_BIN:$PATH" FM_HOME="$ATT" "$ROOT/bin/fm-procevent-lavish.sh" arm "$ATT_ART" --for board-worker >/dev/null || fail 'could not re-arm answered board'
 # Remove dedup receipts to check each reminder after feedback.
-rm "$ATT/state/procevent/.$att_id.attention-owner-stopped" "$ATT/state/procevent/.$att_id.attention-unanswered"
+rm "$ATT/state/procevent/.$att_id.attention-owner-stopped" "$ATT/state/procevent/.$att_id.attention-unanswered-"*
 : > "$ATT/state/.wake-queue"
 att_reconcile
 [ "$(att_count owner-stopped)" = 1 ] && [ "$(att_count unanswered)" = 0 ] || fail 'feedback incorrectly suppressed stopped-owner reminder or raised recap'
