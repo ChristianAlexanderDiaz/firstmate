@@ -14,6 +14,7 @@ Fill `## Firstmate spec` (`{FIRSTMATE_SPEC}`) with only the build instructions t
 `bin/fm-dod-lib.sh` owns intent authoring without added speaker labels or direct address, its provenance markers, what a no-mistakes worker may pass as `--intent`, and the string's self-sufficiency rule.
 Keep additions task-specific rather than repeating lifecycle instructions, and alter generated sections only when the task genuinely differs from the standard shape.
 For plan review boards, point workers to [`bin/fm-plan-board.sh`](../../../bin/fm-plan-board.sh) and its shipped template instead of asking them to hand-build a page; its header owns the payload and pre-show lint contract.
+Record the choices already settled at intake in the ticket, and scaffold work needing a new board with `--needs-board` to declare its resident author at dispatch.
 
 Every ship brief must retain the worktree-isolation assertion and stop if launched in the primary checkout.
 If a ship task touches firstmate's shared tracked material, explicitly require `firstmate-coding-guidelines` before editing.

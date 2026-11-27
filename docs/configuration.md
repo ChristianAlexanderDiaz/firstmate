@@ -2460,8 +2460,21 @@ An already-armed Lavish source keeps its registered listener command until it is
 ### Crew-hosted Lavish review boards
 
 Local board reminders use the existing supervision cycle and captured results; [`fm-procevent-lavish.sh attention`](../bin/fm-procevent-lavish.sh) describes eligibility, timing, deduplication, and liveness limitations.
-A board rewritten in place can have old answers suppress its new reminders, and replacement or rebuild transitions do not guarantee isolation from earlier feedback.
+An unanswered board receives a recap-or-close reminder every two days, measured from registration or the latest captured answer.
 Automatic closure after the last pick is not supported.
+
+Board authors remain resident until their registered review is concluded, including between feedback rounds and while a terminal result awaits acknowledgement.
+Exit, captain-wait parking, and cleanup refuse while that author still owns a registered board.
+An accepted plan is explicitly finished through the adapter's `finish` command, which ends the Lavish session and lets the normal terminal acknowledgement retire its listener.
+The sole exit exception is explicit `fm-control.sh <task-id> exit --machine-pressure`, which verifies fresh same-boot RAM or thermal CPU pressure and selects the longest-idle live board author across the shared stores.
+Unknown liveness or idle age refuses that exception.
+A verified pressure exit records `board_pressure_closed_at` in task metadata; when an answer arrives, use the saved-session `resume` path before ordinary answer delivery.
+This board policy does not implement session resume.
+
+There is no limit on the number of open boards.
+Scaffold tasks needing a new board with `fm-brief.sh --needs-board` to declare their resident author at dispatch.
+[`fm-board.py`](../bin/fm-board.py) owns cross-home board inventory and author protection.
+The fleet snapshot's `boards` array and fleet view show session status and recovery-grade author liveness; an unreadable or unsupported backend is reported as unknown.
 
 **Arm and confirm a listener**
 

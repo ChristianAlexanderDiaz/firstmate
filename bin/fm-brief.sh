@@ -146,6 +146,8 @@
 # a later scout promotion could not outrank), stops the scaffold before
 # anything is written. Secondmate charters never take it.
 # Refuses to overwrite an existing brief.
+# --needs-board records at dispatch that this ship/scout will host a board.
+# Board authors remain resident until the review is concluded; there is no cap.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -212,6 +214,7 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 case "$CONFIG" in /*) ;; *) CONFIG="$PWD/$CONFIG" ;; esac
 KIND=ship
 HERDR_LAB=0
+NEEDS_BOARD=no
 NO_PROJECTS=0
 MODE=
 MODE_SET=0
@@ -251,6 +254,7 @@ for a in "$@"; do
     --scout) KIND=scout ;;
     --secondmate) KIND=secondmate ;;
     --herdr-lab) HERDR_LAB=1 ;;
+    --needs-board) NEEDS_BOARD=yes ;;
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
@@ -274,6 +278,10 @@ for a in "$@"; do
   esac
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
+if [ "$KIND" = secondmate ] && [ "$NEEDS_BOARD" = yes ]; then
+  echo 'error: --needs-board applies only to ship and scout tasks' >&2
+  exit 1
+fi
 
 # Ship delivery mode is an explicit per-task decision (AGENTS.md section 7). A
 # missing or invalid value stops the scaffold rather than silently defaulting.
@@ -677,6 +685,12 @@ else
   SETUP_BASE="You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch."
 fi
 
+BOARD_INSTRUCTIONS="Board required: $NEEDS_BOARD
+
+Before putting any question on a board, read the project vision document and the full task ticket, including its recorded decisions. Ask only about forks those sources leave open; do not ask again about settled choices.
+While your board is open, stay available in this same session and answer its feedback within a minute. Do not exit or treat an unanswered board as completed work.
+When the plan is accepted, end its session with bin/fm-procevent-lavish.sh finish <artifact.html> --for $ID, read and acknowledge the terminal round, and conclude the review before reporting completion. A session ended by the user follows the same terminal acknowledgement path."
+
 if [ "$KIND" = scout ]; then
 if "$SCRIPT_DIR/fm-bootstrap.sh" lavish-compatible >/dev/null 2>&1; then
   LAVISH_LINE='If your deliverable is a visual artifact the captain will review and iterate on, use the lavish-axi rule: arm your board with bin/fm-procevent-lavish.sh arm <artifact.html> --for <task-id>; never run lavish-axi poll yourself. Re-arm with the reply after each nonterminal round to acknowledge it, route the board feedback through your steering inbox, write needs-decision [key=board-review] with the live board URL when the captain owes a decision, and stop at session_ended or an empty End without re-arming - acknowledge that final round with bin/fm-procevent.sh handled <source-id> <sequence> to conclude and retire your board.'
@@ -687,6 +701,8 @@ cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
 $TASK_SECTION
+
+$BOARD_INSTRUCTIONS
 
 For a plan review board, use \`$FM_ROOT/bin/fm-plan-board.sh\` and its shipped template; its \`--help\` owns payload composition and the required pre-show lint.
 
@@ -760,6 +776,8 @@ cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
 $TASK_SECTION
+
+$BOARD_INSTRUCTIONS
 
 For a plan review board, use \`$FM_ROOT/bin/fm-plan-board.sh\` and its shipped template; its \`--help\` owns payload composition and the required pre-show lint.
 

@@ -3,6 +3,7 @@
 # Usage: fm-crew-state.sh <id> [--sync-review-pane|--sync-presentation|--work-emoji|--sidebar|--sidebar-evidence]
 # --sidebar renders the shared plain display status; --sidebar-evidence emits
 # the canonical line followed by its attributed raw run for the periodic reporter.
+# --boards prints this task's board inventory and author liveness as JSON.
 #
 # Why this exists: state/<id>.status is an append-only, best-effort EVENT LOG.
 # Crews append only wake-worthy transitions (done/needs-decision/blocked/paused/failed)
@@ -164,7 +165,8 @@
 # --work-emoji prints only the derived work-state emoji (or an empty line).
 # Read-only unless --sync-review-pane requests the review pane, or
 # --sync-presentation requests both the review pane and workspace state label.
-# Always exits 0 on a read regardless of state; exit 2 on a usage error.
+# Ordinary status reads exit 0 regardless of state; --boards reports inventory
+# errors with a nonzero exit. Usage errors exit 2.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -191,6 +193,14 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 ID=${1:-}
 SYNC_REVIEW_PANE=${2:-}
+if [ "$SYNC_REVIEW_PANE" = --boards ]; then
+  [ -n "$ID" ] || { echo 'usage: fm-crew-state.sh <id> --boards' >&2; exit 2; }
+  board_state=$(cd "$STATE" && pwd -P) || exit 1
+  board_snapshot=$(python3 "$SCRIPT_DIR/fm-board.py" snapshot "$board_state" --liveness) || exit 1
+  printf '%s\n' "$board_snapshot" | \
+    jq --arg task "$ID" --arg state "$board_state" '[.[] | select(.task == $task and .state == $state)]'
+  exit "$?"
+fi
 case "$SYNC_REVIEW_PANE" in ''|--sync-review-pane|--sync-presentation|--work-emoji|--sidebar|--sidebar-evidence) ;; *) echo "usage: fm-crew-state.sh <id> [--sync-review-pane|--sync-presentation|--work-emoji|--sidebar|--sidebar-evidence]" >&2; exit 2 ;; esac
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
 

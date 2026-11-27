@@ -9,6 +9,8 @@ set -u
 SNAPSHOT="$ROOT/bin/fm-fleet-snapshot.sh"
 VIEW="$ROOT/bin/fm-fleet-view.sh"
 TMP_ROOT=$(fm_test_tmproot fm-fleet-snapshot)
+export FM_PROCEVENT_CLAIM_ROOT="$TMP_ROOT/board-claims"
+export LAVISH_AXI_STATE_DIR="$TMP_ROOT/lavish"
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 
@@ -150,6 +152,23 @@ test_empty_fleet_json() {
   assert_contains "$view" "No live task metadata found." "empty fleet view should say no live metadata"
   pass "empty fleet snapshot and view use explicit absence markers"
 }
+
+test_board_inventory_projection() {
+  local home out view
+  home=$(make_home board-inventory)
+  mkdir -p "$LAVISH_AXI_STATE_DIR"
+  jq -n --arg file "$home/review.html" '{sessions:{board:{file:$file,status:"ended",url:"http://review-board"}}}' \
+    > "$LAVISH_AXI_STATE_DIR/state.json"
+  out=$(FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '.boards | length == 1 and .[0].status == "closed" and .[0].author == "board-closed"' >/dev/null \
+    || fail 'fleet snapshot omitted closed board status'
+  view=$(FM_HOME="$home" "$VIEW")
+  assert_contains "$view" '| http://review-board | closed | - | board-closed |' 'fleet renderer omitted board status'
+  rm "$LAVISH_AXI_STATE_DIR/state.json"
+  pass 'fleet snapshot and view expose board session and author status'
+}
+
+test_board_inventory_projection
 
 test_fixture_snapshot_json() {
   local home fakebin out ids

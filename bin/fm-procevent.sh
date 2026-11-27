@@ -552,6 +552,7 @@ cmd_register() {
   fi
   fm_procevent_source_lock_release "$id"
   owner_lease_refresh
+  [ "$adapter" != lavish ] || python3 "$SCRIPT_DIR/fm-board.py" record "$STATE" "$id" || return 1
   printf 'registered: %s (%s)\n' "$id" "$adapter"
 }
 
@@ -575,6 +576,12 @@ cmd_register_task() {
   state_root_bind create || die "cannot safely prepare the process-event state root"
   fm_backend_validate_task_endpoint "$STATE/$task.meta" "$task" >/dev/null \
     || die "cannot own a board for task $task; its captured feedback would reach no endpoint"
+  # Serialize admission with exit/cleanup. Those commands check the registration
+  # under this same task lock, so a board cannot appear after their final guard.
+  REGISTER_TASK_LOCK="$STATE/.control-$task.lock"
+  fm_lock_try_acquire "$REGISTER_TASK_LOCK" \
+    || die "cannot arm board while lifecycle control is running for task $task"
+  trap 'fm_lock_release "$REGISTER_TASK_LOCK"' EXIT
   (umask 077; mkdir -p "$REG") || die "cannot prepare the process-event registry"
   fm_procevent_source_lock_acquire "$id" || die "cannot lock the source"
   if [ -e "$(source_file "$id")" ] || [ -L "$(source_file "$id")" ]; then
@@ -700,6 +707,7 @@ cmd_register_task() {
   done
   fm_procevent_source_lock_release "$id"
   owner_lease_refresh
+  python3 "$SCRIPT_DIR/fm-board.py" record "$STATE" "$id" || return 1
   printf 'registered: %s (%s, task=%s)\n' "$id" "$adapter" "$task"
 }
 
