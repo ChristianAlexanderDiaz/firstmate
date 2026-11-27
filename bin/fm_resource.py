@@ -100,11 +100,12 @@ def thermal_sleep_log(since, until, command=("/usr/bin/pmset", "-g", "log"), pla
     return dict(result, state="clear")
 
 
-def process_table():
+def process_table(pids=None):
     """Kernel-derived start identity plus pgrp; zombies do not retain a slot."""
     rows = {}
     if sys.platform != "darwin":
-        for directory in Path("/proc").iterdir():
+        directories = Path("/proc").iterdir() if pids is None else (Path("/proc") / str(pid) for pid in pids)
+        for directory in directories:
             if not directory.name.isdigit():
                 continue
             try:
@@ -116,7 +117,8 @@ def process_table():
                     continue
                 rows[int(directory.name)] = {"start": fields[19], "ppid": int(fields[1]),
                     "pgid": int(fields[2]), "rssKiB": int(fields[21]) * os.sysconf("SC_PAGE_SIZE") // 1024,
-                    "cpuTicks": int(fields[11]) + int(fields[12])}
+                    "cpuTicks": int(fields[11]) + int(fields[12]),
+                    "cpuSeconds": (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")}
             except (OSError, ValueError, IndexError):
                 continue
         return rows
@@ -135,28 +137,54 @@ def process_table():
             ("tpgid", ctypes.c_uint32), ("nice", ctypes.c_int32),
             ("start_sec", ctypes.c_uint64), ("start_usec", ctypes.c_uint64)]
     lib = ctypes.CDLL("/usr/lib/libproc.dylib")
-    output = subprocess.check_output(["/bin/ps", "-axo", "pid=,rss=,time="], text=True)
-    for line in output.splitlines():
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        pid = int(parts[0])
+    class TaskInfo(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_uint64) for name in (
+            "virtual", "resident", "user", "system", "threads_user", "threads_system")] + [
+            (name, ctypes.c_int32) for name in ("policy", "faults", "pageins", "cow_faults",
+            "messages_sent", "messages_received", "syscalls_mach", "syscalls_unix",
+            "csw", "threadnum", "numrunning", "priority")]
+    if pids is None:
+        size = lib.proc_listpids(4, os.getuid(), None, 0)
+        if size <= 0:
+            raise Refusal("cannot enumerate host processes")
+        # Allow growth between the sizing call and the actual read.
+        buffer = (ctypes.c_int * (size // ctypes.sizeof(ctypes.c_int) + 256))()
+        count = lib.proc_listpids(4, os.getuid(), buffer, ctypes.sizeof(buffer))
+        if count <= 0 or count >= ctypes.sizeof(buffer):
+            raise Refusal("incomplete host process enumeration")
+        pids = buffer[:count // ctypes.sizeof(ctypes.c_int)]
+    for pid in pids:
         info = BSDInfo()
         if lib.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
             continue
         if info.uid != os.getuid() or info.status == 5:
             continue
+        task = TaskInfo()
+        measured = lib.proc_pidinfo(pid, 4, 0, ctypes.byref(task), ctypes.sizeof(task)) == ctypes.sizeof(task)
         rows[pid] = {"start": f"{info.start_sec}.{info.start_usec:06d}",
-                     "ppid": info.ppid, "pgid": info.pgid, "rssKiB": int(parts[1]),
-                     "cpuTime": parts[2] if len(parts) > 2 else ""}
+                     "ppid": info.ppid, "pgid": info.pgid,
+                     "rssKiB": task.resident // 1024 if measured else 0,
+                     "cpuSeconds": (task.user + task.system) / 1e9 if measured else None}
     return rows
 
 
 def identity(pid, table=None):
-    row = (table if table is not None else process_table()).get(pid)
+    row = (table if table is not None else process_table([pid])).get(pid)
     if row is None:
         raise Refusal(f"process {pid} is not live")
     return {"boot": boot_id(), "pid": pid, "start": row["start"]}
+
+
+def host_capacity():
+    """Read host capacity without forking a telemetry subprocess."""
+    if sys.platform == "darwin":
+        value, size = ctypes.c_uint64(), ctypes.c_size_t(8)
+        if ctypes.CDLL(None).sysctlbyname(b"hw.memsize", ctypes.byref(value), ctypes.byref(size), None, 0):
+            raise Refusal("host physical memory is unavailable")
+        memory = value.value / 1048576
+    else:
+        memory = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1048576
+    return {"memoryMiB": memory, "cores": os.cpu_count() or 1, "load1": os.getloadavg()[0]}
 
 
 def matches(owner, table):
@@ -217,25 +245,52 @@ def atomic_json(path, value):
             os.unlink(temporary)
 
 
+def atomic_program(path, content):
+    path = Path(path)
+    if path.is_symlink():
+        raise Refusal("refusing symlink installation target")
+    fd, temporary = tempfile.mkstemp(prefix=".resource-program-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fchmod(stream.fileno(), 0o700)
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def config_digest(config):
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
+
+
+def capacity(config, key):
+    return config.get(key, math.inf if key == "maxHeavyJobs" else 0)
 
 
 def capacity_relaxation(previous, config):
     if not isinstance(previous, dict):
         return False
-    if any(type(previous.get(key)) is not int for key in CAPACITY_FIELDS):
+    if any(type(previous.get(key)) is not int for key in CAPACITY_FIELDS if key != "maxHeavyJobs"):
         return False
     # Switching policy changes safety/cancellation semantics as well as capacity,
-    # so it is never a live relaxation. Full may only be enabled, never disabled.
+    # so it is never a capacity-only relaxation. This path only enables Full;
+    # resident-only policy changes are checked separately at ledger recovery.
     fields = (*CAPACITY_FIELDS, "fullLevelEnabled")
     old_other = {key: value for key, value in previous.items() if key not in fields}
     new_other = {key: value for key, value in config.items() if key not in fields}
-    full_increase = not previous.get("fullLevelEnabled", False) and config.get("fullLevelEnabled", False)
+    full_increase = not previous.get("fullLevelEnabled", True) and config.get("fullLevelEnabled", True)
     return (config_digest(old_other) == config_digest(new_other) and
-            (not previous.get("fullLevelEnabled", False) or config.get("fullLevelEnabled", False)) and
-            all(config[key] >= previous[key] for key in CAPACITY_FIELDS) and
-            (full_increase or any(config[key] > previous[key] for key in CAPACITY_FIELDS)))
+            (not previous.get("fullLevelEnabled", True) or config.get("fullLevelEnabled", True)) and
+            all(capacity(config, key) >= capacity(previous, key) for key in CAPACITY_FIELDS) and
+            (full_increase or any(capacity(config, key) > capacity(previous, key) for key in CAPACITY_FIELDS)))
 
 
 def load_config(name):
@@ -247,7 +302,7 @@ def load_config(name):
         raise Refusal("only schemaVersion 1 is supported")
     if config.get("policyMode", "shadow") not in ("shadow", "on"):
         raise Refusal("invalid policyMode: expected shadow or on")
-    if type(config.get("fullLevelEnabled", False)) is not bool:
+    if type(config.get("fullLevelEnabled", True)) is not bool:
         raise Refusal("invalid fullLevelEnabled")
     for key in ("stateDirectory", "socketPath", "monitorPath"):
         if not isinstance(config.get(key), str) or not Path(config[key]).is_absolute():
@@ -256,10 +311,12 @@ def load_config(name):
         raise Refusal("Unix socket path exceeds portable 100-byte limit")
     for key, default, low, high in (("memoryMiB", 10240, 4096, 1048576),
             ("maxResidentWorkers", 12, 1, 128), ("recoverySeconds", 120, 120, 3600),
-            ("graceSeconds", 5, 1, 60), ("maxHeavyJobs", 1, 1, 2)):
+            ("graceSeconds", 5, 1, 60)):
         value = config.setdefault(key, default)
         if type(value) is not int or not low <= value <= high:
             raise Refusal(f"invalid {key}")
+    if "maxHeavyJobs" in config and (type(config["maxHeavyJobs"]) is not int or config["maxHeavyJobs"] < 1):
+        raise Refusal("invalid maxHeavyJobs: omit for headroom admission, or supply a positive emergency cap")
     digest = config_digest(config)
     return str(Path(name).resolve()), config, digest
 
@@ -406,7 +463,7 @@ class AdmissionPolicy:
                 return 1, "battery below 30% admission reserve", "power", 30
             if sample.get("performanceWarning", False):
                 return 1, "secondary OS performance warning", "heat", 240
-            if self.swap_bad >= 2:
+            if self.swap_bad >= 1:
                 return 1, "swap growth under memory pressure", "memory", 60
             if source == "ac" and draining and mono - self.samples[0][0] >= 60:
                 return 1, "sustained AC battery discharge", "power", 30
@@ -415,7 +472,7 @@ class AdmissionPolicy:
                 return 1, "memory warning with growing swap: compute held", "memory", 60
             if pressure == "warning":
                 return 2, "memory warning: small jobs only", "memory", 60
-            if source == "ac" and not draining and self.config.get("fullLevelEnabled", False):
+            if thermal == "nominal" and source == "ac" and not draining and self.config.get("fullLevelEnabled", True):
                 return 4, "ready", "ready", 0
             return 3, "ready", "ready", 0
         except (ValueError, KeyError, TypeError, Refusal) as error:
@@ -455,7 +512,7 @@ class AdmissionPolicy:
         if self.since is None or (self.level, self.reason) != (old_level, old_reason):
             self.since = now
         next_step = now + max(0, self.dwell - (mono - self.recovering)) if self.recovering is not None else None
-        slots = 0 if self.level < 2 else min(self.config["maxHeavyJobs"], 2 if self.level == 4 else 1)
+        slots = 0 if self.level < 2 else (self.config.get("maxHeavyJobs") if self.level == 4 else 1)
         workers = 0 if self.level < 2 else 2 if self.level == 2 or self.portable else 4
         return {"level": LEVELS[self.level], "reason": self.reason, "since": self.since,
                 "nextStepUp": next_step, "heavySlots": slots, "cpuWorkers": workers,
@@ -472,7 +529,11 @@ class Budget:
         self.path = self.root / "ledger.json"
         if (self.root / "owner.lock").is_symlink() or self.path.is_symlink():
             raise Refusal("symlink in recovery ledger/lock")
-        self.lock = open(self.root / "owner.lock", "a+")
+        inherited = os.environ.pop("FM_RESOURCE_OWNER_LOCK_FD", None)
+        self.lock = os.fdopen(int(inherited), "a+") if inherited else open(self.root / "owner.lock", "a+")
+        if inherited and os.fstat(self.lock.fileno()).st_ino != (self.root / "owner.lock").stat().st_ino:
+            raise Refusal("inherited owner lock does not match ledger")
+        os.set_inheritable(self.lock.fileno(), False)
         os.chmod(self.root / "owner.lock", 0o600)
         try:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -484,26 +545,39 @@ class Budget:
             self.data = json.loads(self.path.read_text())
             if self.data.get("schemaVersion") != 1:
                 raise Refusal("unknown recovery ledger schema; preserve it for inspection")
+            if self.data.get("pendingConfigWrite"):
+                if (digest not in [self.data.get("configDigest"), *self.data.get("compatibleConfigDigests", [])] or
+                        config_digest(self.data["configPolicy"]) != self.data["configDigest"]):
+                    raise Refusal("incomplete policy activation conflicts with current config")
+                atomic_json(self.data.pop("pendingConfigWrite"), self.data["configPolicy"])
+                config, digest = self.data["configPolicy"], self.data["configDigest"]
+                self.config, self.digest = config, digest
             if self.data.get("configDigest") != digest:
                 previous = self.data.get("configPolicy")
                 verified = isinstance(previous, dict) and config_digest(previous) == self.data.get("configDigest")
                 relaxed = verified and capacity_relaxation(previous, config)
                 policy_fields = (*CAPACITY_FIELDS, "policyMode", "fullLevelEnabled")
+                resident_change = (verified and bool(self.data["leases"]) and not self.data["queue"] and
+                    all(lease["class"] == "worker" for lease in self.data["leases"].values()) and
+                    all(capacity(config, key) >= capacity(previous, key) for key in CAPACITY_FIELDS) and
+                    {k: v for k, v in previous.items() if k not in policy_fields} ==
+                    {k: v for k, v in config.items() if k not in policy_fields})
                 empty_change = (verified and not self.data["leases"] and not self.data["queue"] and
                     {k: v for k, v in previous.items() if k not in policy_fields} ==
                     {k: v for k, v in config.items() if k not in policy_fields})
-                if not relaxed and not empty_change:
+                if not relaxed and not empty_change and not resident_change:
                     self.lock.close()
                     raise Refusal("policy changed; reconcile the existing ledger before changing configuration")
-                old_capacity = {key: previous[key] for key in CAPACITY_FIELDS}
-                new_capacity = {key: config[key] for key in CAPACITY_FIELDS}
+                old_capacity = {key: previous.get(key) for key in CAPACITY_FIELDS}
+                new_capacity = {key: config.get(key) for key in CAPACITY_FIELDS}
                 if previous.get("fullLevelEnabled", False) != config.get("fullLevelEnabled", False):
                     old_capacity["fullLevelEnabled"] = previous.get("fullLevelEnabled", False)
                     new_capacity["fullLevelEnabled"] = config.get("fullLevelEnabled", False)
                 transition = f"capacity relaxed: {json.dumps(old_capacity, sort_keys=True)} -> {json.dumps(new_capacity, sort_keys=True)}"
                 # Running controllers retain the digest loaded at launch. Only
-                # policies in this verified relaxation chain remain compatible.
-                if relaxed:
+                # policies in this verified relaxation/resident-only change
+                # chain remain compatible.
+                if relaxed or resident_change:
                     self.data.setdefault("compatibleConfigDigests", []).append(self.data["configDigest"])
                 else:
                     transition_kind = "host-budget-policy-changed"
@@ -520,6 +594,12 @@ class Budget:
         self.data["configPolicy"] = config
         self.level_policy = AdmissionPolicy(config, self.data.get("levelPolicy"))
         self.decision = None
+        self.saving_request = False
+        self.last_metrics = -math.inf
+        self.last_admission = self.data.get("lastAdmission", -math.inf) if self.data.get("admissionBoot") == boot_id() else -math.inf
+        self.cpu_observations = {}
+        self.host = None
+        self.upgrade = None
         self.healthy_since = None
         # Thermal signals or a persisted emergency latch lengthen the next recovery.
         self.thermal_hold = False
@@ -561,7 +641,8 @@ class Budget:
         self.save()
 
     def save(self):
-        atomic_json(self.path, self.data)
+        if not self.saving_request:
+            atomic_json(self.path, self.data)
 
     def event(self, reason):
         held = 0
@@ -622,12 +703,14 @@ class Budget:
         self.data["queue"] = [r for r in queue if not self.orphaned(r["controller"], r["parent"])]
         for token, lease in list(self.data["leases"].items()):
             group = lease.get("group")
-            if not matches(lease["controller"], self.table):
+            controller_live = matches(lease["controller"], self.table)
+            if not controller_live and not group:
                 self.cleanup_browser(token, lease)
                 del self.data["leases"][token]
                 continue
-            lease.setdefault("parent", self.table[lease["controller"]["pid"]]["ppid"])
-            if self.orphaned(lease["controller"], lease["parent"]):
+            if controller_live:
+                lease.setdefault("parent", self.table[lease["controller"]["pid"]]["ppid"])
+            if controller_live and self.orphaned(lease["controller"], lease["parent"]) and not group:
                 self.cleanup_browser(token, lease)
                 del self.data["leases"][token]
                 continue
@@ -894,7 +977,18 @@ class Budget:
             return str(error), cancel
 
     def tick(self):
+        self.saving_request = True
+        try:
+            self.tick_once()
+        finally:
+            self.saving_request = False
+            self.save()
+
+    def tick_once(self):
         self.reconcile()
+        self.activate_pending_policy()
+        self.host = host_capacity()
+        self.observe_cpu()
         self.reason, cancel = self.policy()
         if cancel:
             for lease in self.data["leases"].values():
@@ -907,7 +1001,7 @@ class Budget:
         self.event(self.reason)
         usage = [{"lease": token, "class": lease["class"], "rssKiB": sum(
             self.table[m["pid"]]["rssKiB"] for m in lease.get("members", []) if matches(m, self.table)),
-            "cpu": [self.table[m["pid"]].get("cpuTime", self.table[m["pid"]].get("cpuTicks"))
+            "cpu": [self.table[m["pid"]].get("cpuSeconds")
                     for m in lease.get("members", []) if matches(m, self.table)]}
             for token, lease in self.data["leases"].items()]
         peaks = self.data.setdefault("classPeakMiB", {})
@@ -927,7 +1021,9 @@ class Budget:
             "power": self.telemetry.get("power") if self.telemetry else None,
             "thermal": self.telemetry.get("thermalState") if self.telemetry else None,
             "memory": self.telemetry.get("memory") if self.telemetry else None, "jobs": usage})
-        atomic_json(self.root / "metrics.json", list(self.metrics))
+        if time.monotonic() - self.last_metrics >= 30:
+            atomic_json(self.root / "metrics.json", list(self.metrics))
+            self.last_metrics = time.monotonic()
         self.save()
 
     def log_policy(self, record):
@@ -965,8 +1061,98 @@ class Budget:
 
     def heavy_slots(self):
         if self.config.get("policyMode", "shadow") == "on":
-            return self.decision["heavySlots"] if self.decision else 0
+            slots = self.decision["heavySlots"] if self.decision else 0
+            return math.inf if slots is None else slots
         return 1 if self.reason == "ready" else 0
+
+    def activate_pending_policy(self):
+        pending = self.data.get("pendingPolicy")
+        if not pending:
+            return
+        name, current, digest = load_config(pending)
+        if digest != self.digest:
+            raise Refusal("pending policy config changed externally; inspect before activation")
+        already_enabled = current.get("policyMode", "shadow") == "on"
+        current.update(policyMode="on", fullLevelEnabled=True)
+        current.pop("maxHeavyJobs", None)
+        self.data.setdefault("compatibleConfigDigests", []).append(self.digest)
+        self.config, self.digest = current, config_digest(current)
+        self.data.update(configPolicy=current, configDigest=self.digest)
+        self.data.pop("pendingPolicy", None)
+        # Ledger first: owner startup completes an interrupted config rename
+        # without forgetting leases or emergency evidence.
+        self.data["pendingConfigWrite"] = name
+        atomic_json(self.path, self.data)
+        atomic_json(name, current)
+        self.data.pop("pendingConfigWrite", None)
+        if already_enabled:
+            self.level_policy.config = current
+        else:
+            self.level_policy = AdmissionPolicy(current, self.data.get("levelPolicy"))
+        self.record_event("host-budget-policy-changed", "headroom policy activated without dropping leases")
+
+    def observe_cpu(self):
+        now = time.monotonic()
+        for token, lease in self.data["leases"].items():
+            if lease["class"] == "worker":
+                continue
+            readings = {}
+            for member in lease.get("members", []):
+                if matches(member, self.table):
+                    value = self.table[member["pid"]].get("cpuSeconds")
+                    if type(value) in (float, int) and math.isfinite(value):
+                        readings[(member["pid"], member["start"])] = value
+            before = self.cpu_observations.get(token)
+            self.cpu_observations[token] = (now, readings)
+            if not before or not readings or now <= before[0]:
+                lease.pop("idleSince", None)
+                lease["idleCPU"] = False
+                continue
+            delta = sum(max(0, value - before[1].get(key, 0)) for key, value in readings.items())
+            if delta / (now - before[0]) < 0.02:
+                lease.setdefault("idleSince", now)
+                lease["idleCPU"] = now - lease["idleSince"] >= 600
+                if lease["idleCPU"] and not lease.get("idleNotified"):
+                    self.record_event("host-budget-possibly-hung", f"lease={token} task={lease.get('task', 'unknown')}: under 2% CPU for 10 minutes; reservation retained")
+                    lease["idleNotified"] = True
+            else:
+                lease.pop("idleSince", None)
+                lease["idleCPU"] = False
+        self.cpu_observations = {token: value for token, value in self.cpu_observations.items()
+                                 if token in self.data["leases"]}
+
+    def headroom_allows(self, request, excluding=None):
+        if self.config.get("policyMode", "shadow") != "on":
+            return True
+        if not self.host or not self.telemetry:
+            return False
+        memory = self.telemetry.get("memory")
+        if not isinstance(memory, dict):
+            return False
+        free = memory.get("freePercent")
+        if type(free) not in (float, int) or not math.isfinite(free) or not 0 <= free <= 100:
+            return False
+        now = time.monotonic()
+        pending = 0
+        cpu = 0
+        candidate = request["memoryMiB"]
+        for token, lease in self.data["leases"].items():
+            rss = sum(self.table[m["pid"]]["rssKiB"] / 1024
+                      for m in lease.get("members", []) if matches(m, self.table))
+            if token == excluding:
+                candidate = max(0, candidate - rss)
+                continue
+            if now - lease.get("reservationUpdated", lease["acquired"]) < 60:
+                pending += max(0, lease["memoryMiB"] - rss)
+            if lease["class"] != "worker" and not lease.get("idleCPU"):
+                cpu += lease.get("cpuWorkers", 1)
+        if free - 100 * (pending + candidate) / self.host["memoryMiB"] < 30:
+            return False
+        if request["class"] == "worker":
+            return True
+        load = self.host["load1"]
+        return (math.isfinite(load) and
+                max(load, cpu) + self.cpu_workers() <= max(0, self.host["cores"] - 2))
 
     def class_allowed(self, kind, excluding=None):
         if not self.heavy_slots():
@@ -974,7 +1160,7 @@ class Budget:
         if self.config.get("policyMode", "shadow") == "on":
             if self.decision["smallOnly"] and kind not in SMALL_CLASSES:
                 return False
-            if kind in LARGE_CLASSES and any(l["class"] in LARGE_CLASSES
+            if any(l["class"] != "worker" and (kind == "exclusive" or l["class"] == "exclusive")
                     for token, l in self.data["leases"].items() if token != excluding):
                 return False
         return True
@@ -1001,12 +1187,19 @@ class Budget:
             worker = request["class"] == "worker"
             if request.get("automaticReservation"):
                 request["memoryMiB"] = self.reservation(request["class"])
+            if request["memoryMiB"] > self.config["memoryMiB"]:
+                continue
             if not worker and not self.class_allowed(request["class"]):
                 continue
             active_heavy = sum(l["class"] != "worker" for l in leases.values())
             resident = sum(l["class"] == "worker" for l in leases.values())
             memory = sum(l["memoryMiB"] for l in leases.values())
-            if (worker and resident >= self.config["maxResidentWorkers"]) or (not worker and active_heavy >= self.heavy_slots()) or memory + request["memoryMiB"] > self.config["memoryMiB"]:
+            adaptive = self.config.get("policyMode", "shadow") == "on"
+            if (worker and resident >= self.config["maxResidentWorkers"]) or (not worker and active_heavy >= self.heavy_slots()) or (not adaptive and memory + request["memoryMiB"] > self.config["memoryMiB"]):
+                continue
+            if not self.headroom_allows(request):
+                continue
+            if adaptive and not worker and time.monotonic() - self.last_admission < 30:
                 continue
             # Resident CLIs need their own admission check even without compute.
             if worker:
@@ -1019,6 +1212,10 @@ class Budget:
                          cpuWorkers=self.cpu_workers())
             leases[request["token"]] = lease
             self.data["queue"].remove(request)
+            if not worker:
+                self.last_admission = lease["acquired"]
+                self.data["lastAdmission"] = self.last_admission
+                self.data["admissionBoot"] = boot_id()
             self.save()  # Reservation reaches durable storage before response.
         self.notify_stuck()
 
@@ -1052,14 +1249,61 @@ class Budget:
             self.save()
 
     def handle(self, request):
+        self.saving_request = True
+        try:
+            return self.handle_request(request)
+        finally:
+            self.saving_request = False
+            self.save()  # Exactly one durable commit before any reply.
+
+    def handle_request(self, request):
         if not isinstance(request, dict):
             raise Refusal("request must be a JSON object")
         if (request.get("configDigest") != self.digest and
                 request.get("configDigest") not in self.data.get("compatibleConfigDigests", [])):
             raise Refusal("client policy differs from the single running owner")
         op = request.get("op")
-        self.reconcile()
+        if op == "upgrade":
+            # This is serialized with every acquisition, so there is no gap
+            # between inspecting clients and accepting the handoff.
+            occupants = [*self.data["leases"].values(), *self.data["queue"]]
+            if any(item.get("restartProtocol") != 1 for item in occupants):
+                return {"ok": True, "state": "waiting", "reason": "clients predate restart tolerance"}
+            name, _, digest = load_config(request["configPath"])
+            if digest != self.digest:
+                raise Refusal("installation config differs from owner")
+            source = Path(request["source"])
+            if source.is_symlink() or source.stat().st_uid != os.getuid():
+                raise Refusal("installation source must be owned by this user and not a symlink")
+            content = source.read_bytes()
+            if hashlib.sha256(content).hexdigest() != request["sha256"]:
+                raise Refusal("installation source changed")
+            compile(content, str(source), "exec")
+            destination = private_dir(request["destination"])
+            self.upgrade = {"content": content, "destination": destination, "configPath": name}
+            self.data["pendingPolicy"] = name
+            return {"ok": True, "state": "accepted"}
+        # The tick owns full process reconciliation. Requests only refresh
+        # identities they use, avoiding an O(host processes) scan per waiter.
+        for key in ("controller", "group"):
+            owner = request.get(key)
+            if isinstance(owner, dict) and type(owner.get("pid")) is int:
+                pid = owner["pid"]
+                self.table.pop(pid, None)
+                self.table.update(process_table([pid]))
+        if op in ("inherit", "inherit-browser") and isinstance(request.get("controller"), dict):
+            pid = request["controller"]["pid"]
+            visited = set()
+            while pid in self.table and pid not in visited:
+                visited.add(pid)
+                pid = self.table[pid]["ppid"]
+                if pid > 0:
+                    self.table.pop(pid, None)
+                    self.table.update(process_table([pid]))
         if op in ("acquire", "inherit"):
+            # Recheck the small monitor snapshot at every admission boundary:
+            # fresh heat/pressure warnings must not wait for the next tick.
+            # Only process enumeration and host capacity sampling are cached.
             self.reason, _ = self.policy()
             self.event(self.reason)
         if op == "status":
@@ -1074,7 +1318,9 @@ class Budget:
             return {"ok": True, "reason": self.reason, "portable": self.portable,
                 "policy": decision, "summary": summary, "cpuWorkers": self.cpu_workers(),
                 "reservationsMiB": {kind: self.reservation(kind) for kind in CLASSES},
-                "availableHeavySlots": max(0, self.heavy_slots() - sum(l["class"] != "worker" for l in self.data["leases"].values())),
+                "availableHeavySlots": None if math.isinf(self.heavy_slots()) else max(0, self.heavy_slots() - sum(l["class"] != "worker" for l in self.data["leases"].values())),
+                "restartProtocol": 1, "headroom": self.host,
+                "pendingPolicy": self.data.get("pendingPolicy"),
                 "leases": self.data["leases"],
                 "queue": [{**item, "waitedSeconds": max(0, int(time.monotonic() - item["queued"]))}
                           for item in self.data["queue"]],
@@ -1144,6 +1390,7 @@ class Budget:
                 self.data["queue"].append({"token": token, "controller": controller,
                     "parent": parent, "class": kind, "memoryMiB": memory,
                     "automaticReservation": request.get("memoryMiB") is None,
+                    "restartProtocol": request.get("restartProtocol", 0),
                     "task": request.get("task", "ad-hoc"), "queued": time.monotonic()})
             elif existing["controller"] != controller:
                 raise Refusal("nonce belongs to another controller")
@@ -1154,10 +1401,14 @@ class Budget:
         lease = self.data["leases"].get(token)
         if op == "cancel-queued":
             self.data["queue"] = [q for q in self.data["queue"] if q["token"] != token]
+        elif lease is None and op == "release":
+            return {"ok": True}
         elif lease is None:
             raise Refusal("lease is no longer active")
         elif op == "bind":
             group = request["group"]
+            if lease.get("group") == group and matches(group, self.table):
+                return {"ok": True, "cpuWorkers": lease["cpuWorkers"]}
             if (lease.get("group") or not matches(group, self.table) or
                     not matches(lease["controller"], self.table) or
                     self.table[group["pid"]]["pgid"] != group["pid"] or
@@ -1189,15 +1440,17 @@ class Budget:
             memory = request.get("memoryMiB")
             minimum = self.reservation(kind)
             memory = minimum if memory is None else memory
-            if type(memory) is not int or memory < minimum:
+            if type(memory) is not int or not minimum <= memory <= self.config["memoryMiB"]:
                 raise Refusal("invalid nested reservation")
             if memory > lease["memoryMiB"]:
                 # Atomic in-place upgrade, never acquire a second slot while
                 # holding one. Fail rather than wait if it cannot fit.
                 others = sum(l["memoryMiB"] for k, l in self.data["leases"].items() if k != token)
-                if others + memory > self.config["memoryMiB"]:
+                if ((self.config.get("policyMode", "shadow") != "on" and others + memory > self.config["memoryMiB"]) or
+                    not self.headroom_allows({"class": kind, "memoryMiB": memory}, excluding=token)):
                     raise Refusal("nested lease upgrade cannot fit; declare composite reservation at outer stage")
                 lease["memoryMiB"] = memory
+                lease["reservationUpdated"] = time.monotonic()
             if (self.config.get("policyMode", "shadow") == "on" and
                     kind in LARGE_CLASSES and lease["class"] != "exclusive"):
                 lease["class"] = kind
@@ -1211,7 +1464,8 @@ def serve(config, digest):
     budget = Budget(config, digest)
     path = Path(config["socketPath"])
     private_dir(path.parent)
-    if path.exists() or path.is_symlink():
+    inherited_server = os.environ.pop("FM_RESOURCE_OWNER_SOCKET_FD", None)
+    if not inherited_server and (path.exists() or path.is_symlink()):
         if not stat.S_ISSOCK(path.lstat().st_mode) or path.lstat().st_uid != os.getuid():
             raise Refusal("refusing to replace a non-owned socket path")
         probe = socket.socket(socket.AF_UNIX)
@@ -1223,10 +1477,16 @@ def serve(config, digest):
             raise Refusal("another live socket owner exists")
         finally:
             probe.close()
-    server = socket.socket(socket.AF_UNIX)
-    server.bind(str(path))
-    os.chmod(path, 0o600)
-    server.listen(64)
+    if inherited_server:
+        server = socket.socket(fileno=int(inherited_server))
+        if server.getsockname() != str(path):
+            raise Refusal("inherited socket does not match owner")
+        server.set_inheritable(False)
+    else:
+        server = socket.socket(socket.AF_UNIX)
+        server.bind(str(path))
+        os.chmod(path, 0o600)
+        server.listen(64)
     stopping = False
 
     def stop(_sig, _frame):
@@ -1263,6 +1523,19 @@ def serve(config, digest):
                     connection.sendall(json.dumps(result).encode() + b"\n")
                 except OSError:
                     pass
+            if budget.upgrade:
+                upgrade = budget.upgrade
+                target = upgrade["destination"] / "fm_resource.py"
+                atomic_program(target, upgrade["content"])
+                atomic_program(upgrade["destination"] / "fm-resource-run", (HERE / "fm-resource-run").read_bytes())
+                budget.save()
+                # Preserve the listening socket, its queued connections and the
+                # ledger lock across exec. No second owner or admission gap.
+                os.set_inheritable(budget.lock.fileno(), True)
+                server.set_inheritable(True)
+                env = dict(os.environ, FM_RESOURCE_OWNER_LOCK_FD=str(budget.lock.fileno()),
+                           FM_RESOURCE_OWNER_SOCKET_FD=str(server.fileno()))
+                os.execve(sys.executable, [sys.executable, str(target), "--config", upgrade["configPath"], "serve"], env)
     finally:
         # Stopping admission never frees a live reservation or restarts work.
         budget.save()
@@ -1271,15 +1544,37 @@ def serve(config, digest):
 
 
 def rpc(config, digest, *, wait=None, **request):
+    """Run clients tolerate a bounded owner outage; explicit refusals stay fatal.
+
+    Replays reuse the nonce and all mutation arguments. Bind/release are
+    idempotent, including a restart after persistence but before acknowledgement.
+    """
+    deadline = time.monotonic() + 120
+    while True:
+        try:
+            return rpc_once(config, digest, wait=wait, **request)
+        except (FileNotFoundError, ConnectionRefusedError, ConnectionResetError,
+                BrokenPipeError, EOFError):
+            if wait is None or time.monotonic() >= deadline:
+                raise Refusal("budget owner unavailable for restart recovery; compute is held") from None
+            if not wait():
+                raise InterruptedError("budget wait cancelled") from None
+            time.sleep(min(2, max(0, deadline - time.monotonic())))
+
+
+def rpc_once(config, digest, *, wait=None, **request):
     path = Path(config["socketPath"])
-    if path.is_symlink() or not path.exists() or path.stat().st_uid != os.getuid():
-        raise Refusal("budget service socket missing or unsafe; compute is held")
+    if path.is_symlink():
+        raise Refusal("budget service socket unsafe; compute is held")
+    mode = path.stat()  # Missing socket is a recoverable owner outage.
+    if mode.st_uid != os.getuid() or not stat.S_ISSOCK(mode.st_mode):
+        raise Refusal("budget service socket unsafe; compute is held")
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(5)
         connection.connect(str(path))
         if peer_uid(connection) != os.getuid():
             raise Refusal("budget owner is not this user")
-        connection.sendall(json.dumps(dict(request, configDigest=digest)).encode() + b"\n")
+        connection.sendall(json.dumps(dict(request, configDigest=digest, restartProtocol=1)).encode() + b"\n")
         raw = b""
         reported = False
         while not raw.endswith(b"\n"):
@@ -1291,13 +1586,28 @@ def rpc(config, digest, *, wait=None, **request):
                 if not wait():
                     raise InterruptedError("budget wait cancelled") from None
                 if not reported:
-                    print("fm-resource-run: held: budget response delayed; continuing to wait", file=sys.stderr, flush=True)
+                    notice = "fm-resource-run: held: budget response delayed; continuing to wait"
+                    if not sys.stderr.isatty():
+                        print(notice, file=sys.stderr, flush=True)
+                    else:
+                        # Never interrupt an agent's terminal with wait notices.
+                        # Logging failure must not abandon a pending mutation.
+                        try:
+                            path = Path(config["stateDirectory"]) / "host-budget.log"
+                            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+                            with os.fdopen(fd, "a") as log:
+                                print(notice, file=log)
+                        except OSError:
+                            pass
                     reported = True
                 # Keep this connection and request: the owner may already have
-                # durably acquired or bound the lease. Never replay mutations.
+                # durably acquired or bound the lease. A timeout alone must not
+                # replay it; disconnection recovery reuses the same arguments.
                 continue
-            if not part or len(raw) > 4 * 1024 * 1024:
-                break
+            if not part:
+                raise EOFError("owner disconnected before acknowledgement")
+            if len(raw) > 4 * 1024 * 1024:
+                raise Refusal("oversized owner reply")
             raw += part
     result = json.loads(raw)
     if wait is not None and not wait():
@@ -1768,7 +2078,7 @@ def run_job(args, config_name, config, digest):
                     gaming_fd = gaming_lock(deadline, lambda: interrupted)
                     continue
                 break
-            time.sleep(0.2)
+            time.sleep(2)
         queuing = False
         state = request(op="status")
         portable = state.get("portable", True)
@@ -1890,11 +2200,79 @@ def transitions(args, config):
         atomic_json(cursor, position)
 
 
+def install_owner(args, config_name, config, digest):
+    """Cooperative online handoff, or installation under an empty offline lock.
+
+    A legacy running owner cannot be made atomic by observing its ledger from
+    outside. Never signal it or unlink its socket. Wait for an offline empty
+    ledger, or for a protocol-capable owner to accept the serialized handoff.
+    """
+    destination = private_dir(args.destination)
+    source = Path(__file__).resolve()
+    content = source.read_bytes()
+    announced = None
+    while True:
+        root = private_dir(config["stateDirectory"])
+        lock_path = root / "owner.lock"
+        if lock_path.is_symlink():
+            raise Refusal("symlink in owner lock")
+        with lock_path.open("a+") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                try:
+                    result = rpc(config, digest, op="upgrade", source=str(source),
+                                 sha256=hashlib.sha256(content).hexdigest(),
+                                 destination=str(destination), configPath=config_name)
+                    if result.get("state") == "accepted":
+                        print("Owner accepted installation; headroom policy activates on handoff with live leases and queued clients preserved.")
+                        return 0
+                    reason = result.get("reason", "owner has not accepted installation")
+                except (Refusal, OSError, ValueError) as error:
+                    reason = f"running owner cannot safely hand off: {error}; waiting for an offline empty ledger"
+            else:
+                ledger_path = root / "ledger.json"
+                if ledger_path.is_symlink():
+                    raise Refusal("symlink in recovery ledger")
+                data = json.loads(ledger_path.read_text()) if ledger_path.exists() else {
+                    "schemaVersion": 1, "leases": {}, "queue": [], "events": [], "emergency": None}
+                if data.get("schemaVersion") != 1:
+                    raise Refusal("unknown recovery ledger schema")
+                if data["leases"] or data["queue"]:
+                    reason = "offline ledger still contains leases or queued clients; no installation performed"
+                else:
+                    desired = dict(config, policyMode="on", fullLevelEnabled=True)
+                    desired.pop("maxHeavyJobs", None)
+                    # All writes happen while no owner can acquire the lifetime
+                    # lock. Keep emergency evidence and event history intact.
+                    atomic_program(destination / "fm_resource.py", content)
+                    atomic_program(destination / "fm-resource-run", (HERE / "fm-resource-run").read_bytes())
+                    data.update(configPolicy=desired, configDigest=config_digest(desired), compatibleConfigDigests=[digest])
+                    data["pendingConfigWrite"] = config_name
+                    atomic_json(ledger_path, data)
+                    atomic_json(config_name, desired)
+                    data.pop("pendingConfigWrite")
+                    atomic_json(ledger_path, data)
+                    print("Installed with empty ledger under owner lock; configured headroom policy. The service manager may start the owner.")
+                    return 0
+        if reason != announced:
+            print("fm-resource-install: " + reason, file=sys.stderr, flush=True)
+            announced = reason
+        if not args.wait:
+            return 75
+        time.sleep(2)
+        config_name, config, digest = load_config(config_name)
+
+
 def parser():
     p = argparse.ArgumentParser(description="One per-user atomic host budget. No auto-start or unlimited fallback.",
-        epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; maxHeavyJobs=1 (range 1..2), memoryMiB=10240, maxResidentWorkers=12, recoverySeconds=120 (legacy dwell), graceSeconds=5. policyMode=shadow|on defaults to shadow, fullLevelEnabled is boolean and defaults to false. Shadow preserves legacy decisions and logs proposed levels each tick in policy.jsonl. On uses 240s heat, 60s memory, 30s missing/source recovery per level, with no reset for AC wattage alone; Full needs fullLevelEnabled=true and maxHeavyJobs=2 for two slots, at most one build/exclusive. Reservations use recorded class RSS peaks plus 25%, rounded to 64 MiB, otherwise class defaults. Status includes a clocked summary and reservationsMiB. Capacity increases and enabling Full can carry live leases; mode changes or decreases require an empty queue and lease ledger at owner restart, preserving emergency evidence. All homes must select the same config, via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger and 30-minute metrics ring are private atomic JSON; transitions append to transitions.jsonl. register-check --directory STATE requires an existing home state directory, creates private files and registers a host-budget custom watcher check; transitions --cursor PATH relays stuck/long-held alarms and holds over ten minutes once per cursor; --start-at-end initializes a new cursor without replay. Critical thermal signals latch across boot; clear only after inspecting evidence. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; these are integration boundaries, not an OS sandbox. Direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
+        epilog="Config schemaVersion=1: absolute stateDirectory (0700), socketPath (private directory), monitorPath; memoryMiB=10240 (legacy aggregate and individual reservation limit), maxResidentWorkers=12, recoverySeconds=120 (legacy dwell), graceSeconds=5. maxHeavyJobs is an optional positive emergency cap, omitted by default. policyMode=shadow|on defaults to shadow; fullLevelEnabled is boolean, defaults to true, and false limits enabled admission to one. Shadow preserves legacy decisions and logs proposed levels each tick in policy.jsonl. On admits by headroom: more than one heavy job needs nominal thermal and AC without battery discharge; fair thermal or battery admits at most one, warning memory admits small classes only, serious heat stops, critical/emergency heat cancels and latches. Battery below 30% stops and below 15% or closed lid on battery cancels. Swap growth >=256 MiB/60s stops admission. Free memory minus candidate reservation and the unresident part of reservations admitted or increased within 60s must remain >=30% of physical RAM. max(load1, non-idle leased CPU workers) plus candidate workers must be <= cores minus 2. Exclusive jobs run without other heavy jobs; at most one new heavy admission every 30s. A heavy lease below 2% CPU for 10 minutes stops reserving CPU and emits one possibly-hung alert; its memory and process ownership remain. Recovery uses 240s heat, 60s memory, 30s missing/source dwell per level; AC wattage alone does not reset it. Class reservations use recorded RSS peaks plus 25%, rounded to 64 MiB, otherwise class defaults. Status includes headroom, clocked summary and reservationsMiB; availableHeavySlots=null means no count ceiling, not unlimited resources. Capacity increases can carry live leases; mode changes also allow resident-only leases with an empty queue and no capacity decrease. Other decreases require empty queue and ledger. Emergency evidence survives. install --help owns cooperative upgrade and activation. All homes must select the same config via --config or FM_RESOURCE_CONFIG; default ~/.config/firstmate/host-budget.json. Monitor: dotfiles mac-workload schema 1. Ledger and 30-minute metrics ring are private atomic JSON; metrics flush every 30s, transitions append to transitions.jsonl. register-check --directory STATE requires an existing home state directory and registers a host-budget check; transitions --cursor PATH relays alarms and holds over ten minutes once per cursor; --start-at-end initializes without replay. Missing/stale input holds compute. Read-only commands need no lease. Unknown local validation/Nix work uses exclusive. Nested compute inherits/atomically upgrades one lease; worker leases cover resident CLI memory only. prepare writes a task-owned manifest and PATH adapters; direct interpreter/absolute executable launches must use run explicitly. No no-mistakes daemon or backend lifecycle is managed here.")
     p.add_argument("--config")
     sub = p.add_subparsers(dest="action", required=True)
+    q = sub.add_parser("install", help="install by atomic owner handoff or an empty offline ledger; never signal a legacy owner",
+        description="Installs into the private destination. Live owners must implement the upgrade protocol and every lease/queued client must advertise restartProtocol=1. The owner preserves its socket and ledger lock across exec, then immediately enables policyMode=on and removes maxHeavyJobs with live leases and queued clients preserved. Legacy running owners are refused even if a status snapshot is empty. Offline installation requires an empty ledger under its lifetime lock. No lease is killed or forgotten. --wait retries every 2s; stopping the installer does not cancel work. The installer does not start launchd or signal any service.")
+    q.add_argument("--destination", default=str(Path.home() / "Library/Application Support/firstmate-host-budget/bin"))
+    q.add_argument("--wait", action="store_true")
     q = sub.add_parser("gaming-run", help="run with the home gaming gate only; no host policy required",
         description="While STATE/.gaming exists, serialize new heavy stages with STATE/.heavy-job.lock. STATE is FM_STATE_OVERRIDE, else FM_HOME/state, FM_ROOT_OVERRIDE/state, or the installation's state directory. Queued stages recheck the flag; removal restores normal capacity. Existing work is not interrupted. Never delete the lock file. Nested stages inherit the lock. Worker residency is not heavy compute.")
     q.add_argument("argv", nargs=argparse.REMAINDER)
@@ -1920,7 +2298,7 @@ def parser():
         q = sub.add_parser(action)
         q.add_argument("--evidence", required=True, help="inspection/cause note; never credentials")
     q = sub.add_parser("run", help="lease a bounded process group; descendants retain reservation after parent exit",
-        description="Queue holds and delayed owner replies wait indefinitely by default, without replaying requests or cancelling resident workers. A delayed reply prints a held notice. SIGINT/SIGTERM cancels the wait; --wait-seconds bounds queue admission only. Missing/unsafe sockets and explicit owner refusals still stop compute.")
+        description="Queue holds and delayed replies wait indefinitely by default. A delayed reply writes a held notice to non-terminal stderr, or to the private host-budget.log when stderr is a terminal; logging failure does not interrupt the wait. Missing/refusing/disconnected owner sockets retry the same idempotent request for up to 120s; unsafe sockets and explicit policy refusals stop compute. SIGINT/SIGTERM cancels the wait; --wait-seconds bounds queue admission only. Queued clients poll every 2s.")
     q.add_argument("--class", dest="resource_class", choices=CLASSES, default="exclusive",
         help="fallback reservation MiB: test=1024, build=3072, browser=2048, graph=512, exclusive=4096, worker=512")
     q.add_argument("--memory-mib", type=int, help="explicit planning reservation; otherwise owner uses the class peak/default")
@@ -1941,6 +2319,8 @@ def main():
     if args.action == "gaming-run":
         return gaming_run(args.argv)
     name, config, digest = load_config(args.config)
+    if args.action == "install":
+        return install_owner(args, name, config, digest)
     if args.action == "register-check":
         register_check(args, name)
         return 0

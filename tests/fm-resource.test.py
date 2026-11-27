@@ -28,7 +28,7 @@ resource = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(resource)
 SAMPLE = {"schemaVersion": 1, "instanceUUID": "fixture-instance", "lifecycle": "running",
     "unavailable": [], "thermalState": "nominal", "lowPowerModeEnabled": False,
-    "lidClosed": False, "memory": {"pressure": "normal", "swapUsedBytes": 0},
+    "lidClosed": False, "memory": {"pressure": "normal", "swapUsedBytes": 0, "freePercent": 80},
     "power": {"source": "battery", "adapterWatts": None, "batteryPercent": 80, "isCharging": False},
     "policy": {"schemaVersion": 1, "maxHeavyJobs": 1, "batteryAdmissionPercent": 30,
                "batteryCancellationPercent": 15, "staleAfterSeconds": 10}}
@@ -227,7 +227,7 @@ class ResourceTests(unittest.TestCase):
     def status(self):
         try:
             return resource.rpc(self.config, resource.load_config(str(self.root / "config.json"))[2], op="status")
-        except (OSError, ValueError):
+        except (OSError, ValueError, resource.Refusal):
             return {"reason": "not ready"}
 
     def job(self, code, kind="test", wait=0, env=None):
@@ -296,6 +296,43 @@ class ResourceTests(unittest.TestCase):
         _, err = job.communicate(timeout=15)
         self.assertEqual(job.returncode, 0, err)
         self.assertNotIn("timed out", err)
+
+    def test_delayed_acquire_notice_never_reaches_terminal(self):
+        # TOOL-124: a held client's diagnostics must not corrupt the agent's
+        # terminal. A real PTY catches stderr writes as well as /dev/tty writes.
+        marker = self.root / "command-ran"
+        (self.root / "delay-response").write_text("acquire")
+        pid, master = pty.fork()
+        if pid == 0:
+            os.execv(sys.executable, [sys.executable, str(ROOT / "bin/fm_resource.py"),
+                "--config", str(self.root / "config.json"), "run", "--class", "test",
+                "--", "/usr/bin/touch", str(marker)])
+        try:
+            wait_for((self.root / "response-waiting").exists)
+            # Cross the real five-second socket deadline while the owner holds
+            # its acknowledgement. No command or terminal output is expected.
+            readable = select.select([master], [], [], 7)[0]
+            output = os.read(master, 65536) if readable else b""
+            self.assertEqual(output, b"", "held client wrote to its terminal")
+            self.assertFalse(marker.exists())
+            self.assertIn("held: budget response delayed; continuing to wait",
+                          (self.root / "state/host-budget.log").read_text())
+            (self.root / "release-response").touch()
+
+            def exited():
+                result = os.waitpid(pid, os.WNOHANG)
+                return result if result[0] else None
+
+            _, status = wait_for(exited)
+            pid = None
+            self.assertEqual(os.waitstatus_to_exitcode(status), 0)
+            self.assertTrue(marker.exists())
+        finally:
+            (self.root / "release-response").touch()
+            if pid is not None:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            os.close(master)
 
     def test_slow_bind_acknowledgement_starts_command_once(self):
         marker = self.root / "executions"
@@ -517,6 +554,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         self.assertEqual(state, "queued")
         controller.terminate()
         controller.wait(timeout=5)
+        wait_for(lambda: token not in [q["token"] for q in self.status()["queue"]])
         self.assertNotIn(token, [q["token"] for q in self.status()["queue"]])
 
     def test_orphaned_controller_request_is_dropped_on_reconcile(self):
@@ -529,6 +567,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         # Some test hosts adopt orphans through a subreaper, so supply only the
         # parent-1 observation while retaining the real live kernel identity.
         (self.root / "orphan-controller").write_text(str(controller.pid))
+        wait_for(lambda: token not in [q["token"] for q in self.status()["queue"]])
         self.assertNotIn(token, [q["token"] for q in self.status()["queue"]])
         self.assertIsNone(controller.poll())
         with self.assertRaisesRegex(resource.Refusal, "orphaned controller"):
@@ -570,18 +609,30 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             "boot": resource.boot_id(), "profile": str(directory / "profile")}))
         return token, rows, directory
 
-    def test_dead_controller_releases_held_lease_and_browser_state(self):
+    def test_dead_controller_retains_surviving_group_and_browser_state(self):
         token, rows, directory = self.held_fixture()
         del rows[900001]
         self.write("process-table.json", rows)
+        time.sleep(2.2)
+        self.assertIn(token, self.status()["leases"])
+        self.assertTrue(directory.exists())
+        del rows[900002]
+        self.write("process-table.json", rows)
+        wait_for(lambda: token not in self.status()["leases"])
         self.assertNotIn(token, self.status()["leases"])
         self.assertFalse(directory.exists())
         self.assertEqual(self.status()["availableHeavySlots"], 1)
 
-    def test_orphaned_controller_releases_held_lease_and_browser_state(self):
+    def test_orphaned_controller_retains_surviving_group_and_browser_state(self):
         token, rows, directory = self.held_fixture()
         rows[900001]["ppid"] = 1
         self.write("process-table.json", rows)
+        time.sleep(2.2)
+        self.assertIn(token, self.status()["leases"])
+        self.assertTrue(directory.exists())
+        del rows[900002]
+        self.write("process-table.json", rows)
+        wait_for(lambda: token not in self.status()["leases"])
         self.assertNotIn(token, self.status()["leases"])
         self.assertFalse(directory.exists())
         self.assertEqual(self.status()["availableHeavySlots"], 1)
@@ -598,7 +649,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         token, _, _ = self.held_fixture()
         self.assertFalse(any("host-budget-long-held" in line for line in self.poll_transitions()))
         (self.root / "clock").write_text(str(121 + resource.LONG_HELD_EXCLUSIVE_SECONDS + 1))
-        self.status()
+        wait_for(lambda: self.status()["leases"][token].get("longHeldNotified"))
         lines = [line for line in self.poll_transitions() if "host-budget-long-held" in line]
         self.assertEqual(len(lines), 1)
         for expected in (token, "pid=900001", "task=held-fixture", "class=exclusive"):
@@ -746,14 +797,136 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         result = self.call("run", "--class", "test", "--", "/bin/sh", "-c",
                            'printf "%s,%s" "$FM_RESOURCE_CPU_WORKERS" "$FM_RESOURCE_BROWSER_WORKERS"')
         self.assertEqual((result.returncode, result.stdout), (0, "4,1"), result.stderr)
+        clock.write_text(str(int(clock.read_text()) + 31))
+        wait_for(lambda: not self.status()["leases"])
         self.assertEqual(self.acquire("build")[1], "leased")
         self.assertEqual(self.acquire("exclusive")[1], "queued")
+        clock.write_text(str(int(clock.read_text()) + 31))
+        wait_for(lambda: self.status()["policy"]["level"] == "Full")
         self.assertEqual(self.acquire("graph")[1], "leased")
         sample["memory"]["pressure"] = "warning"
         self.write("input.json", sample)
         wait_for(lambda: self.status().get("policy", {}).get("level") == "Reduced")
         self.assertEqual(self.acquire("worker")[1], "leased")
         self.assertEqual(self.acquire("test")[1], "queued")
+
+    def test_client_survives_missing_and_refusing_socket_with_same_lease(self):
+        marker = self.root / "finished"
+        job = self.job(f'while [ ! -e {marker} ]; do sleep 0.1; done; echo survived')
+        lease = wait_for(lambda: next((l for l in self.status().get("leases", {}).values()
+                                      if l.get("group")), None))
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            self.stop(sig)
+            time.sleep(2.2)  # Cross a heartbeat while owner is absent.
+            self.assertIsNone(job.poll())
+            self.start()
+            recovered = wait_for(lambda: self.status().get("leases", {}).get(lease["token"]))
+            self.assertEqual(recovered["group"], lease["group"])
+        marker.touch()
+        output, errors = job.communicate(timeout=12)
+        self.assertEqual((job.returncode, output.strip()), (0, "survived"), errors)
+
+    def test_restart_replays_persisted_bind_without_starting_command_twice(self):
+        started = self.root / "started"
+        finished = self.root / "finished"
+        (self.root / "drop-response").write_text("bind")
+        job = self.job(f'echo started >> {started}; while [ ! -e {finished} ]; do sleep 0.1; done')
+        wait_for(lambda: self.server.poll() is not None)
+        self.assertFalse(started.exists())
+        before = json.loads((self.root / "state/ledger.json").read_text())["leases"]
+        self.assertEqual(len(before), 1)
+        self.start()
+        wait_for(started.exists)
+        after = self.status()["leases"]
+        self.assertEqual(set(before), set(after))
+        token = next(iter(before))
+        self.assertEqual(before[token]["group"], after[token]["group"])
+        finished.touch()
+        job.communicate(timeout=12)
+        self.assertEqual(job.returncode, 0)
+        self.assertEqual(started.read_text().splitlines(), ["started"])
+
+    def test_install_exec_preserves_socket_lock_and_live_lease_then_activates(self):
+        marker = self.root / "finish"
+        job = self.job(f'while [ ! -e {marker} ]; do sleep 0.1; done')
+        lease = wait_for(lambda: next((l for l in self.status().get("leases", {}).values()
+                                      if l.get("group")), None))
+        queued_marker = self.root / "second-started"
+        second = self.job(f'touch {queued_marker}; while [ ! -e {marker} ]; do sleep 0.1; done')
+        wait_for(lambda: len(self.status().get("queue", [])) == 1)
+        sample = copy.deepcopy(SAMPLE)
+        sample["power"].update(source="ac", adapterWatts=94, isCharging=True)
+        self.write("input.json", sample)
+        wait_for(lambda: self.status().get("telemetry", {}).get("power") == sample["power"])
+        owner_pid = self.server.pid
+        inode = Path(self.config["socketPath"]).stat().st_ino
+        result = self.call("install", "--destination", str(self.root / "installed"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        wait_for(lambda: (self.root / "installed/fm_resource.py").exists())
+        wait_for(lambda: json.loads((self.root / "config.json").read_text()).get("policyMode") == "on")
+        self.assertEqual(self.server.pid, owner_pid)
+        self.assertIsNone(self.server.poll())
+        self.assertEqual(Path(self.config["socketPath"]).stat().st_ino, inode)
+        self.assertEqual(self.status()["leases"][lease["token"]]["group"], lease["group"])
+        with (self.root / "state/owner.lock").open("a+") as lock:
+            with self.assertRaises(BlockingIOError):
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.assertFalse(self.status().get("pendingPolicy"))
+        clock = self.root / "clock"
+        for level in ("Reduced", "Normal", "Full"):
+            wait_for(lambda: self.status().get("policy", {}).get("nextStepUp"))
+            clock.write_text(str(int(clock.read_text()) + 31))
+            wait_for(lambda: self.status().get("policy", {}).get("level") == level)
+        wait_for(queued_marker.exists)
+        self.assertIsNone(job.poll())
+        self.assertIsNone(second.poll())
+        marker.touch()
+        second.communicate(timeout=12)
+        self.assertEqual(second.returncode, 0)
+        job.communicate(timeout=12)
+        self.assertEqual(job.returncode, 0)
+        wait_for(lambda: json.loads((self.root / "config.json").read_text()).get("policyMode") == "on")
+        self.assertNotIn("maxHeavyJobs", json.loads((self.root / "config.json").read_text()))
+
+    def test_installer_refuses_legacy_owner_and_legacy_live_clients(self):
+        (self.root / "legacy-upgrade").touch()
+        token, _ = self.acquire("worker")
+        before = (self.root / "config.json").read_bytes()
+        for legacy in (True, False):
+            if not legacy:
+                (self.root / "legacy-upgrade").unlink()
+            result = self.call("install", "--destination", str(self.root / "installed"))
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertFalse((self.root / "installed/fm_resource.py").exists())
+            self.assertEqual((self.root / "config.json").read_bytes(), before)
+            self.assertIn(token, self.status()["leases"])
+        installer = subprocess.Popen([str(ROOT / "bin/fm-resource-install"), "--config",
+            str(self.root / "config.json"), "--destination", str(self.root / "installed"), "--wait"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(installer)
+        time.sleep(2.2)
+        self.assertIsNone(installer.poll())
+        self.assertFalse((self.root / "installed/fm_resource.py").exists())
+        self.request("release", token=token)
+        _, errors = installer.communicate(timeout=12)
+        self.assertEqual(installer.returncode, 0, errors)
+        wait_for(lambda: json.loads((self.root / "config.json").read_text()).get("policyMode") == "on")
+
+    def test_ten_waiting_clients_keep_owner_cpu_below_two_percent(self):
+        sample = copy.deepcopy(SAMPLE)
+        sample["power"]["batteryPercent"] = 29
+        self.write("input.json", sample)
+        wait_for(lambda: self.status()["reason"] == "battery below 30% admission reserve")
+        jobs = [self.job("true") for _ in range(10)]
+        wait_for(lambda: len(self.status().get("queue", [])) == 10)
+        before = resource.process_table([self.server.pid])[self.server.pid]["cpuSeconds"]
+        started = time.monotonic()
+        time.sleep(10)
+        after = resource.process_table([self.server.pid])[self.server.pid]["cpuSeconds"]
+        percent = 100 * (after - before) / (time.monotonic() - started)
+        print(f"owner CPU with ten waiting clients: {percent:.2f}%")
+        self.assertLess(percent, 2)
+        self.assertTrue(all(job.poll() is None for job in jobs))
 
     def test_long_queued_request_emits_one_wake_naming_the_holder(self):
         self.job("sleep 30", kind="exclusive")
@@ -879,6 +1052,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         # Keep the controller alive across owner recovery, then drain its group.
         del rows[900002]
         self.write("process-table.json", rows)
+        wait_for(lambda: token not in self.status()["leases"])
         self.assertNotIn(token, self.status()["leases"])
         self.assertFalse(directory.exists())
 
@@ -1064,8 +1238,8 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         transitions = [json.loads(line) for line in path.read_text().splitlines()
                        if json.loads(line)["event"] == "host-budget-capacity-relaxed"]
         self.assertEqual(len(transitions), 1)
-        for capacity in ({"maxResidentWorkers": 12, "memoryMiB": 10240, "maxHeavyJobs": 1},
-                         {"maxResidentWorkers": 14, "memoryMiB": 10240, "maxHeavyJobs": 1}):
+        for capacity in ({"maxResidentWorkers": 12, "memoryMiB": 10240, "maxHeavyJobs": None},
+                         {"maxResidentWorkers": 14, "memoryMiB": 10240, "maxHeavyJobs": None}):
             self.assertIn(json.dumps(capacity, sort_keys=True), transitions[0]["reason"])
         self.stop()
         ledger = json.loads((self.root / "state/ledger.json").read_text())
@@ -1075,7 +1249,8 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         self.start()
         after = wait_for(lambda: self.status().get("leases") and self.status())
         self.assertEqual(after["leases"], ledger["leases"])
-        self.assertEqual(after["queue"], ledger["queue"])
+        self.assertEqual([{key: value for key, value in item.items() if key != "waitedSeconds"}
+                          for item in after["queue"]], ledger["queue"])
         self.assertEqual(sum(json.loads(line)["event"] == "host-budget-capacity-relaxed"
                              for line in path.read_text().splitlines()), 1)
         # Controllers launched before the relaxation still maintain their leases.
@@ -1131,7 +1306,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         self.assertIn("policy changed; reconcile the existing ledger before changing configuration", result.stderr)
         self.assertEqual((relocated / "ledger.json").read_bytes(), before)
         for changes, message in (({"schemaVersion": 2}, "only schemaVersion 1"),
-                                 ({"maxHeavyJobs": 3}, "invalid maxHeavyJobs")):
+                                 ({"maxHeavyJobs": 0}, "invalid maxHeavyJobs")):
             with self.subTest(changes=changes):
                 self.write("config.json", dict(self.config, maxResidentWorkers=13, **changes))
                 result = self.call("serve")
@@ -2087,10 +2262,15 @@ setTimeout(() => fs.rmdirSync('active-test'), 300);
         self.stop()
         for name, argv in (("npm", ["version", "patch"]), ("pnpm", ["run", "test"]),
                 ("yarn", ["version"]), ("yarn", ["build"])):
-            result = subprocess.run([str(directory / "bin" / name), *argv],
-                capture_output=True, text=True, timeout=5)
-            self.assertEqual(result.returncode, 75, result.stderr)
-            self.assertNotIn("query:", result.stdout)
+            child = subprocess.Popen([str(directory / "bin" / name), *argv],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.children.append(child)
+            time.sleep(2.2)
+            self.assertIsNone(child.poll(), "mutating work must wait for owner recovery")
+            child.terminate()
+            output, errors = child.communicate(timeout=6)
+            self.assertEqual(child.returncode, 130, errors)
+            self.assertNotIn("query:", output)
 
     def test_unrequested_runner_settings_are_preserved(self):
         keys = ("RAYON_NUM_THREADS", "CARGO_BUILD_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL",
@@ -2659,7 +2839,7 @@ class LevelPolicyTests(unittest.TestCase):
         self.assertTrue(reduced["smallOnly"])
         self.assertTrue(reduced["workersAllowed"])
         self.assertEqual(reduced["reason"], "memory warning: small jobs only")
-        self.assertNotIn("freePercent", self.sample["memory"])
+        self.assertEqual(self.sample["memory"]["freePercent"], 80)
 
     def test_full_disabled_and_battery_normal(self):
         self.policy.config["fullLevelEnabled"] = False
@@ -2701,7 +2881,8 @@ class LevelPolicyTests(unittest.TestCase):
         self.assertEqual(self.observe(2)["level"], "Reduced")
         self.assertEqual(self.observe(238)["level"], "Reduced")
         self.assertEqual(self.observe(2)["level"], "Normal")
-        self.assertEqual(self.observe(240)["level"], "Full")
+        self.assertEqual(self.observe(240)["level"], "Normal")
+        self.assertEqual(self.observe(240, thermalState="nominal")["level"], "Full")
 
     def test_continuity_during_safety_stops(self):
         for hazard in ("heat", "memory", "battery", "lid"):
@@ -2794,7 +2975,7 @@ class LevelPolicyTests(unittest.TestCase):
                 self.assertTrue(self.policy.update(sample, 0, 0, 0, "fixture")["cancel"])
         self.policy = resource.AdmissionPolicy({"maxHeavyJobs": 2})
         self.sample["lidClosed"] = True
-        self.assertEqual(self.observe(120)["level"], "Normal")
+        self.assertEqual(self.observe(120)["level"], "Full")
         self.sample["power"]["source"] = "battery"
         self.assertEqual(self.observe()["level"], "Stop and cancel")
 
@@ -2857,7 +3038,9 @@ class LevelOwnerTests(unittest.TestCase):
                            maxResidentWorkers=12, memoryMiB=10240, recoverySeconds=120, graceSeconds=1)
         self.now = 1000
         self.rows = {100: {"start": "fixture-start", "ppid": 99, "pgid": 100, "rssKiB": 0}}
-        for name, value in (("process_table", lambda: self.rows), ("boot_id", lambda: "fixture-boot"),
+        for name, value in (("process_table", lambda pids=None: {pid: row for pid, row in self.rows.items()
+                            if pids is None or pid in pids}), ("boot_id", lambda: "fixture-boot"),
+                            ("host_capacity", lambda: {"memoryMiB": 32768, "cores": 15, "load1": 0}),
                             ("uptime", lambda: self.now), ("time.time", lambda: self.now),
                             ("time.monotonic", lambda: self.now)):
             patcher = mock.patch.object(resource, name, value) if "." not in name else mock.patch.object(resource.time, name.split(".")[1], value)
@@ -2886,12 +3069,232 @@ class LevelOwnerTests(unittest.TestCase):
                               "start": "fixture-start"}, parent=99, **{"class": kind, "task": "fixture", **values})
         return token, result["state"]
 
-    def test_class_pair_limit_and_memory_reservations(self):
+    def test_builds_overlap_and_manual_emergency_cap_holds(self):
         self.assertEqual(self.acquire("build")[1], "leased")
         self.assertEqual(self.acquire("exclusive")[1], "queued")
-        self.assertEqual(self.acquire("test")[1], "leased")
+        self.step(30)
+        self.assertEqual(self.acquire("build")[1], "leased")
         self.assertEqual(self.acquire("graph")[1], "queued")
         self.assertEqual(self.request("status")["availableHeavySlots"], 0)
+
+    def test_headroom_has_no_count_ceiling_and_staggers_each_start(self):
+        self.config.pop("maxHeavyJobs")
+        self.budget.host["cores"] = 64
+        self.step()
+        tokens = []
+        with mock.patch.object(resource, "host_capacity", return_value={"memoryMiB": 32768, "cores": 64, "load1": 0}):
+            for _ in range(6):
+                token, state = self.acquire("graph")
+                self.assertEqual(state, "leased")
+                tokens.append(token)
+                queued, state = self.acquire("graph")
+                self.assertEqual(state, "queued")
+                self.request("cancel-queued", token=queued)
+                self.step(30)
+        self.assertEqual(len(self.request("status")["leases"]), 6)
+        self.assertIsNone(self.request("status")["availableHeavySlots"])
+
+    def test_memory_floor_reserves_unresident_jobs_and_rejects_unknown_free(self):
+        self.config.pop("maxHeavyJobs")
+        self.sample["memory"]["freePercent"] = 34
+        self.step()
+        self.assertEqual(self.acquire("test")[1], "leased")
+        self.step(30)
+        self.assertEqual(self.acquire("test")[1], "queued")
+        for value in (None, float("nan"), -1, 101):
+            self.sample["memory"]["freePercent"] = value
+            self.step()
+            self.assertEqual(len(self.request("status")["leases"]), 1)
+
+    def test_malformed_memory_holds_resident_and_compute_admission(self):
+        for memory in (None, [], "unknown"):
+            with self.subTest(memory=memory):
+                self.sample["memory"] = memory
+                self.step()
+                self.assertEqual(self.acquire("worker")[1], "queued")
+                self.assertEqual(self.acquire("test")[1], "queued")
+                self.assertEqual(self.request("status")["policy"]["level"], "Stop")
+                self.assertFalse(self.budget.data["leases"])
+
+    def nested(self, token, kind, memory):
+        return self.request("inherit", token=token,
+                            controller={"boot": "fixture-boot", "pid": 100, "start": "fixture-start"},
+                            **{"class": kind, "memoryMiB": memory})
+
+    def bind_nested(self, token, rss):
+        self.rows[100]["rssKiB"] = rss * 1024
+        lease = self.budget.data["leases"][token]
+        lease["group"] = {"pid": 100, "boot": "fixture-boot", "start": "fixture-start"}
+        lease["members"] = [lease["group"]]
+
+    def test_nested_reservations_enforce_individual_limit(self):
+        token, state = self.acquire("test")
+        self.assertEqual(state, "leased")
+        self.bind_nested(token, 0)
+        with self.assertRaises(resource.Refusal):
+            self.acquire("test", memoryMiB=12288)
+        with self.assertRaisesRegex(resource.Refusal, "invalid nested reservation"):
+            self.nested(token, "test", 12288)
+        self.assertEqual(self.budget.data["leases"][token]["memoryMiB"], 1024)
+        self.assertTrue(self.nested(token, "test", 10240)["ok"])
+        self.assertEqual(self.budget.data["leases"][token]["memoryMiB"], 10240)
+
+    def test_refreshed_automatic_reservation_cannot_exceed_individual_limit(self):
+        token, state = self.acquire("test")
+        self.assertEqual(state, "leased")
+        queued, state = self.acquire("test")
+        self.assertEqual(state, "queued")
+        self.bind_nested(token, 9216)
+        self.step(32)
+        status = self.request("status")
+        self.assertEqual(status["policy"]["level"], "Full")
+        self.assertEqual(status["reservationsMiB"]["test"], 11520)
+        self.assertNotIn(queued, status["leases"])
+        self.assertIn(queued, [q["token"] for q in status["queue"]])
+        with self.assertRaisesRegex(resource.Refusal, "invalid nested reservation"):
+            self.nested(token, "test", None)
+        self.assertEqual(self.acquire("graph")[1], "leased")
+
+    def test_adaptive_aggregate_can_exceed_individual_limit(self):
+        self.assertEqual(self.acquire("test", memoryMiB=6144)[1], "leased")
+        self.step(30)
+        self.assertEqual(self.acquire("test", memoryMiB=6144)[1], "leased")
+        self.assertEqual(sum(l["memoryMiB"] for l in self.request("status")["leases"].values()), 12288)
+
+    def test_nested_growth_charges_only_unresident_memory(self):
+        token, state = self.acquire("build")
+        self.assertEqual(state, "leased")
+        self.bind_nested(token, 3072)
+        self.sample["memory"]["freePercent"] = 40
+        self.step()
+        self.assertTrue(self.nested(token, "build", 4096)["ok"])
+        self.assertEqual(self.budget.data["leases"][token]["memoryMiB"], 4096)
+
+    def test_nested_growth_renews_pending_memory_across_recovery(self):
+        token, state = self.acquire("test")
+        self.assertEqual(state, "leased")
+        self.bind_nested(token, 128)
+        self.step(62)
+        self.sample["memory"]["freePercent"] = 42
+        self.step()
+        self.assertTrue(self.nested(token, "test", 3072)["ok"])
+        increased = self.now
+        self.assertEqual(self.request("status")["policy"]["level"], "Full")
+        self.assertEqual(self.acquire("browser")[1], "queued")
+        self.budget.lock.close()
+        self.budget = resource.Budget(self.config, resource.config_digest(self.config))
+        self.addCleanup(self.budget.lock.close)
+        self.assertEqual(self.budget.data["leases"][token]["reservationUpdated"], increased)
+        self.step(92)
+        self.assertTrue(any(l["class"] == "browser" for l in self.budget.data["leases"].values()))
+
+    def test_exclusive_jobs_exclude_all_other_heavy_classes(self):
+        for kind in ("test", "graph", "browser", "build", "exclusive"):
+            with self.subTest(kind=kind):
+                token, state = self.acquire("exclusive")
+                self.assertEqual(state, "leased")
+                self.step(30)
+                queued, state = self.acquire(kind)
+                self.assertEqual(state, "queued")
+                self.request("cancel-queued", token=queued)
+                self.request("release", token=token)
+                token, state = self.acquire(kind)
+                self.assertEqual(state, "leased")
+                self.step(30)
+                queued, state = self.acquire("exclusive")
+                self.assertEqual(state, "queued")
+                self.request("cancel-queued", token=queued)
+                self.request("release", token=token)
+
+    def test_nested_builds_can_overlap_other_builds(self):
+        self.acquire("build")
+        self.step(30)
+        token, state = self.acquire("test")
+        self.assertEqual(state, "leased")
+        self.bind_nested(token, 0)
+        self.assertTrue(self.nested(token, "build", 3072)["ok"])
+        self.assertEqual(self.budget.data["leases"][token]["class"], "build")
+
+    def test_cpu_headroom_and_idle_lease_alarm(self):
+        self.config.pop("maxHeavyJobs")
+        self.step()
+        self.budget.host["load1"] = 10  # Four workers would exceed 15 - 2.
+        token, state = self.acquire("test")
+        self.assertEqual(state, "queued")
+        self.step(30)
+        self.assertIn(token, self.budget.data["leases"])
+        self.rows[101] = {"start": "idle-child", "ppid": 100, "pgid": 101,
+                          "rssKiB": 1000, "cpuSeconds": 0.01}
+        self.request("bind", token=token, group={"boot": "fixture-boot", "pid": 101, "start": "idle-child"})
+        self.step(604)
+        self.assertTrue(self.budget.data["leases"][token]["idleCPU"])
+        self.budget.host.update(cores=6, load1=0)
+        self.assertEqual(self.acquire("graph")[1], "leased")
+        self.step(30)
+        events = (self.root / "state/transitions.jsonl").read_text().splitlines()
+        self.assertEqual(sum("host-budget-possibly-hung" in event for event in events), 1)
+        self.rows[101]["cpuSeconds"] += 2
+        self.step()
+        self.assertFalse(self.budget.data["leases"][token]["idleCPU"])
+
+    def test_battery_and_fair_heat_retain_live_leases_but_hold_additional_work(self):
+        self.config.pop("maxHeavyJobs")
+        self.step()
+        first, _ = self.acquire("test")
+        self.step(30)
+        second, _ = self.acquire("graph")
+        self.sample["thermalState"] = "fair"
+        self.step(30)
+        token, state = self.acquire("graph")
+        self.assertEqual(state, "queued")
+        self.assertEqual(set(self.budget.data["leases"]), {first, second})
+        self.assertFalse(any("cancelAt" in l for l in self.budget.data["leases"].values()))
+        self.sample["power"].update(source="battery", adapterWatts=None, isCharging=False)
+        self.step(92)
+        self.assertEqual(self.budget.heavy_slots(), 1)
+        self.assertIn(token, [q["token"] for q in self.budget.data["queue"]])
+
+    def test_request_reuses_tick_and_saves_ledger_once(self):
+        with mock.patch.object(resource, "process_table", wraps=resource.process_table) as processes, \
+                mock.patch.object(resource, "atomic_json", wraps=resource.atomic_json) as writes:
+            self.acquire("test")
+        self.assertEqual(processes.call_args_list, [mock.call([100])])
+        self.assertEqual([call.args[0] for call in writes.call_args_list], [self.budget.path])
+
+    def test_pending_policy_activates_with_resident_lease_and_recovers_partial_write(self):
+        token, _ = self.acquire("worker", restartProtocol=1)
+        path = self.root / "config.json"
+        path.write_text(json.dumps(self.config))
+        self.budget.data["pendingPolicy"] = str(path)
+        self.step()
+        desired = json.loads(path.read_text())
+        self.assertEqual(desired["policyMode"], "on")
+        self.assertNotIn("maxHeavyJobs", desired)
+        self.assertIn(token, self.budget.data["leases"])
+        self.budget.data["pendingConfigWrite"] = str(path)
+        self.budget.save()
+        self.budget.lock.close()
+        replacement = resource.Budget(desired, resource.config_digest(desired))
+        self.addCleanup(replacement.lock.close)
+        self.assertIn(token, replacement.data["leases"])
+        self.assertNotIn("pendingConfigWrite", replacement.data)
+
+    def test_offline_install_preserves_emergency_evidence_and_refuses_nonempty_ledger(self):
+        path = self.root / "config.json"
+        path.write_text(json.dumps(self.config))
+        token, _ = self.acquire("worker")
+        self.budget.lock.close()
+        args = types.SimpleNamespace(destination=str(self.root / "installed"), wait=False)
+        self.assertEqual(resource.install_owner(args, str(path), self.config, self.budget.digest), 75)
+        self.assertFalse((self.root / "installed/fm_resource.py").exists())
+        self.request("release", token=token)
+        self.request("emergency", evidence="Synthetic retained emergency")
+        emergency = self.budget.data["emergency"]
+        self.assertEqual(resource.install_owner(args, str(path), self.config, self.budget.digest), 0)
+        installed = json.loads((self.root / "state/ledger.json").read_text())
+        self.assertEqual(installed["emergency"], emergency)
+        self.assertEqual(json.loads(path.read_text())["policyMode"], "on")
+        self.assertTrue((self.root / "installed/fm-resource-run").exists())
 
     def test_policy_log_capacity_and_write_failure_do_not_stop_safety(self):
         path = self.root / "state/policy.jsonl"
@@ -3019,6 +3422,7 @@ class LevelOwnerTests(unittest.TestCase):
 
     def test_nested_large_upgrade_cannot_bypass_class_rule(self):
         self.acquire("build")
+        self.step(30)
         token, _ = self.acquire("test")
         self.budget.data["leases"][token]["group"] = {"pid": 100, "boot": "fixture-boot", "start": "fixture-start"}
         with self.assertRaisesRegex(resource.Refusal, "nested workload class"):
@@ -3028,7 +3432,7 @@ class LevelOwnerTests(unittest.TestCase):
     def test_config_validation_and_relaxation_direction(self):
         path = self.root / "config.json"
         for changes in ({"policyMode": "automatic"}, {"fullLevelEnabled": 1},
-                        {"maxHeavyJobs": 3}, {"maxHeavyJobs": True}):
+                        {"maxHeavyJobs": 0}, {"maxHeavyJobs": True}):
             path.write_text(json.dumps(dict(self.config, **changes)))
             with self.assertRaises(resource.Refusal):
                 resource.load_config(str(path))
@@ -3039,7 +3443,7 @@ class LevelOwnerTests(unittest.TestCase):
         self.assertFalse(resource.capacity_relaxation(previous, dict(self.config, graceSeconds=2)))
 
     def test_empty_policy_change_preserves_latch_and_rejects_live_change(self):
-        token, _ = self.acquire("worker")
+        token, _ = self.acquire("test")
         self.budget.save()
         self.budget.lock.close()
         changed = dict(self.config, policyMode="shadow", fullLevelEnabled=False)
@@ -3066,6 +3470,29 @@ class LevelOwnerTests(unittest.TestCase):
         self.addCleanup(replacement.lock.close)
         self.assertIn(token, replacement.data["leases"])
         self.assertEqual(replacement.data["compatibleConfigDigests"], [resource.config_digest(self.config)])
+
+
+class RestartRPCTests(unittest.TestCase):
+    def test_retry_is_bounded_and_reuses_mutation_arguments(self):
+        now = [0]
+        def sleep(seconds):
+            now[0] += seconds
+        request = dict(op="bind", token="a" * 32, group={"pid": 123})
+        with mock.patch.object(resource.time, "monotonic", side_effect=lambda: now[0]), \
+                mock.patch.object(resource.time, "sleep", side_effect=sleep), \
+                mock.patch.object(resource, "rpc_once", side_effect=ConnectionRefusedError) as rpc:
+            with self.assertRaisesRegex(resource.Refusal, "restart recovery"):
+                resource.rpc({}, "digest", wait=lambda: True, **request)
+        self.assertEqual(now[0], 120)
+        self.assertEqual(len(rpc.call_args_list), 61)
+        self.assertTrue(all(call.kwargs["token"] == request["token"] and
+                            call.kwargs["group"] == request["group"] for call in rpc.call_args_list))
+
+    def test_explicit_refusal_is_not_retried(self):
+        with mock.patch.object(resource, "rpc_once", side_effect=resource.Refusal("policy differs")) as rpc:
+            with self.assertRaisesRegex(resource.Refusal, "policy differs"):
+                resource.rpc({}, "digest", wait=lambda: True, op="acquire")
+        self.assertEqual(rpc.call_count, 1)
 
 
 if __name__ == "__main__":

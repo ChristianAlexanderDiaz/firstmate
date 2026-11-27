@@ -11,6 +11,7 @@ No thermal load, machine settings, user daemon or runtime backend is involved.
 import importlib.util
 import json
 import os
+import signal
 from pathlib import Path
 import sys
 import threading
@@ -60,11 +61,12 @@ def wall_time():
     return wall_epoch + real_time.monotonic()
 
 
-def process_table():
+def process_table(pids=None):
     fake = root / "process-table.json"
     if fake.exists():
-        return {int(pid): row for pid, row in json.loads(fake.read_text()).items()}
-    rows = real_process_table()
+        return {int(pid): row for pid, row in json.loads(fake.read_text()).items()
+                if pids is None or int(pid) in pids}
+    rows = real_process_table(pids)
     try:
         orphan = int((root / "orphan-controller").read_text())
         if orphan in rows:
@@ -75,14 +77,33 @@ def process_table():
 
 
 resource.process_table = process_table
+resource.host_capacity = lambda: {"memoryMiB": 32768, "cores": 15, "load1": 0}
+real_execve = os.execve
+
+
+def execve(executable, argv, env):
+    # Preserve synthetic telemetry/time across a real exec handoff. Socket and
+    # lock descriptors, the production serve loop and ledger remain real.
+    real_execve(executable, [executable, __file__, argv[1], str(root)], env)
+
+
+resource.os.execve = execve
 real_handle = resource.Budget.handle
 
 
 def handle(budget, request):
+    if (root / "legacy-upgrade").exists():
+        if request.get("op") == "upgrade":
+            raise resource.Refusal("unknown request operation")
+        request.pop("restartProtocol", None)
     legacy = (root / "legacy-owner").exists() and isinstance(request, dict)
     if legacy and request.get("op") == "inherit-browser":
         raise resource.Refusal("invalid request nonce")
     result = real_handle(budget, request)
+    drop = root / "drop-response"
+    if drop.exists() and drop.read_text() == request.get("op"):
+        drop.unlink()
+        os.kill(os.getpid(), signal.SIGKILL)
     # Delay one acknowledgement after the real mutation, like an overloaded
     # single owner. Delay alone must not replay a bind or cancel live work.
     delay = root / "delay-response"
