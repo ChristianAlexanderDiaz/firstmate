@@ -18,6 +18,8 @@
 #            session on that board and PROVE it is live BEFORE binding and
 #            arming its answer source, so a registered poll can never race a
 #            session that does not exist or attach to one that has ended.
+#            A finished build leaves the board's own state line saying it is
+#            ready (bin/fm-board-live.sh owns that line).
 #            Bind to the keyed-answer intake (bin/fm-captain-hold.sh) ALWAYS
 #            precedes arm, so the board can never produce an answer that has
 #            nowhere to go (captain-hold-lifecycle's ordering rule, enforced
@@ -411,6 +413,9 @@ command_build() {
     fail "cannot publish the board"
   fi
   printf 'board: %s\n' "$board"
+  # A rebuilt board keeps its state line on an open page: bin/fm-board-live.sh
+  # owns that line. A miss here or below costs only the line, never the build.
+  "$SCRIPT_DIR/fm-board-live.sh" stamp "$board" >/dev/null 2>&1 || true
 
   command -v lavish-axi >/dev/null 2>&1 || fail "lavish-axi is not installed"
   sid=$("$SCRIPT_DIR/fm-procevent-lavish.sh" source-id "$board") \
@@ -456,6 +461,7 @@ command_build() {
     fi
     printf 'listening: live\n'
   fi
+  "$SCRIPT_DIR/fm-board-live.sh" ready "$board" >/dev/null 2>&1 || true
 }
 
 case "${1-}" in

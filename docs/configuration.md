@@ -2463,6 +2463,12 @@ Local board reminders use the existing supervision cycle and captured results; [
 A board rewritten in place can have old answers suppress its new reminders, and replacement or rebuild transitions do not guarantee isolation from earlier feedback.
 Automatic closure after the last pick is not supported.
 
+**Keep the open page current**
+
+[`bin/fm-board-live.sh`](../bin/fm-board-live.sh) owns the line at the top of a board that says "Working on your changes" or "Ready for you, updated HH:MM", and how an open page catches up with a republished board that Lavish's own live reload did not deliver.
+Arming a board makes it ready, and feedback that leaves the session open makes it working, so a worker republishes by changing the same board file and re-arming when the round is finished.
+Lavish serves one page per session: when the session address is opened a second time, the earlier page stops receiving new versions until it is reloaded, so nobody but the captain opens it.
+
 **Arm and confirm a listener**
 
 A live task that hosts a Lavish board owns its listener, so firstmate must never arm that board.

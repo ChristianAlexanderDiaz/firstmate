@@ -212,6 +212,51 @@ They fail for opposite reasons, which is the point of keeping them apart.
 The crashed-leader cases separately pin refusal and claim preservation when a leader dies outside the stop's own signal, so successful escalation cannot be mistaken for closing that limit.
 Refresh the regressions with `bash tests/fm-procevent.test.sh`; the dated measurements above are recorded observations, not fixed timing thresholds.
 
+## Open board state line and self-refresh
+
+[`bin/fm-board-live.sh`](../../bin/fm-board-live.sh) owns the contract; this section records what it was verified against.
+Verified on 2026-11-26 on macOS (Darwin 27.0.0) against `lavish-axi` 0.1.86 (installed) and 0.1.99 (a temporary npm prefix), each on its own server with a private `LAVISH_AXI_STATE_DIR` and `LAVISH_AXI_PORT`, in headless Chrome driven through `chrome-devtools-axi` with a fresh profile.
+Dia was not driven.
+
+Without the live block, both versions behaved the same when a board was republished under an open page:
+
+| Case | Open page afterwards |
+| --- | --- |
+| page connected (atomic replace or in-place write, tab in front or in the background) | new board within about 1 second |
+| browser offline during the republish, then online | new board once online |
+| server restarted across the republish | old board until a manual reload |
+| session address opened a second time | the earlier page keeps the old board for every later republish, even after the second page closes |
+| page restored through browser history | Lavish page with an empty board frame |
+
+With the live block, on both versions:
+
+| Case | Open page afterwards |
+| --- | --- |
+| board made ready | "Ready for you, updated HH:MM" within 2 seconds |
+| board marked working | "Working on your changes" within 2 seconds, with no frame reload |
+| server restarted across the republish | new board and the ready line about 5 seconds after the server returns, scroll position kept, and a queued answer still reaches Lavish |
+| session address opened a second time | the earlier page says "A newer version is ready. Reload this tab to see it." and the newest page shows the new board |
+
+Lavish filed no layout issue against the line.
+The history-restore case is not helped, because the block never runs in an empty frame.
+
+The page's self-refresh rests on four Lavish behaviors that `tests/fm-board-live-lavish-live-e2e.test.sh` checks against the installed release without a browser:
+
+```sh
+$ lavish-axi --version
+0.1.86
+$ FM_BOARD_LIVE_LAVISH_LIVE=1 bash tests/fm-board-live-lavish-live-e2e.test.sh
+# lavish-axi 0.1.86
+ok - lavish-axi 0.1.86 serves the state file beside a board as a script without a page-load token
+ok - lavish-axi 0.1.86 adds its script to the served board and answers it while the page load is current
+ok - lavish-axi 0.1.86 returns the changed board when a still-current page load asks again
+ok - lavish-axi 0.1.86 refuses the probe once another page load has taken the session
+```
+
+The same four lines passed with 0.1.99 first on `PATH`.
+Run that guard after a `lavish-axi` upgrade; the portable page and adapter behavior is pinned by `tests/fm-board-live.test.sh`.
+The change is harness- and backend-neutral: the adapter hooks run in the home that owns the board's listener, for local and remote homes alike, and no launch, steering, or lifecycle interface is involved.
+
 ## Portability finding
 
 `setsid` is **not present on macOS**, so it cannot establish the runner's process group.
