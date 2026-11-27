@@ -15,7 +15,7 @@ export PATH="$TMP_ROOT/fakebin:$PATH"
 unset HERDR_ENV HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_SOCKET_PATH HERDR_SESSION
 cat > "$TMP_ROOT/fakebin/herdr" <<'FAKE'
 #!/usr/bin/env python3
-import json,os,sys
+import json,os,sys,shlex
 from pathlib import Path
 args=sys.argv[1:]
 assert args[-2:]==['--session','lab'], 'every Herdr call must name the session'
@@ -37,10 +37,21 @@ elif a==['pane','split']:
  source=s['panes'][args[2]]
  n='w1:p'+str(s['next']); s['next']+=1
  s['panes'][n]={'workspace_id':source['workspace_id'],'tab_id':source['tab_id']}
+ s['right']=n
  result={'pane':{'pane_id':n,**s['panes'][n]}}
+elif a==['pane','list']:
+ result={'panes':[{'pane_id':k,**v} for k,v in s['panes'].items()]}
+elif a==['pane','neighbor']:
+ result={'neighbor':{'pane_id':args[3],'neighbor_pane_id':s.get('right')}}
+elif a==['pane','move']:
+ assert args[args.index('--tab')+1]==s['panes'][args[2]]['tab_id'], 'move must bind the target tab'
+ s['right']=args[2]
+ result={'move_result':{'pane':{'pane_id':args[2]}}}
 elif a==['pane','process-info']:
  pane=s['panes'].get(args[3],{})
- result={'process_info':{'pane_id':args[3],'shell_pid':100,'foreground_process_group_id':200 if pane.get('command') else 100}}
+ argv=shlex.split(pane.get('command','').split('&&')[-1])
+ result={'process_info':{'pane_id':args[3],'shell_pid':100,'foreground_process_group_id':200 if pane.get('command') else 100,
+  'foreground_processes':[{'argv':argv,'cwd':pane.get('cwd',os.environ['FM_FAKE_WT'])}] if argv else []}}
 elif a==['pane','run']:
  if s.get('fail_run'): error('failed')
  s['panes'][args[2]]['command']=args[3]
@@ -71,6 +82,7 @@ chmod +x "$TMP_ROOT/fakebin/"*
 git init -q -b main "$TMP_ROOT/wt"
 git -C "$TMP_ROOT/wt" commit -q --allow-empty -m init
 git -C "$TMP_ROOT/wt" checkout -q -b fm/panes
+export FM_FAKE_WT="$TMP_ROOT/wt"
 HEAD_SHA=$(git -C "$TMP_ROOT/wt" rev-parse HEAD)
 META="$FM_HOME/state/panes.meta"
 RECORD="$FM_HOME/state/panes.nm-review-pane"
@@ -82,6 +94,7 @@ reset_panes() {
   printf '%s\n' '{"panes":{"w1:p2":{"workspace_id":"w1","tab_id":"w1:t2"}},"next":3}' > "$FM_FAKE_HERDR_STATE"
   : > "$FM_FAKE_HERDR_LOG"
   rm -f "$RECORD"
+  rm -f "$FM_HOME/state/panes.nm-review-miss" "$FM_HOME/state/.wake-queue"
 }
 run_status() {  # <run> <status> [branch] [head]
   cat > "$FM_FAKE_NM_STATUS" <<EOF
@@ -117,13 +130,13 @@ cmp "$META" "$TMP_ROOT/original.meta" || fail 'chat metadata changed'
 python3 - "$FM_FAKE_HERDR_LOG" "$FM_FAKE_HERDR_STATE" "$TMP_ROOT/wt" <<'PY'
 import json,sys
 calls=[json.loads(l) for l in open(sys.argv[1])]; split=next(c for c in calls if c[:2]==['pane','split'])
-assert split[split.index('--direction')+1]=='down'
+assert split[split.index('--direction')+1]=='right'
 assert split[split.index('--cwd')+1]==sys.argv[3]
 assert '--no-focus' in split and split[split.index('--ratio')+1]=='0.55'
 assert ['pane','rename','w1:p3','no-mistakes'] in calls
 assert json.load(open(sys.argv[2]))['panes']['w1:p3']['command'].endswith('no-mistakes attach --run run-one')
 PY
-pass 'attributed run opens one stacked viewer, preserving chat and focus'
+pass 'branch-scoped run opens one right-hand viewer, preserving chat and focus'
 run_status run-one completed fm/panes deadbeef
 call
 call
@@ -146,7 +159,7 @@ import json,sys
 split=next(c for c in map(json.loads,open(sys.argv[1])) if c[:2]==['pane','split'])
 assert split[split.index('--direction')+1]=='right'
 PY
-pass 'wide pane chooses side by side'
+pass 'width does not change right-hand placement'
 # Run replacement must close the old viewer before opening another.
 run_status replacement running
 call
@@ -166,7 +179,7 @@ call
 run_status historical completed fm/panes deadbeef
 call
 [ "$(count split)" = 0 ] || fail 'historical head must not open viewer'
-for backend in tmux zellij orca cmux; do
+for backend in tmux zellij orca cmux paseo; do
   sed "s/^backend=herdr$/backend=$backend/" "$TMP_ROOT/original.meta" > "$META"
   call
   [ "$(count split)" = 0 ] || fail "$backend must be a no-op"
@@ -273,7 +286,7 @@ assert [c for c in calls if c[:2]==['workspace','rename']]==[['workspace','renam
 assert json.load(open(sys.argv[2]))['label']=='🔍 fm-panes'
 assert sum(c[:2]==['pane','split'] for c in calls)==1
 PY
-pass 'one attributed state read reconciles both the workspace emoji and review viewer without repeated renames'
+pass 'presentation reconciles both the workspace emoji and review viewer without repeated renames'
 
 # The sweep on a home whose no-mistakes release appends a column to its runs
 # table: the worker keeps a readable state, so the sweep applies its emoji and
@@ -306,3 +319,96 @@ assert renames==['🔍 fm-panes','⏳ fm-panes'], renames
 assert json.load(open(sys.argv[2]))['label']=='⏳ fm-panes'
 PY
 pass 'a runs table with an appended column keeps the swept emoji applied and current across a state change'
+
+reset_panes
+run_status moved running
+call
+change '{"right":null}'
+call
+call
+[ "$(count split)" = 1 ] && [ "$(count move)" = 1 ] || fail 'existing stacked view must move right exactly once'
+pass 'existing stacked view moves right without replacing attach'
+
+reset_panes
+run_status adopted running
+change '{"next":4,"panes":{"w1:p2":{"workspace_id":"w1","tab_id":"w1:t2"},"w1:p3":{"workspace_id":"w1","tab_id":"w1:t2","command":"no-mistakes attach --run adopted"}}}'
+call
+[ "$(count split)" = 0 ] && [ "$(count run)" = 0 ] && [ "$(record_pane)" = w1:p3 ] \
+  || fail 'proven hook view should be adopted, not duplicated or restarted'
+run_status successor running
+call
+[ "$(count close)" = 1 ] && [ "$(count split)" = 1 ] || fail 'adopted older run must be replaced'
+pass 'exact attach process is adopted and replaced on rerun without duplicates'
+
+reset_panes
+run_status occupied running
+change '{"panes":{"w1:p2":{"workspace_id":"w1","tab_id":"w1:t2"},"w1:p3":{"workspace_id":"w1","tab_id":"w1:t2","command":"sleep 100"}}}'
+call
+[ "$(count split)" = 0 ] && [ "$(count close)" = 0 ] && [ ! -e "$RECORD" ] \
+  || fail 'unknown sibling must prevent creating or closing a pane'
+[ ! -s "$FM_HOME/state/.wake-queue" ] || fail 'miss must not alert before 30 seconds'
+since=$(($(date +%s) - 31))
+sed "s/^since=.*/since=$since/" "$FM_HOME/state/panes.nm-review-miss" > "$TMP_ROOT/miss.tmp"
+mv "$TMP_ROOT/miss.tmp" "$FM_HOME/state/panes.nm-review-miss"
+call
+call
+[ "$(wc -l < "$FM_HOME/state/.wake-queue" | tr -d ' ')" = 1 ] || fail '30-second miss must alert once per run'
+assert_contains "$(cat "$FM_HOME/state/.wake-queue")" 'unknown pane' 'miss alert must name the failure'
+change '{"panes":{"w1:p2":{"workspace_id":"w1","tab_id":"w1:t2"}}}'
+call
+[ -f "$RECORD" ] && [ ! -f "$FM_HOME/state/panes.nm-review-miss" ] || fail 'successful retry must clear miss'
+pass 'unknown panes remain untouched; 30-second miss alerts once and recovery clears it'
+
+reset_panes
+run_status decoupled running fm/panes deadbeef
+printf '%s\n' 'unreadable newer inventory' > "$FM_FAKE_NM_OVERVIEW"
+"$ROOT/bin/fm-crew-state.sh" panes --sync-review-pane > "$TMP_ROOT/verdict"
+assert_contains "$(cat "$TMP_ROOT/verdict")" 'state: unknown' 'strict ownership must remain unknown'
+[ "$(count split)" = 1 ] || fail 'unknown supervision verdict must not suppress same-branch view'
+pass 'view detection is independent of strict run inventory and head attribution'
+
+reset_panes
+run_status scoped running
+sed 's/^run:$/other_branch_run:/' "$FM_FAKE_NM_STATUS" > "$TMP_ROOT/status.tmp"
+mv "$TMP_ROOT/status.tmp" "$FM_FAKE_NM_STATUS"
+call
+[ "$(count split)" = 0 ] || fail 'other_branch_run block must not be interpreted as current run'
+sed 's/^other_branch_run:$/active_run:/' "$FM_FAKE_NM_STATUS" > "$TMP_ROOT/status.tmp"
+mv "$TMP_ROOT/status.tmp" "$FM_FAKE_NM_STATUS"
+call
+[ "$(count split)" = 1 ] || fail 'active_run block must be supported'
+pass 'current run blocks are scoped and other-branch detail is ignored'
+
+# The portable public attribution helper must accept both real overview schemas
+# and ignore unfamiliar history without licensing an unfamiliar current status.
+overview=$(cat <<'EOF'
+count: 3 of 3 total
+runs[3]{id,branch,status,head,pr,run_counter}:
+  newest,fm/panes,running,12345678,"","run 3 of 3, 1 fix rounds"
+  interrupted,fm/panes,ci_monitor_interrupted,12345678,"","run 2 of 3"
+  older,fm/panes,future_status,12345678,"","run 1 of 3"
+EOF
+)
+choice=$(bash -c '. "$1/bin/fm-nm-run-lib.sh"; fm_nm_select_run fm/panes "$2" "$3"' _ "$ROOT" "$overview" "$TMP_ROOT/wt")
+assert_contains "$choice" 'selected|newest|running|' 'new output and unknown history must select current run'
+unknown=$(printf '%s\n' "$overview" | sed 's/newest,fm\/panes,running/newest,fm\/panes,future_status/')
+choice=$(bash -c '. "$1/bin/fm-nm-run-lib.sh"; fm_nm_select_run fm/panes "$2" "$3"' _ "$ROOT" "$unknown" "$TMP_ROOT/wt")
+assert_contains "$choice" 'unknown|unrecognized run status' 'unknown current status must remain unknown'
+pass 'six-column quoted run counters and interrupted history preserve newest-run selection'
+
+reset_panes
+run_status sweep running
+printf 'earlier diagnostic\n' > "$FM_HOME/state/.nm-review-pane.log"
+"$ROOT/bin/fm-nm-review-pane.sh" --sweep
+"$ROOT/bin/fm-nm-review-pane.sh" --sweep
+[ "$(count split)" = 1 ] || fail 'watcher sweep entry point must open only one view'
+assert_contains "$(cat "$FM_HOME/state/.nm-review-pane.log")" 'earlier diagnostic' 'sweep must append diagnostics'
+dd if=/dev/zero of="$FM_HOME/state/.nm-review-pane.log" bs=1048576 count=1 2>/dev/null
+"$ROOT/bin/fm-nm-review-pane.sh" --sweep
+[ "$(wc -c < "$FM_HOME/state/.nm-review-pane.log.1" | tr -d ' ')" = 1048576 ] || fail 'sweep must rotate a full log'
+pass 'watcher sweep is idempotent and appends then rotates its bounded diagnostic log'
+
+change '{"panes":{"w1:p2":{"workspace_id":"w1","tab_id":"w1:t2"},"w1:p3":{"workspace_id":"w1","tab_id":"w1:t2"}}}'
+call
+[ "$(count split)" = 1 ] && [ "$(count run)" = 2 ] || fail 'exited attach must restart only in its proven idle shell'
+pass 'an exited attach retries in its recorded idle pane without a duplicate split'

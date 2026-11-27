@@ -3015,13 +3015,14 @@ home_summary_refresh_detached() {
   HOME_SUMMARY_PID=$!
 }
 
-# The existing bounded Herdr sweep shares one authoritative state read for
-# review panes and work-state labels on each home, including remote PC homes.
+# The view runs before and independently of strict state attribution. Separate
+# tasks progress concurrently so a slow state read cannot hide another view.
 NM_REVIEW_PANE_PID=
+NM_WORK_LABEL_PID=
 nm_review_pane_tick() {
   local meta id
   local metas=()
-  [ "$(age_of "$STATE/.last-nm-review-pane")" -ge 20 ] || return 0
+  [ "$(age_of "$STATE/.last-nm-review-pane")" -ge 10 ] || return 0
   if [ -n "$NM_REVIEW_PANE_PID" ]; then
     kill -0 "$NM_REVIEW_PANE_PID" 2>/dev/null && return 0
     wait "$NM_REVIEW_PANE_PID" 2>/dev/null || true
@@ -3035,14 +3036,24 @@ nm_review_pane_tick() {
   done
   [ "${#metas[@]}" -gt 0 ] || return 0
   touch "$STATE/.last-nm-review-pane"
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/fm-nm-review-pane.sh" --sweep </dev/null >/dev/null 2>>"$STATE/.nm-review-pane.log" &
+  NM_REVIEW_PANE_PID=$!
+  if [ -n "$NM_WORK_LABEL_PID" ]; then
+    kill -0 "$NM_WORK_LABEL_PID" 2>/dev/null && return 0
+    wait "$NM_WORK_LABEL_PID" 2>/dev/null || true
+  fi
   (
     for meta in "${metas[@]}"; do
       id=$(basename "$meta" .meta)
-      FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CREW_STATE_NO_FORGE=1 \
-        "$SCRIPT_DIR/fm-crew-state.sh" "$id" --sync-presentation || true
+      (
+        export FM_HOME FM_STATE_OVERRIDE="$STATE" FM_CREW_STATE_NO_FORGE=1
+        FM_CREW_STATE_SKIP_REVIEW_PANE=1 "$SCRIPT_DIR/fm-crew-state.sh" "$id" --sync-presentation || true
+      ) &
     done
-  ) </dev/null >/dev/null 2>"$STATE/.nm-review-pane.log" &
-  NM_REVIEW_PANE_PID=$!
+    wait
+  ) </dev/null >/dev/null 2>>"$STATE/.nm-review-pane.log" &
+  NM_WORK_LABEL_PID=$!
 }
 
 RECONCILE_REQUEST_PID=

@@ -154,7 +154,7 @@ fm_nm_head_matches_worktree() {  # <worktree> <run_head>
 # field as well, which fm_nm_run_is_active below checks directly.
 fm_nm_run_status_class() {  # <status_word>
   case "${1:-}" in
-    completed|failed|cancelled) printf 'terminal' ;;
+    completed|failed|cancelled|ci_monitor_interrupted|checks_passed) printf 'terminal' ;;
     pending|running)            printf 'live' ;;
     *)                          printf 'unknown' ;;
   esac
@@ -190,8 +190,10 @@ fm_nm_run_status_class() {  # <status_word>
 # The newest same-branch row is the candidate regardless of outcome: an older
 # live run must not hide a newer failure. If the newest is live and another
 # same-branch live run exists, neither has exclusive authority: report all
-# candidate ids as unknown. A newer live row can replace cancelled history,
-# but the caller must fetch its full status BY ID and prove branch/head,
+# candidate ids as unknown. A newer live row can replace cancelled history;
+# an unfamiliar status in older history does not invalidate that candidate.
+# The newest status must still be recognized before it can answer for the branch.
+# The caller must fetch its full status BY ID and prove branch/head,
 # executing status, or active pipeline custody before using its steps.
 # Never reuse another run's gate detail.
 # This is a read-only selection, not teardown authorization.
@@ -257,7 +259,7 @@ fm_nm_select_run() {  # <branch> <axi-overview> <worktree> [timeout_secs]
       }
       if (first == "") { first = id; first_status = st }
       if (st == "running" || st == "pending") live++
-      if (st !~ /^(pending|running|completed|failed|cancelled)$/) unknown_status = 1
+      if (first == id && st !~ /^(pending|running|completed|failed|cancelled|ci_monitor_interrupted|checks_passed)$/) unknown_status = 1
       next
     }
     inrows { inrows = 0 }
@@ -382,7 +384,7 @@ fm_nm_run_is_active() {  # <toon-output>
   status=$(fm_nm_strip_quotes "$(fm_nm_field "$1" status)")
   outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$1" outcome)")
   [ -z "$outcome" ] || return 1
-  case "$status" in completed|failed|cancelled) return 1 ;; esac
+  case "$status" in completed|failed|cancelled|ci_monitor_interrupted|checks_passed) return 1 ;; esac
 }
 
 # The custody exemption to the head rule above: while the pipeline OWNS the

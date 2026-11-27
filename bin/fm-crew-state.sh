@@ -301,7 +301,9 @@ emit() {  # <state> <source> [detail]
     esac
     case "$SYNC_REVIEW_PANE" in
       --sync-review-pane|--sync-presentation)
-        reconcile_review_pane || echo "warning: no-mistakes pane reconciliation for $ID failed; supervision will retry" >&2
+        if [ "${FM_CREW_STATE_SKIP_REVIEW_PANE:-0}" != 1 ]; then
+          reconcile_review_pane || echo "warning: no-mistakes pane reconciliation for $ID failed; supervision will retry" >&2
+        fi
         ;;
     esac
   fi
@@ -316,27 +318,9 @@ emit() {  # <state> <source> [detail]
 }
 
 reconcile_review_pane() {
-  local run phase=terminal status outcome
-  [ -n "${RUN_OUT:-}" ] || return 0
-  run=$(fm_nm_strip_quotes "$(fm_nm_field "$RUN_OUT" id)")
-  [ -n "$run" ] || return 0
-  if [ "${HAVE_RUN:-0}" = 1 ] && [ "${RUN_SOURCE:-}" = full ] && [ -z "${RUN_DEAD_DAEMON:-}" ]; then
-    fm_nm_run_is_active "$RUN_OUT" && phase=active
-  else
-    # The pipeline may have advanced the code beyond this checkout. A run
-    # previously displayed here can still be closed by its exact terminal
-    # identity; head mismatch must not strand that viewer after completion.
-    [ "$(fm_meta_get "$STATE/$ID.nm-review-pane" run)" = "$run" ] || return 0
-    status=$(fm_nm_strip_quotes "$(fm_nm_field "$RUN_OUT" status)")
-    outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$RUN_OUT" outcome)")
-    case "$status:$outcome" in
-      completed:*|failed:*|cancelled:*|*:passed|*:passed-with-override|*:passed-with-skips|*:checks-passed|*:failed|*:cancelled) ;;
-      *) return 0 ;;
-    esac
-  fi
-  # shellcheck source=bin/fm-nm-review-pane.sh
-  . "$SCRIPT_DIR/fm-nm-review-pane.sh"
-  fm_nm_review_pane_sync "$META" "$STATE" "$ID" "$run" "$phase"
+  # Presentation has its own read-only branch-scoped evidence. It must still
+  # run when the stricter supervision verdict is unknown.
+  "$SCRIPT_DIR/fm-nm-review-pane.sh" "$ID"
 }
 
 # --- meta resolution --------------------------------------------------------
@@ -1115,7 +1099,7 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
           emit unknown run-step "selected run unavailable or mismatched; run ids: $candidate_ids"
         fi
         case "$(strip_quotes "$(nm_field status)")" in
-          pending|running|fixing|ci|awaiting_approval|fix_review|completed|failed|cancelled) ;;
+          pending|running|fixing|ci|awaiting_approval|fix_review|completed|failed|cancelled|ci_monitor_interrupted|checks_passed) ;;
           *) emit unknown run-step "selected run status unverified; run ids: $candidate_ids" ;;
         esac
         if fm_nm_run_is_active "$RUN_OUT"; then current_class=live; else current_class=terminal; fi

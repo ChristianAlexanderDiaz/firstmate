@@ -2486,7 +2486,8 @@ The daemon injection transport into a live composer keeps its coverage in `tests
 
 ### No-mistakes pane lifecycle
 
-Verified on 2026-10-18 on Linux with Bash 5.2.21, jq 1.7, and Python 3.12.3, using a session-scoped stateful Herdr fake:
+Verified on 2026-11-26 on macOS arm64 with Herdr 0.9.3, Bash 5.3.9, jq 1.8.2, Python 3.14.8 and no-mistakes `custom-v1.102.0-138-g0cd4ec56`.
+The portable regression uses a session-scoped stateful Herdr fake and the real presentation executable:
 
 ```sh
 bash bin/fm-test-run.sh tests/fm-nm-review-pane.test.sh --jobs 1
@@ -2495,24 +2496,41 @@ bash bin/fm-test-run.sh tests/fm-nm-review-pane.test.sh --jobs 1
 Observed output:
 
 ```text
-ok - attributed run opens one stacked viewer, preserving chat and focus
-ok - terminal run with a pipeline-advanced head closes; replacement converges
-ok - wide pane chooses side by side
-ok - replacement and close refusal preserve exact viewer identity
-ok - foreign, historical and non-Herdr evidence cannot open a viewer
-ok - attach retries reuse the recorded pane; ambiguous reads preserve it
-ok - already absent viewer closes without touching chat
-ok - relaunched chat closes the earlier viewer and opens one beside the new pane
-ok - record corruption cannot redirect viewer cleanup onto chat
-ok - session lock serializes pane creation with teardown and concurrent sweeps
-FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=77801
+ok - branch-scoped run opens one right-hand viewer, preserving chat and focus
+ok - existing stacked view moves right without replacing attach
+ok - exact attach process is adopted and replaced on rerun without duplicates
+ok - unknown panes remain untouched; 30-second miss alerts once and recovery clears it
+ok - view detection is independent of strict run inventory and head attribution
+ok - current run blocks are scoped and other-branch detail is ignored
+ok - six-column quoted run counters and interrupted history preserve newest-run selection
 ```
 
-The regression uses the real crew-state run attribution and pane reconciliation executable, checks the chat metadata remains identical, and refuses every fake Herdr call without an explicit session.
+The regression also checks replacement, manual closure, retry, corrupted records, endpoint relaunch, presentation-lock contention, and unchanged chat metadata.
 The feature does not inspect harness output or introduce harness-specific state rules.
-Non-Herdr backends return before any viewer mutation.
+Claude, Codex and other worker harnesses share the same branch-scoped display path; tmux, zellij, Orca, cmux and Paseo return before any viewer mutation.
 Task teardown cleanup of a recorded viewer, including one beside a chat pane from before a relaunch, is covered through the real `bin/fm-teardown.sh` by `test_herdr_flat_teardown_closes_recorded_viewer` in `tests/fm-teardown.test.sh`; this record does not include an observed run of that case.
-Live Herdr lifecycle verification was unavailable on this host because the lab helper could not establish its required running-default-session tripwire; this record makes no live-backend claim for the new pane behavior.
+
+The opt-in live guard starts a real no-mistakes review in a throwaway repository with a local bare origin and publication steps skipped:
+
+```sh
+FM_NM_REVIEW_PANE_E2E=1 bash bin/fm-test-run.sh tests/fm-nm-review-pane.test.sh tests/fm-nm-review-pane-live-e2e.test.sh --jobs 1
+```
+
+Observed output:
+
+```text
+ok - real stacked view moves right, is adopted without duplication, and stays closed when dismissed
+elapsed_seconds=13
+ok - real no-mistakes run opens one live view on the right within 30 seconds
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=63295
+```
+
+The guard exercises the real automatic watcher trigger and checks the attach process arguments and cwd, two panes in the task tab, pane rectangles and focus, the right-neighbour API and idempotent reconciliation.
+It then repairs an existing stacked view, adopts the real attach after record loss, and confirms a dismissed view stays closed for the same run.
+Every Herdr command goes through the guarded named-lab helper, whose cleanup verifies the default session is unchanged.
+Only the throwaway run is cancelled; the shared no-mistakes daemon remains running.
+This guard requires macOS `sandbox-exec` to prevent `no-mistakes init` from replacing unrelated personal skills, and spends a real review-agent budget when enabled.
+Repeat it after changes to the no-mistakes status schema, Herdr layout API or this reconciler.
 
 ### Secondmate retirement record guard
 
