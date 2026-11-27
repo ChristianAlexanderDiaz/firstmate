@@ -58,6 +58,11 @@
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>] [--claude-account <name>]
+#   FM_CONTROL_RESUME_SESSION is internal to a locked fm-control resume.
+#   It retains a canonical Claude/Codex session, account root and cwd, omits the
+#   initial brief, and refuses profile changes. Native IDs live in task meta;
+#   Claude receives its UUID at launch, Codex's native notify records thread-id
+#   at the first completed turn (before a board can be reviewed).
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded worktree, reusing its recorded endpoint when that
 #   endpoint still exists. Legacy pool copies migrate to a durable allocation
@@ -2083,6 +2088,12 @@ if [ "$RELAUNCH" -eq 1 ]; then
     exit 1
   fi
 fi
+if [ -n "${FM_CONTROL_RESUME_SESSION:-}" ]; then
+  [ "$RELAUNCH" = 1 ] && [ "$SPAWN_CONTROL_PARENT" = 1 ] || {
+    echo "error: saved-session launch requires the owning fm-control transaction" >&2
+    exit 1
+  }
+fi
 ORCA_LAUNCH_ENV_ENABLED=0
 ORCA_LAUNCH_ENV_ARGS=
 if [ "$RELAUNCH" -eq 0 ]; then
@@ -2569,7 +2580,7 @@ launch_template() {
     # record-backed doorbell: the full envelope is published into the receiving
     # home's state/operational-inbox before launch and only a printable doorbell
     # naming it is passed. A record that cannot be published stops the spawn.
-    printf '%s' '__MODELFLAG____EFFORTFLAG____BRIEFDOORBELL__'
+    printf '%s' '__MODELFLAG____EFFORTFLAG____NATIVESESSION____BRIEFDOORBELL__'
     ;;
   # --disable hooks (equivalent to -c features.hooks=false) turns codex's whole
   # lifecycle-hook layer off for CREWMATE and SCOUT launches only.
@@ -2597,7 +2608,9 @@ launch_template() {
     if [ "$kind" = secondmate ]; then
       printf '%s' '__CONTEXTCOMMAND____MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
     else
-      printf '%s' '__CONTEXTCOMMAND____MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox --disable hooks -c "notify=[\"bash\",\"-c\",\"touch __TURNEND__\"]" "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      # Updates belong to the operator: an update picker otherwise replaces
+      # the saved conversation's composer on unattended startup and resume.
+      printf '%s' '__CONTEXTCOMMAND____NATIVESESSION____MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox --disable hooks -c check_for_update_on_startup=false __SESSIONNOTIFY____SESSIONPROMPT__'
     fi
     ;;
   opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}__EFFORTFLAG__}'\'' opencode __MODELFLAG__--prompt "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
@@ -3081,7 +3094,7 @@ record_claude_account_refusal() {
   printf '%s\n' "$1" >&2
 }
 if [ "$HARNESS" = claude ] && [ "$RAW_LAUNCH" = 0 ] && [ "$CLAUDE_ACCOUNT_SET" -eq 0 ] \
-  && fm_worker_account_paced "$CONFIG"; then
+  && [ -z "${FM_CONTROL_RESUME_SESSION:-}" ] && fm_worker_account_paced "$CONFIG"; then
   case "$KIND" in ship | scout) CLAUDE_ACCOUNT_PACED=1 ;; esac
 fi
 if [ "$RELAUNCH" -eq 1 ]; then
@@ -3151,6 +3164,26 @@ elif [ -n "$CLAUDE_ACCOUNT" ]; then
   else
     unset CLAUDE_CONFIG_DIR
   fi
+fi
+
+# The ordinary account resolver still validates pins and failover maps. Resume
+# may retain its account, but may never override a changed pin to reach it.
+# shellcheck source=bin/fm-agent-session-lib.sh
+. "$SCRIPT_DIR/fm-agent-session-lib.sh"
+if [ -n "${FM_CONTROL_RESUME_SESSION:-}" ]; then
+  if [ "$HARNESS" != "$(fm_meta_get "$RELAUNCH_META" harness)" ] \
+    || [ "${MODEL:-default}" != "$(fm_meta_get "$RELAUNCH_META" model)" ] \
+    || [ "${EFFORT:-default}" != "$(fm_meta_get "$RELAUNCH_META" effort)" ] \
+    || [ "$FM_CONTROL_RESUME_SESSION" != "$(fm_meta_get "$RELAUNCH_META" agent_session_id)" ] \
+    || [ "$(fm_agent_session_root "$HARNESS")" != "$(fm_meta_get "$RELAUNCH_META" agent_session_root)" ]; then
+    echo "error: resume profile or account differs from the saved conversation; pins remain unchanged" >&2
+    exit 1
+  fi
+  fm_agent_session_file "$HARNESS" "$(fm_agent_session_root "$HARNESS")" \
+    "$FM_CONTROL_RESUME_SESSION" "$RELAUNCH_WT" >/dev/null || {
+    echo "error: saved conversation became unavailable before resume launch" >&2
+    exit 1
+  }
 fi
 
 secondmate_registry_value() {
@@ -4461,6 +4494,15 @@ relaunch_ensure_durable_worktree() {
   SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
   fm_treehouse_slot_owner_state "$WT" "$ID"
   old_owner=$FM_TREEHOUSE_SLOT_OWNER
+  if [ -n "${FM_CONTROL_RESUME_SESSION:-}" ]; then
+    case "$old_owner" in
+      other|unsafe)
+        echo "error: saved-session resume cannot use a reassigned or unreadable pool slot" >&2
+        return 1
+        ;;
+      *) return 0 ;; # Keep the original cwd and its project lock, without migration.
+    esac
+  fi
   case "$old_owner" in
     unsafe) echo "error: task $ID's slot owner claim is unreadable; refusing to move it" >&2; return 1 ;;
     mine) [ "$FM_TREEHOUSE_SLOT_DURABLE" != 1 ] || return 0 ;;
@@ -5718,6 +5760,10 @@ if [ "$KIND" = secondmate ]; then
   fi
 fi
 BUSY_GEN=
+BUSY_SEED_ARGS=()
+# Native resume opens a composer without submitting a turn. Its first actual
+# prompt, including a board answer, will open busy through the normal hook.
+[ -z "${FM_CONTROL_RESUME_SESSION:-}" ] || BUSY_SEED_ARGS=(--state idle --event native-resume)
   case "$WIRING_HARNESS" in
   codex*)
     if fm_busy_codex_semantic_source; then
@@ -5728,7 +5774,7 @@ BUSY_GEN=
   esac
   case "$WIRING_HARNESS" in
   claude* | opencode* | pi | pi-signed | omp)
-    BUSY_GEN=$("$FM_ROOT/bin/fm-busy-event.sh" arm "$STATE_REAL" "$ID") || {
+    BUSY_GEN=$("$FM_ROOT/bin/fm-busy-event.sh" arm "$STATE_REAL" "$ID" "${BUSY_SEED_ARGS[@]}") || {
       echo "error: failed to arm the busy-state contract for $ID" >&2
       exit 1
     }
@@ -6271,6 +6317,22 @@ fi
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
 SPAWN_GEN="s$(date +%s).${BASHPID:-$$}.$RANDOM"
+AGENT_SESSION_ID=
+AGENT_SESSION_ROOT=
+if [ "$RAW_LAUNCH" = 0 ]; then
+  case "$HARNESS" in
+    claude|codex)
+      AGENT_SESSION_ROOT=$(fm_agent_session_root "$HARNESS")
+      AGENT_SESSION_ID=${FM_CONTROL_RESUME_SESSION:-}
+      if [ "$HARNESS" = claude ] && [ -z "$AGENT_SESSION_ID" ]; then
+        AGENT_SESSION_ID=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]') || AGENT_SESSION_ID=
+        if ! fm_agent_session_uuid "$AGENT_SESSION_ID"; then
+          AGENT_SESSION_ID=$(node -e 'process.stdout.write(require("node:crypto").randomUUID())') || exit 1
+        fi
+      fi
+      ;;
+  esac
+fi
 SPAWN_META_PATH="$STATE/$ID.meta"
 if [ "$SPAWN_META_LOCK_HELD" != 1 ]; then
   SPAWN_META_LOCK=$(fm_meta_lock_path "$STATE/$ID.meta") || exit 1
@@ -6286,6 +6348,7 @@ fi
 SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
+    $1 == "agent_session_id" || $1 == "agent_session_root" { next }
     $1 == "presentation" || $1 == "presentation_closed_at" { next }
     BEGIN {
       split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort account account_provider claude_account claude_account_reason busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
@@ -6323,6 +6386,14 @@ preserve_relaunch_meta() {
   [ -z "$CLAUDE_ACCOUNT_REASON" ] || echo "claude_account_reason=$CLAUDE_ACCOUNT_REASON"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
+  if [ "$RAW_LAUNCH" = 0 ]; then
+    case "$HARNESS" in
+      claude|codex)
+        echo "agent_session_id=$AGENT_SESSION_ID"
+        echo "agent_session_root=$AGENT_SESSION_ROOT"
+        ;;
+    esac
+  fi
   # Default-off writes no traceparent= line.
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;
@@ -6485,6 +6556,40 @@ MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 # A pinned Pi launch confines Pi's model lookup to the declared provider.
 [ -z "$WORKER_ACCOUNT_PROVIDER" ] || MODELFLAG="--provider $(shell_quote "$WORKER_ACCOUNT_PROVIDER") $MODELFLAG"
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT" "$MODEL") || exit 1
+NATIVE_SESSION=
+if [ "$RAW_LAUNCH" = 0 ]; then
+  case "$HARNESS" in
+    claude)
+      if [ -n "$AGENT_SESSION_ROOT" ]; then
+        LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$AGENT_SESSION_ROOT") $LAUNCH"
+      else
+        LAUNCH="env -u CLAUDE_CONFIG_DIR $LAUNCH"
+      fi
+      if [ -n "${FM_CONTROL_RESUME_SESSION:-}" ]; then
+        NATIVE_SESSION="--resume $(shell_quote "$AGENT_SESSION_ID") "
+        LAUNCH=${LAUNCH//__BRIEFDOORBELL__/}
+      else
+        NATIVE_SESSION="--session-id $(shell_quote "$AGENT_SESSION_ID") "
+      fi
+      ;;
+    codex)
+      if [ -n "${FM_CONTROL_RESUME_SESSION:-}" ]; then
+        NATIVE_SESSION="resume $(shell_quote "$AGENT_SESSION_ID") "
+        LAUNCH=${LAUNCH//__SESSIONPROMPT__/}
+      else
+        # shellcheck disable=SC2016 # Expanded in the worker's launch shell.
+        LAUNCH=${LAUNCH//__SESSIONPROMPT__/'"$(__OPINPUT__ encode launch-brief < __BRIEF__)"'}
+      fi
+      session_notify=$(jq -cn --arg script "$FM_ROOT/bin/fm-agent-session-notify.sh" \
+        --arg state "$STATE_REAL" --arg id "$ID" --arg gen "$SPAWN_GEN" \
+        '["bash",$script,$state,$id,$gen]')
+      LAUNCH=${LAUNCH//__SESSIONNOTIFY__/"-c $(shell_quote "notify=$session_notify") "}
+      # Pin the native store even when the pane retained another CODEX_HOME.
+      LAUNCH="CODEX_HOME=$(shell_quote "$AGENT_SESSION_ROOT") $LAUNCH"
+      ;;
+  esac
+fi
+LAUNCH=${LAUNCH//__NATIVESESSION__/$NATIVE_SESSION}
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 # Relaunch session continuity. Computed here, where the adopted endpoint (T) is

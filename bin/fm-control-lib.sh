@@ -38,10 +38,9 @@
 #      stopped. A verb whose postcondition cannot be proven on the recorded
 #      backend is refused rather than performed blind.
 #
-# `resume` is deliberately NOT a verb: it is not deterministic across the
-# verified adapters (docs/agent-control.md owns the per-adapter resume facts).
-# `relaunch` uses the brief on disk rather than a harness-private session as
-# its durable instruction. The relaunch-time exception is
+# `resume` restores an explicitly recorded Claude or Codex conversation.
+# Other adapters remain unsupported; no latest-session selection is allowed.
+# `relaunch` uses the brief on disk. The relaunch-time exception is
 # fm_control_relaunch_resume_flag below: a reference the endpoint's runtime
 # bound as its status authority is returned to a replacement with that adapter.
 
@@ -51,12 +50,13 @@ fm_control_verbs() {
 interrupt
 exit
 relaunch
+resume
 EOF
 }
 
 fm_control_verb_allowed() {  # <verb>
   case "${1-}" in
-    interrupt|exit|relaunch) return 0 ;;
+    interrupt|exit|relaunch|resume) return 0 ;;
   esac
   return 1
 }

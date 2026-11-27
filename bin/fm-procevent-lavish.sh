@@ -544,7 +544,7 @@ cmd_attention() {
     fi
     case "$verdict" in
       dead|missing)
-        printf 'owner-stopped\tLavish board %s (%s), task %s: its worker stopped; post a holding reply within 5 minutes and move the work.\n' "$artifact" "$id" "$task"
+        printf 'owner-stopped\tLavish board %s (%s), task %s: its worker stopped; post a holding reply within 5 minutes. On an answer, use fm-control resume for this author; only exit 3 permits a fresh relaunch, which must be reported in its status.\n' "$artifact" "$id" "$task"
         ;;
     esac
   fi

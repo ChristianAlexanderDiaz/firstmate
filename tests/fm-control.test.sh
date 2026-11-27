@@ -11,7 +11,7 @@
 #      classifier, both refuse instead of acting blind.
 #   3. Exact-id scoping: a window label, an explicit endpoint, an unknown id,
 #      and a record bound to another task are all refused.
-#   4. Verb allowlist: no arbitrary text, no raw keys, no resume.
+#   4. Verb allowlist: no arbitrary text or raw keys; resume needs saved identity.
 #   5. Lifecycle states: busy interrupts first, idle does not, already-stopped
 #      is idempotent success, and an agent that does not stop fails closed.
 #   6. Marker non-regression: a control command to a kind=secondmate task
@@ -894,12 +894,16 @@ test_resume_is_refused_with_its_reason() {
   local dir out rc
   dir=$(new_case resume)
   add_task "$dir" t1 claude
+  alive_as "$dir" zsh
   out=$(run_control "$dir" t1 resume); rc=$?
-  expect_code 2 "$rc" "resume should be refused"
-  assert_contains "$out" "not deterministic across the verified adapters" \
-    "the refusal should explain why resume is excluded"
-  assert_contains "$out" "relaunch" "the refusal should point at the deterministic alternative"
-  pass "fm-control: resume is refused with the determinism reason and the alternative"
+  expect_code 3 "$rc" "missing saved conversation should be unavailable"
+  assert_contains "$out" "missing or unreadable" "resume must explain its missing saved identity"
+  [ -z "$(literals "$dir")" ] || fail "unavailable resume sent input"
+  alive_as "$dir" claude
+  out=$(run_control "$dir" t1 resume); rc=$?
+  expect_code 1 "$rc" "a live agent must refuse, not offer fresh fallback"
+  assert_contains "$out" "requires a stopped worker" "live resume must name the safety refusal"
+  pass "fm-control: unavailable conversation differs from unsafe live resume"
 }
 
 test_relaunch_only_flags_are_rejected_on_other_verbs() {
@@ -1361,10 +1365,10 @@ test_captain_wait_parking_boundary_and_guards() {
       busy|unknown)
         "$ROOT/bin/fm-busy-event.sh" apply "$dir/home/state" t1 "$variant" --current-gen --source fm-recovery --event changed >/dev/null ;;
       firstmate) printf 'needs-decision [key=choice]: firstmate answer owed\n' > "$dir/home/state/t1.status" ;;
-      secondmate) sed -i 's/kind=ship/kind=secondmate/' "$dir/home/state/t1.meta" ;;
+      secondmate) sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/t1.meta" ;;
       generation)
         gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1 --state idle --source fm-spawn --event seed)
-        sed -i "s/^busy_gen=.*/busy_gen=$gen/" "$dir/home/state/t1.meta" ;;
+        sed -i.bak "s/^busy_gen=.*/busy_gen=$gen/" "$dir/home/state/t1.meta" ;;
       resumed)
         "$ROOT/bin/fm-busy-event.sh" apply "$dir/home/state" t1 busy --current-gen --source fm-recovery --event begin >/dev/null
         "$ROOT/bin/fm-busy-event.sh" apply "$dir/home/state" t1 idle --current-gen --source fm-recovery --event end >/dev/null ;;
@@ -1437,17 +1441,33 @@ captain_wait_resume_policy() (
   . "$ROOT/bin/fm-busy-lib.sh"
   . "$ROOT/bin/fm-captain-wait-lib.sh"
   agent_state() { printf dead; }
+  do_resume() {
+    [ ! -f "$dir/fake/resume-refused" ] || return 1
+    [ -f "$dir/fake/native-resume" ] || return 3
+    printf 'resumed\n' >> "$dir/fake/resume-calls"
+    printf 'replacement\n' > "$STATE/t1.busy-gen"
+  }
   do_relaunch() {
     printf '%s\n' "$NOTE" >> "$dir/fake/relaunch-notes"
     if [ -f "$dir/fake/interrupt-launch" ]; then exit 77; fi
     printf 'replacement\n' > "$STATE/t1.busy-gen"
   }
+  if [ -f "$dir/fake/native-resume" ]; then
+    SCRIPT_DIR="$dir/send"
+    mkdir -p "$SCRIPT_DIR"
+    export FM_WAIT_TEST_DELIVERY="$dir/fake/answer-delivered"
+    cat > "$SCRIPT_DIR/fm-send.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_WAIT_TEST_DELIVERY"
+SH
+    chmod +x "$SCRIPT_DIR/fm-send.sh"
+  fi
   fm_captain_wait_control
 )
 
 test_captain_wait_answer_binding_and_interruption() {
   local dir variant out record
-  for variant in answer wrong-key new-wait replacement truncation interrupt; do
+  for variant in answer native refused wrong-key new-wait replacement truncation interrupt; do
     dir=$(new_case "captain-answer-$variant")
     captain_wait_fixture "$dir"
     out=$(run_control "$dir" t1 exit --captain-wait) || fail "$variant observe: $out"
@@ -1463,21 +1483,29 @@ test_captain_wait_answer_binding_and_interruption() {
       new-wait) printf 'paused [key=choice] [wait=captain]: new occurrence\n' >> "$dir/home/state/t1.status" ;;
       replacement) printf 'replacement\n' > "$dir/home/state/t1.busy-gen" ;;
       interrupt) touch "$dir/fake/interrupt-launch" ;;
+      native) touch "$dir/fake/native-resume" ;;
+      refused) touch "$dir/fake/resume-refused" ;;
     esac
     if ! captain_wait_resume_policy "$dir"; then
-      case "$variant" in interrupt|new-wait|truncation) ;; *) fail "$variant resume failed" ;; esac
+      case "$variant" in refused|interrupt|new-wait|truncation) ;; *) fail "$variant resume failed" ;; esac
     fi
     captain_wait_resume_policy "$dir" || fail "$variant replay failed"
     case "$variant" in
+      native)
+        [ "$(wc -l < "$dir/fake/resume-calls" | tr -d ' ')" = 1 ] || fail 'native session resumed more than once'
+        assert_grep 'use option B exactly' "$dir/fake/answer-delivered" 'answer was not delivered after native resume'
+        [ ! -e "$dir/fake/relaunch-notes" ] || fail 'native resume also started a fresh agent'
+        ;;
       answer|interrupt)
         [ "$(grep -c '^Resume this task' "$dir/fake/relaunch-notes")" = 1 ] || fail "$variant launched more than once"
         assert_grep 'use option B exactly' "$dir/fake/relaunch-notes" 'answer absent from resume note'
         [ "$(jq -r .answer "$record")" = 'resolved [key=choice]: use option B exactly' ] || fail 'answer not saved before launch'
+        assert_grep 'saved conversation unavailable; falling back' "$dir/home/state/t1.status" 'fresh fallback was not reported'
         ;;
       *) [ ! -e "$dir/fake/relaunch-notes" ] || fail "$variant launched wrong decision/incarnation" ;;
     esac
   done
-  pass 'captain parking: answer identity, exactly one relaunch, durable answer across interruption'
+  pass 'captain parking: resume first, explicit unavailable fallback, safe refusals and exactly-once answer'
 }
 
 test_captain_wait_parking_boundary_and_guards

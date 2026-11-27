@@ -24,6 +24,8 @@ set -u
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
 # shellcheck source=/dev/null
+. "$ROOT/bin/fm-busy-lib.sh"
+# shellcheck source=/dev/null
 . "$ROOT/bin/fm-trace-context-lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-tasks-axi-lib.sh"
@@ -82,7 +84,7 @@ case "${1:-}" in
           printf 'zsh' > "$D/command"
           [ -z "${FM_FAKE_EXIT_TRANSPORT_FAIL_AFTER_STOP:-}" ] || exit 1
           ;;
-        *'encode launch-brief'* | *'Firstmate operational input waiting: read'*)
+        *'encode launch-brief'* | *'Firstmate operational input waiting: read'* | *'--resume '* | *"resume '11111111-"*)
           cat "$D/becomes" > "$D/command"
           [ -z "${FM_FAKE_LAUNCH_TRANSPORT_FAIL_AFTER_START:-}" ] || exit 1
           ;;
@@ -2259,7 +2261,9 @@ test_spawn_relaunch_refuses_a_pane_outside_the_worktree() {
   out=$(run_spawn "$dir" rl18 --relaunch --harness claude); rc=$?
   expect_code 1 "$rc" "a pane outside the worktree should refuse"
   assert_contains "$out" "not its recorded worktree" "the refusal should name the wrong location"
-  [ ! -s "$dir/fake/keys" ] || fail "a refused tmux relaunch must send nothing to the pane"
+  [ "$(cat "$dir/fake/keys")" = "cd -- '$dir/wt'" ] \
+    || fail "a refused tmux relaunch may only try entering its recorded worktree"
+  [ ! -s "$dir/fake/literal" ] || fail "a refused tmux relaunch must not launch a harness"
   pass "fm-spawn --relaunch: refuses to start a replacement outside the copy holding its work"
 }
 
@@ -2426,13 +2430,21 @@ case "${1:-} ${2:-}" in
   'pane process-info')
     # A retained registration with a shell-only pane models an exited agent
     # whose Herdr status authority still belongs to its previous session.
-    if [ -f "$D/herdr-agent-registration" ]; then
+    if [ ! -f "$D/herdr-agent-live" ]; then
       printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":4242,"foreground_processes":[]}}}\n' \
         "$(cat "$D/herdr-pane")"
     else
       printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":4242,"foreground_processes":[{"pid":4243,"name":"claude","argv":["claude"],"cmdline":"claude"}]}}}\n' \
         "$(cat "$D/herdr-pane")"
     fi
+    exit 0 ;;
+  'api snapshot')
+    pane=$(cat "$D/herdr-pane")
+    id=$(cat "$D/task-id")
+    tab=tab1 ws=ws1
+    [ "$pane" != %9 ] || { tab=tabnew; ws=wsnew; }
+    jq -cn --arg pane "$pane" --arg tab "$tab" --arg ws "$ws" --arg label "fm-$id" \
+      '{result:{snapshot:{panes:[{pane_id:$pane,tab_id:$tab,workspace_id:$ws}],tabs:[{tab_id:$tab,workspace_id:$ws,label:$label}]}}}'
     exit 0 ;;
   'pane send-text')
     # Mirrors the tmux fake's `becomes`: delivering the launch brief is what
@@ -2494,9 +2506,10 @@ SH
   chmod +x "$fb/herdr"
   cat > "$fb/ps" <<'SH'
 #!/usr/bin/env bash
-if [ -f "$FM_FAKE_DIR/herdr-agent-registration" ]; then
+if [ ! -f "$FM_FAKE_DIR/herdr-agent-live" ]; then
   case "$*" in
     '-axo pid=,ppid=,comm=') printf '4242 1 bash\n' ;;
+    '-axo pid=,ppid=,stat=,comm=') printf '4242 1 S bash\n' ;;
     '-p 4242 -o args=') printf 'bash\n' ;;
     *) exec /bin/ps "$@" ;;
   esac
@@ -2545,6 +2558,7 @@ EOF
   } > "$home/state/$id.meta"
   printf '%s' "$wt" > "$dir/fake/cwd"
   printf '%s' "$survivor" > "$dir/fake/herdr-pane"
+  printf '%s' "$id" > "$dir/fake/task-id"
   : > "$dir/fake/herdr-log"
   : > "$dir/fake/herdr-stopped"
   TASK_TMPS+=("/tmp/fm-$id")
@@ -2582,7 +2596,7 @@ test_herdr_relaunch_resumes_only_the_registered_pi_session() {
     }
     dir=$HERDR_CASE_DIR
     rm -f "$dir/fake/herdr-stopped"
-    sed -i 's/^harness=claude$/harness=pi/' "$dir/home/state/resume-$registered.meta"
+    sed -i.bak 's/^harness=claude$/harness=pi/' "$dir/home/state/resume-$registered.meta"
     # Keep the pane's status authority registered to the previous agent's session,
     # while process-info proves that its previous agent has exited.
     printf '{"result":{"agent":{"agent":"%s","agent_status":"idle","agent_session":{"kind":"path","value":"/tmp/pi-bound-session.jsonl"}}}}\n' \
@@ -3056,6 +3070,61 @@ SH
   pass "fm-control exit removes the dialog file before it releases the control lock"
 }
 
+test_saved_session_resume_preserves_conversation() {
+  local harness dir meta root uuid file out rc launch
+  uuid=11111111-2222-4333-8444-555555555555
+  for harness in claude codex; do
+    dir=$(new_case "native-resume-$harness" saved)
+    add_ship_task "$dir" saved "$harness"
+    meta="$dir/home/state/saved.meta"
+    root="$dir/native"
+    mkdir -p "$root/projects/project" "$root/sessions/2026/11/26"
+    if [ "$harness" = claude ]; then
+      file="$root/projects/project/$uuid.jsonl"
+      jq -cn --arg id "$uuid" --arg cwd "$dir/wt" '{sessionId:$id,cwd:$cwd,type:"user"}' > "$file"
+    else
+      file="$root/sessions/2026/11/26/rollout-date-$uuid.jsonl"
+      jq -cn --arg id "$uuid" --arg cwd "$dir/wt" '{type:"session_meta",payload:{id:$id,cwd:$cwd}}' > "$file"
+    fi
+    printf 'agent_session_id=%s\nagent_session_root=%s\nspawn_gen=old\n' "$uuid" "$root" >> "$meta"
+    cp "$dir/home/data/saved/brief.md" "$dir/brief-before"
+    printf zsh > "$dir/fake/command"
+    printf '%s' "$harness" > "$dir/fake/becomes"
+    out=$(run_control "$dir" saved resume); rc=$?
+    expect_code 0 "$rc" "$harness resume should succeed: $out"
+    assert_contains "$out" "resumed saved session=$uuid" 'resume must name its native identity'
+    grep -qx "agent_session_id=$uuid" "$meta" || fail 'resume changed its native identity'
+    cmp "$dir/brief-before" "$dir/home/data/saved/brief.md" || fail 'resume changed the original instructions'
+    launch=$(cat "$dir/fake/literal")
+    [[ "$launch" != *'encode launch-brief'* && "$launch" != *'Firstmate operational input waiting: read'* ]] \
+      || fail 'resume resubmitted the launch instructions'
+    assert_contains "$launch" "$uuid" 'resume did not launch the selected native identity'
+    if [ "$harness" = codex ]; then
+      assert_contains "$launch" 'check_for_update_on_startup=false' 'a native resume must not stop at the update picker'
+    fi
+    pass "fm-control resume: $harness keeps the native identity and omits the brief"
+    if [ "$harness" = claude ]; then
+      [ "$(fm_busy_record_read "$dir/home/state" saved)" = 'idle fm-spawn native-resume 1' ] \
+        || fail 'a resumed composer with no submitted turn must start idle'
+      make_claude_auth_stub "$dir"
+      mkdir -p "$dir/home/config" "$dir/different-account"
+      : > "$dir/different-account/.credentials.json"
+      printf '%s\n' "$dir/different-account" > "$dir/home/config/claude-account"
+      printf zsh > "$dir/fake/command"
+      : > "$dir/fake/literal"
+      : > "$dir/fake/keys"
+      out=$(run_control "$dir" saved resume); rc=$?
+      expect_code 1 "$rc" 'a changed account pin must refuse rather than offer fresh fallback'
+      assert_contains "$out" 'resume profile or account differs' 'resume did not explain the account mismatch'
+      [ "$(cat "$dir/home/config/claude-account")" = "$dir/different-account" ] || fail 'resume changed the account pin'
+      [ ! -s "$dir/fake/literal" ] && [ ! -s "$dir/fake/keys" ] || fail 'account refusal sent pane input'
+      grep -qx "agent_session_id=$uuid" "$meta" || fail 'account refusal lost the saved conversation'
+      pass 'fm-control resume: a changed account pin refuses without modifying it or sending input'
+    fi
+  done
+}
+
+test_saved_session_resume_preserves_conversation
 test_relaunch_off_opencode_removes_tracked_wiring
 test_exit_and_relaunch_remove_the_dialog_file
 test_exit_removes_the_dialog_file_before_releasing_the_lock

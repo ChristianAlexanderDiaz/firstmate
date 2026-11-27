@@ -10,7 +10,7 @@
 # generation, decision occurrence and status prefix. Answers are saved before
 # launch. An interrupted launch is never retried automatically: the existing
 # exited-wait recovery wake and once-per-gate marker request reconciliation.
-# No lifecycle implementation lives here; exit/relaunch remain fm-control's.
+# No lifecycle implementation lives here; exit/resume/relaunch remain fm-control's.
 
 fm_captain_wait_meta() {  # <meta>
   sed '/^busy_gen=/d' "$1"
@@ -153,7 +153,7 @@ fm_captain_wait_control() {
         fm_captain_wait_phase "$record" failed
         return 1
       fi
-      [ "$VERB" = relaunch ] || return 0
+      case "$VERB" in resume|relaunch) ;; *) return 0 ;; esac
       # Claim before invoking the existing transaction. Its own journal and
       # replacement generation resolve interruption; never launch twice blindly.
       json=$(jq --arg answer "$answer" '.answer=$answer | .phase="launching"' "$record") || return 1
@@ -166,7 +166,18 @@ $answer"
       fi
       fm_captain_wait_matches "$record" "$META" "$ID" || return 1
       [ "$(agent_state)" = dead ] || return 1
-      FM_CAPTAIN_WAIT_RELAUNCH="$ID" do_relaunch
+      rc=0
+      FM_CAPTAIN_WAIT_RELAUNCH="$ID" do_resume || rc=$?
+      case "$rc" in
+        0)
+          "$SCRIPT_DIR/fm-send.sh" "$ID" "$NOTE" || return 1
+          ;;
+        3)
+          printf 'working [at=%s]: saved conversation unavailable; falling back to a fresh relaunch with the recorded board answer\n' "$(date +%s)" >> "$STATE/$ID.status"
+          FM_CAPTAIN_WAIT_RELAUNCH="$ID" do_relaunch
+          ;;
+        *) return "$rc" ;;
+      esac
       fm_captain_wait_phase "$record" complete
       return
       ;;
