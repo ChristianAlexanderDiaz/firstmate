@@ -1,0 +1,35 @@
+{
+  "schema": "fm-research-brief.v1",
+  "ticket": "LIFE-1",
+  "title": "is the short review working",
+  "answer": "Yes, reviews now open on 120 words, and nobody has asked for the long form back.",
+  "words": {"quote": "did the shorter review actually help or is it just shorter", "from": "You, on Nov 20"},
+  "picture": {
+    "caption": "Words before the first choice",
+    "alt": "Today a review runs 640 words before the first choice, and after the change it runs 120.",
+    "file": "plan-board-sample-picture.svg",
+    "facts": [{"big": "5", "label": "reviews looked at"}]
+  },
+  "found": [
+    {"claim": "The last five reviews ran 640 words before the first choice.", "source": "The five reviews, counted by hand",
+     "topic": "Before"},
+    {"claim": "The first review in the new form ran 120 words before the first choice.",
+     "detail": "It was answered in under a minute, where the five before took four to nine.",
+     "source": "The review record for Nov 19", "link": "https://example.com/reviews/nov-19", "topic": "After"},
+    {"claim": "Nobody has opened the full explanation on that review.", "source": "The review record for Nov 19", "topic": "After"}
+  ],
+  "expect": [
+    {"claim": "Answers stay quick as more reviews move to the new form.",
+     "because": "One review is thin, but the time saved came from reading less, which every review shares.", "sure": "Fairly sure"}
+  ],
+  "sure": "Sure of the word counts. Not sure the speed holds, because only one review has run in the new form.",
+  "unverified": [
+    {"gap": "Whether the short form leaves out something you wanted on a hard review.", "why": "No hard review has come up yet"},
+    {"gap": "How it reads on a phone."}
+  ],
+  "watch": [
+    {"when": "Mon Nov 23", "what": "The next three reviews go out in the new form.", "means": "Three quick answers would make this a pattern."},
+    {"when": "If you open the full explanation", "what": "That review is noted as one where the short form fell short."}
+  ],
+  "builder_detail": "Method\nWord counts come from the rendered HTML of each review, not the JSON payload. The schema is unchanged.\n\nSources\nReview records for Nov 12 to Nov 19."
+}

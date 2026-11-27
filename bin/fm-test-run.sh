@@ -1595,7 +1595,7 @@ families_for_changed_path() {
     bin/fm-gate-refuse*|bin/fm-lock*)
       printf '%s\n' session-bootstrap
       ;;
-    bin/fm-plan-board.sh|.agents/skills/crewmate-briefs/assets/plan-board-template.html|tests/assets/plan-board-sample.json|tests/fm-plan-board-submit.test.js)
+    bin/fm-plan-board.sh|.agents/skills/crewmate-briefs/assets/plan-board-template.html|tests/assets/plan-board-sample.json|tests/assets/plan-board-sample-picture.svg|tests/assets/research-brief-sample.json|tests/fm-plan-board-submit.test.js)
       printf '%s\n' "__script__:fm-plan-board.test.sh"
       ;;
     bin/fm-bootstrap.sh)

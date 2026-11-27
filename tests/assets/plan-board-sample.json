@@ -1,26 +1,55 @@
 {
-  "schema": "fm-plan-board.v1",
-  "title": "Make the next choice easier",
-  "tldr": "Start each review with a short overview and a clear recommendation. Keep the full explanation close by, so you can choose quickly or read further before deciding.",
-  "decisions": [
+  "schema": "fm-plan-board.v2",
+  "ticket": "TOOL-1",
+  "title": "make the next choice easier",
+  "tldr": "Reviews take too long to answer. This ticket makes each one open on a short overview and a clear recommendation.",
+  "words": {"quote": "I just want to see the choice and why", "from": "You, when you sent this ticket"},
+  "picture": {
+    "caption": "Words before the first choice",
+    "alt": "Today a review runs 640 words before the first choice, and after the change it runs 120.",
+    "file": "plan-board-sample-picture.svg",
+    "facts": [{"big": "5", "label": "reviews looked at"}]
+  },
+  "plans": [
     {
-      "key": "review-length",
-      "question": "How much should we show first?",
-      "options": [
-        {"value": "short", "label": "A short overview", "detail": "Show the outcome, the choices, and why we recommend one."},
-        {"value": "full", "label": "The full explanation", "detail": "Put the supporting detail beside every choice."}
+      "steps": [
+        {"question": "review-length"},
+        {"say": "it moves the long explanation behind one closed section.", "does": "Render supporting detail inside the collapsed builder section"},
+        {"question": "rollout"}
       ],
-      "recommended": "short"
-    },
-    {
-      "key": "rollout",
-      "question": "Where should we try this?",
-      "options": [
-        {"value": "next", "label": "The next review", "detail": "Try one example and adjust after your feedback."},
-        {"value": "all", "label": "Every review", "detail": "Use the new format everywhere at once."}
-      ],
-      "recommended": "next"
+      "seen": "you will see a review you can answer in under a minute.",
+      "touches": ["The review page"],
+      "wont": ["Change what a review asks"],
+      "risk": ["A short overview can leave out something you wanted to know.", "Old reviews keep the long form."],
+      "undo": ["The old form comes back with one change."],
+      "done": ["The next review opens on the overview", "The full explanation is one tap away"],
+      "proof": "The next review, in the new form.",
+      "questions": [
+        {
+          "key": "review-length",
+          "question": "How much should we show first?",
+          "options": [
+            {"value": "short", "label": "A short overview", "detail": "Show the outcome, the choices, and why we recommend one.",
+             "say": "the worker makes each review open on a short overview.", "does": "Open with the outcome, the choices and the recommendation"},
+            {"value": "full", "label": "The full explanation", "detail": "Put the supporting detail beside every choice.",
+             "say": "the worker makes each review open on the full explanation.", "does": "Open with the supporting detail beside every choice"}
+          ],
+          "recommended": "short"
+        },
+        {
+          "key": "rollout",
+          "question": "Where should we try this?",
+          "options": [
+            {"value": "next", "label": "The next review", "detail": "Try one example and adjust after your feedback.",
+             "say": "it tries the new form on the next review only.", "does": "Apply the format to the next review and collect feedback"},
+            {"value": "all", "label": "Every review", "detail": "Use the new form everywhere at once.",
+             "say": "it switches every review to the new form at once.", "does": "Apply the format to every open review"}
+          ],
+          "recommended": "next"
+        }
+      ]
     }
   ],
-  "builder_detail": "Implementation notes\nThe JSON payload uses schema fm-plan-board.v1. The filler escapes text before rendering HTML.\n\nVerification\nThe pre-show lint checks the first content block, the expanded word budget, and technical vocabulary. The builder writes only after all checks pass."
+  "defaults": [{"label": "Look", "value": "The same on every review"}],
+  "builder_detail": "Implementation notes\nThe JSON payload uses schema fm-plan-board.v2. The filler escapes text before rendering HTML.\n\nVerification\nThe pre-show lint checks the first content block, the page title, and technical vocabulary. The builder writes only after all checks pass."
 }
