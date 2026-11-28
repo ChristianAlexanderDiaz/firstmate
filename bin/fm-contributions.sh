@@ -83,7 +83,9 @@
 # output (control characters dropped, at most 160 characters), or the
 # structural check that refused the observation. A later good read clears the
 # record's error, so the unavailable line is the copy that outlives it.
-# FM_CONTRIBUTIONS_MAX_AGE (default 900 seconds) bounds freshness.
+# FM_CONTRIBUTIONS_MAX_AGE (default 900 seconds) bounds active freshness.
+# Observations from the current hold use at least the configured slow polling
+# interval as their freshness bound.
 # A supported URL whose last good observation is merged or closed is final: it is
 # never re-read, stays fresh, and every owner's saved row converges on that
 # observation, with a stale error beside it cleared.
@@ -120,6 +122,8 @@ export FM_HOME FM_STATE_OVERRIDE="$STATE"
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-path-lib.sh
 . "$SCRIPT_DIR/fm-path-lib.sh"
+# shellcheck source=bin/fm-held-pr-lib.sh
+. "$SCRIPT_DIR/fm-held-pr-lib.sh"
 
 fail() { printf 'fm-contributions: %s\n' "$*" >&2; exit 1; }
 usage() { sed -n '2,/^set -eu$/s/^# \{0,1\}//p' "$0"; }
@@ -183,13 +187,35 @@ get_input() {
 }
 
 project() {
+  local url interval
+  local -a row
+  interval=$(fm_held_pr_interval "$STATE")
+  [ "$interval" -ge "$MAX_AGE" ] || interval=$MAX_AGE
+  jq_lib -nr --slurpfile input "$1" --slurpfile saved "$TMP/saved.json" '
+    known($input[0];$saved[0]) | map(select(.url | supported_url) | select(.url | contains("/pull/")))
+    | group_by(.url) | .[] | [.[0].url] + (map(.task) | unique) | @tsv' > "$TMP/project-known.tsv"
+  : > "$TMP/held-urls.txt"
+  while IFS=$'\t' read -r -a row; do
+    [ "${#row[@]}" -ge 2 ] || continue
+    url=${row[0]}
+    [ -d "$STATE" ] && [ ! -L "$STATE" ] || continue
+    FM_HELD_PR_READ_ONLY=1 fm_held_pr_due "$STATE" contributions "$url" "${row[@]:1}" || :
+    if [ -n "$FM_HELD_PR_KEY" ] && jq -ne --slurpfile saved "$TMP/saved.json" \
+      --arg url "$url" --arg generation "$FM_HELD_PR_KEY" --args '
+      all($ARGS.positional[]; . as $task | any($saved[0][] | select(.task == $task) | .records[];
+        .url == $url and .held_generation == $generation))' "${row[@]:1}" >/dev/null; then
+      printf '%s\n' "$url" >> "$TMP/held-urls.txt"
+    fi
+  done < "$TMP/project-known.tsv"
+  jq -Rsc 'split("\n") | map(select(length > 0))' "$TMP/held-urls.txt" > "$TMP/held-urls.json"
   jq_lib -n --slurpfile input "$1" --slurpfile saved "$TMP/saved.json" \
+    --slurpfile held "$TMP/held-urls.json" --argjson held_age "$interval" \
     --argjson now "$EPOCH" --argjson max_age "$MAX_AGE" --argjson errors "$ERRORS" \
     --arg all "${2:-}" '
-    projected($input[0];$saved[0];$now;$max_age) as $rows
+    projected($input[0];$saved[0];$now;$max_age;$held[0];$held_age) as $rows
     | summary($rows;($errors + (if $input[0].backlog.present == true then 0 else 1 end)))
     # Final rows never expire; a home holding only final rows is valid from now.
-    | .valid_until = (if ($rows | length) > 0 and all($rows[]; .final) then $now else .valid_until end) + $max_age
+    | .valid_until = (if ($rows | length) > 0 and all($rows[]; .final) then $now + $max_age else .valid_until end)
     | .captain_omitted = ([0, (.captain | length) - 20] | max)
     | .captain |= .[:20]
     | . + (if $all == "--all" then {rows:$rows} else {} end)'
@@ -280,6 +306,7 @@ forge() {
   out=$(mktemp "$TMP/forge-output.XXXXXX")
   # The final head read must remain live to detect a push during observation.
   [ "$forge_err" != "$TMP/head.err" ] || cache_mode=fresh
+  [ -z "${FM_HELD_PR_RECORD:-}" ] || cache_mode=fresh
   now=$(date +%s)
   read_deadline=$((now + 5))
   [ "$read_deadline" -le "$DEADLINE" ] || read_deadline=$DEADLINE
@@ -516,6 +543,7 @@ poll() {
   while IFS=$'\t' read -r -a row; do
     [ $((DEADLINE - $(date +%s))) -ge "$OBSERVATION_RESERVE" ] || break
     url=${row[0]}
+    fm_held_pr_due "$STATE" contributions "$url" "${row[@]:1}" || continue
     observed=0
     observe "$url" || observed=$?
     [ "$BUDGET_EXHAUSTED" -eq 0 ] || continue
@@ -535,12 +563,12 @@ poll() {
         ([$saved[0][] | select(.task == $task) | .records[] | select(.url == $url)] | first)
         // {url:$url,kind:$kind,checked_at:null,observation:null,verdict:null,seen:[],pending:[],notified:[]}' > "$old"
       if [ "$observed" -eq 0 ]; then
-        jq -n --arg now "$NOW" --slurpfile old "$old" --slurpfile observation "$TMP/observation.json" '
+        jq -n --arg now "$NOW" --arg generation "$FM_HELD_PR_KEY" --slurpfile old "$old" --slurpfile observation "$TMP/observation.json" '
           $old[0] as $old | $observation[0] as $o
           | ($o.events + (if $o.ready == true and $old.observation.ready != true and (any($o.events[]; .type == "ready-for-pr") | not) then
               [{token:("ready-for-pr:" + $now),type:"ready-for-pr",source:$old.url,head:null,body:"filed issue reached ready-for-pr"}]
               else [] end)) as $events
-          | $old + {checked_at:$now,error:null,
+          | $old + {checked_at:$now,error:null,held_generation:$generation,
             observation:($o + {absent_checks:((($old.observation.absent_checks // []) + [($old.observation.checks // [])[] | .name]) - [$o.checks[].name] | unique)}),
             seen:($events | map(.token)),
             pending:(($old.pending // []) + [$events[] | select(.token as $t | ($old.seen // [] | index($t)) == null)] | unique_by(.token))}' > "$TMP/row.json"
@@ -551,6 +579,7 @@ poll() {
       write_record "$task" "$TMP/row.json"
       publish_pending "$task" "$url" "$TMP/row.json"
     done
+    [ "$observed" -ne 0 ] || fm_held_pr_observed
   done < "$TMP/known.tsv"
 }
 

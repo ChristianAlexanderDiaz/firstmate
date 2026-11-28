@@ -651,6 +651,66 @@ test_watcher_surfaces_new_contribution_once() {
   pass 'watcher surfaces one newly durable contribution signal without re-ringing it'
 }
 
+test_held_freshness_and_summary() {
+  local home child out observed_epoch now_epoch
+  home=$(new_home held-fresh-parent)
+  child=$(new_home held-fresh-child)
+  mkdir -p "$child/bin"
+  printf '# Fixture\n' > "$child/AGENTS.md"
+  printf 'child\n' > "$child/.fm-secondmate-home"
+  forge_home "$child"
+  mutate_record "$child" delivery '.records[0].checked_at="2026-09-16T07:30:00Z" | .records[0].verdict={head:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",actor:"maintainer",source:"https://github.com/o/r/pull/8",summary:"waiting"}'
+  printf 'paused [wait=captain]: review requested\n' > "$child/state/delivery.status"
+  observed_epoch=$(jq -nr '"2026-09-16T07:30:00Z" | fromdateiso8601')
+  now_epoch=$((observed_epoch + 1800))
+  printf -- '- child - fixture (home: %s; scope: fixture; projects: sample; added 2026-09-16)\n' "$child" > "$home/data/secondmates.md"
+  with_home "$child" "$ROOT/bin/fm-fleet-snapshot.sh" --contribution-input > "$child/input.json" || fail 'held input failed'
+  with_home "$child" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$now_epoch" "$ROOT/bin/fm-contributions.sh" snapshot "$child/input.json" --all | jq -e '.rows[] | select(.task == "delivery") | (.checked | not) and .verdict.freshness == "unverified"' >/dev/null || fail 'new hold revived an old verdict'
+  FM_SNAPSHOT_NOW="$NOW" with_home "$child" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$now_epoch" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary > "$child/state/home-summary.json" || fail 'held child summary failed'
+  bearings "$home" | jq -e '.contributions.checked == 0 and (.contributions.complete | not)' >/dev/null || fail 'new hold revived an old child summary'
+  with_home "$child" env FM_CONTRIBUTIONS_NOW=2026-09-16T07:30:00Z FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$observed_epoch" "$ROOT/bin/fm-contributions.sh" poll >/dev/null || fail 'held observation failed'
+  record "$child" active 32 open mergeable
+  with_home "$child" "$ROOT/bin/fm-fleet-snapshot.sh" --contribution-input > "$child/input.json" || fail 'mixed input failed'
+  with_home "$child" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$now_epoch" "$ROOT/bin/fm-contributions.sh" snapshot "$child/input.json" --all | jq -e '.rows[] | select(.task == "delivery") | .checked and .verdict.freshness == "current"' >/dev/null || fail 'current hold observation became unverified'
+  FM_SNAPSHOT_NOW="$NOW" with_home "$child" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$now_epoch" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary > "$child/state/home-summary.json" || fail 'mixed child summary failed'
+  out=$(bearings "$home") || fail 'parent contribution projection failed'
+  printf '%s' "$out" | jq -e '.contributions.checked == 2 and .contributions.complete' >/dev/null || fail 'held observation expired the mixed child summary'
+  mutate_record "$child" active '.records[0].checked_at="2026-09-16T07:44:59Z"'
+  FM_SNAPSHOT_NOW="$NOW" with_home "$child" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$now_epoch" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary > "$child/state/home-summary.json" || fail 'stale active child summary failed'
+  bearings "$home" | jq -e '.contributions.checked == 0 and (.contributions.complete | not)' >/dev/null || fail 'active observation past 900 seconds stayed fresh in child summary'
+  pass 'held freshness requires an observation in the current hold'
+}
+
+test_held_collision_freshness() {
+  local home child observed_epoch now_epoch first_slot slot task n
+  home=$(new_home collision-parent)
+  child=$(new_home collision-child)
+  mkdir -p "$child/bin"
+  printf '# Fixture\n' > "$child/AGENTS.md"
+  printf 'child\n' > "$child/.fm-secondmate-home"
+  forge_home "$child"
+  first_slot=$(printf '%s\n' 'https://github.com/o/r/pull/8' delivery | cksum)
+  first_slot=$(( ${first_slot%% *} % 256 ))
+  for ((n=1; n<=4096; n++)); do
+    task="waiting$n"
+    slot=$(printf '%s\n' 'https://github.com/o/r/pull/9' "$task" | cksum)
+    [ "$(( ${slot%% *} % 256 ))" -ne "$first_slot" ] || break
+  done
+  [ "$n" -le 4096 ] || fail 'could not construct colliding held PRs'
+  record "$child" "$task" 9 open mergeable
+  printf 'paused [wait=captain]: review requested\n' > "$child/state/delivery.status"
+  printf 'paused [wait=captain]: review requested\n' > "$child/state/$task.status"
+  observed_epoch=$(jq -nr '"2026-09-16T07:30:00Z" | fromdateiso8601')
+  now_epoch=$((observed_epoch + 1800))
+  with_home "$child" env FM_CONTRIBUTIONS_NOW=2026-09-16T07:30:00Z FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$observed_epoch" "$ROOT/bin/fm-contributions.sh" poll >/dev/null || fail 'colliding held observations failed'
+  with_home "$child" "$ROOT/bin/fm-fleet-snapshot.sh" --contribution-input > "$child/input.json" || fail 'collision input failed'
+  with_home "$child" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$now_epoch" "$ROOT/bin/fm-contributions.sh" snapshot "$child/input.json" --all | jq -e '.known == 2 and .checked == 2 and all(.rows[]; .checked)' >/dev/null || fail 'colliding held observations became stale'
+  FM_SNAPSHOT_NOW="$NOW" with_home "$child" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$now_epoch" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary > "$child/state/home-summary.json" || fail 'collision summary failed'
+  printf -- '- child - fixture (home: %s; scope: fixture; projects: sample; added 2026-09-16)\n' "$child" > "$home/data/secondmates.md"
+  bearings "$home" | jq -e '.contributions.checked == 2 and .contributions.complete' >/dev/null || fail 'collision expired the child summary'
+  pass 'colliding held PRs retain independent freshness'
+}
+
 test_home_summary_coverage() {
   local home child
   home=$(new_home parent)
@@ -1703,8 +1763,72 @@ test_rate_limited_reads_wait() {
   pass 'primary and secondary quota refusals wait without retries or green observations'
 }
 
+# One hour at the ordinary five-minute sweep cadence. The one-second setting
+# is the every-sweep control; both passes retain identical structured holds.
+test_held_pr_hour_replay() {
+  local home mode tick task number out before after held_before held_after
+  home=$(new_home held-hour)
+  forge_home "$home"
+  wrap_forge "$home"
+  record "$home" waiting 9 open mergeable '(hold: decision) (hold-kind: captain)'
+  record "$home" active 10 open mergeable
+  printf 'paused [wait=captain]: review requested\n' > "$home/state/delivery.status"
+  for mode in before after; do
+    if [ "$mode" = before ]; then
+      printf '1\n' > "$home/config/held-pr-poll-interval"
+    else
+      rm "$home/config/held-pr-poll-interval"
+    fi
+    rm -rf "$home/state/held-pr-poll"
+    : > "$home/forge/calls"
+    for tick in 0 300 600 900 1200 1500 1800 2100 2400 2700 3000 3300; do
+      for task in delivery waiting active; do
+        case "$task" in delivery) number=8 ;; waiting) number=9 ;; active) number=10 ;; esac
+        out=$(with_home "$home" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$((10000 + tick))" \
+          FM_PR_POLL_TASK="$task" "$ROOT/bin/fm-pr-poll.sh" --validated github \
+          "https://github.com/o/r/pull/$number" github.com o/r "$number") || fail 'merge replay failed'
+        [ -z "$out" ] || fail "open PR reported an outcome: $out"
+      done
+      with_home "$home" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW="$((10000 + tick))" \
+        "$ROOT/bin/fm-contributions.sh" poll >/dev/null || fail 'contribution replay failed'
+    done
+    if [ "$mode" = before ]; then before=$(wc -l < "$home/forge/calls")
+    else after=$(wc -l < "$home/forge/calls"); fi
+    # Per-PR merge and core reads prove each consumer kept the intended cadence.
+    for number in 8 9 10; do
+      if [ "$mode" = before ] || [ "$number" = 10 ]; then tick=12; else tick=1; fi
+      [ "$(grep -c "^api repos/o/r/pulls/$number$" "$home/forge/calls")" -eq "$tick" ] \
+        || fail "wrong contribution cadence for $mode PR $number"
+      [ "$(grep -c "^pr view https://github.com/o/r/pull/$number --json state,isDraft,headRefOid,url$" "$home/forge/calls")" -eq "$tick" ] \
+        || fail "wrong merge cadence for $mode PR $number"
+    done
+  done
+  [ "$before" -eq 324 ] && [ "$after" -eq 126 ] || fail "unexpected replay reads: $before -> $after"
+  held_before=216; held_after=18
+  printf 'REPLAY: one hour, two held PRs + one active PR, 12 sweeps; all reads %s -> %s; held reads %s -> %s; active reads 108 -> 108\n' \
+    "$before" "$after" "$held_before" "$held_after"
+  # Release both kinds of hold: their next sweep must immediately read again.
+  printf 'working: resumed\n' >> "$home/state/delivery.status"
+  sed 's/ (hold: decision) (hold-kind: captain)//' "$home/data/backlog.md" > "$home/backlog.new"
+  mv "$home/backlog.new" "$home/data/backlog.md"
+  : > "$home/forge/calls"
+  with_home "$home" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW=13301 \
+    "$ROOT/bin/fm-contributions.sh" poll >/dev/null || fail 'released contribution poll failed'
+  [ "$(wc -l < "$home/forge/calls")" -eq 24 ] || fail 'release did not restore contribution cadence'
+  # An external wait is also structured, even without a captain owner tag.
+  printf 'paused: dependency unavailable\n' > "$home/state/delivery.status"
+  with_home "$home" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW=14000 \
+    "$ROOT/bin/fm-contributions.sh" poll >/dev/null || fail 'external wait poll failed'
+  printf 'merged\n' > "$home/forge/state"
+  with_home "$home" env FM_TEST_SEAM=1 FM_TEST_HELD_PR_NOW=17600 \
+    "$ROOT/bin/fm-contributions.sh" poll >/dev/null || fail 'held merge contribution poll failed'
+  jq -e '.records[0].observation.state == "merged"' "$home/data/delivery/contributions.json" >/dev/null \
+    || fail 'merge was not detected at the slow interval'
+  pass 'held PR replay, config override, both hold releases and held merge detection'
+}
+
 failures=0
-for test_name in test_rate_limited_reads_wait test_actor_coverage test_stale_verdict test_unchecked_is_not_silence test_newest_check_has_no_verdict test_comment_wake test_review_wake test_inline_wake test_ready_issue_wake test_fresh_issue_requires_maintainer test_missing_lane_remains_missing test_partial_freshness_keeps_measured_rows test_malformed_record_cannot_prove_silence test_issue_timeline_and_exact_ack test_verdict_retains_judged_head test_verdict_actor_values_are_discoverable test_observed_replacement_refreshes_verdict test_unobserved_head_leaves_verdict_unknown test_away_yolo_is_fleet_work test_away_yolo_cross_home_is_fleet_work test_retired_and_unsupported_coverage test_unsupported_forge_is_not_fleet_work test_held_unsupported_forge_is_not_captain_work test_unsupported_poll_is_silent_and_clears_legacy_errors test_legacy_cleanup_preserves_supported_failure test_shared_contribution_signal_wakes_once test_watcher_keeps_diagnostics_separate_from_contribution_wakes test_expired_child_unsupported_forge_stays_unmeasured test_watcher_surfaces_new_contribution_once test_home_summary_coverage test_unreadable_pending_is_not_empty test_record_task_identity_matches_dirname_basename test_read_only_views_create_no_state test_budget_refusal_between_calls test_budget_bounded_call_timeout test_genuine_failure_near_deadline_is_unavailable test_http_500_once_retries_without_waking test_http_500_twice_records_the_failed_read test_http_404_retry_keeps_diagnostic test_real_gh_errors_drive_retry_and_summary test_next_url_does_not_inherit_a_forge_diagnostic test_shared_url_observed_once test_terminal_contribution_settles test_late_owner_inherits_terminal_observation test_interrupted_multi_owner_poll_settles_every_owner test_done_task_open_pr_still_observed test_reservation_defers_later_url_when_fifteen_seconds_do_not_remain test_three_second_pr_reads_complete_fresh_in_one_cycle test_slow_read_deadline_kill_is_budget_refusal test_unmeasured_url_does_not_starve_the_tail test_budget_is_cut_down_to_the_watcher_check_bound test_arm_plumbs_a_configured_budget_into_the_check_shim test_unavailable_forge_records_error_and_wakes_once_per_episode test_late_owner_keeps_failure_episode_suppressed test_retire_ends_observation_of_a_gone_contribution test_late_owner_of_a_retired_final_contribution_is_not_retired test_retire_is_idempotent_and_refuses_unknown_pairs test_many_reviews_stay_readable test_eof_once_retries_without_waking test_http_404_is_retried; do
+for test_name in test_held_collision_freshness test_held_freshness_and_summary test_held_pr_hour_replay test_rate_limited_reads_wait test_actor_coverage test_stale_verdict test_unchecked_is_not_silence test_newest_check_has_no_verdict test_comment_wake test_review_wake test_inline_wake test_ready_issue_wake test_fresh_issue_requires_maintainer test_missing_lane_remains_missing test_partial_freshness_keeps_measured_rows test_malformed_record_cannot_prove_silence test_issue_timeline_and_exact_ack test_verdict_retains_judged_head test_verdict_actor_values_are_discoverable test_observed_replacement_refreshes_verdict test_unobserved_head_leaves_verdict_unknown test_away_yolo_is_fleet_work test_away_yolo_cross_home_is_fleet_work test_retired_and_unsupported_coverage test_unsupported_forge_is_not_fleet_work test_held_unsupported_forge_is_not_captain_work test_unsupported_poll_is_silent_and_clears_legacy_errors test_legacy_cleanup_preserves_supported_failure test_shared_contribution_signal_wakes_once test_watcher_keeps_diagnostics_separate_from_contribution_wakes test_expired_child_unsupported_forge_stays_unmeasured test_watcher_surfaces_new_contribution_once test_home_summary_coverage test_unreadable_pending_is_not_empty test_record_task_identity_matches_dirname_basename test_read_only_views_create_no_state test_budget_refusal_between_calls test_budget_bounded_call_timeout test_genuine_failure_near_deadline_is_unavailable test_http_500_once_retries_without_waking test_http_500_twice_records_the_failed_read test_http_404_retry_keeps_diagnostic test_real_gh_errors_drive_retry_and_summary test_next_url_does_not_inherit_a_forge_diagnostic test_shared_url_observed_once test_terminal_contribution_settles test_late_owner_inherits_terminal_observation test_interrupted_multi_owner_poll_settles_every_owner test_done_task_open_pr_still_observed test_reservation_defers_later_url_when_fifteen_seconds_do_not_remain test_three_second_pr_reads_complete_fresh_in_one_cycle test_slow_read_deadline_kill_is_budget_refusal test_unmeasured_url_does_not_starve_the_tail test_budget_is_cut_down_to_the_watcher_check_bound test_arm_plumbs_a_configured_budget_into_the_check_shim test_unavailable_forge_records_error_and_wakes_once_per_episode test_late_owner_keeps_failure_episode_suppressed test_retire_ends_observation_of_a_gone_contribution test_late_owner_of_a_retired_final_contribution_is_not_retired test_retire_is_idempotent_and_refuses_unknown_pairs test_many_reviews_stay_readable test_eof_once_retries_without_waking test_http_404_is_retried; do
   ( "$test_name" ) || failures=$((failures + 1))
 done
 [ "$failures" -eq 0 ] || fail "$failures contribution regressions"

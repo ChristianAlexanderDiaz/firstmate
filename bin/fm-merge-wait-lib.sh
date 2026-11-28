@@ -8,6 +8,9 @@
 # poll registration. Current state is rechecked before a row suppresses a poll
 # or pane capture. Failed/partial reads never suppress ordinary handling.
 
+# shellcheck source=bin/fm-held-pr-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-held-pr-lib.sh"
+
 fm_merge_wait_signature() {  # <state> <id>
   local state=$1 id=$2 wt head activity file
   wt=$(fm_meta_get "$state/$id.meta" worktree)
@@ -65,6 +68,8 @@ fm_merge_wait_collect() {  # <state> <bin-dir>; sets requests and GraphQL query
     fm_pr_poll_snapshot_capture "$state" "$id" "$scripts/fm-pr-poll.sh" || continue
     [ "$FM_PR_POLL_SNAPSHOT_PROVIDER" = github ] || continue
     [ "$(fm_dod_pr_url_from_done_note "$(status_line_note "$last")")" = "$FM_PR_POLL_SNAPSHOT_URL" ] || continue
+    # Held tasks use the independently paced merge poll, never this batch.
+    if fm_held_pr_signature "$state" "$id" >/dev/null; then continue; fi
     # Metadata/status/head may have changed during the authoritative read.
     fm_merge_wait_signature "$state" "$id" || continue
     [ "$signature" = "$FM_MERGE_WAIT_SIGNATURE" ] || continue

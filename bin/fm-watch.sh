@@ -3422,7 +3422,7 @@ while :; do
             out=
             [ "$FM_MERGE_WAIT_VERDICT" != merged ] || out=merged
           else
-            run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
+            FM_PR_POLL_TASK="$id" run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
               "$provider" "$url" "$host" "$path" "$number" || exit 1
             out=$FM_CHECK_RESULT
           fi

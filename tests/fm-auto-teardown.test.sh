@@ -159,6 +159,7 @@ esac
 SH
 chmod +x "$FAKEBIN/no-mistakes"
 printf 'running\n' > "$CASE/run-status"
+fm_test_tasks_toml "$CASE/.tasks.toml"
 cat > "$CASE/batch-test.sh" <<'SH'
 set -eu
 . "$1/bin/fm-backend.sh"
@@ -167,6 +168,11 @@ set -eu
 . "$1/bin/fm-dod-lib.sh"
 . "$1/bin/fm-busy-lib.sh"
 . "$1/bin/fm-merge-wait-lib.sh"
+printf '## Queued\n\n- [ ] task-a - Waiting for review (hold: choose) (hold-kind: captain)\n' > "$FM_HOME/data/backlog.md"
+fm_merge_wait_collect "$FM_STATE_OVERRIDE" "$1/bin"
+case "$FM_MERGE_WAIT_REQUESTS" in *task-a*) exit 1 ;; esac
+case "$FM_MERGE_WAIT_REQUESTS" in *task-b*) ;; *) exit 1 ;; esac
+printf '## Queued\n\n- [ ] task-a - Review answered\n' > "$FM_HOME/data/backlog.md"
 fm_merge_wait_collect "$FM_STATE_OVERRIDE" "$1/bin"
 [ -n "$FM_MERGE_WAIT_QUERY" ]
 FM_MERGE_WAIT_RESULTS=$(fm_merge_wait_read "$FM_MERGE_WAIT_QUERY")
