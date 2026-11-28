@@ -21,7 +21,7 @@ script.write_text('''#!/usr/bin/env python3
 import json, os, re, sys, time
 from pathlib import Path
 with open(os.environ['CALLS'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\\n')
-if os.environ.get('REFUSED'):
+if os.environ.get('REFUSED') or (os.environ.get('REFUSED_PAGE2') and 'page=2' in sys.argv[2]):
     print('< HTTP/2.0 403 Forbidden', file=sys.stderr)
     if os.environ.get('RESET'): print('< X-Ratelimit-Reset: ' + os.environ['RESET'], file=sys.stderr)
     if os.environ.get('RETRY'): print('< Retry-After: ' + os.environ['RETRY'], file=sys.stderr)
@@ -36,8 +36,24 @@ if sys.argv[1:3] == ['api', 'graphql']:
         print(f'{alias}\\thttps://github.com/{owner}/{name}/pull/{number}\\tOPEN\\tfalse\\t' + 'a'*40)
 elif sys.argv[1:3] == ['pr', 'view']:
     print(json.dumps(dict(url=sys.argv[3], state=os.environ.get('FORGE_STATE', 'OPEN'), isDraft=False, headRefOid='a'*40)))
+elif '--include' in sys.argv:
+    second = 'page=2' in sys.argv[2]
+    tag = os.environ.get('REST_TAG2' if second else 'REST_TAG', '')
+    modified = os.environ.get('REST_MODIFIED', '')
+    same = (tag and 'If-None-Match: ' + tag in sys.argv) or (not tag and modified and 'If-Modified-Since: ' + modified in sys.argv)
+    print('HTTP/2.0 304 Not Modified' if same else 'HTTP/2.0 200 OK')
+    if tag: print('ETag: ' + tag)
+    if modified: print('Last-Modified: ' + modified)
+    if same:
+        print('X-Ratelimit-Remaining: 0')
+        print()
+        sys.exit(int(os.environ.get('REST_304_EXIT', '0')))
+    if os.environ.get('REST_PAGES') and not second:
+        print('Link: <https://api.github.com/repos/example/sample/items?page=2>; rel="next"')
+    print()
+    print(os.environ.get('REST_BODY2' if second else 'REST_BODY', '{}'))
 else:
-    print('{}')
+    print(os.environ.get('REST_BODY', '{}'))
 ''')
 script.chmod(0o755)
 parent = root / 'parent'
@@ -158,6 +174,91 @@ assert count() == start+3
 for option in ('--method=POST', '-XPOST', '--field', '--raw-field', '--input=data.json'):
     assert run('read', 'api', 'repos/example/sample/issues', option, 'title=x').returncode != 0
 assert count() == start+3, 'read wrapper admitted a mutation'
+# Expiry revalidates representations; a 304 can be a nonzero gh exit, carries
+# no body, and is not exhaustion even when the remaining-quota header is zero.
+rest_args = ('read', 'api', 'repos/example/sample/items')
+conditional = {'FM_GITHUB_CACHE_DIR':str(root/'conditional'), 'FM_TEST_GITHUB_NOW':'50000',
+               'REST_TAG':'"v1"', 'REST_BODY':'{"version":1}', 'REST_MODIFIED':'Wed, 21 Oct 2015 07:28:00 GMT'}
+assert json.loads(good(run(*rest_args, extra=conditional))) == {'version':1}
+unchanged = dict(conditional, FM_TEST_GITHUB_NOW='50300', REST_304_EXIT='1', REST_BODY='unusable')
+assert json.loads(good(run(*rest_args, extra=unchanged))) == {'version':1}
+last = json.loads((root/'calls').read_text().splitlines()[-1])
+assert 'If-None-Match: "v1"' in last and not any('If-Modified-Since' in x for x in last)
+before = count()
+good(run(*rest_args, extra=dict(unchanged, FM_TEST_GITHUB_NOW='50599')))
+assert count() == before, '304 did not refresh freshness'
+replacement = dict(conditional, FM_TEST_GITHUB_NOW='50600', REST_TAG='"v2"', REST_BODY='{"version":2}')
+assert json.loads(good(run(*rest_args, extra=replacement))) == {'version':2}
+assert json.loads(good(run(*rest_args, extra=dict(replacement, FM_TEST_GITHUB_NOW='50900', REST_BODY='unusable')))) == {'version':2}
+assert 'If-None-Match: "v2"' in json.loads((root/'calls').read_text().splitlines()[-1])
+# Fresh reads neither send validators nor return a stored body.
+assert json.loads(good(run('fresh', *rest_args[1:], extra=dict(replacement, FM_TEST_GITHUB_NOW='50900', REST_BODY='{"version":3}')))) == {'version':3}
+assert not any('If-None-Match' in x for x in json.loads((root/'calls').read_text().splitlines()[-1]))
+# Credential partitions do not send another credential's validator.
+good(run(*rest_args, extra=dict(replacement, FM_TEST_GITHUB_NOW='50900', GH_TOKEN='separate-fixture-token')))
+assert not any('If-None-Match' in x for x in json.loads((root/'calls').read_text().splitlines()[-1]))
+# Last-Modified works when ETag is absent, and no validators means ordinary 200s.
+for name, fields, expected in (('modified', {'REST_MODIFIED':'Wed, 21 Oct 2015 07:28:00 GMT'}, 'If-Modified-Since:'),
+                               ('unconditional', {}, None)):
+    sample = dict(fields, FM_GITHUB_CACHE_DIR=str(root/name), FM_TEST_GITHUB_NOW='50000', REST_BODY='{"version":1}')
+    good(run(*rest_args, extra=sample))
+    result = good(run(*rest_args, extra=dict(sample, FM_TEST_GITHUB_NOW='50300', REST_BODY='{"version":2}')))
+    assert json.loads(result)['version'] == (1 if expected else 2)
+    sent = json.loads((root/'calls').read_text().splitlines()[-1])
+    assert any(x.startswith(expected) for x in sent) if expected else not any(x.startswith('If-') for x in sent)
+# A replacement without validators must discard the old ETag.
+good(run(*rest_args, extra=dict(replacement, FM_TEST_GITHUB_NOW='51200', REST_TAG='', REST_MODIFIED='')))
+good(run(*rest_args, extra=dict(replacement, FM_TEST_GITHUB_NOW='51500')))
+assert not any(x.startswith('If-') for x in json.loads((root/'calls').read_text().splitlines()[-1]))
+# Refusals/errors during revalidation never return the expired representation.
+refusal = dict(replacement, FM_TEST_GITHUB_NOW='51800', REFUSED='1', REMAINING='0', RESET='53000')
+result = run(*rest_args, extra=refusal)
+assert result.returncode == 75 and not result.stdout and 'waiting:' in result.stderr
+assert 'If-None-Match: "v2"' in json.loads((root/'calls').read_text().splitlines()[-1])
+assert run(*rest_args, extra=dict(replacement, FM_TEST_GITHUB_NOW='53000', BROKEN='1')).returncode != 0
+# Validators expire in a day even if the entry has not otherwise been evicted.
+good(run(*rest_args, extra=dict(replacement, FM_TEST_GITHUB_NOW='140000')))
+assert not any(x.startswith('If-') for x in json.loads((root/'calls').read_text().splitlines()[-1]))
+# Every page is revalidated separately. A 304 missing Link metadata cannot
+# establish pagination topology, so the page with the prior link is read again.
+paged = dict(conditional, FM_GITHUB_CACHE_DIR=str(root/'paged'), REST_PAGES='1',
+             REST_BODY='[1]', REST_BODY2='[2]', REST_TAG2='"page2-v1"')
+page_args = (*rest_args, '--paginate', '--slurp')
+assert json.loads(good(run(*page_args, extra=paged))) == [[1], [2]]
+paged.update(FM_TEST_GITHUB_NOW='50300', REST_TAG2='"page2-v2"', REST_BODY2='[3]')
+assert json.loads(good(run(*page_args, extra=paged))) == [[1], [3]]
+sent = [json.loads(x) for x in (root/'calls').read_text().splitlines()[-3:]]
+assert 'If-None-Match: "v1"' in sent[0] and 'If-None-Match: "page2-v1"' in sent[2]
+assert not any(x.startswith('If-') for x in sent[1])
+assert json.loads(good(run(*page_args, extra=dict(paged, FM_TEST_GITHUB_NOW='50600', REST_BODY2='unusable')))) == [[1], [3]]
+# A 200 with no next link removes the former second page.
+paged.update(FM_TEST_GITHUB_NOW='50900', REST_TAG='"shorter"', REST_PAGES='', REST_BODY='[4]')
+assert json.loads(good(run(*page_args, extra=paged))) == [[4]]
+# Page projections retain raw-string output; unsupported slurp combinations
+# remain refused as in gh rather than acquiring new output semantics.
+assert good(run(*rest_args, '--jq', '.version', extra=dict(replacement, FM_GITHUB_CACHE_DIR=str(root/'jq')))).strip() == '2'
+assert good(run(*rest_args, '--paginate', '--jq', '.[]', extra=dict(paged, REST_BODY='["sample"]'))).strip() == 'sample'
+before = count()
+assert run(*page_args, '--jq', '.[][]', extra=paged).returncode != 0
+assert run(*rest_args, '--slurp', extra=paged).returncode != 0
+assert count() == before, 'unsupported slurp combination issued a request'
+# A later-page refusal wins over an earlier-page 304 and publishes no partial
+# body. After cooldown, the old complete representation can be revalidated.
+paged.update(FM_GITHUB_CACHE_DIR=str(root/'paged-refusal'), FM_TEST_GITHUB_NOW='60000',
+             REST_PAGES='1', REST_BODY='[1]', REST_BODY2='[2]', REST_TAG='"page1"')
+assert json.loads(good(run(*page_args, extra=paged))) == [[1], [2]]
+result = run(*page_args, extra=dict(paged, FM_TEST_GITHUB_NOW='60300', REFUSED_PAGE2='1',
+                                   RESET='61000', REMAINING='0'))
+assert result.returncode == 75 and not result.stdout and 'waiting:' in result.stderr
+assert json.loads(good(run(*page_args, extra=dict(paged, FM_TEST_GITHUB_NOW='61000')))) == [[1], [2]]
+# A formerly terminal full page can acquire a successor with the same ETag.
+# Re-reading missing Link metadata must discover it rather than trust the old
+# absence of a next page.
+growing = dict(conditional, FM_GITHUB_CACHE_DIR=str(root/'growing'), REST_BODY='[1]', REST_BODY2='[2]')
+growing_args = ('read', 'api', 'repos/example/sample/items?per_page=1', '--paginate', '--slurp')
+assert json.loads(good(run(*growing_args, extra=growing))) == [[1]]
+assert json.loads(good(run(*growing_args, extra=dict(growing, FM_TEST_GITHUB_NOW='50300', REST_PAGES='1')))) == [[1], [2]]
+print('PASS: REST 304 reuse/freshness, 200 replacement, validator fallback/expiry, credential partition, fresh bypass, quota refusal and per-page pagination')
 # Scripted hour: 8 PRs, two observing homes, two reads each per sweep.
 # Baseline individual poll: 8 * 2 * 2 * 12 = 384; cache: 8 * 12 = 96.
 fleet_start = count()

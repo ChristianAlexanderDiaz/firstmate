@@ -6,6 +6,15 @@
 #        fm-github-read.sh read|fresh <read-only gh arguments...>
 # core and batch share PR observations for the configured interval. read caches
 # exact requests for that interval; fresh bypasses success caching for coherence checks.
+# REST GETs revalidate expired bodies per page with ETag, falling back to
+# Last-Modified. A 304 refreshes freshness; a 200 replaces body and validators.
+# Validators survive at most one day within the existing bounded slots; expired
+# entries may be evicted for new keys, while fresh observations are never evicted.
+# REST pagination follows GitHub Link headers; --slurp assembles page bodies and
+# --jq/-q uses the callers' existing jq dependency to project the final output.
+# As in gh, --slurp requires --paginate and cannot be combined with --jq/-q.
+# A paginated 304 missing Link metadata triggers an unconditional read when a
+# full page or a prior Link header makes the current page topology uncertain.
 # fresh-head reads the head live and invalidates its shared PR observation.
 # All modes share quota backoff. Exit 75 and "waiting:" mean no observation,
 # never a failed check or readiness. Other read errors retain a nonzero status.
